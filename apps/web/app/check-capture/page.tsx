@@ -15,6 +15,7 @@ import { getApiErrorMessage } from "@/lib/api";
 import {
   parseCheckTextFromOcr,
   runLocalCheckOcr,
+  shrinkCheckImageFileIfLarge,
   type ParsedCheckFields,
   type LocalOcrBestResult
 } from "@/lib/checkCaptureOcr";
@@ -159,10 +160,11 @@ export default function CheckCapturePage() {
     setStatus("Uploading check image...");
     setUploading(true);
     try {
-      const dataBase64 = await toBase64(file);
-      const mimeType = (file.type || "image/jpeg") as "image/jpeg" | "image/jpg" | "image/png" | "image/webp";
+      const uploadFile = await shrinkCheckImageFileIfLarge(file);
+      const dataBase64 = await toBase64(uploadFile);
+      const mimeType = (uploadFile.type || "image/jpeg") as "image/jpeg" | "image/jpg" | "image/png" | "image/webp";
       const uploaded = await uploadCheckImage({
-        fileName: file.name,
+        fileName: uploadFile.name,
         mimeType,
         dataBase64
       });
@@ -180,7 +182,7 @@ export default function CheckCapturePage() {
 
       if (extracted.provider === "manual-review" || isParsedEmpty(extracted.parsed)) {
         setStatus("Running on-device OCR (first use may download language data)...");
-        localResult = await runLocalCheckOcr(file);
+        localResult = await runLocalCheckOcr(uploadFile);
         localParsed = localResult.parsed || parseCheckTextFromOcr(localResult.text);
         debugLog("selected OCR rotation", {
           angle: localResult.angle,

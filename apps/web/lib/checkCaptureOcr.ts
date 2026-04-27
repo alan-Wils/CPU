@@ -302,17 +302,88 @@ function scoreParsedResult(text: string, parsed: ParsedCheckFields): { score: nu
   return { score: fieldCount * 1000 + Math.min(text.length, 500), fieldCount };
 }
 
+/** Enough structured fields to stop scanning more angles / variants. */
+function isExtractionGoodEnough(parsed: ParsedCheckFields, fieldCount: number): boolean {
+  if (fieldCount >= 5) return true;
+  if (fieldCount >= 4 && parsed.amount != null && parsed.routingNumber) return true;
+  return false;
+}
+
+function mergeOcrCandidate(
+  prev: LocalOcrBestResult,
+  text: string,
+  angle: number,
+  parsed: ParsedCheckFields,
+  confidence: number
+): LocalOcrBestResult {
+  const scored = scoreParsedResult(text, parsed);
+  const score = scored.score + Math.max(0, confidence) * 0.5;
+  if (score <= prev.score) return prev;
+  return {
+    text,
+    angle,
+    parsed,
+    score,
+    fieldsDetected: scored.fieldCount
+  };
+}
+
+type TessWorker = Awaited<ReturnType<(typeof import("tesseract.js"))["createWorker"]>>;
+
+let sharedCheckOcrWorkerPromise: Promise<TessWorker> | null = null;
+let sharedWorkerUnloadHooked = false;
+
+async function getSharedCheckOcrWorker(): Promise<TessWorker> {
+  if (!sharedCheckOcrWorkerPromise) {
+    sharedCheckOcrWorkerPromise = (async () => {
+      const { createWorker, PSM } = await import("tesseract.js");
+      const worker = await createWorker("eng");
+      await worker.setParameters({
+        tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
+        preserve_interword_spaces: "1"
+      });
+      return worker;
+    })();
+  }
+  try {
+    return await sharedCheckOcrWorkerPromise;
+  } catch (e) {
+    sharedCheckOcrWorkerPromise = null;
+    throw e;
+  }
+}
+
+async function resetSharedCheckOcrWorker(): Promise<void> {
+  const p = sharedCheckOcrWorkerPromise;
+  sharedCheckOcrWorkerPromise = null;
+  if (!p) return;
+  try {
+    const w = await p;
+    await w.terminate();
+  } catch {
+    // ignore
+  }
+}
+
+function ensureSharedCheckOcrWorkerReleasedOnLeave(): void {
+  if (sharedWorkerUnloadHooked || typeof window === "undefined") return;
+  sharedWorkerUnloadHooked = true;
+  const release = () => {
+    void resetSharedCheckOcrWorker();
+  };
+  window.addEventListener("pagehide", release);
+}
+
+const FAST_ANGLES = [0, 90] as const;
+const EXTRA_ANGLES = [180, 270] as const;
+
 /**
- * Runs Tesseract in the browser on the image at 0° and 90° (common for phone photos of landscape checks).
- * Picks the orientation that yields the most parsed fields.
+ * Runs Tesseract in the browser across rotations (0°/90° first, then 180°/270° if needed).
+ * Reuses one worker per tab, skips redundant enhanced passes when base OCR is already strong,
+ * and stops early once enough fields are parsed.
  */
 export async function runLocalCheckOcr(file: File): Promise<LocalOcrBestResult> {
-  const { createWorker, PSM } = await import("tesseract.js");
-  const worker = await createWorker("eng");
-  await worker.setParameters({
-    tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
-    preserve_interword_spaces: "1"
-  });
+  ensureSharedCheckOcrWorkerReleasedOnLeave();
 
   let best: LocalOcrBestResult = {
     text: "",
@@ -322,31 +393,92 @@ export async function runLocalCheckOcr(file: File): Promise<LocalOcrBestResult> 
     fieldsDetected: 0
   };
 
+  const runRecognize = async (worker: TessWorker, blob: Blob, angle: number) => {
+    const { data } = await worker.recognize(blob);
+    const text = String(data?.text || "");
+    const parsed = parseCheckTextFromOcr(text);
+    const confidence = Number(data?.confidence || 0);
+    best = mergeOcrCandidate(best, text, angle, parsed, confidence);
+    const scored = scoreParsedResult(text, parsed);
+    return { text, parsed, scored, confidence };
+  };
+
   try {
-    for (const angle of [0, 90, 180, 270]) {
-      for (const variant of ["base", "enhanced"] as const) {
+    const worker = await getSharedCheckOcrWorker();
+
+    const processAngles = async (angles: readonly number[]) => {
+      for (const angle of angles) {
         const rotated = await blobToPngWithRotation(file, angle, 2);
-        const blob = variant === "enhanced" ? await enhanceForOcr(rotated) : rotated;
-        const { data } = await worker.recognize(blob);
-        const text = String(data?.text || "");
-        const parsed = parseCheckTextFromOcr(text);
-        const confidence = Number(data?.confidence || 0);
-        const scored = scoreParsedResult(text, parsed);
-        const score = scored.score + Math.max(0, confidence) * 0.5;
-        if (score > best.score) {
-          best = {
-            text,
-            angle,
-            parsed,
-            score,
-            fieldsDetected: scored.fieldCount
-          };
+        const base = await runRecognize(worker, rotated, angle);
+        if (isExtractionGoodEnough(best.parsed, best.fieldsDetected)) return;
+
+        const tryEnhance = !isExtractionGoodEnough(base.parsed, base.scored.fieldCount);
+        if (tryEnhance) {
+          const enhanced = await enhanceForOcr(rotated);
+          await runRecognize(worker, enhanced, angle);
+          if (isExtractionGoodEnough(best.parsed, best.fieldsDetected)) return;
         }
       }
+    };
+
+    await processAngles(FAST_ANGLES);
+    if (!isExtractionGoodEnough(best.parsed, best.fieldsDetected)) {
+      await processAngles(EXTRA_ANGLES);
     }
-  } finally {
-    await worker.terminate();
+  } catch (e) {
+    await resetSharedCheckOcrWorker();
+    throw e;
   }
 
   return best;
+}
+
+const UPLOAD_IMAGE_TYPE = /^image\/(jpeg|jpg|png|webp)$/i;
+
+/**
+ * Downscales very large camera photos before base64 upload and local OCR (faster I/O and recognition).
+ * Returns the original file when already small enough or when decode fails.
+ */
+export async function shrinkCheckImageFileIfLarge(file: File, maxEdge = 2000): Promise<File> {
+  const type = (file.type || "").toLowerCase();
+  if (!UPLOAD_IMAGE_TYPE.test(type) || !file.size) return file;
+
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Could not decode image"));
+      img.src = url;
+    });
+    const nw = img.naturalWidth || 0;
+    const nh = img.naturalHeight || 0;
+    if (!nw || !nh) return file;
+
+    const scale = Math.min(1, maxEdge / Math.max(nw, nh));
+    if (scale >= 1) return file;
+
+    const tw = Math.round(nw * scale);
+    const th = Math.round(nh * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = tw;
+    canvas.height = th;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, tw, th);
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), "image/jpeg", 0.88)
+    );
+    if (!blob) return file;
+
+    const baseName = file.name.replace(/\.[^.\\/]+$/, "") || "check";
+    return new File([blob], `${baseName}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
+  } catch {
+    return file;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
