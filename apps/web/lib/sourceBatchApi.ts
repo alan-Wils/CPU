@@ -126,10 +126,13 @@ export async function loadSourceBatches() {
       };
     })
       .filter(isExtractionInputType)
-      .filter((row: any) => Number(row?.remainingAmount || 0) > 0)
-      .filter((row: any) => !String(row?.status || "").toLowerCase().includes("used in extraction"));
-    store.sourceBatches = merged;
-    return merged;
+      .filter((row: any) => Number(row?.remainingAmount || 0) > 0);
+    const filteredByStatus = merged.filter((row: any) => {
+      const normalizedStatus = String(row?.status || "").trim().toLowerCase();
+      return normalizedStatus !== "used in extraction";
+    });
+    store.sourceBatches = filteredByStatus;
+    return filteredByStatus;
   } catch {
     return uniqueById((store.sourceBatches || []).filter(isExtractionInputType));
   }
