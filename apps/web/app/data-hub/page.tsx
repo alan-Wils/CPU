@@ -16,6 +16,7 @@ import {
   loadCultivationBatches,
   updateCultivationBatch,
   deleteCultivationBatch,
+  isCultivationBatchCompleteStatus,
 } from "@/lib/cultivationApi";
 import {
   loadSourceBatches,
@@ -722,11 +723,9 @@ export default function DataHub() {
         const packagingList = asArray(realPackagingBatches);
         const logsList = asArray(s.logs);
 
-        s.cultivationBatches = cultivationList.filter(
-          (batch: any) => batch.status !== "Complete"
-        );
-        s.completedCultivationBatches = cultivationList.filter(
-          (batch: any) => batch.status === "Complete"
+        s.cultivationBatches = cultivationList.filter((batch: any) => !isCultivationBatchCompleteStatus(batch));
+        s.completedCultivationBatches = cultivationList.filter((batch: any) =>
+          isCultivationBatchCompleteStatus(batch)
         );
 
         s.sourceBatches = sourceList.filter(

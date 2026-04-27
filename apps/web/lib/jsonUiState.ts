@@ -4,6 +4,7 @@ export function pickSerializableUiFields(source: unknown, deny: Set<string>): Re
   if (!source || typeof source !== "object" || Array.isArray(source)) return out;
   for (const [k, v] of Object.entries(source as Record<string, unknown>)) {
     if (deny.has(k)) continue;
+    if (v === undefined) continue;
     if (typeof v === "function") continue;
     try {
       JSON.stringify(v);

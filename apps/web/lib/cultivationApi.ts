@@ -11,17 +11,21 @@ export function markCultivationBatchCompletedLocal(batch: any) {
   return batch;
 }
 
+/** Exported for cultivation UI filters (case-insensitive). */
+export function isCultivationBatchCompleteStatus(batch: any) {
+  return String(batch?.status ?? "")
+    .trim()
+    .toLowerCase() === "complete";
+}
+
 function isValidCultivationBatch(batch: any) {
-  return (
-    batch &&
-    typeof batch.id === "string" &&
-    normalizeId(batch.id).length > 0 &&
-    typeof batch.strain === "string" &&
-    batch.strain.trim().length > 0 &&
-    typeof batch.stage === "string" &&
-    batch.stage.trim().length > 0 &&
-    Number.isFinite(Number(batch.plants))
-  );
+  if (!batch || typeof batch.id !== "string" || normalizeId(batch.id).length === 0) return false;
+  const strain = String(batch?.strain ?? "").trim();
+  if (!strain) return false;
+  const stage = String(batch?.stage ?? "").trim();
+  if (!stage) return false;
+  const plants = Number(batch?.plants);
+  return Number.isFinite(plants) && plants >= 0;
 }
 
 function uniqueByNormalizedId(rows: any[]) {
@@ -50,7 +54,7 @@ function toUiBatch(row: any) {
   const displayId =
     row?.strainAcronym && row?.batchChainCode
       ? `${String(row.strainAcronym).toUpperCase()}.${row.batchChainCode}`
-      : row?.id;
+      : String(row?.id || "").trim() || "unknown-batch";
   const ui =
     row?.cultivationUiState && typeof row.cultivationUiState === "object"
       ? (row.cultivationUiState as Record<string, unknown>)
@@ -95,6 +99,18 @@ function toUiBatch(row: any) {
     merged.stage = "Complete";
     merged.status = "Complete";
   }
+
+  // Saved cultivationUiState can contain undefined/null or non-string stage/plants from React merges;
+  // those must not drop the row on the next loadCultivationBatches().
+  const plantsN = Number(merged.plants);
+  const plantsFinal = Number.isFinite(plantsN) ? Math.max(0, plantsN) : Math.max(0, plantsFromRow);
+  const origN = Number(merged.originalPlants);
+  merged.plants = plantsFinal;
+  merged.originalPlants = Number.isFinite(origN) ? Math.max(0, origN) : plantsFinal;
+  merged.stage = String(merged.stage ?? "").trim() || (fromAuto ? "Complete" : "Clone");
+  merged.status = String(merged.status ?? "").trim() || (fromAuto ? "Complete" : "Active");
+  merged.strain = String(merged.strain ?? "Unknown").trim() || "Unknown";
+
   return merged;
 }
 
@@ -107,8 +123,8 @@ export async function loadCultivationBatches() {
         .map((row: any) => toUiBatch(row))
         .filter(isValidCultivationBatch)
     );
-    store.cultivationBatches = mapped.filter((b: any) => b.status !== "Complete");
-    store.completedCultivationBatches = mapped.filter((b: any) => b.status === "Complete");
+    store.cultivationBatches = mapped.filter((b: any) => !isCultivationBatchCompleteStatus(b));
+    store.completedCultivationBatches = mapped.filter((b: any) => isCultivationBatchCompleteStatus(b));
     return mapped;
   } catch {
     return [];

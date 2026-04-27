@@ -12,6 +12,7 @@ import {
   markCultivationBatchCompletedLocal,
   updateCultivationBatch,
   deleteCultivationBatch,
+  isCultivationBatchCompleteStatus,
 } from "@/lib/cultivationApi";
 import { createSourceBatch } from "@/lib/sourceBatchApi";
 import { createLog, getTaskLogSaveStatus, mergeRecentTaskLogsFromApi } from "@/lib/logsApi";
@@ -473,62 +474,13 @@ export default function Cultivation() {
 
     async function loadSharedData() {
       try {
-        // #region agent log
-        fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
-          body: JSON.stringify({
-            sessionId: "6beeea",
-            runId: "pre-fix",
-            hypothesisId: "H4",
-            location: "cultivation/page.tsx:loadSharedData:start",
-            message: "Cultivation shared-data load started",
-            data: {
-              manualReloadTick,
-              activeInMemoryBefore: (s.cultivationBatches || []).length,
-              completedInMemoryBefore: (s.completedCultivationBatches || []).length
-            },
-            timestamp: Date.now()
-          })
-        }).catch(() => {});
-        // #endregion
         await loadBackendStore();
         await loadConfigStrains();
 
-        const realCultivationBatches = await loadCultivationBatches();
+        await loadCultivationBatches();
         await mergeRecentTaskLogsFromApi();
 
         if (!mounted) return;
-
-        if (Array.isArray(realCultivationBatches)) {
-          s.cultivationBatches = uniqueById(
-            realCultivationBatches.filter((batch: any) => batch.status !== "Complete")
-          );
-
-          s.completedCultivationBatches = uniqueById(
-            realCultivationBatches.filter((batch: any) => batch.status === "Complete")
-          );
-          // #region agent log
-          fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
-            body: JSON.stringify({
-              sessionId: "6beeea",
-              runId: "pre-fix",
-              hypothesisId: "H4",
-              location: "cultivation/page.tsx:loadSharedData:partitioned",
-              message: "Cultivation shared-data load partitioned active/completed",
-              data: {
-                realCultivationCount: realCultivationBatches.length,
-                activeInMemoryAfter: (s.cultivationBatches || []).length,
-                completedInMemoryAfter: (s.completedCultivationBatches || []).length,
-                activeSample: (s.cultivationBatches || []).slice(0, 8).map((b: any) => String(b?.id || ""))
-              },
-              timestamp: Date.now()
-            })
-          }).catch(() => {});
-          // #endregion
-        }
 
         setSelectedBatch((current: any) => {
           if (current?.id) {
@@ -780,12 +732,10 @@ export default function Cultivation() {
     }
   }
 
-  const activeBatches = s.cultivationBatches.filter(
-    (batch: any) => batch.status !== "Complete"
-  );
+  const activeBatches = s.cultivationBatches.filter((batch: any) => !isCultivationBatchCompleteStatus(batch));
 
   const activeDryFlowerBatches = s.dryFlowerBatches.filter(
-    (batch: any) => batch.status !== "Complete"
+    (batch: any) => !isCultivationBatchCompleteStatus(batch)
   );
 
   function getTasksForStage(stage: string) {
@@ -1185,9 +1135,7 @@ export default function Cultivation() {
       time: new Date().toLocaleString(),
     }))
 
-    const nextActive = s.cultivationBatches.find(
-      (b: any) => b.status !== "Complete"
-    );
+    const nextActive = s.cultivationBatches.find((b: any) => !isCultivationBatchCompleteStatus(b));
 
     if (nextActive) {
       selectBatch(nextActive);
@@ -2173,7 +2121,7 @@ export default function Cultivation() {
               {selectedBatch ? `${selectedBatch.stage} Stage Tasks` : "Stage Tasks"}
             </h3>
 
-            {!selectedBatch || selectedBatch.status === "Complete" ? (
+            {!selectedBatch || isCultivationBatchCompleteStatus(selectedBatch) ? (
               <p style={{ textAlign: "center", color: "#cbd5e1" }}>Select an active batch.</p>
             ) : (
               <>
