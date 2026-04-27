@@ -2,7 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCameraOverlay } from "@/components/CheckCameraOverlay";
+import { CheckCameraGroundHints, CheckCameraOverlay } from "@/components/CheckCameraOverlay";
 import {
   extractCheckFields,
   listCheckCaptures,
@@ -469,23 +469,52 @@ export default function CheckCapturePage() {
           }}
         >
           {cameraOn ? (
-            <div style={{ position: "relative", width: "100%", minHeight: 280, background: "#000" }}>
+            <div
+              style={{
+                position: "relative",
+                width: "100%",
+                minHeight: 300,
+                height: "clamp(280px, 56vmin, 480px)",
+                background: "#000",
+                isolation: "isolate",
+                zIndex: 0
+              }}
+            >
               <video
                 ref={videoRef}
                 playsInline
                 muted
                 autoPlay
+                controls={false}
+                disablePictureInPicture
                 style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
                   width: "100%",
                   height: "100%",
-                  minHeight: 280,
-                  display: "block",
                   objectFit: "cover",
-                  position: "relative",
-                  zIndex: 0
+                  display: "block",
+                  zIndex: 0,
+                  transform: "translateZ(0)",
+                  WebkitTransform: "translateZ(0)"
                 }}
               />
-              <CheckCameraOverlay active />
+              <div
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  width: "100%",
+                  height: "100%",
+                  zIndex: 50,
+                  pointerEvents: "none",
+                  transform: "translateZ(1px)",
+                  WebkitTransform: "translateZ(1px)"
+                }}
+              >
+                <CheckCameraOverlay active />
+              </div>
             </div>
           ) : previewUrl ? (
             <img src={previewUrl} alt="Check preview" style={{ width: "100%", display: "block" }} />
@@ -493,6 +522,8 @@ export default function CheckCapturePage() {
             <div style={{ padding: 40, textAlign: "center", color: "#64748b" }}>No preview yet</div>
           )}
         </div>
+
+        <CheckCameraGroundHints active={cameraOn} />
 
         <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
           <label>
