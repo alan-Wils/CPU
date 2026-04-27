@@ -8,10 +8,10 @@
 4. **Settings** → **Build** (or watch Nixpacks use `railway.toml`):
    - **Build command:** `npm install && npm run build`
 5. **Settings** → **Deploy**:
-   - **Start command:** `node dist/server.js`
-   - **Custom release command** (runs once per deploy, before the new version serves traffic):  
+   - **Start command:** Prefer the value from `railway.toml` (`prisma migrate deploy` then `node dist/server.js`) so migrations always run on boot.
+   - Optionally set **Custom release command** instead:  
      `npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma`  
-   - If the dashboard does not show release: rely on the **Procfile** `release` line (supported on many Railway stacks).
+     (If you use only a release command, you can set **Start command** back to `node dist/server.js`.)
 
 ## 2. Environment variables (paste in Variables)
 

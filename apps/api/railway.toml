@@ -9,4 +9,5 @@ builder = "nixpacks"
 buildCommand = "npm install && npm run build"
 
 [deploy]
-startCommand = "node dist/server.js"
+# Apply pending migrations before serving (fixes missing tables after deploy if no release hook is set in Railway UI).
+startCommand = "npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma && node dist/server.js"
