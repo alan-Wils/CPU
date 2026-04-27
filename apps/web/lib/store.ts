@@ -35,6 +35,9 @@ type StoreShape = {
   persist?: () => void;
 };
 
+const STORE_VERSION_KEY = "cpuAppStoreVersion";
+const STORE_VERSION = process.env.NEXT_PUBLIC_STORE_VERSION || "v1";
+
 function loadInitial(): StoreShape {
   if (typeof window === "undefined") {
     return {
@@ -49,6 +52,12 @@ function loadInitial(): StoreShape {
     };
   }
   try {
+    const existingVersion = localStorage.getItem(STORE_VERSION_KEY);
+    if (existingVersion !== STORE_VERSION) {
+      localStorage.removeItem("cpuAppStore");
+      localStorage.removeItem("cultivationStore");
+      localStorage.setItem(STORE_VERSION_KEY, STORE_VERSION);
+    }
     const raw = localStorage.getItem("cpuAppStore") || localStorage.getItem("cultivationStore");
     if (!raw) {
       throw new Error("No local snapshot");
@@ -84,6 +93,7 @@ export const store: StoreShape = {
   ...initial,
   save() {
     if (typeof window === "undefined") return;
+    localStorage.setItem(STORE_VERSION_KEY, STORE_VERSION);
     localStorage.setItem(
       "cpuAppStore",
       JSON.stringify({

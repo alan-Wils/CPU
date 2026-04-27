@@ -55,13 +55,14 @@ export async function loadBackendStore() {
   }
 }
 
-export async function saveBackendStore() {
+export async function saveBackendStore(options?: { forceRemote?: boolean }) {
   const payload = snapshot();
   store.save?.();
   // Compatibility mode only: avoid using /store as primary write path.
   // Enable explicit compatibility writes only when requested.
   const shouldWriteCompatibilityStore =
-    (process.env.NEXT_PUBLIC_ENABLE_STORE_COMPAT_WRITE || "").toLowerCase() === "true";
+    (process.env.NEXT_PUBLIC_ENABLE_STORE_COMPAT_WRITE || "").toLowerCase() === "true" ||
+    Boolean(options?.forceRemote);
   if (shouldWriteCompatibilityStore) {
     const saved = await apiPut<any>("/store", payload, localStorage.getItem("token"));
     lastStoreUpdatedAt = saved?._meta?.updatedAt ?? lastStoreUpdatedAt;

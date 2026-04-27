@@ -136,13 +136,6 @@ export async function loadCultivationBatches() {
     const rows = Array.isArray(active?.cultivation) ? active.cultivation : [];
     const existing = allBatches();
     const completedOverrides = readCompletedOverrides();
-    const debugMergeSummary: Array<{
-      id: string;
-      baseStatus: string;
-      priorStatus: string;
-      finalStatus: string;
-      plants: number;
-    }> = [];
     const mapped = uniqueByNormalizedId(
       rows
         .map((row: any) => {
@@ -166,16 +159,7 @@ export async function loadCultivationBatches() {
                   ""
               }
             : base;
-          if (!prior) {
-            debugMergeSummary.push({
-              id: String(baseOrCompleted?.id || ""),
-              baseStatus: String(baseOrCompleted?.status || ""),
-              priorStatus: "",
-              finalStatus: String(baseOrCompleted?.status || ""),
-              plants: Number(baseOrCompleted?.plants || 0)
-            });
-            return baseOrCompleted;
-          }
+          if (!prior) return baseOrCompleted;
           // Keep workflow-progress fields from current UI state so backend sync
           // does not reset clone/veg/flower task progress during polling.
           const mergedRow: CultivationBatch = {
@@ -205,37 +189,10 @@ export async function loadCultivationBatches() {
             metrcActualDate: String(prior?.metrcActualDate || "").trim() || undefined,
             metrcSyncStatus: (prior?.metrcSyncStatus as CultivationBatch["metrcSyncStatus"]) || "not_synced"
           };
-          debugMergeSummary.push({
-            id: String(mergedRow?.id || ""),
-            baseStatus: String(baseOrCompleted?.status || ""),
-            priorStatus: String(prior?.status || ""),
-            finalStatus: String(mergedRow?.status || ""),
-            plants: Number(mergedRow?.plants || 0)
-          });
           return mergedRow;
         })
         .filter(isValidCultivationBatch)
     );
-    // #region agent log
-    fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
-      body: JSON.stringify({
-        sessionId: "6beeea",
-        runId: "pre-fix",
-        hypothesisId: "H1",
-        location: "cultivationApi.ts:loadCultivationBatches:merge",
-        message: "Merged backend cultivation rows with local state",
-        data: {
-          backendCount: rows.length,
-          existingCount: existing.length,
-          mappedCount: mapped.length,
-          summary: debugMergeSummary.slice(0, 12)
-        },
-        timestamp: Date.now()
-      })
-    }).catch(() => {});
-    // #endregion
     store.cultivationBatches = mapped.filter((b: any) => b.status !== "Complete");
     store.completedCultivationBatches = mapped.filter((b: any) => b.status === "Complete");
     return mapped;

@@ -432,6 +432,7 @@ export default function Cultivation() {
     onConfirm: null,
   });
   const [logSaveStatus, setLogSaveStatus] = useState<SaveStatus>("idle");
+  const [manualReloadTick, setManualReloadTick] = useState(0);
 
   useEffect(() => {
     setCanDeleteRecords(hasManagerDeleteAccess());
@@ -490,26 +491,6 @@ export default function Cultivation() {
           s.completedCultivationBatches = uniqueById(
             realCultivationBatches.filter((batch: any) => batch.status === "Complete")
           );
-          // #region agent log
-          fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
-            body: JSON.stringify({
-              sessionId: "6beeea",
-              runId: "pre-fix",
-              hypothesisId: "H2",
-              location: "cultivation/page.tsx:loadSharedData:partition",
-              message: "Partitioned cultivation batches into active/completed lists",
-              data: {
-                realCount: realCultivationBatches.length,
-                activeCount: s.cultivationBatches.length,
-                completedCount: s.completedCultivationBatches.length,
-                completedIds: (s.completedCultivationBatches || []).slice(0, 10).map((b: any) => b?.id || "")
-              },
-              timestamp: Date.now()
-            })
-          }).catch(() => {});
-          // #endregion
         }
 
         setSelectedBatch((current: any) => {
@@ -555,7 +536,7 @@ export default function Cultivation() {
       mounted = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [manualReloadTick]);
 
   useEffect(() => {
     if (!showTaskWindow || selectedTask !== "Create METRC Tags" || !selectedBatch) return;
@@ -806,7 +787,7 @@ export default function Cultivation() {
   function forceRefresh() {
     persistStore();
 
-    saveBackendStore().catch((error) => {
+    saveBackendStore({ forceRemote: true }).catch((error) => {
       console.error("Could not save backend store:", error);
     });
 
@@ -1166,27 +1147,6 @@ export default function Cultivation() {
       s.completedCultivationBatches.unshift(batch);
     }
     markCultivationBatchCompletedLocal(batch);
-    // #region agent log
-    fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
-      body: JSON.stringify({
-        sessionId: "6beeea",
-        runId: "pre-fix",
-        hypothesisId: "H3",
-        location: "cultivation/page.tsx:moveBatchToCompleted",
-        message: "Locally marked cultivation batch complete",
-        data: {
-          batchId: batch?.id || "",
-          plants: Number(batch?.plants || 0),
-          alreadyCompleted,
-          activeCount: (s.cultivationBatches || []).length,
-          completedCount: (s.completedCultivationBatches || []).length
-        },
-        timestamp: Date.now()
-      })
-    }).catch(() => {});
-    // #endregion
 
     s.logs.unshift(withLoggedBy({
       area: "Cultivation",
@@ -2108,9 +2068,21 @@ export default function Cultivation() {
 
         <div style={{ ...cardStyle, marginBottom: 18, textAlign: "center" }}>
           {canWriteRecords ? (
-            <button style={primaryButtonStyle} onClick={() => setShowCreateBatch(true)}>
-              + Create Clone Batch
-            </button>
+            <div style={{ display: "flex", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
+              <button style={primaryButtonStyle} onClick={() => setShowCreateBatch(true)}>
+                + Create Clone Batch
+              </button>
+              <button
+                style={buttonStyle}
+                onClick={() => {
+                  localStorage.removeItem("cpuAppStore");
+                  localStorage.removeItem("cultivationStore");
+                  setManualReloadTick((n) => n + 1);
+                }}
+              >
+                Refresh from Server
+              </button>
+            </div>
           ) : (
             <div style={{ color: "#94a3b8", fontWeight: 800 }}>
               Read Only Access: you can view cultivation data, but cannot create or edit records.
