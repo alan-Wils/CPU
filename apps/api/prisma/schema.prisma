@@ -1,0 +1,29 @@
+// Local dev (SQLite). For deploy builds use `schema.postgresql.prisma`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model CheckCapture {
+  id                String    @id @default(cuid())
+  companyId         String
+  createdByUserId   String
+  checkDate         DateTime?
+  amount            Decimal?
+  checkNumber       String?
+  payerName         String?
+  routingNumber     String?
+  accountNumber     String?
+  bankName          String?
+  memo              String?
+  imageUrl          String
+  rawOcrJson        String?
+  createdAt         DateTime  @default(now())
+
+  @@index([companyId])
+}

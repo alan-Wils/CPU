@@ -1,0 +1,29 @@
+// PostgreSQL schema for staging/production. Keep models in sync with `schema.prisma` (SQLite).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model CheckCapture {
+  id                String    @id @default(cuid())
+  companyId         String
+  createdByUserId   String
+  checkDate         DateTime?
+  amount            Decimal?  @db.Decimal(12, 2)
+  checkNumber       String?
+  payerName         String?
+  routingNumber     String?
+  accountNumber     String?
+  bankName          String?
+  memo              String?
+  imageUrl          String
+  rawOcrJson        String?   @db.Text
+  createdAt         DateTime  @default(now())
+
+  @@index([companyId])
+}
