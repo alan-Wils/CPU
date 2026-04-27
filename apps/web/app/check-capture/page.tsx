@@ -181,8 +181,9 @@ export default function CheckCapturePage() {
       lastOcrRawRef.current = extracted.raw;
 
       if (extracted.provider === "manual-review" || isParsedEmpty(extracted.parsed)) {
-        setStatus("Running on-device OCR (first use may download language data)...");
-        localResult = await runLocalCheckOcr(uploadFile);
+        localResult = await runLocalCheckOcr(uploadFile, {
+          onPhase: (message) => setStatus(message)
+        });
         localParsed = localResult.parsed || parseCheckTextFromOcr(localResult.text);
         debugLog("selected OCR rotation", {
           angle: localResult.angle,

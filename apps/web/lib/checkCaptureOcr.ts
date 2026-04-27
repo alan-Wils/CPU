@@ -17,6 +17,13 @@ export type LocalOcrBestResult = {
   fieldsDetected: number;
 };
 
+export type LocalOcrRunOptions = {
+  /** Shown while the worker loads and each rotation runs (first load can take 30–90s). */
+  onPhase?: (message: string) => void;
+  /** Abort and reject if OCR does not finish in time (default 3 minutes). */
+  timeoutMs?: number;
+};
+
 const MONTH_NAME =
   /(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})/i;
 const MONTH_MAP: Record<string, string> = {
@@ -377,60 +384,106 @@ function ensureSharedCheckOcrWorkerReleasedOnLeave(): void {
 const FAST_ANGLES = [0, 90] as const;
 const EXTRA_ANGLES = [180, 270] as const;
 
+/** Serialize runs so the shared Tesseract worker is never used concurrently. */
+let localOcrQueue: Promise<unknown> = Promise.resolve();
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  if (ms <= 0) return promise;
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
+    );
+  });
+}
+
 /**
  * Runs Tesseract in the browser across rotations (0°/90° first, then 180°/270° if needed).
  * Reuses one worker per tab, skips redundant enhanced passes when base OCR is already strong,
  * and stops early once enough fields are parsed.
  */
-export async function runLocalCheckOcr(file: File): Promise<LocalOcrBestResult> {
+export function runLocalCheckOcr(file: File, opts?: LocalOcrRunOptions): Promise<LocalOcrBestResult> {
+  const run = localOcrQueue.then(() => runLocalCheckOcrCore(file, opts));
+  localOcrQueue = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+async function runLocalCheckOcrCore(file: File, opts?: LocalOcrRunOptions): Promise<LocalOcrBestResult> {
   ensureSharedCheckOcrWorkerReleasedOnLeave();
+  const onPhase = opts?.onPhase;
+  const timeoutMs = opts?.timeoutMs ?? 180_000;
 
-  let best: LocalOcrBestResult = {
-    text: "",
-    angle: 0,
-    parsed: {},
-    score: -1,
-    fieldsDetected: 0
-  };
+  const work = async (): Promise<LocalOcrBestResult> => {
+    onPhase?.(
+      "Loading OCR engine… The first run may download language data (often 30–90 seconds on a slow connection)."
+    );
 
-  const runRecognize = async (worker: TessWorker, blob: Blob, angle: number) => {
-    const { data } = await worker.recognize(blob);
-    const text = String(data?.text || "");
-    const parsed = parseCheckTextFromOcr(text);
-    const confidence = Number(data?.confidence || 0);
-    best = mergeOcrCandidate(best, text, angle, parsed, confidence);
-    const scored = scoreParsedResult(text, parsed);
-    return { text, parsed, scored, confidence };
-  };
-
-  try {
-    const worker = await getSharedCheckOcrWorker();
-
-    const processAngles = async (angles: readonly number[]) => {
-      for (const angle of angles) {
-        const rotated = await blobToPngWithRotation(file, angle, 2);
-        const base = await runRecognize(worker, rotated, angle);
-        if (isExtractionGoodEnough(best.parsed, best.fieldsDetected)) return;
-
-        const tryEnhance = !isExtractionGoodEnough(base.parsed, base.scored.fieldCount);
-        if (tryEnhance) {
-          const enhanced = await enhanceForOcr(rotated);
-          await runRecognize(worker, enhanced, angle);
-          if (isExtractionGoodEnough(best.parsed, best.fieldsDetected)) return;
-        }
-      }
+    let best: LocalOcrBestResult = {
+      text: "",
+      angle: 0,
+      parsed: {},
+      score: -1,
+      fieldsDetected: 0
     };
 
-    await processAngles(FAST_ANGLES);
-    if (!isExtractionGoodEnough(best.parsed, best.fieldsDetected)) {
-      await processAngles(EXTRA_ANGLES);
-    }
-  } catch (e) {
-    await resetSharedCheckOcrWorker();
-    throw e;
-  }
+    const runRecognize = async (worker: TessWorker, blob: Blob, angle: number) => {
+      const { data } = await worker.recognize(blob);
+      const text = String(data?.text || "");
+      const parsed = parseCheckTextFromOcr(text);
+      const confidence = Number(data?.confidence || 0);
+      best = mergeOcrCandidate(best, text, angle, parsed, confidence);
+      const scored = scoreParsedResult(text, parsed);
+      return { text, parsed, scored, confidence };
+    };
 
-  return best;
+    try {
+      const worker = await getSharedCheckOcrWorker();
+      onPhase?.("OCR ready. Reading your check…");
+
+      const processAngles = async (angles: readonly number[], label: string) => {
+        for (const angle of angles) {
+          onPhase?.(`${label} ${angle}°…`);
+          const rotated = await blobToPngWithRotation(file, angle, 2);
+          const base = await runRecognize(worker, rotated, angle);
+          if (isExtractionGoodEnough(best.parsed, best.fieldsDetected)) return;
+
+          const tryEnhance = !isExtractionGoodEnough(base.parsed, base.scored.fieldCount);
+          if (tryEnhance) {
+            onPhase?.(`${label} ${angle}° (contrast boost)…`);
+            const enhanced = await enhanceForOcr(rotated);
+            await runRecognize(worker, enhanced, angle);
+            if (isExtractionGoodEnough(best.parsed, best.fieldsDetected)) return;
+          }
+        }
+      };
+
+      await processAngles(FAST_ANGLES, "Reading at");
+      if (!isExtractionGoodEnough(best.parsed, best.fieldsDetected)) {
+        await processAngles(EXTRA_ANGLES, "Trying");
+      }
+    } catch (e) {
+      await resetSharedCheckOcrWorker();
+      throw e;
+    }
+
+    return best;
+  };
+
+  return withTimeout(
+    work(),
+    timeoutMs,
+    "On-device OCR timed out. Try again, use a smaller or sharper photo, or check your network (first run downloads OCR data)."
+  );
 }
 
 const UPLOAD_IMAGE_TYPE = /^image\/(jpeg|jpg|png|webp)$/i;
