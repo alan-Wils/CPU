@@ -2,6 +2,25 @@ import { publicApiBaseUrl } from "./publicEnv";
 
 const API = publicApiBaseUrl;
 
+export class ApiError extends Error {
+  public readonly status: number;
+  public readonly code?: string;
+  public readonly details?: unknown;
+
+  constructor(message: string, status: number, code?: string, details?: unknown) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+export function getApiErrorMessage(error: unknown, fallback = "Request failed"): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return fallback;
+}
+
 function generateTempPassword() {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
@@ -52,12 +71,25 @@ function headers(token?: string | null, withBody = false): Record<string, string
 async function unwrap<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let text = "";
+    let code: string | undefined;
+    let details: unknown;
     try {
-      text = await res.text();
+      const rawText = await res.text();
+      text = rawText;
+      if (rawText) {
+        const parsed = JSON.parse(rawText) as {
+          message?: string;
+          details?: unknown;
+          error?: { code?: string; message?: string; details?: unknown };
+        };
+        code = parsed.error?.code;
+        details = parsed.error?.details ?? parsed.details;
+        text = parsed.error?.message || parsed.message || rawText;
+      }
     } catch {
       text = res.statusText;
     }
-    throw new Error(text || res.statusText);
+    throw new ApiError(text || res.statusText, res.status, code, details);
   }
   return (await res.json()) as T;
 }

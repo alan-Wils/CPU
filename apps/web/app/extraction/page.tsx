@@ -18,7 +18,9 @@ import {
   deleteExtractionBatchRecord,
 } from "@/lib/extractionApi";
 import { createPackagingBatch } from "@/lib/packagingApi";
-import { createLog } from "@/lib/logsApi";
+import { createLog, getTaskLogSaveStatus } from "@/lib/logsApi";
+import { formatActorDisplay, resolveActorIdentity } from "@/lib/actorDisplay";
+import type { SaveStatus } from "@/lib/taskLogTypes";
 
 const sourceMaterialTypes = {
   freshFrozen: [
@@ -132,22 +134,11 @@ function canWriteExtraction(userRole: any) {
 }
 
 function getLoggedBy() {
-  const user: any = getAuthUser();
-
-  return {
-    userId: user?.id || user?.userId || "",
-    username: user?.username || "Unknown User",
-    role: user?.role || "",
-  };
+  return resolveActorIdentity(getAuthUser(), undefined, "System User");
 }
 
 function formatLoggedBy(loggedBy: any) {
-  if (!loggedBy) return "Unknown User";
-
-  const username = loggedBy.username || "Unknown User";
-  const role = loggedBy.role ? ` (${loggedBy.role})` : "";
-
-  return `${username}${role}`;
+  return formatActorDisplay(loggedBy, "System User");
 }
 
 
@@ -431,6 +422,7 @@ export default function Extraction() {
     cancelText: "",
     onConfirm: null,
   });
+  const [logSaveStatus, setLogSaveStatus] = useState<SaveStatus>("idle");
 
   function showNotice(title: string, message: string, details = "") {
     setNotificationModal({
@@ -544,6 +536,7 @@ export default function Extraction() {
 
   function saveLog(log: any) {
     s.logs.unshift(log);
+    setLogSaveStatus("saving");
 
     createLog({
       area: log.area || "Extraction",
@@ -557,9 +550,14 @@ export default function Extraction() {
         loggedBy: log.loggedBy,
         time: log.time,
       },
-    }).catch((error) => {
-      console.error("Could not save extraction log to backend:", error);
-    });
+    })
+      .then(() => {
+        setLogSaveStatus(getTaskLogSaveStatus());
+      })
+      .catch((error) => {
+        setLogSaveStatus(getTaskLogSaveStatus());
+        console.error("Could not save extraction log to backend:", error);
+      });
   }
 
   function getCompletedTasks(batch: any) {
@@ -2129,6 +2127,21 @@ export default function Extraction() {
 
         <div style={{ textAlign: "center", marginTop: 24 }}>
           <h1 style={{ margin: 0 }}>Extraction</h1>
+          <div
+            style={{
+              display: "inline-flex",
+              borderRadius: 999,
+              border: "1px solid rgba(148, 163, 184, 0.3)",
+              padding: "4px 10px",
+              fontSize: 12,
+              fontWeight: 700,
+              marginTop: 8,
+              color:
+                logSaveStatus === "saved" ? "#86efac" : logSaveStatus === "retry" ? "#fca5a5" : "#cbd5e1"
+            }}
+          >
+            Log Save: {logSaveStatus}
+          </div>
           <p style={{ color: "#94a3b8", marginTop: 8 }}>
             Create extraction batches and log purge, whip, terp separation,
             decarb, testing, and finish tasks.

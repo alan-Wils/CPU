@@ -35,6 +35,7 @@ import {
 import { deleteAllLogs } from "@/lib/logsApi";
 import { getLogs } from "@/lib/api";
 import { getFlowerWeights } from "@/lib/dataHubChainMetrics";
+import { formatActorDisplay } from "@/lib/actorDisplay";
 
 function show(value: any) {
   if (value === undefined || value === null || value === "") return "—";
@@ -42,20 +43,7 @@ function show(value: any) {
 }
 
 function formatLoggedBy(value: any) {
-  if (!value) return "—";
-
-  if (typeof value === "string") return value || "—";
-
-  const username =
-    value.username ||
-    value.name ||
-    value.email ||
-    value.userName ||
-    value.user ||
-    "—";
-  const role = value.role ? ` (${value.role})` : "";
-
-  return `${username}${role}`;
+  return formatActorDisplay(value, "System User");
 }
 
 function getLoggedByFromLog(log: any) {

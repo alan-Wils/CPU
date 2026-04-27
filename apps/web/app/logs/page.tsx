@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import { getAuthUser } from "@/lib/auth";
-import { getLogs } from "@/lib/api";
+import { getApiErrorMessage, getLogs } from "@/lib/api";
 
 type ActivityPayload = {
   items: Array<{ id: string; kind: "audit" | "task"; when: string; summary: string; actor?: string }>;
@@ -38,7 +38,7 @@ export default function LogsPage() {
           if (active) setData({ items: [] });
         }
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed"));
+      .catch((e) => setError(getApiErrorMessage(e, "Failed to load logs")));
     load();
     const interval = setInterval(load, 1000);
     return () => {

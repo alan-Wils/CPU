@@ -13,8 +13,10 @@ import {
   deleteCultivationBatch,
 } from "@/lib/cultivationApi";
 import { createSourceBatch } from "@/lib/sourceBatchApi";
-import { createLog, mergeRecentTaskLogsFromApi } from "@/lib/logsApi";
+import { createLog, getTaskLogSaveStatus, mergeRecentTaskLogsFromApi } from "@/lib/logsApi";
 import { publicApiOriginUrl } from "@/lib/publicEnv";
+import { formatActorDisplay, resolveActorIdentity } from "@/lib/actorDisplay";
+import type { SaveStatus } from "@/lib/taskLogTypes";
 
 type ConfigStrain = {
   id?: string;
@@ -363,6 +365,7 @@ export default function Cultivation() {
     cancelText: "",
     onConfirm: null,
   });
+  const [logSaveStatus, setLogSaveStatus] = useState<SaveStatus>("idle");
 
   useEffect(() => {
     setCanDeleteRecords(hasManagerDeleteAccess());
@@ -555,22 +558,11 @@ export default function Cultivation() {
 
 
   function getLoggedBy() {
-    const user: any = getAuthUser();
-
-    return {
-      userId: user?.id || user?.userId || "",
-      username: user?.username || "Unknown User",
-      role: user?.role || "",
-    };
+    return resolveActorIdentity(getAuthUser(), undefined, "System User");
   }
 
   function formatLoggedBy(loggedBy: any) {
-    if (!loggedBy) return "Unknown User";
-
-    const username = loggedBy.username || "Unknown User";
-    const role = loggedBy.role ? ` (${loggedBy.role})` : "";
-
-    return `${username}${role}`;
+    return formatActorDisplay(loggedBy, "System User");
   }
 
   function batchChainDbIdForLog(batchKey: string | undefined) {
@@ -591,6 +583,7 @@ export default function Cultivation() {
   }
 
   function withLoggedBy(log: any) {
+    setLogSaveStatus("saving");
     const loggedBy = getLoggedBy();
     const loggedAt = new Date().toLocaleString();
     const loggedAtIso = new Date().toISOString();
@@ -628,12 +621,14 @@ export default function Cultivation() {
       data: finalLog.data,
     })
       .then((r: any) => {
+        setLogSaveStatus(getTaskLogSaveStatus());
         if (r?.id) {
           (finalLog as any).id = r.id;
           (finalLog as any).fromServer = true;
         }
       })
       .catch((err) => {
+        setLogSaveStatus(getTaskLogSaveStatus());
         console.error("Failed to save log to backend:", err);
       });
 
@@ -1872,6 +1867,21 @@ export default function Cultivation() {
 
         <div style={headerStyle}>
           <h1 style={{ marginBottom: 6 }}>Cultivation</h1>
+          <div
+            style={{
+              display: "inline-flex",
+              borderRadius: 999,
+              border: "1px solid rgba(148, 163, 184, 0.3)",
+              padding: "4px 10px",
+              fontSize: 12,
+              fontWeight: 700,
+              marginBottom: 8,
+              color:
+                logSaveStatus === "saved" ? "#86efac" : logSaveStatus === "retry" ? "#fca5a5" : "#cbd5e1"
+            }}
+          >
+            Log Save: {logSaveStatus}
+          </div>
           <p style={{ color: "#cbd5e1", margin: 0 }}>
             Manage clone, veg, flower, dry flower, testing, packaging, and completed batch history.
           </p>

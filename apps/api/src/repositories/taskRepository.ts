@@ -51,7 +51,7 @@ export class TaskRepository extends TenantRepository {
     return rows.map((row) => ({
       ...row,
       loggedBy: usersById.get(row.actorUserId) || {
-        username: "User",
+        username: "System User",
         email: "",
         role: ""
       }

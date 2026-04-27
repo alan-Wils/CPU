@@ -1,5 +1,19 @@
 import { apiGet, apiPost } from "./api";
 import { store } from "./store";
+import { resolveActorIdentity } from "./actorDisplay";
+import type {
+  CreateTaskLogPayload,
+  RecentTaskLogResponse,
+  SaveStatus,
+  TaskLogServerRow,
+  UiTaskLogRow
+} from "./taskLogTypes";
+
+let taskLogSaveStatus: SaveStatus = "idle";
+
+export function getTaskLogSaveStatus(): SaveStatus {
+  return taskLogSaveStatus;
+}
 
 function parseTaskFromServerNote(note: string) {
   const m = String(note || "").match(/^(.*?)\s*\(([^)]+)\)\s*$/);
@@ -15,13 +29,13 @@ function batchIdFromServerRow(row: any) {
   return m ? m[1].trim() : "";
 }
 
-function mapServerTaskLogToUiRow(row: any) {
+function mapServerTaskLogToUiRow(row: TaskLogServerRow): UiTaskLogRow {
   const note = String(row?.note || "");
   const batchKey = batchIdFromServerRow(row);
   const fallbackUser =
     String(row?.actorUserId || "").trim().length > 0
       ? { username: String(row.actorUserId).slice(0, 8), role: "" }
-      : { username: "Server log", role: "" };
+      : { username: "System User", role: "" };
   return {
     id: row.id,
     fromServer: true,
@@ -31,8 +45,8 @@ function mapServerTaskLogToUiRow(row: any) {
     output: note,
     minutes: row.minutes,
     time: row.createdAt ? new Date(row.createdAt).toLocaleString() : "",
-    loggedAtIso: row.createdAt,
-    loggedBy: row.loggedBy || fallbackUser,
+    loggedAtIso: row.createdAt || undefined,
+    loggedBy: resolveActorIdentity(row.loggedBy, fallbackUser),
   };
 }
 
@@ -42,23 +56,24 @@ export async function mergeRecentTaskLogsFromApi() {
   const token = localStorage.getItem("token");
   if (!token) return;
   try {
-    const res = await apiGet<any>("/tasks/logs/recent", token);
+    const res = await apiGet<RecentTaskLogResponse>("/tasks/logs/recent", token);
     const rows = Array.isArray(res?.rows) ? res.rows : [];
     if (rows.length === 0) return;
-    const serverMapped = rows.map((r: any) => mapServerTaskLogToUiRow(r));
-    const serverIds = new Set(serverMapped.map((m: any) => m.id).filter(Boolean));
+    const serverMapped = rows.map((r) => mapServerTaskLogToUiRow(r));
+    const serverIds = new Set(serverMapped.map((m) => m.id).filter(Boolean));
     const b = (x: any) => String(x || "").trim();
+    const localKey = (x: any) =>
+      [
+        b(x.batch).toUpperCase(),
+        b(x.task).toUpperCase(),
+        String(x.minutes || "").trim(),
+        String(x.loggedAtIso || x.time || "").trim()
+      ].join("|");
+    const serverKeySet = new Set(serverMapped.map((m) => localKey(m)));
     const localOnly = (store.logs || []).filter((l: any) => {
       if (l?.fromServer) return false;
       if (l?.id && serverIds.has(l.id)) return false;
-      if (!l?.id) {
-        const dup = serverMapped.some(
-          (m: any) =>
-            b(m.batch) === b(l.batch) &&
-            String(m.output || "").includes(String(l.task || "").trim())
-        );
-        if (dup) return false;
-      }
+      if (serverKeySet.has(localKey(l))) return false;
       return true;
     });
     const tsec = (x: any) => {
@@ -73,8 +88,9 @@ export async function mergeRecentTaskLogsFromApi() {
   }
 }
 
-export async function createLog(payload: any) {
-  const next = { ...payload, createdAt: new Date().toISOString() };
+export async function createLog(payload: CreateTaskLogPayload): Promise<UiTaskLogRow> {
+  taskLogSaveStatus = "saving";
+  const next = { ...payload, createdAt: new Date().toISOString() } as UiTaskLogRow & { createdAt: string };
   const minutesRaw = Number(payload?.data?.minutes || payload?.minutes || 0);
   const minutes = Number.isFinite(minutesRaw) && minutesRaw > 0 ? Math.round(minutesRaw) : 1;
   const upperArea = String(payload?.area || "").toUpperCase();
@@ -94,7 +110,7 @@ export async function createLog(payload: any) {
   ).trim();
   const referenceId = ref.length > 0 ? ref : undefined;
   try {
-    const row = await apiPost(
+    const row = await apiPost<{ id?: string }>(
       "/tasks/logs",
       {
         stage,
@@ -104,22 +120,24 @@ export async function createLog(payload: any) {
       },
       localStorage.getItem("token")
     );
-    if (row && (row as any).id) {
-      next.id = (row as any).id;
+    if (row && row.id) {
+      next.id = row.id;
       next.fromServer = true;
     }
+    taskLogSaveStatus = "saved";
   } catch {
     // Fallback keeps UI stable if reference id shape mismatches.
+    taskLogSaveStatus = "retry";
     store.logs = [next, ...(store.logs || [])];
     store.save?.();
   }
 
-  return next;
+  return next as UiTaskLogRow;
 }
 
 export async function deleteAllLogs() {
   const token = localStorage.getItem("token");
-  const existing = await apiGet<any>("/tasks/logs/recent", token).catch(() => ({ rows: [] }));
+  const existing = await apiGet<RecentTaskLogResponse>("/tasks/logs/recent", token).catch(() => ({ rows: [] }));
   const deletedCount = Array.isArray(existing?.rows) ? existing.rows.length : 0;
   // No bulk-delete API exists yet; keep local clear for UI compatibility.
   store.logs = [];
