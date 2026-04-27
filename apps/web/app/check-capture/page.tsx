@@ -461,7 +461,7 @@ export default function CheckCapturePage() {
         <div
           style={{
             position: "relative",
-            minHeight: cameraOn ? 280 : 200,
+            minHeight: cameraOn ? 320 : 200,
             borderRadius: 12,
             overflow: "hidden",
             background: "#0f172a",
@@ -469,10 +469,24 @@ export default function CheckCapturePage() {
           }}
         >
           {cameraOn ? (
-            <>
-              <video ref={videoRef} playsInline muted autoPlay style={{ width: "100%", display: "block" }} />
+            <div style={{ position: "relative", width: "100%", minHeight: 280, background: "#000" }}>
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                autoPlay
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  minHeight: 280,
+                  display: "block",
+                  objectFit: "cover",
+                  position: "relative",
+                  zIndex: 0
+                }}
+              />
               <CheckCameraOverlay active />
-            </>
+            </div>
           ) : previewUrl ? (
             <img src={previewUrl} alt="Check preview" style={{ width: "100%", display: "block" }} />
           ) : (
