@@ -32,13 +32,44 @@ function snapshot() {
 export async function loadBackendStore() {
   try {
     const token = localStorage.getItem("token");
-    const [active, activity] = await Promise.all([
+    const [active, activity, remoteStore] = await Promise.all([
       apiGet<any>("/workflow/active", token).catch(() => ({})),
-      apiGet<any>("/activity/all", token).catch(() => ({ items: [] }))
+      apiGet<any>("/activity/all", token).catch(() => ({ items: [] })),
+      apiGet<any>("/store", token).catch(() => null)
     ]);
 
     // Cultivation lists are hydrated by cultivationApi. Keep current in-memory
     // values here so workflow-progress fields can be preserved during polling.
+    // When a remote shared snapshot exists, load it first so cross-device stage
+    // transitions (Clone->Veg->Flower and similar) are consistent.
+    const remoteUpdatedAt = remoteStore?._meta?.updatedAt ?? null;
+    if (remoteUpdatedAt) {
+      lastStoreUpdatedAt = remoteUpdatedAt;
+      if (Array.isArray(remoteStore.cultivationBatches)) {
+        store.cultivationBatches = remoteStore.cultivationBatches.filter(isValidCultivationBatch);
+      }
+      if (Array.isArray(remoteStore.completedCultivationBatches)) {
+        store.completedCultivationBatches = remoteStore.completedCultivationBatches.filter(isValidCultivationBatch);
+      }
+      if (Array.isArray(remoteStore.dryFlowerBatches)) {
+        store.dryFlowerBatches = remoteStore.dryFlowerBatches;
+      }
+      if (Array.isArray(remoteStore.productionBatches)) {
+        store.productionBatches = remoteStore.productionBatches;
+      }
+      if (Array.isArray(remoteStore.sourceBatches)) {
+        store.sourceBatches = remoteStore.sourceBatches;
+      }
+      if (Array.isArray(remoteStore.extractionBatches)) {
+        (store as any).extractionBatches = remoteStore.extractionBatches;
+      }
+      if (Array.isArray(remoteStore.packagingBatches)) {
+        store.packagingBatches = remoteStore.packagingBatches;
+      }
+      if (Array.isArray(remoteStore.logs)) {
+        store.logs = remoteStore.logs;
+      }
+    }
 
     // Do not inject raw sourcePackage rows here. Extraction source material
     // is hydrated by sourceBatchApi with proper filtering and unit mapping.
@@ -72,7 +103,7 @@ export async function saveBackendStore(options?: { forceRemote?: boolean }) {
 
 export async function hasCompanyStoreChanged() {
   try {
-    const version = await apiGet<{ updatedAt: string | null }>("/activity/version", localStorage.getItem("token"));
+    const version = await apiGet<{ updatedAt: string | null }>("/store/version", localStorage.getItem("token"));
     const next = version?.updatedAt ?? null;
     if (!lastStoreUpdatedAt && next) {
       lastStoreUpdatedAt = next;
