@@ -181,9 +181,7 @@ export default function CheckCapturePage() {
       if (extracted.provider === "manual-review" || isParsedEmpty(extracted.parsed)) {
         setStatus("Running on-device OCR (first use may download language data)...");
         localResult = await runLocalCheckOcr(file);
-        localParsed = localResult.parsed?.checkDate || localResult.parsed?.amount !== undefined
-          ? localResult.parsed
-          : parseCheckTextFromOcr(localResult.text);
+        localParsed = localResult.parsed || parseCheckTextFromOcr(localResult.text);
         debugLog("selected OCR rotation", {
           angle: localResult.angle,
           score: localResult.score,
@@ -203,13 +201,22 @@ export default function CheckCapturePage() {
         };
       }
 
+      const mergedPreview = mergeExtractedToForm(form, uploaded.imageUrl, extracted.parsed, localParsed);
       setForm((prev) => {
         const merged = mergeExtractedToForm(prev, uploaded.imageUrl, extracted.parsed, localParsed);
         debugLog("final form state after merge", merged);
         return merged;
       });
-
-      const hasAnyValue = !isParsedEmpty(extracted.parsed) || Boolean(localParsed && !isParsedEmpty(localParsed));
+      const hasAnyValue = Boolean(
+        mergedPreview.checkDate ||
+          mergedPreview.amount ||
+          mergedPreview.checkNumber ||
+          mergedPreview.payerName ||
+          mergedPreview.routingNumber ||
+          mergedPreview.accountNumber ||
+          mergedPreview.bankName ||
+          mergedPreview.memo
+      );
       if (hasAnyValue) {
         if (localResult) {
           setStatus(`Extraction complete (browser OCR at ${localResult.angle}° + review). Edit any fields, then save.`);

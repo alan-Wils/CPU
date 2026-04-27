@@ -145,7 +145,7 @@ export function parseCheckTextFromOcr(text: string): ParsedCheckFields {
   };
 }
 
-function blobToPngWithRotation(file: File, degrees: number): Promise<Blob> {
+function blobToPngWithRotation(file: File, degrees: number, upscale = 1): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -153,8 +153,8 @@ function blobToPngWithRotation(file: File, degrees: number): Promise<Blob> {
       try {
         const rad = (degrees * Math.PI) / 180;
         const swap = degrees % 180 !== 0;
-        const w = swap ? img.naturalHeight : img.naturalWidth;
-        const h = swap ? img.naturalWidth : img.naturalHeight;
+        const w = (swap ? img.naturalHeight : img.naturalWidth) * upscale;
+        const h = (swap ? img.naturalWidth : img.naturalHeight) * upscale;
         const canvas = document.createElement("canvas");
         canvas.width = w;
         canvas.height = h;
@@ -166,7 +166,15 @@ function blobToPngWithRotation(file: File, degrees: number): Promise<Blob> {
         }
         ctx.translate(w / 2, h / 2);
         ctx.rotate(rad);
-        ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(
+          img,
+          -((img.naturalWidth * upscale) / 2),
+          -((img.naturalHeight * upscale) / 2),
+          img.naturalWidth * upscale,
+          img.naturalHeight * upscale
+        );
         URL.revokeObjectURL(url);
         canvas.toBlob(
           (blob) => {
@@ -179,6 +187,54 @@ function blobToPngWithRotation(file: File, degrees: number): Promise<Blob> {
       } catch (e) {
         URL.revokeObjectURL(url);
         reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not load image"));
+    };
+    img.src = url;
+  });
+}
+
+function enhanceForOcr(blob: Blob): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          URL.revokeObjectURL(url);
+          reject(new Error("Canvas not available"));
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const p = data.data;
+        for (let i = 0; i < p.length; i += 4) {
+          const gray = p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114;
+          const boosted = gray > 155 ? 255 : Math.max(0, gray - 25);
+          p[i] = boosted;
+          p[i + 1] = boosted;
+          p[i + 2] = boosted;
+        }
+        ctx.putImageData(data, 0, 0);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(
+          (out) => {
+            if (out) resolve(out);
+            else reject(new Error("Could not encode enhanced image"));
+          },
+          "image/png",
+          0.95
+        );
+      } catch (error) {
+        URL.revokeObjectURL(url);
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
     };
     img.onerror = () => {
@@ -217,8 +273,12 @@ function scoreParsedResult(text: string, parsed: ParsedCheckFields): { score: nu
  * Picks the orientation that yields the most parsed fields.
  */
 export async function runLocalCheckOcr(file: File): Promise<LocalOcrBestResult> {
-  const { createWorker } = await import("tesseract.js");
+  const { createWorker, PSM } = await import("tesseract.js");
   const worker = await createWorker("eng");
+  await worker.setParameters({
+    tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
+    preserve_interword_spaces: "1"
+  });
 
   let best: LocalOcrBestResult = {
     text: "",
@@ -230,19 +290,24 @@ export async function runLocalCheckOcr(file: File): Promise<LocalOcrBestResult> 
 
   try {
     for (const angle of [0, 90, 180, 270]) {
-      const blob = await blobToPngWithRotation(file, angle);
-      const { data } = await worker.recognize(blob);
-      const text = String(data?.text || "");
-      const parsed = parseCheckTextFromOcr(text);
-      const { score, fieldCount } = scoreParsedResult(text, parsed);
-      if (score > best.score) {
-        best = {
-          text,
-          angle,
-          parsed,
-          score,
-          fieldsDetected: fieldCount
-        };
+      for (const variant of ["base", "enhanced"] as const) {
+        const rotated = await blobToPngWithRotation(file, angle, 2);
+        const blob = variant === "enhanced" ? await enhanceForOcr(rotated) : rotated;
+        const { data } = await worker.recognize(blob);
+        const text = String(data?.text || "");
+        const parsed = parseCheckTextFromOcr(text);
+        const confidence = Number(data?.confidence || 0);
+        const scored = scoreParsedResult(text, parsed);
+        const score = scored.score + Math.max(0, confidence) * 0.5;
+        if (score > best.score) {
+          best = {
+            text,
+            angle,
+            parsed,
+            score,
+            fieldsDetected: scored.fieldCount
+          };
+        }
       }
     }
   } finally {
