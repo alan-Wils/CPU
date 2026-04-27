@@ -1,6 +1,30 @@
+export type MetrcSyncStatus = "not_synced" | "ready_to_sync" | "synced" | "error";
+
+export type CultivationBatch = {
+  id: string;
+  dbId?: string;
+  strain: string;
+  stage: string;
+  status?: string;
+  plants: number;
+  originalPlants?: number;
+  createdAt?: string;
+  completedAt?: string;
+  metrcSourceMotherPlantTag?: string;
+  metrcFirstPlantTag?: string;
+  metrcPlantTags?: string[];
+  metrcTagCreatedAt?: string;
+  metrcTagPlantCount?: number;
+  metrcLocationName?: string;
+  metrcSublocationName?: string;
+  metrcActualDate?: string;
+  metrcSyncStatus?: MetrcSyncStatus;
+  [key: string]: unknown;
+};
+
 type StoreShape = {
-  cultivationBatches: any[];
-  completedCultivationBatches: any[];
+  cultivationBatches: CultivationBatch[];
+  completedCultivationBatches: CultivationBatch[];
   dryFlowerBatches: any[];
   productionBatches: any[];
   sourceBatches: any[];

@@ -1,5 +1,6 @@
 import { apiDelete, apiGet, apiPost, apiRequest } from "./api";
 import { store } from "./store";
+import type { CultivationBatch } from "./store";
 
 const COMPLETED_OVERRIDE_KEY = "cpuCompletedCultivationOverrides";
 
@@ -116,7 +117,16 @@ function toUiBatch(row: any) {
     room: row?.room || "",
     bay: row?.bay || "",
     table: row?.table || "",
-    createdAt: row?.createdAt
+    createdAt: row?.createdAt,
+    metrcSourceMotherPlantTag: undefined,
+    metrcFirstPlantTag: undefined,
+    metrcPlantTags: [],
+    metrcTagCreatedAt: undefined,
+    metrcTagPlantCount: undefined,
+    metrcLocationName: undefined,
+    metrcSublocationName: undefined,
+    metrcActualDate: undefined,
+    metrcSyncStatus: "not_synced"
   };
 }
 
@@ -168,7 +178,7 @@ export async function loadCultivationBatches() {
           }
           // Keep workflow-progress fields from current UI state so backend sync
           // does not reset clone/veg/flower task progress during polling.
-          const mergedRow = {
+          const mergedRow: CultivationBatch = {
             ...baseOrCompleted,
             stage: forceComplete ? "Complete" : prior.stage ?? baseOrCompleted.stage,
             status: forceComplete ? "Complete" : prior.status ?? baseOrCompleted.status,
@@ -183,7 +193,17 @@ export async function loadCultivationBatches() {
             completedAt:
               prior?.completedAt ||
               completionKeysForBackendRow(row).map((k) => completedOverrides[k]?.completedAt).find(Boolean) ||
-              (baseOrCompleted as any).completedAt
+              (baseOrCompleted as any).completedAt,
+            metrcSourceMotherPlantTag: String(prior?.metrcSourceMotherPlantTag || "").trim() || undefined,
+            metrcFirstPlantTag: String(prior?.metrcFirstPlantTag || "").trim() || undefined,
+            metrcPlantTags: Array.isArray(prior?.metrcPlantTags) ? prior.metrcPlantTags : [],
+            metrcTagCreatedAt: String(prior?.metrcTagCreatedAt || "").trim() || undefined,
+            metrcTagPlantCount:
+              Number.isFinite(Number(prior?.metrcTagPlantCount)) ? Number(prior.metrcTagPlantCount) : undefined,
+            metrcLocationName: String(prior?.metrcLocationName || "").trim() || undefined,
+            metrcSublocationName: String(prior?.metrcSublocationName || "").trim() || undefined,
+            metrcActualDate: String(prior?.metrcActualDate || "").trim() || undefined,
+            metrcSyncStatus: (prior?.metrcSyncStatus as CultivationBatch["metrcSyncStatus"]) || "not_synced"
           };
           debugMergeSummary.push({
             id: String(mergedRow?.id || ""),

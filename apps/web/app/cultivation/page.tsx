@@ -48,6 +48,7 @@ const defaultVegTasks = [
   "Plant Work",
   "IPM",
   "Move to Flower",
+  "Create METRC Tags",
 ];
 
 const defaultFlowerTasks = [
@@ -286,6 +287,64 @@ function requireFields(fields: { label: string; value: any; positive?: boolean; 
   return true;
 }
 
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function generateSequentialMetrcTags(firstTag: string, count: number): string[] {
+  const clean = String(firstTag || "").trim();
+  const match = clean.match(/^(.*?)(\d+)$/);
+  const safeCount = Math.floor(Number(count || 0));
+  if (!match || safeCount <= 0) return [];
+
+  const prefix = match[1] || "";
+  const numericSuffix = match[2] || "";
+  const width = numericSuffix.length;
+  const start = BigInt(numericSuffix);
+
+  const out: string[] = [];
+  for (let i = 0; i < safeCount; i += 1) {
+    const next = (start + BigInt(i)).toString().padStart(width, "0");
+    out.push(`${prefix}${next}`);
+  }
+  return out;
+}
+
+export function buildMetrcPlantingPayload(batch: any): object {
+  const tags = Array.isArray(batch?.metrcPlantTags) ? batch.metrcPlantTags : [];
+  return {
+    PlantLabel: tags[0] || batch?.metrcFirstPlantTag || "",
+    PlantBatchName: batch?.id || "",
+    PlantBatchType: "Mother",
+    PlantCount: Number(batch?.metrcTagPlantCount || batch?.plants || 0),
+    LocationName: batch?.metrcLocationName || "",
+    SublocationName: batch?.metrcSublocationName || "",
+    StrainName: batch?.strain || "",
+    ActualDate: batch?.metrcActualDate || ""
+    // TODO: Verify source mother plant exists in METRC.
+    // TODO: Verify plant tags are available before assigning.
+    // TODO: Submit POST /plants/v2/plantings.
+    // TODO: Save METRC response IDs and warnings.
+  };
+}
+
+export function buildMetrcGrowthPhasePayload(batch: any): object {
+  const tags = Array.isArray(batch?.metrcPlantTags) ? batch.metrcPlantTags : [];
+  return {
+    Name: batch?.id || "",
+    Count: Number(batch?.metrcTagPlantCount || batch?.plants || 0),
+    StartingTag: tags[0] || batch?.metrcFirstPlantTag || "",
+    GrowthPhase: "Vegetative",
+    NewLocation: batch?.metrcLocationName || "",
+    NewSublocation: batch?.metrcSublocationName || "",
+    GrowthDate: batch?.metrcActualDate || ""
+    // TODO: Verify source mother plant exists in METRC.
+    // TODO: Verify plant tags are available before assigning.
+    // TODO: Submit POST /plantbatches/v2/growthphase.
+    // TODO: Save METRC response IDs and warnings.
+  };
+}
+
 export default function Cultivation() {
   const s: any = store;
 
@@ -330,6 +389,12 @@ export default function Cultivation() {
   const [harvestPlants, setHarvestPlants] = useState("");
   const [freshFrozenBundles, setFreshFrozenBundles] = useState("");
   const [freshFrozenGrams, setFreshFrozenGrams] = useState("");
+  const [metrcNewPlantCount, setMetrcNewPlantCount] = useState("");
+  const [metrcSourceMotherPlantTag, setMetrcSourceMotherPlantTag] = useState("");
+  const [metrcFirstPlantTag, setMetrcFirstPlantTag] = useState("");
+  const [metrcLocationName, setMetrcLocationName] = useState("");
+  const [metrcSublocationName, setMetrcSublocationName] = useState("");
+  const [metrcActualDate, setMetrcActualDate] = useState(todayIsoDate());
 
   const [selectedDryFlowerBatch, setSelectedDryFlowerBatch] = useState<any>(null);
   const [selectedDryFlowerTask, setSelectedDryFlowerTask] = useState(
@@ -491,6 +556,22 @@ export default function Cultivation() {
       clearInterval(interval);
     };
   }, []);
+
+  useEffect(() => {
+    if (!showTaskWindow || selectedTask !== "Create METRC Tags" || !selectedBatch) return;
+    setMetrcNewPlantCount(
+      Number.isFinite(Number(selectedBatch?.metrcTagPlantCount))
+        ? String(Math.floor(Number(selectedBatch.metrcTagPlantCount)))
+        : Number.isFinite(Number(selectedBatch?.plants))
+        ? String(Math.floor(Number(selectedBatch.plants)))
+        : ""
+    );
+    setMetrcSourceMotherPlantTag(String(selectedBatch?.metrcSourceMotherPlantTag || "").trim());
+    setMetrcFirstPlantTag(String(selectedBatch?.metrcFirstPlantTag || "").trim());
+    setMetrcLocationName(String(selectedBatch?.metrcLocationName || "").trim());
+    setMetrcSublocationName(String(selectedBatch?.metrcSublocationName || "").trim());
+    setMetrcActualDate(String(selectedBatch?.metrcActualDate || todayIsoDate()));
+  }, [showTaskWindow, selectedTask, selectedBatch]);
 
   if (!s.completedCultivationBatches) s.completedCultivationBatches = [];
   if (!s.dryFlowerBatches) s.dryFlowerBatches = [];
@@ -713,6 +794,14 @@ export default function Cultivation() {
   }
 
   const currentTasks = getTasksForStage(selectedBatch?.stage || "Clone");
+  const metrcCountInt = Math.floor(Number(metrcNewPlantCount || 0));
+  const metrcGeneratedTags =
+    metrcCountInt > 0 ? generateSequentialMetrcTags(metrcFirstPlantTag, metrcCountInt) : [];
+  const metrcPreviewTags =
+    metrcGeneratedTags.length <= 20
+      ? metrcGeneratedTags
+      : [...metrcGeneratedTags.slice(0, 10), "...", ...metrcGeneratedTags.slice(-10)];
+  const metrcPreviewOnly = metrcGeneratedTags.length > 20;
 
   function forceRefresh() {
     persistStore();
@@ -1720,6 +1809,88 @@ export default function Cultivation() {
       return;
     }
 
+    if (selectedTask === "Create METRC Tags") {
+      const wholeNumberPattern = /^\d+$/;
+      if (!wholeNumberPattern.test(String(metrcNewPlantCount || "").trim()) || Math.floor(Number(metrcNewPlantCount)) <= 0) {
+        showNotice("Invalid Plant Count", "New plant count must be a positive whole number.");
+        return;
+      }
+      if (!requireFieldsStyled([
+        { label: "Source Mother Plant Tag", value: metrcSourceMotherPlantTag },
+        { label: "First METRC Plant Tag", value: metrcFirstPlantTag },
+        { label: "METRC Location", value: metrcLocationName },
+        { label: "METRC Sublocation", value: metrcSublocationName },
+        { label: "Actual Date", value: metrcActualDate }
+      ])) {
+        return;
+      }
+      const firstTagClean = String(metrcFirstPlantTag || "").trim();
+      if (!/\d+$/.test(firstTagClean)) {
+        showNotice(
+          "Invalid First METRC Tag",
+          "First METRC plant tag must end in a number."
+        );
+        return;
+      }
+      const nextPlantCount = Math.floor(Number(metrcNewPlantCount));
+      const generatedTags = generateSequentialMetrcTags(firstTagClean, nextPlantCount);
+      if (generatedTags.length !== nextPlantCount) {
+        showNotice(
+          "Could Not Generate Tags",
+          "Please verify the first METRC tag and plant count."
+        );
+        return;
+      }
+
+      selectedBatch.plants = nextPlantCount;
+      selectedBatch.metrcSourceMotherPlantTag = String(metrcSourceMotherPlantTag || "").trim();
+      selectedBatch.metrcFirstPlantTag = firstTagClean;
+      selectedBatch.metrcPlantTags = generatedTags;
+      selectedBatch.metrcTagCreatedAt = new Date().toISOString();
+      selectedBatch.metrcTagPlantCount = nextPlantCount;
+      selectedBatch.metrcLocationName = String(metrcLocationName || "").trim();
+      selectedBatch.metrcSublocationName = String(metrcSublocationName || "").trim();
+      selectedBatch.metrcActualDate = String(metrcActualDate || "").trim();
+      selectedBatch.metrcSyncStatus = "ready_to_sync";
+
+      // Build future payloads now to keep structures in sync for METRC API wiring.
+      const plantingPayload = buildMetrcPlantingPayload(selectedBatch);
+      const growthPhasePayload = buildMetrcGrowthPhasePayload(selectedBatch);
+      void plantingPayload;
+      void growthPhasePayload;
+
+      const firstTag = generatedTags[0];
+      const lastTag = generatedTags[generatedTags.length - 1];
+      s.logs.unshift(
+        withLoggedBy({
+          area: "Cultivation",
+          batch: selectedBatch.id,
+          task: "Create METRC Tags",
+          people,
+          minutes,
+          output: `Created local METRC tag assignment for ${nextPlantCount} plants from source mother ${selectedBatch.metrcSourceMotherPlantTag}. First tag: ${firstTag}. Last tag: ${lastTag}.`,
+          time: new Date().toLocaleString(),
+          data: {
+            metrcSourceMotherPlantTag: selectedBatch.metrcSourceMotherPlantTag,
+            metrcFirstPlantTag: selectedBatch.metrcFirstPlantTag,
+            metrcTagPlantCount: selectedBatch.metrcTagPlantCount,
+            metrcLocationName: selectedBatch.metrcLocationName,
+            metrcSublocationName: selectedBatch.metrcSublocationName,
+            metrcActualDate: selectedBatch.metrcActualDate,
+            metrcSyncStatus: selectedBatch.metrcSyncStatus
+          }
+        })
+      );
+
+      setPeople("");
+      setMinutes("");
+      setOutput("");
+      setShowTaskWindow(false);
+      saveRealCultivationBatch(selectedBatch);
+      forceRefresh();
+      return;
+    }
+
     let taskOutput = output;
 
     if (selectedTask === "Move to Flower") {
@@ -2349,7 +2520,74 @@ export default function Cultivation() {
                 </>
               )}
 
-              {selectedTask !== "Harvest" && (
+              {selectedTask === "Create METRC Tags" && (
+                <>
+                  <input style={inputStyle} value={selectedBatch.id || ""} readOnly />
+                  <input style={inputStyle} value={selectedBatch.strain || ""} readOnly />
+                  <input
+                    style={inputStyle}
+                    value={`Current plant count: ${Number(selectedBatch.plants || 0)}`}
+                    readOnly
+                  />
+                  <input
+                    style={inputStyle}
+                    placeholder="New plant count"
+                    value={metrcNewPlantCount}
+                    onChange={(e) => setMetrcNewPlantCount(e.target.value)}
+                  />
+                  <input
+                    style={inputStyle}
+                    placeholder="Source mother plant tag"
+                    value={metrcSourceMotherPlantTag}
+                    onChange={(e) => setMetrcSourceMotherPlantTag(e.target.value)}
+                  />
+                  <input
+                    style={inputStyle}
+                    placeholder="First METRC plant tag"
+                    value={metrcFirstPlantTag}
+                    onChange={(e) => setMetrcFirstPlantTag(e.target.value)}
+                  />
+                  <input
+                    style={inputStyle}
+                    placeholder="METRC location"
+                    value={metrcLocationName}
+                    onChange={(e) => setMetrcLocationName(e.target.value)}
+                  />
+                  <input
+                    style={inputStyle}
+                    placeholder="METRC sublocation"
+                    value={metrcSublocationName}
+                    onChange={(e) => setMetrcSublocationName(e.target.value)}
+                  />
+                  <input
+                    style={inputStyle}
+                    type="date"
+                    value={metrcActualDate}
+                    onChange={(e) => setMetrcActualDate(e.target.value)}
+                  />
+                  <div style={{ ...inputStyle, background: "#111827", display: "grid", gap: 6 }}>
+                    <b>Preview Generated Plant Tags</b>
+                    {metrcGeneratedTags.length === 0 ? (
+                      <span style={{ color: "#94a3b8" }}>Enter first tag and plant count to preview tags.</span>
+                    ) : (
+                      <>
+                        {metrcPreviewOnly ? (
+                          <span style={{ color: "#fbbf24" }}>
+                            Preview only: showing first 10 and last 10 tags.
+                          </span>
+                        ) : null}
+                        <div style={{ maxHeight: 180, overflowY: "auto", fontFamily: "monospace", fontSize: 12 }}>
+                          {metrcPreviewTags.map((tag, idx) => (
+                            <div key={`${tag}-${idx}`}>{tag}</div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {selectedTask !== "Harvest" && selectedTask !== "Create METRC Tags" && (
                 <input
                   style={inputStyle}
                   placeholder={
