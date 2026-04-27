@@ -97,11 +97,13 @@ function mergePreferConfidentServer(
     "bankName",
     "memo"
   ];
+  const micrHeavy = new Set(["routingNumber", "accountNumber", "checkNumber"]);
   for (const k of keys) {
     const c = conf?.[k] ?? 0;
     const bs = b[k]?.trim();
     const as = a[k]?.trim();
-    if (c >= 0.52 && bs) out[k] = b[k] as never;
+    const localOk = micrHeavy.has(k) ? c >= 0.38 && Boolean(bs) : c >= 0.52 && Boolean(bs);
+    if (localOk) out[k] = b[k] as never;
     else if (as) out[k] = a[k] as never;
     else if (bs) out[k] = b[k] as never;
   }
@@ -111,9 +113,11 @@ function mergePreferConfidentServer(
 function lowConfidenceKeys(conf: Partial<Record<string, number>> | undefined): Set<string> {
   const s = new Set<string>();
   if (!conf) return s;
+  const micrHeavy = new Set(["routingNumber", "accountNumber", "checkNumber"]);
   for (const k of FIELD_KEYS) {
     const v = conf[k];
-    if (v != null && v < 0.52) s.add(k);
+    const thresh = micrHeavy.has(k) ? 0.38 : 0.52;
+    if (v != null && v < thresh) s.add(k);
   }
   return s;
 }
@@ -463,7 +467,7 @@ export default function CheckCapturePage() {
             position: "relative",
             minHeight: cameraOn ? 320 : 200,
             borderRadius: 12,
-            overflow: "hidden",
+            overflow: cameraOn ? "visible" : "hidden",
             background: "#0f172a",
             border: "1px solid #1e293b"
           }}

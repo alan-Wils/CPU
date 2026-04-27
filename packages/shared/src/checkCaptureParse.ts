@@ -145,6 +145,184 @@ function parseWrittenAmountLine(raw: string): { text?: string; confidence: numbe
   return { confidence: 0 };
 }
 
+/** Normalize MICR-ish OCR: spaces, common E13B symbol junk, O/0 and l/1 between digits. */
+function normalizeMicrOcrSnippet(s: string): string {
+  let t = String(s || "")
+    .replace(/\r/g, "")
+    .replace(/[⑆⑇⑈⑉]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  t = t.replace(/^[lI|](?=\d{8})/i, "1");
+  t = t.replace(/(?<=\d)[Oo](?=\d)/g, "0");
+  t = t.replace(/(?<=\d)[Il1](?=\d)/g, "1");
+  return t;
+}
+
+/**
+ * Parse routing / account / check # from a MICR-line crop (preferred over whole-document regex).
+ */
+export function parseMicrFromRegionSnippet(micrRaw: string): {
+  routingNumber?: string;
+  accountNumber?: string;
+  checkNumber?: string;
+  confidenceRouting: number;
+  confidenceAccount: number;
+  confidenceCheck: number;
+} {
+  const t = normalizeMicrOcrSnippet(micrRaw);
+  const out = {
+    confidenceRouting: 0,
+    confidenceAccount: 0,
+    confidenceCheck: 0
+  };
+  if (!t) return out;
+
+  const triple =
+    t.match(/(\d{9})[\s.:|'"_-]+(\d{10,17})[\s.:|'"_-]+(\d{2,10})\b/) ||
+    t.match(/(\d{9})\D+(\d{10,17})\D+(\d{2,10})\b/);
+  if (triple) {
+    return {
+      routingNumber: triple[1],
+      accountNumber: triple[2],
+      checkNumber: triple[3],
+      confidenceRouting: 0.94,
+      confidenceAccount: 0.92,
+      confidenceCheck: 0.9
+    };
+  }
+  const pair = t.match(/(\d{9})\D+(\d{10,17})\b/);
+  if (pair) {
+    return {
+      routingNumber: pair[1],
+      accountNumber: pair[2],
+      confidenceRouting: 0.78,
+      confidenceAccount: 0.74,
+      confidenceCheck: 0
+    };
+  }
+  const rt = t.match(/\b(\d{9})\b/);
+  if (rt) {
+    return {
+      routingNumber: rt[1],
+      confidenceRouting: 0.48,
+      confidenceAccount: 0,
+      confidenceCheck: 0
+    };
+  }
+  return out;
+}
+
+function payeeFromRegionSnippet(sn: string): { payerName?: string; confidence: number } {
+  const t = String(sn || "").replace(/\r/g, "").trim();
+  if (!t || t.length < 2) return { confidence: 0 };
+  const block = t.match(/PAY\s+TO\s+THE\s+ORDER\s+OF\s*[:\s]*(.+)/is);
+  if (block) {
+    const line = block[1].split("\n")[0]?.trim().replace(/\s+/g, " ").slice(0, 200) || "";
+    if (line.length >= 2) return { payerName: line, confidence: 0.9 };
+  }
+  const line2 = t
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length >= 2 && l.length < 200 && !/^\d[\d\s.-]+$/.test(l));
+  if (line2 && !/^memo\b/i.test(line2)) return { payerName: line2, confidence: 0.58 };
+  return { confidence: 0 };
+}
+
+function applyCroppedRegionOverrides(
+  cropped: Record<string, string> | undefined,
+  current: {
+    checkDate?: string;
+    amount?: number;
+    checkNumber?: string;
+    payerName?: string;
+    routingNumber?: string;
+    accountNumber?: string;
+    bankName?: string;
+    memo?: string;
+    writtenAmount?: string;
+    drawerName?: string;
+    confidenceByField: Partial<Record<CheckFieldKey, number>>;
+  }
+): void {
+  if (!cropped) return;
+  const R = cropped;
+
+  const mic = parseMicrFromRegionSnippet(String(R.micr || ""));
+  if (mic.routingNumber && mic.confidenceRouting >= 0.72) {
+    current.routingNumber = mic.routingNumber;
+    current.confidenceByField.routingNumber = Math.max(
+      current.confidenceByField.routingNumber ?? 0,
+      mic.confidenceRouting
+    );
+  }
+  if (mic.accountNumber && mic.confidenceAccount >= 0.7) {
+    current.accountNumber = mic.accountNumber;
+    current.confidenceByField.accountNumber = Math.max(
+      current.confidenceByField.accountNumber ?? 0,
+      mic.confidenceAccount
+    );
+  }
+  if (mic.checkNumber && mic.confidenceCheck >= 0.72) {
+    current.checkNumber = mic.checkNumber;
+    current.confidenceByField.checkNumber = Math.max(current.confidenceByField.checkNumber ?? 0, mic.confidenceCheck);
+  }
+
+  const dateFrom = String(R.date || "").trim();
+  if (dateFrom.length >= 4) {
+    const d = parseCheckDateLoose(dateFrom);
+    if (d.iso && d.confidence >= 0.65) {
+      current.checkDate = d.iso;
+      current.confidenceByField.checkDate = Math.max(current.confidenceByField.checkDate ?? 0, d.confidence);
+    }
+  }
+
+  const amtBlob = [R.numericAmount, R.writtenAmount].map((x) => String(x || "").trim()).filter(Boolean).join("\n");
+  if (amtBlob.length >= 3) {
+    const regionalAmt = extractPrimaryCheckAmount(amtBlob);
+    if (regionalAmt != null) {
+      current.amount = regionalAmt;
+      current.confidenceByField.amount = Math.max(
+        current.confidenceByField.amount ?? 0,
+        amountConfidence(amtBlob, regionalAmt)
+      );
+    }
+  }
+
+  const pay = payeeFromRegionSnippet(String(R.payee || ""));
+  if (pay.payerName && pay.confidence >= 0.55) {
+    current.payerName = pay.payerName;
+    current.confidenceByField.payerName = Math.max(current.confidenceByField.payerName ?? 0, pay.confidence);
+    current.confidenceByField.payeeName = current.confidenceByField.payerName;
+  }
+
+  const drawerLine = String(R.drawer || "")
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length > 3 && l.length < 120);
+  if (drawerLine && !/pay\s+to/i.test(drawerLine)) {
+    current.drawerName = drawerLine;
+    current.confidenceByField.drawerName = Math.max(current.confidenceByField.drawerName ?? 0, 0.62);
+  }
+
+  const bankLine = String(R.drawer || "")
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => /(bank|credit union|financial|N\.A\.)/i.test(l) && l.length < 140);
+  if (bankLine) {
+    current.bankName = bankLine;
+    current.confidenceByField.bankName = Math.max(current.confidenceByField.bankName ?? 0, 0.68);
+  }
+
+  const memoRaw = String(R.memo || "").trim();
+  if (memoRaw.length >= 1) {
+    const stripped = memoRaw.replace(/^memo[:\s]*/i, "").trim() || memoRaw;
+    if (stripped.length >= 1) {
+      current.memo = stripped.slice(0, 500);
+      current.confidenceByField.memo = Math.max(current.confidenceByField.memo ?? 0, 0.7);
+    }
+  }
+}
+
 /**
  * Parse concatenated OCR text (optionally with region snippets in `croppedRegionText`).
  */
@@ -152,11 +330,16 @@ export function parseCheckOcrTextWithConfidence(
   raw: string,
   croppedRegionText?: Record<string, string>
 ): CheckParseResult {
-  const text = String(raw || "").replace(/\r/g, "");
+  let text = String(raw || "").replace(/\r/g, "");
   const warnings: string[] = [];
   const confidenceByField: Partial<Record<CheckFieldKey, number>> = {};
 
-  if (!text.trim()) {
+  const hasRegions = Boolean(
+    croppedRegionText &&
+      Object.values(croppedRegionText).some((v) => String(v ?? "").replace(/\s+/g, "").length > 0)
+  );
+
+  if (!text.trim() && !hasRegions) {
     return {
       confidenceByField: {},
       rawText: text,
@@ -164,6 +347,12 @@ export function parseCheckOcrTextWithConfidence(
       parseQuality: "empty",
       warnings: ["No OCR text"]
     };
+  }
+
+  if (!text.trim() && hasRegions && croppedRegionText) {
+    text = Object.entries(croppedRegionText)
+      .map(([k, v]) => `[${k}]\n${String(v ?? "").trim()}`)
+      .join("\n\n");
   }
 
   const lines = text
@@ -276,16 +465,19 @@ export function parseCheckOcrTextWithConfidence(
   let writtenAmount = written.text;
   if (writtenAmount) confidenceByField.writtenAmount = written.confidence;
 
-  const filled = Object.values(confidenceByField).filter((v) => v > 0).length;
-  const strongFields = Object.values(confidenceByField).filter((v) => v >= 0.72).length;
-  const parseQuality: CheckParseResult["parseQuality"] =
-    strongFields >= 3 ? "strong" : filled >= 2 ? "weak" : "empty";
-
-  if (parseQuality === "weak" || parseQuality === "empty") {
-    warnings.push("Some fields have low confidence — please review before saving.");
-  }
-
-  return {
+  const merged: {
+    checkDate?: string;
+    amount?: number;
+    checkNumber?: string;
+    payerName?: string;
+    routingNumber?: string;
+    accountNumber?: string;
+    bankName?: string;
+    memo?: string;
+    writtenAmount?: string;
+    drawerName?: string;
+    confidenceByField: Partial<Record<CheckFieldKey, number>>;
+  } = {
     checkDate,
     amount,
     checkNumber,
@@ -296,8 +488,41 @@ export function parseCheckOcrTextWithConfidence(
     memo,
     writtenAmount,
     drawerName,
-    payeeName: payerName,
-    confidenceByField,
+    confidenceByField: { ...confidenceByField }
+  };
+  applyCroppedRegionOverrides(croppedRegionText, merged);
+
+  const wrRegion = parseWrittenAmountLine(String(croppedRegionText?.writtenAmount || ""));
+  if (wrRegion.text && (merged.confidenceByField.writtenAmount ?? 0) < wrRegion.confidence + 0.05) {
+    merged.writtenAmount = wrRegion.text;
+    merged.confidenceByField.writtenAmount = Math.max(
+      merged.confidenceByField.writtenAmount ?? 0,
+      wrRegion.confidence
+    );
+  }
+
+  const filled = Object.values(merged.confidenceByField).filter((v) => v > 0).length;
+  const strongFields = Object.values(merged.confidenceByField).filter((v) => v >= 0.72).length;
+  const parseQuality: CheckParseResult["parseQuality"] =
+    strongFields >= 3 ? "strong" : filled >= 2 ? "weak" : "empty";
+
+  if (parseQuality === "weak" || parseQuality === "empty") {
+    warnings.push("Some fields have low confidence — please review before saving.");
+  }
+
+  return {
+    checkDate: merged.checkDate,
+    amount: merged.amount,
+    checkNumber: merged.checkNumber,
+    payerName: merged.payerName,
+    routingNumber: merged.routingNumber,
+    accountNumber: merged.accountNumber,
+    bankName: merged.bankName,
+    memo: merged.memo,
+    writtenAmount: merged.writtenAmount,
+    drawerName: merged.drawerName,
+    payeeName: merged.payerName,
+    confidenceByField: merged.confidenceByField,
     rawText: text,
     croppedRegionText,
     parseQuality,

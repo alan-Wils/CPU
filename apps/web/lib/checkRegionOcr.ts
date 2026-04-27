@@ -223,20 +223,30 @@ async function runLocalCheckOcrCore(
       onPhase?.("Preparing image…");
 
       const tPrep = performance.now();
-      const candidates = [0, 90] as const;
       const worker = await getWorker();
       const { PSM } = await import("tesseract.js");
+
+      let portraitLike = false;
+      try {
+        const bmp = await createImageBitmap(file);
+        portraitLike = bmp.height > bmp.width * 1.08;
+        bmp.close();
+      } catch {
+        portraitLike = false;
+      }
+      const candidates = portraitLike ? ([90, 0] as const) : ([0, 90] as const);
 
       let bestAngle = 0;
       let bestCanvas: HTMLCanvasElement | null = null;
       let bestScore = -1;
 
       onP?.({ phase: "orientation", label: "Detecting check orientation…" });
-      onPhase?.("Detecting orientation (0° vs 90°)…");
+      onPhase?.("Detecting orientation…");
 
       const tRot = performance.now();
+      const orientMaxEdge = 640;
       for (const deg of candidates) {
-        const c = await blobToPngCanvas(file, deg, 900);
+        const c = await blobToPngCanvas(file, deg, orientMaxEdge);
         const blob = await canvasToBlob(c);
         const { data } = await worker.recognize(blob);
         const len = String(data?.text || "").replace(/\s+/g, " ").length;
@@ -251,8 +261,10 @@ async function runLocalCheckOcrCore(
       timingsMs.orientationMs = Math.round(performance.now() - tRot);
 
       if (!bestCanvas) {
-        bestCanvas = await blobToPngCanvas(file, 0, 1400);
+        bestCanvas = await blobToPngCanvas(file, 0, 960);
         bestAngle = 0;
+      } else {
+        bestCanvas = await blobToPngCanvas(file, bestAngle, 960);
       }
 
       const w = bestCanvas.width;
