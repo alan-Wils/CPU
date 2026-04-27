@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import {
@@ -8,9 +8,11 @@ import {
   listCheckCaptures,
   saveCheckCapture,
   uploadCheckImage,
-  type CheckCaptureRecord
+  type CheckCaptureRecord,
+  type CheckExtractedFields
 } from "@/lib/checksApi";
 import { getApiErrorMessage } from "@/lib/api";
+import { parseCheckTextFromOcr, runLocalCheckOcr, type ParsedCheckFields } from "@/lib/checkCaptureOcr";
 
 type FormState = {
   checkDate: string;
@@ -36,6 +38,36 @@ const emptyForm: FormState = {
   imageUrl: ""
 };
 
+function isParsedEmpty(parsed: CheckExtractedFields) {
+  return (
+    !parsed.checkDate &&
+    !Number.isFinite(Number(parsed.amount)) &&
+    !parsed.checkNumber &&
+    !parsed.payerName &&
+    !parsed.routingNumber &&
+    !parsed.accountNumber &&
+    !parsed.bankName &&
+    !parsed.memo
+  );
+}
+
+function mergeExtractedToForm(imageUrl: string, server: CheckExtractedFields, local?: ParsedCheckFields) {
+  const l = local || {};
+  const amountStr = (v: number | undefined) =>
+    Number.isFinite(Number(v)) && Number(v) > 0 ? String(Number(v)) : "";
+  return {
+    imageUrl,
+    checkDate: server.checkDate || l.checkDate || "",
+    amount: amountStr(server.amount) || amountStr(l.amount),
+    checkNumber: server.checkNumber || l.checkNumber || "",
+    payerName: server.payerName || l.payerName || "",
+    routingNumber: server.routingNumber || l.routingNumber || "",
+    accountNumber: server.accountNumber || l.accountNumber || "",
+    bankName: server.bankName || l.bankName || "",
+    memo: server.memo || l.memo || ""
+  };
+}
+
 function toBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -58,6 +90,7 @@ export default function CheckCapturePage() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const lastOcrRawRef = useRef<unknown>(undefined);
 
   useEffect(() => {
     let mounted = true;
@@ -105,19 +138,32 @@ export default function CheckCapturePage() {
         dataBase64
       });
       setStatus("Extracting check fields...");
-      const extracted = await extractCheckFields({ imageUrl: uploaded.imageUrl });
-      patchForm({
+      const extracted = await extractCheckFields({
         imageUrl: uploaded.imageUrl,
-        checkDate: extracted.parsed.checkDate || "",
-        amount: Number.isFinite(Number(extracted.parsed.amount)) ? String(extracted.parsed.amount) : "",
-        checkNumber: extracted.parsed.checkNumber || "",
-        payerName: extracted.parsed.payerName || "",
-        routingNumber: extracted.parsed.routingNumber || "",
-        accountNumber: extracted.parsed.accountNumber || "",
-        bankName: extracted.parsed.bankName || "",
-        memo: extracted.parsed.memo || ""
+        dataBase64,
+        mimeType
       });
-      setStatus(`Extraction complete (${extracted.provider}). Review fields below before saving.`);
+
+      let merged = mergeExtractedToForm(uploaded.imageUrl, extracted.parsed);
+      lastOcrRawRef.current = extracted.raw;
+
+      if (extracted.provider === "manual-review" || isParsedEmpty(extracted.parsed)) {
+        setStatus("Running on-device OCR (first use may download language data)...");
+        const { text, angle } = await runLocalCheckOcr(file);
+        const localParsed = parseCheckTextFromOcr(text);
+        merged = mergeExtractedToForm(uploaded.imageUrl, extracted.parsed, localParsed);
+        lastOcrRawRef.current = {
+          server: extracted.raw,
+          localOcr: { angle, textLength: text.length, preview: text.slice(0, 500) }
+        };
+        setStatus(
+          `Extraction complete (browser OCR at ${angle}° + review). Edit any fields, then save.`
+        );
+      } else {
+        setStatus(`Extraction complete (${extracted.provider}). Review fields below before saving.`);
+      }
+
+      patchForm(merged);
     } catch (err) {
       setError(getApiErrorMessage(err, "Could not extract check data"));
       setStatus("");
@@ -144,7 +190,8 @@ export default function CheckCapturePage() {
         routingNumber: form.routingNumber || undefined,
         accountNumber: form.accountNumber || undefined,
         bankName: form.bankName || undefined,
-        memo: form.memo || undefined
+        memo: form.memo || undefined,
+        rawOcrJson: lastOcrRawRef.current
       });
       setRecords((prev) => [saved, ...prev]);
       setStatus("Check record saved.");
@@ -169,7 +216,9 @@ export default function CheckCapturePage() {
         <section style={cardStyle}>
           <h1 style={{ marginTop: 0, marginBottom: 8 }}>Check Capture</h1>
           <p style={mutedStyle}>
-            Capture a check image, auto-extract fields, review, and save to your shared check records table.
+            Capture a check image, auto-extract fields, review, and save to your shared check records table. If the
+            server has no OCR API key, the app runs OCR in your browser (may take a few seconds the first time while
+            language data downloads).
           </p>
 
           <div style={rowStyle}>

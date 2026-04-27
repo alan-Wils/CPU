@@ -40,43 +40,100 @@ function extForMime(mimeType: UploadInput["mimeType"]): string {
   return "jpg";
 }
 
-function parseCheckText(text: string) {
-  const compact = String(text || "").replace(/\r/g, "");
-  const amountMatch = compact.match(/\$?\s?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+\.[0-9]{2})/);
-  const checkNumberMatch =
-    compact.match(/\b(?:check|chk|no\.?|#)\s*[:\-]?\s*([0-9]{3,12})\b/i) ||
-    compact.match(/\b([0-9]{3,12})\b(?!.*\b[0-9]{3,12}\b)/);
-  const routingMatch = compact.match(/\b([0-9]{9})\b/);
-  const accountMatch = compact.match(/\b([0-9]{6,17})\b/g);
-  const dateMatch = compact.match(/\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12][0-9]|3[01])[\/\-]([0-9]{2,4})\b/);
+const MONTH_NAME =
+  /(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})/i;
+const MONTH_MAP: Record<string, string> = {
+  january: "01",
+  february: "02",
+  march: "03",
+  april: "04",
+  may: "05",
+  june: "06",
+  july: "07",
+  august: "08",
+  september: "09",
+  october: "10",
+  november: "11",
+  december: "12"
+};
 
-  const lines = compact
+function parseCheckText(text: string) {
+  const raw = String(text || "").replace(/\r/g, "");
+  const lines = raw
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
+
+  let amount: number | undefined;
+  const amtDollar = raw.match(/\$\s*([0-9]{1,3}(?:,[0-9]{3})*\.\d{2})\b/);
+  if (amtDollar) amount = Number(amtDollar[1].replace(/,/g, ""));
+  if (amount === undefined) {
+    const amtPlain = raw.match(/\b([0-9]{1,3}(?:,[0-9]{3})*\.\d{2})\b/);
+    if (amtPlain) amount = Number(amtPlain[1].replace(/,/g, ""));
+  }
+
+  let payerName: string | undefined;
+  const payeeBlock = raw.match(/PAY\s+TO\s+THE\s+ORDER\s+OF\s*\n?\s*(.+?)(?:\n{2,}|$)/is);
+  if (payeeBlock) {
+    payerName = payeeBlock[1]
+      .split("\n")[0]
+      ?.trim()
+      .replace(/\s+/g, " ")
+      .slice(0, 200);
+  }
+  if (!payerName) {
+    const payee2 = raw.match(/PAY\s+TO\s+THE\s+ORDER\s+OF\s+(.+)/i);
+    if (payee2) payerName = payee2[1].trim().replace(/\s+/g, " ").slice(0, 200);
+  }
+
+  let checkNumber: string | undefined;
+  const cn1 = raw.match(/(?:CHECK|CHK)\s*#?\s*[:]?\s*(\d{2,12})/i);
+  const cn2 = raw.match(/\bNo\.?\s*#?\s*(\d{2,12})\b/i);
+  if (cn1) checkNumber = cn1[1];
+  else if (cn2) checkNumber = cn2[1];
+
+  let checkDate: string | undefined;
+  const d1 = raw.match(/\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12]\d|3[01])[\/\-](\d{2,4})\b/);
+  if (d1) {
+    const [mm, dd, yyyy] = [d1[1], d1[2], d1[3]];
+    const year = yyyy.length === 2 ? `20${yyyy}` : yyyy;
+    checkDate = `${year}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+  } else {
+    const d2 = raw.match(MONTH_NAME);
+    if (d2) {
+      const mon = MONTH_MAP[d2[1].toLowerCase()];
+      if (mon) checkDate = `${d2[3]}-${mon}-${d2[2].padStart(2, "0")}`;
+    }
+  }
+
+  let routingNumber: string | undefined;
+  let accountNumber: string | undefined;
+  const micr = raw.replace(/\s+/g, " ").match(/(\d{9})\D+(\d{4,17})\D+(\d{2,10})\b/);
+  if (micr) {
+    routingNumber = micr[1];
+    accountNumber = micr[2];
+    if (!checkNumber) checkNumber = micr[3];
+  } else {
+    const rt = raw.match(/\b(\d{9})\b/);
+    if (rt) routingNumber = rt[1];
+    const accts = raw.match(/\b(\d{10,17})\b/g);
+    if (accts) {
+      accountNumber = accts.find((a) => a !== routingNumber);
+    }
+  }
+
   const memoLine = lines.find((line) => /^memo[:\s]/i.test(line)) || "";
   const memo = memoLine ? memoLine.replace(/^memo[:\s]*/i, "").trim() : undefined;
   const bankName =
-    lines.find((line) => /(bank|credit union|financial)/i.test(line) && line.length <= 80) || undefined;
-  const payerName =
-    lines.find((line) => /^[A-Za-z][A-Za-z0-9 .,'-]{3,80}$/.test(line) && !/(bank|memo|pay to)/i.test(line)) ||
+    lines.find((line) => /(bank|credit union|financial|N\.A\.|N\.A\b)/i.test(line) && line.length <= 120) ||
     undefined;
-
-  let checkDate: string | undefined;
-  if (dateMatch) {
-    const [mm, dd, yyyy] = dateMatch[0].split(/[/-]/);
-    const year = yyyy.length === 2 ? `20${yyyy}` : yyyy;
-    checkDate = `${year}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
-  }
-
-  const accountNumber = accountMatch?.find((value) => value !== routingMatch?.[1]);
 
   return {
     checkDate,
-    amount: amountMatch ? Number(amountMatch[1].replace(/,/g, "")) : undefined,
-    checkNumber: checkNumberMatch?.[1],
+    amount,
+    checkNumber,
     payerName,
-    routingNumber: routingMatch?.[1],
+    routingNumber,
     accountNumber,
     bankName,
     memo
