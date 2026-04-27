@@ -407,6 +407,24 @@ workflowRouter.post(
 workflowRouter.get(
   "/active",
   asyncHandler(async (req, res) => {
+    // #region agent log
+    fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
+      body: JSON.stringify({
+        sessionId: "6beeea",
+        runId: "pre-fix",
+        hypothesisId: "H4",
+        location: "workflow/routes.ts:GET/active",
+        message: "Workflow active endpoint called from cultivation polling",
+        data: {
+          companyId: req.auth?.companyId || "",
+          userIdPresent: Boolean(req.auth?.userId)
+        },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
     const rows = await workflowService.listActive(req.auth!.companyId);
     res.json(rows);
   })

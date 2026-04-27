@@ -1,8 +1,52 @@
 import { apiDelete, apiGet, apiPost, apiRequest } from "./api";
 import { store } from "./store";
 
+const COMPLETED_OVERRIDE_KEY = "cpuCompletedCultivationOverrides";
+
 function normalizeId(value: any) {
   return String(value || "").trim().toUpperCase();
+}
+
+function readCompletedOverrides(): Record<string, { completedAt?: string }> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(COMPLETED_OVERRIDE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeCompletedOverrides(next: Record<string, { completedAt?: string }>) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(COMPLETED_OVERRIDE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+
+function completionKeysForBatch(batch: any): string[] {
+  return [normalizeId(batch?.id), normalizeId(batch?.dbId)].filter(Boolean);
+}
+
+function completionKeysForBackendRow(row: any): string[] {
+  const displayId =
+    row?.strainAcronym && row?.batchChainCode
+      ? `${String(row.strainAcronym).toUpperCase()}.${row.batchChainCode}`
+      : row?.id;
+  return [normalizeId(displayId), normalizeId(row?.id)].filter(Boolean);
+}
+
+export function markCultivationBatchCompletedLocal(batch: any) {
+  const now = String(batch?.completedAt || new Date().toLocaleString());
+  const current = readCompletedOverrides();
+  for (const key of completionKeysForBatch(batch)) {
+    current[key] = { completedAt: now };
+  }
+  writeCompletedOverrides(current);
 }
 
 function isValidCultivationBatch(batch: any) {
@@ -31,7 +75,8 @@ function uniqueByNormalizedId(rows: any[]) {
 }
 
 function allBatches() {
-  const merged = [...(store.cultivationBatches || []), ...(store.completedCultivationBatches || [])];
+  // Prefer completed rows first so local completion state wins on dedupe.
+  const merged = [...(store.completedCultivationBatches || []), ...(store.cultivationBatches || [])];
   return uniqueByNormalizedId(merged.filter(isValidCultivationBatch));
 }
 
@@ -80,31 +125,97 @@ export async function loadCultivationBatches() {
     const active = await apiGet<any>("/workflow/active", localStorage.getItem("token"));
     const rows = Array.isArray(active?.cultivation) ? active.cultivation : [];
     const existing = allBatches();
+    const completedOverrides = readCompletedOverrides();
+    const debugMergeSummary: Array<{
+      id: string;
+      baseStatus: string;
+      priorStatus: string;
+      finalStatus: string;
+      plants: number;
+    }> = [];
     const mapped = uniqueByNormalizedId(
       rows
         .map((row: any) => {
           const base = toUiBatch(row);
           const prior = findExistingForDbRow(row, existing);
-          if (!prior) return base;
+          const hasCompletionOverride = completionKeysForBackendRow(row).some(
+            (key) => Boolean(completedOverrides[key])
+          );
+          const forceComplete =
+            hasCompletionOverride ||
+            String(prior?.status || "").toLowerCase() === "complete" ||
+            String(prior?.stage || "").toLowerCase() === "complete";
+          const baseOrCompleted = forceComplete
+            ? {
+                ...base,
+                stage: "Complete",
+                status: "Complete",
+                completedAt:
+                  prior?.completedAt ||
+                  completionKeysForBackendRow(row).map((k) => completedOverrides[k]?.completedAt).find(Boolean) ||
+                  ""
+              }
+            : base;
+          if (!prior) {
+            debugMergeSummary.push({
+              id: String(baseOrCompleted?.id || ""),
+              baseStatus: String(baseOrCompleted?.status || ""),
+              priorStatus: "",
+              finalStatus: String(baseOrCompleted?.status || ""),
+              plants: Number(baseOrCompleted?.plants || 0)
+            });
+            return baseOrCompleted;
+          }
           // Keep workflow-progress fields from current UI state so backend sync
           // does not reset clone/veg/flower task progress during polling.
-          return {
-            ...base,
-            stage: prior.stage ?? base.stage,
-            status: prior.status ?? base.status,
-            plants: Number.isFinite(Number(prior.plants)) ? Number(prior.plants) : base.plants,
+          const mergedRow = {
+            ...baseOrCompleted,
+            stage: forceComplete ? "Complete" : prior.stage ?? baseOrCompleted.stage,
+            status: forceComplete ? "Complete" : prior.status ?? baseOrCompleted.status,
+            plants: Number.isFinite(Number(prior.plants)) ? Number(prior.plants) : baseOrCompleted.plants,
             originalPlants: Number.isFinite(Number(prior.originalPlants))
               ? Number(prior.originalPlants)
-              : base.originalPlants,
-            flowerRoom: prior.flowerRoom ?? base.room,
-            flowerBay: prior.flowerBay ?? base.bay,
-            flowerTable: prior.flowerTable ?? base.table,
-            flowerTables: Array.isArray(prior.flowerTables) ? prior.flowerTables : prior.flowerTables ?? []
+              : baseOrCompleted.originalPlants,
+            flowerRoom: prior.flowerRoom ?? baseOrCompleted.room,
+            flowerBay: prior.flowerBay ?? baseOrCompleted.bay,
+            flowerTable: prior.flowerTable ?? baseOrCompleted.table,
+            flowerTables: Array.isArray(prior.flowerTables) ? prior.flowerTables : prior.flowerTables ?? [],
+            completedAt:
+              prior?.completedAt ||
+              completionKeysForBackendRow(row).map((k) => completedOverrides[k]?.completedAt).find(Boolean) ||
+              (baseOrCompleted as any).completedAt
           };
+          debugMergeSummary.push({
+            id: String(mergedRow?.id || ""),
+            baseStatus: String(baseOrCompleted?.status || ""),
+            priorStatus: String(prior?.status || ""),
+            finalStatus: String(mergedRow?.status || ""),
+            plants: Number(mergedRow?.plants || 0)
+          });
+          return mergedRow;
         })
         .filter(isValidCultivationBatch)
-        .filter((b: any) => Number(b.plants) > 0)
     );
+    // #region agent log
+    fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
+      body: JSON.stringify({
+        sessionId: "6beeea",
+        runId: "pre-fix",
+        hypothesisId: "H1",
+        location: "cultivationApi.ts:loadCultivationBatches:merge",
+        message: "Merged backend cultivation rows with local state",
+        data: {
+          backendCount: rows.length,
+          existingCount: existing.length,
+          mappedCount: mapped.length,
+          summary: debugMergeSummary.slice(0, 12)
+        },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
     store.cultivationBatches = mapped.filter((b: any) => b.status !== "Complete");
     store.completedCultivationBatches = mapped.filter((b: any) => b.status === "Complete");
     return mapped;

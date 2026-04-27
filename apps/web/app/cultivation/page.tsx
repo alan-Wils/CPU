@@ -9,6 +9,7 @@ import { hasCompanyStoreChanged, loadBackendStore, saveBackendStore } from "@/li
 import {
   loadCultivationBatches,
   createCultivationBatch,
+  markCultivationBatchCompletedLocal,
   updateCultivationBatch,
   deleteCultivationBatch,
 } from "@/lib/cultivationApi";
@@ -424,6 +425,26 @@ export default function Cultivation() {
           s.completedCultivationBatches = uniqueById(
             realCultivationBatches.filter((batch: any) => batch.status === "Complete")
           );
+          // #region agent log
+          fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
+            body: JSON.stringify({
+              sessionId: "6beeea",
+              runId: "pre-fix",
+              hypothesisId: "H2",
+              location: "cultivation/page.tsx:loadSharedData:partition",
+              message: "Partitioned cultivation batches into active/completed lists",
+              data: {
+                realCount: realCultivationBatches.length,
+                activeCount: s.cultivationBatches.length,
+                completedCount: s.completedCultivationBatches.length,
+                completedIds: (s.completedCultivationBatches || []).slice(0, 10).map((b: any) => b?.id || "")
+              },
+              timestamp: Date.now()
+            })
+          }).catch(() => {});
+          // #endregion
         }
 
         setSelectedBatch((current: any) => {
@@ -1039,9 +1060,14 @@ export default function Cultivation() {
   }
 
   function moveBatchToCompleted(batch: any) {
+    if (String(batch?.status || "").toLowerCase() === "complete") {
+      return;
+    }
     batch.status = "Complete";
     batch.stage = "Complete";
     batch.completedAt = new Date().toLocaleString();
+
+    s.cultivationBatches = (s.cultivationBatches || []).filter((b: any) => b.id !== batch.id);
 
     const alreadyCompleted = s.completedCultivationBatches.some(
       (b: any) => b.id === batch.id
@@ -1050,6 +1076,28 @@ export default function Cultivation() {
     if (!alreadyCompleted) {
       s.completedCultivationBatches.unshift(batch);
     }
+    markCultivationBatchCompletedLocal(batch);
+    // #region agent log
+    fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
+      body: JSON.stringify({
+        sessionId: "6beeea",
+        runId: "pre-fix",
+        hypothesisId: "H3",
+        location: "cultivation/page.tsx:moveBatchToCompleted",
+        message: "Locally marked cultivation batch complete",
+        data: {
+          batchId: batch?.id || "",
+          plants: Number(batch?.plants || 0),
+          alreadyCompleted,
+          activeCount: (s.cultivationBatches || []).length,
+          completedCount: (s.completedCultivationBatches || []).length
+        },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
 
     s.logs.unshift(withLoggedBy({
       area: "Cultivation",
