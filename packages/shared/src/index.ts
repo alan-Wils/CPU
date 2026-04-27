@@ -14,6 +14,16 @@ export const APP_ROLES = [
 
 export type AppRole = (typeof APP_ROLES)[number];
 
+export {
+  extractPrimaryCheckAmount,
+  mergeCheckParsedPreferBetter,
+  parseCheckOcrTextWithConfidence,
+  toFlatParsedForApi,
+  type CheckFieldKey,
+  type CheckParseResult,
+  type CheckParsedFlat
+} from "./checkCaptureParse.js";
+
 export const ROLE_PERMISSIONS: Record<AppRole, string[]> = {
   OWNER: ["*"],
   ADMIN: ["users.manage", "workflow.manage", "audit.read", "finance.read", "config.manage"],

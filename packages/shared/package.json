@@ -6,9 +6,11 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "typescript": "latest"
+    "typescript": "latest",
+    "vitest": "^2.1.9"
   }
 }
