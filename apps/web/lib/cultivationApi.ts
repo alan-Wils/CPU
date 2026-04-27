@@ -95,18 +95,43 @@ export async function loadCultivationBatches() {
     const active = await apiGet<any>("/workflow/active", localStorage.getItem("token"));
     const rows = Array.isArray(active?.cultivation) ? active.cultivation : [];
     const existing = allBatches();
+    // #region agent log
+    fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
+      body: JSON.stringify({
+        sessionId: "6beeea",
+        runId: "pre-fix",
+        hypothesisId: "H2",
+        location: "cultivationApi.ts:loadCultivationBatches:input",
+        message: "Received cultivation rows from workflow active API",
+        data: {
+          backendCultivationCount: rows.length,
+          existingLocalCount: existing.length,
+          backendSample: rows.slice(0, 5).map((r: any) => ({
+            id: String(r?.id || ""),
+            acronym: String(r?.strainAcronym || ""),
+            chainCode: String(r?.batchChainCode || ""),
+            autoStatus: String(r?.autoStatus || "")
+          }))
+        },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
     const mapped = uniqueByNormalizedId(
       rows
         .map((row: any) => {
           const base = toUiBatch(row);
           const prior = findExistingForDbRow(row, existing);
           if (!prior) return base;
+          const backendIsComplete = String(base?.status || "").toLowerCase() === "complete";
           // Keep workflow-progress fields from current UI state so backend sync
           // does not reset clone/veg/flower task progress during polling.
           const mergedRow: CultivationBatch = {
             ...base,
-            stage: base.stage,
-            status: base.status,
+            stage: backendIsComplete ? "Complete" : prior.stage ?? base.stage,
+            status: backendIsComplete ? "Complete" : prior.status ?? base.status,
             plants: Number.isFinite(Number(prior.plants)) ? Number(prior.plants) : base.plants,
             originalPlants: Number.isFinite(Number(prior.originalPlants))
               ? Number(prior.originalPlants)
@@ -115,7 +140,7 @@ export async function loadCultivationBatches() {
             flowerBay: prior.flowerBay ?? base.bay,
             flowerTable: prior.flowerTable ?? base.table,
             flowerTables: Array.isArray(prior.flowerTables) ? prior.flowerTables : prior.flowerTables ?? [],
-            completedAt: base.status === "Complete" ? prior?.completedAt || "" : undefined,
+            completedAt: backendIsComplete ? prior?.completedAt || "" : undefined,
             metrcSourceMotherPlantTag: String(prior?.metrcSourceMotherPlantTag || "").trim() || undefined,
             metrcFirstPlantTag: String(prior?.metrcFirstPlantTag || "").trim() || undefined,
             metrcPlantTags: Array.isArray(prior?.metrcPlantTags) ? prior.metrcPlantTags : [],
@@ -131,6 +156,32 @@ export async function loadCultivationBatches() {
         })
         .filter(isValidCultivationBatch)
     );
+    // #region agent log
+    fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
+      body: JSON.stringify({
+        sessionId: "6beeea",
+        runId: "pre-fix",
+        hypothesisId: "H3",
+        location: "cultivationApi.ts:loadCultivationBatches:output",
+        message: "Mapped cultivation rows after merge/dedupe/filter",
+        data: {
+          mappedCount: mapped.length,
+          activeCount: mapped.filter((b: any) => b?.status !== "Complete").length,
+          completeCount: mapped.filter((b: any) => b?.status === "Complete").length,
+          mappedSample: mapped.slice(0, 8).map((b: any) => ({
+            id: String(b?.id || ""),
+            dbId: String(b?.dbId || ""),
+            status: String(b?.status || ""),
+            stage: String(b?.stage || ""),
+            plants: Number(b?.plants || 0)
+          }))
+        },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
     store.cultivationBatches = mapped.filter((b: any) => b.status !== "Complete");
     store.completedCultivationBatches = mapped.filter((b: any) => b.status === "Complete");
     return mapped;
