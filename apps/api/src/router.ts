@@ -12,6 +12,7 @@ import { dashboardRouter } from "./modules/dashboard/routes.js";
 import { dataHubRouter } from "./modules/dataHub/routes.js";
 import { activityRouter } from "./modules/activity/routes.js";
 import { storeRouter } from "./modules/store/routes.js";
+import { checksRouter } from "./modules/checks/routes.js";
 
 export const appRouter = Router();
 
@@ -29,3 +30,4 @@ appRouter.use("/dashboard", dashboardRouter);
 appRouter.use("/data-hub", dataHubRouter);
 appRouter.use("/activity", activityRouter);
 appRouter.use("/store", storeRouter);
+appRouter.use("/checks", checksRouter);

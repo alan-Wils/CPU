@@ -135,6 +135,31 @@ export const cultivationUpdateSchema = z.object({
   complete: z.boolean().optional()
 });
 
+export const checkUploadSchema = z.object({
+  fileName: z.string().min(1).max(200).optional(),
+  mimeType: z.enum(["image/jpeg", "image/jpg", "image/png", "image/webp"]),
+  dataBase64: z.string().min(20).max(20_000_000)
+});
+
+export const checkExtractSchema = z.object({
+  imageUrl: z.string().url().optional(),
+  dataBase64: z.string().min(20).max(20_000_000).optional(),
+  mimeType: z.enum(["image/jpeg", "image/jpg", "image/png", "image/webp"]).optional()
+});
+
+export const checkSaveSchema = z.object({
+  checkDate: z.coerce.date().optional(),
+  amount: z.number().nonnegative().max(10_000_000).optional(),
+  checkNumber: z.string().max(50).optional(),
+  payerName: z.string().max(200).optional(),
+  routingNumber: z.string().max(32).optional(),
+  accountNumber: z.string().max(32).optional(),
+  bankName: z.string().max(200).optional(),
+  memo: z.string().max(500).optional(),
+  imageUrl: z.string().url(),
+  rawOcrJson: z.unknown().optional()
+});
+
 export const sourcePackageCreateSchema = z.object({
   cultivationBatchId: z.string().cuid(),
   role: z.enum(["A_GRADE_FLOWER", "POPCORN", "DRY_TRIM", "FRESH_FROZEN"]),

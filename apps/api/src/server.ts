@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import path from "path";
 import { env } from "./config/env.js";
 import { parseCorsOrigin } from "./config/cors.js";
 import { appRouter } from "./router.js";
@@ -12,7 +13,8 @@ const app = express();
 
 app.use(helmet());
 app.use(cors({ origin: parseCorsOrigin(env.CORS_ORIGIN) }));
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "15mb" }));
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 /** Liveness: process is up; does not hit the database. */
 app.get("/health/live", (_req, res) => {

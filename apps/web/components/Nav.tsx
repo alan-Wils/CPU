@@ -136,6 +136,13 @@ export default function Nav() {
           </Link>
 
           <Link
+            href="/check-capture"
+            style={navButtonStyle(pathname === "/check-capture")}
+          >
+            Check Capture
+          </Link>
+
+          <Link
             href="/config"
             style={navButtonStyle(pathname === "/config")}
           >

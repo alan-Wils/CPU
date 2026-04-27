@@ -25,7 +25,9 @@ const envSchema = z
     SMTP_FROM: z.preprocess(
       (v) => (v === "" || v === null || v === undefined ? undefined : v),
       z.string().email().optional()
-    )
+    ),
+    OCR_SPACE_API_KEY: z.string().optional(),
+    CHECK_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(8 * 1024 * 1024)
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV !== "production") return;

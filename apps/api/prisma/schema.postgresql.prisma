@@ -92,6 +92,7 @@ model Company {
   freshFrozenAllocs   FreshFrozenAllocation[]
   extractionBiomass   ExtractionBiomassInput[]
   storeSnapshots      CompanyStore[]
+  checkCaptures       CheckCapture[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -110,6 +111,7 @@ model User {
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
   passwordResetTokens PasswordResetToken[]
+  checkCaptures       CheckCapture[]       @relation("CheckCaptureCreatedBy")
 
   @@index([companyId])
 }
@@ -401,6 +403,29 @@ model CompanyStore {
   updatedAt  DateTime @updatedAt
 
   @@unique([companyId, key])
+}
+
+model CheckCapture {
+  id              String   @id @default(cuid())
+  companyId       String
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdByUserId String
+  createdByUser   User     @relation("CheckCaptureCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  checkDate       DateTime?
+  amount          Float?
+  checkNumber     String?
+  payerName       String?
+  routingNumber   String?
+  accountNumber   String?
+  bankName        String?
+  memo            String?
+  imageUrl        String
+  rawOcrJson      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([companyId, createdAt])
+  @@index([createdByUserId, createdAt])
 }
 
 model InviteToken {
