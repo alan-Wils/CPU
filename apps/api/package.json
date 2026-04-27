@@ -23,7 +23,7 @@
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@cpu/shared": "0.1.0",
+    "@cpu/shared": "file:../../packages/shared",
     "@prisma/client": "6.16.2",
     "prisma": "6.16.2",
     "bcryptjs": "latest",
