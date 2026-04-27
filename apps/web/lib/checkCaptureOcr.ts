@@ -34,6 +34,44 @@ const MONTH_MAP: Record<string, string> = {
   december: "12"
 };
 
+/**
+ * Pull the most likely printed check amount. OCR often emits a tiny false positive
+ * (e.g. "1.00") before the real total (e.g. "$1,000.00"), so we scan all candidates and
+ * prefer the largest plausible value.
+ */
+function extractPrimaryCheckAmount(raw: string): number | undefined {
+  const text = String(raw || "").replace(/\r/g, "");
+  const candidates: number[] = [];
+
+  const pushAmount = (intPart: string, cents: string) => {
+    const left = String(intPart || "").replace(/,/g, "");
+    if (!/^\d+$/.test(left)) return;
+    if (!/^\d{2}$/.test(cents)) return;
+    const n = Number(`${left}.${cents}`);
+    if (!Number.isFinite(n) || n < 0.01 || n > 99_000_000) return;
+    candidates.push(n);
+  };
+
+  const dollarRe = /\$\s*([\d,]+)\.(\d{2})\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = dollarRe.exec(text)) !== null) {
+    pushAmount(m[1], m[2]);
+  }
+
+  const commaGroupRe = /\b([\d]{1,3}(?:,[\d]{3})+)\.(\d{2})\b/g;
+  while ((m = commaGroupRe.exec(text)) !== null) {
+    pushAmount(m[1], m[2]);
+  }
+
+  const wideIntRe = /\b(\d{4,})\.(\d{2})\b/g;
+  while ((m = wideIntRe.exec(text)) !== null) {
+    pushAmount(m[1], m[2]);
+  }
+
+  if (!candidates.length) return undefined;
+  return Math.max(...candidates);
+}
+
 /** Heuristic parser for OCR text from personal / business checks (US-style). */
 export function parseCheckTextFromOcr(text: string): ParsedCheckFields {
   const raw = String(text || "").replace(/\r/g, "");
@@ -42,13 +80,7 @@ export function parseCheckTextFromOcr(text: string): ParsedCheckFields {
     .map((line) => line.trim())
     .filter(Boolean);
 
-  let amount: number | undefined;
-  const amtDollar = raw.match(/\$\s*([0-9]{1,3}(?:,[0-9]{3})*\.\d{2})\b/);
-  if (amtDollar) amount = Number(amtDollar[1].replace(/,/g, ""));
-  if (amount === undefined) {
-    const amtPlain = raw.match(/\b([0-9]{1,3}(?:,[0-9]{3})*\.\d{2})\b/);
-    if (amtPlain) amount = Number(amtPlain[1].replace(/,/g, ""));
-  }
+  const amount = extractPrimaryCheckAmount(raw);
 
   let payerName: string | undefined;
   const payeeBlock = raw.match(/PAY\s+TO\s+THE\s+ORDER\s+OF\s*\n?\s*(.+?)(?:\n{2,}|$)/is);
@@ -153,8 +185,14 @@ function blobToPngWithRotation(file: File, degrees: number, upscale = 1): Promis
       try {
         const rad = (degrees * Math.PI) / 180;
         const swap = degrees % 180 !== 0;
-        const w = (swap ? img.naturalHeight : img.naturalWidth) * upscale;
-        const h = (swap ? img.naturalWidth : img.naturalHeight) * upscale;
+        const nw = Math.max(2, img.naturalWidth || 2);
+        const nh = Math.max(2, img.naturalHeight || 2);
+        const baseW = (swap ? nh : nw) * upscale;
+        const baseH = (swap ? nw : nh) * upscale;
+        const MIN_DIM = 320;
+        const pad = Math.max(1, MIN_DIM / baseW, MIN_DIM / baseH);
+        const w = Math.round(baseW * pad);
+        const h = Math.round(baseH * pad);
         const canvas = document.createElement("canvas");
         canvas.width = w;
         canvas.height = h;
@@ -168,13 +206,9 @@ function blobToPngWithRotation(file: File, degrees: number, upscale = 1): Promis
         ctx.rotate(rad);
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(
-          img,
-          -((img.naturalWidth * upscale) / 2),
-          -((img.naturalHeight * upscale) / 2),
-          img.naturalWidth * upscale,
-          img.naturalHeight * upscale
-        );
+        const drawW = nw * upscale * pad;
+        const drawH = nh * upscale * pad;
+        ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
         URL.revokeObjectURL(url);
         canvas.toBlob(
           (blob) => {

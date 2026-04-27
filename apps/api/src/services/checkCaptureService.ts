@@ -57,6 +57,40 @@ const MONTH_MAP: Record<string, string> = {
   december: "12"
 };
 
+/** Prefer largest plausible amount; OCR often emits a small false positive before the real total. */
+function extractPrimaryCheckAmount(raw: string): number | undefined {
+  const text = String(raw || "").replace(/\r/g, "");
+  const candidates: number[] = [];
+
+  const pushAmount = (intPart: string, cents: string) => {
+    const left = String(intPart || "").replace(/,/g, "");
+    if (!/^\d+$/.test(left)) return;
+    if (!/^\d{2}$/.test(cents)) return;
+    const n = Number(`${left}.${cents}`);
+    if (!Number.isFinite(n) || n < 0.01 || n > 99_000_000) return;
+    candidates.push(n);
+  };
+
+  const dollarRe = /\$\s*([\d,]+)\.(\d{2})\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = dollarRe.exec(text)) !== null) {
+    pushAmount(m[1], m[2]);
+  }
+
+  const commaGroupRe = /\b([\d]{1,3}(?:,[\d]{3})+)\.(\d{2})\b/g;
+  while ((m = commaGroupRe.exec(text)) !== null) {
+    pushAmount(m[1], m[2]);
+  }
+
+  const wideIntRe = /\b(\d{4,})\.(\d{2})\b/g;
+  while ((m = wideIntRe.exec(text)) !== null) {
+    pushAmount(m[1], m[2]);
+  }
+
+  if (!candidates.length) return undefined;
+  return Math.max(...candidates);
+}
+
 function parseCheckText(text: string) {
   const raw = String(text || "").replace(/\r/g, "");
   const lines = raw
@@ -64,13 +98,7 @@ function parseCheckText(text: string) {
     .map((line) => line.trim())
     .filter(Boolean);
 
-  let amount: number | undefined;
-  const amtDollar = raw.match(/\$\s*([0-9]{1,3}(?:,[0-9]{3})*\.\d{2})\b/);
-  if (amtDollar) amount = Number(amtDollar[1].replace(/,/g, ""));
-  if (amount === undefined) {
-    const amtPlain = raw.match(/\b([0-9]{1,3}(?:,[0-9]{3})*\.\d{2})\b/);
-    if (amtPlain) amount = Number(amtPlain[1].replace(/,/g, ""));
-  }
+  const amount = extractPrimaryCheckAmount(raw);
 
   let payerName: string | undefined;
   const payeeBlock = raw.match(/PAY\s+TO\s+THE\s+ORDER\s+OF\s*\n?\s*(.+?)(?:\n{2,}|$)/is);
