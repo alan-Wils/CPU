@@ -18,6 +18,10 @@ function batchIdFromServerRow(row: any) {
 function mapServerTaskLogToUiRow(row: any) {
   const note = String(row?.note || "");
   const batchKey = batchIdFromServerRow(row);
+  const fallbackUser =
+    String(row?.actorUserId || "").trim().length > 0
+      ? { username: String(row.actorUserId).slice(0, 8), role: "" }
+      : { username: "Server log", role: "" };
   return {
     id: row.id,
     fromServer: true,
@@ -28,7 +32,7 @@ function mapServerTaskLogToUiRow(row: any) {
     minutes: row.minutes,
     time: row.createdAt ? new Date(row.createdAt).toLocaleString() : "",
     loggedAtIso: row.createdAt,
-    loggedBy: { username: "Server log", role: "" },
+    loggedBy: row.loggedBy || fallbackUser,
   };
 }
 
