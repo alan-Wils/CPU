@@ -31,7 +31,9 @@ checksRouter.get(
     if (!companyId) {
       throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
     }
-    const take = Number((req.query as { take?: number })?.take || 50);
+    const rawTake = (req.query as { take?: unknown }).take;
+    const coerced = rawTake === undefined || rawTake === "" ? 50 : Number(rawTake);
+    const take = Number.isFinite(coerced) ? coerced : 50;
     const rows = await service.listChecks(companyId, take);
     res.json({ rows });
   })

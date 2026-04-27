@@ -4,6 +4,7 @@ import path from "path";
 import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
 import { AppError } from "../errors/AppError.js";
+import { logError } from "../lib/logger.js";
 
 type UploadInput = {
   companyId: string;
@@ -301,27 +302,35 @@ export class CheckCaptureService {
   }
 
   async listChecks(companyId: string, take = 50) {
-    return prisma.checkCapture.findMany({
-      where: { companyId },
-      orderBy: { createdAt: "desc" },
-      take: Math.min(Math.max(take, 1), 200),
-      // Omit rawOcrJson: can be huge and is not needed for the recent-records list.
-      select: {
-        id: true,
-        companyId: true,
-        createdByUserId: true,
-        checkDate: true,
-        amount: true,
-        checkNumber: true,
-        payerName: true,
-        routingNumber: true,
-        accountNumber: true,
-        bankName: true,
-        memo: true,
-        imageUrl: true,
-        createdAt: true,
-        updatedAt: true
-      }
-    });
+    const safeTake = Number.isFinite(take) ? Math.min(200, Math.max(1, Math.floor(Number(take)))) : 50;
+    try {
+      return await prisma.checkCapture.findMany({
+        where: { companyId },
+        orderBy: { createdAt: "desc" },
+        take: safeTake,
+        // List view only: skip rawOcrJson (large) and skip company-scoped columns the UI does not use.
+        select: {
+          id: true,
+          checkDate: true,
+          amount: true,
+          checkNumber: true,
+          payerName: true,
+          routingNumber: true,
+          accountNumber: true,
+          bankName: true,
+          memo: true,
+          imageUrl: true,
+          createdAt: true
+        }
+      });
+    } catch (err) {
+      logError("check_capture_list_failed", {
+        companyId,
+        take: safeTake,
+        name: err instanceof Error ? err.name : "unknown",
+        message: err instanceof Error ? err.message : String(err)
+      });
+      throw err;
+    }
   }
 }
