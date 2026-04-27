@@ -28,7 +28,7 @@ export class WorkflowService {
   async updateCultivation(
     companyId: string,
     actorUserId: string,
-    body: { batchId: string; room?: string; bay?: string; table?: string; plantedAt?: Date }
+    body: { batchId: string; room?: string; bay?: string; table?: string; plantedAt?: Date; complete?: boolean }
   ) {
     return operational.updateCultivationBatch({ companyId, actorUserId, ...body });
   }

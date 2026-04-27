@@ -67,7 +67,8 @@ workflowRouter.patch(
       room: req.body.room,
       bay: req.body.bay,
       table: req.body.table,
-      plantedAt: req.body.plantedAt
+      plantedAt: req.body.plantedAt,
+      complete: req.body.complete
     });
     res.json(updated);
   })

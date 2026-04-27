@@ -1147,6 +1147,11 @@ export default function Cultivation() {
       s.completedCultivationBatches.unshift(batch);
     }
     markCultivationBatchCompletedLocal(batch);
+    updateCultivationBatch(batch.id, { complete: true, status: "Complete", stage: "Complete" }).catch(
+      (error) => {
+        console.error("Could not persist batch completion:", error);
+      }
+    );
 
     s.logs.unshift(withLoggedBy({
       area: "Cultivation",

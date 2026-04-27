@@ -780,6 +780,7 @@ export class OperationalWorkflowService {
     bay?: string;
     table?: string;
     plantedAt?: Date;
+    complete?: boolean;
   }) {
     const batch = await prisma.cultivationBatch.findFirst({ where: { companyId: input.companyId, id: input.batchId } });
     if (!batch) throw new AppError("Cultivation batch not found", 404);
@@ -789,7 +790,9 @@ export class OperationalWorkflowService {
         room: input.room ?? batch.room,
         bay: input.bay ?? batch.bay,
         table: input.table ?? batch.table,
-        plantedAt: input.plantedAt ?? batch.plantedAt
+        plantedAt: input.plantedAt ?? batch.plantedAt,
+        autoStatus: input.complete ? "AUTO_COMPLETED" : batch.autoStatus,
+        autoCompletedAt: input.complete ? new Date() : batch.autoCompletedAt
       }
     });
     await this.audit.logAction({
@@ -798,7 +801,13 @@ export class OperationalWorkflowService {
       action: "cultivation.batch.update",
       entityType: "CultivationBatch",
       entityId: updated.id,
-      after: { room: updated.room, bay: updated.bay, table: updated.table }
+      after: {
+        room: updated.room,
+        bay: updated.bay,
+        table: updated.table,
+        autoStatus: updated.autoStatus,
+        autoCompletedAt: updated.autoCompletedAt
+      }
     });
     return updated;
   }

@@ -2,52 +2,13 @@ import { apiDelete, apiGet, apiPost, apiRequest } from "./api";
 import { store } from "./store";
 import type { CultivationBatch } from "./store";
 
-const COMPLETED_OVERRIDE_KEY = "cpuCompletedCultivationOverrides";
-
 function normalizeId(value: any) {
   return String(value || "").trim().toUpperCase();
 }
 
-function readCompletedOverrides(): Record<string, { completedAt?: string }> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(COMPLETED_OVERRIDE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeCompletedOverrides(next: Record<string, { completedAt?: string }>) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(COMPLETED_OVERRIDE_KEY, JSON.stringify(next));
-  } catch {
-    // ignore
-  }
-}
-
-function completionKeysForBatch(batch: any): string[] {
-  return [normalizeId(batch?.id), normalizeId(batch?.dbId)].filter(Boolean);
-}
-
-function completionKeysForBackendRow(row: any): string[] {
-  const displayId =
-    row?.strainAcronym && row?.batchChainCode
-      ? `${String(row.strainAcronym).toUpperCase()}.${row.batchChainCode}`
-      : row?.id;
-  return [normalizeId(displayId), normalizeId(row?.id)].filter(Boolean);
-}
-
 export function markCultivationBatchCompletedLocal(batch: any) {
-  const now = String(batch?.completedAt || new Date().toLocaleString());
-  const current = readCompletedOverrides();
-  for (const key of completionKeysForBatch(batch)) {
-    current[key] = { completedAt: now };
-  }
-  writeCompletedOverrides(current);
+  // Completion is now persisted to backend, so local-only overrides are disabled.
+  return batch;
 }
 
 function isValidCultivationBatch(batch: any) {
@@ -76,7 +37,6 @@ function uniqueByNormalizedId(rows: any[]) {
 }
 
 function allBatches() {
-  // Prefer completed rows first so local completion state wins on dedupe.
   const merged = [...(store.completedCultivationBatches || []), ...(store.cultivationBatches || [])];
   return uniqueByNormalizedId(merged.filter(isValidCultivationBatch));
 }
@@ -135,49 +95,27 @@ export async function loadCultivationBatches() {
     const active = await apiGet<any>("/workflow/active", localStorage.getItem("token"));
     const rows = Array.isArray(active?.cultivation) ? active.cultivation : [];
     const existing = allBatches();
-    const completedOverrides = readCompletedOverrides();
     const mapped = uniqueByNormalizedId(
       rows
         .map((row: any) => {
           const base = toUiBatch(row);
           const prior = findExistingForDbRow(row, existing);
-          const hasCompletionOverride = completionKeysForBackendRow(row).some(
-            (key) => Boolean(completedOverrides[key])
-          );
-          const forceComplete =
-            hasCompletionOverride ||
-            String(prior?.status || "").toLowerCase() === "complete" ||
-            String(prior?.stage || "").toLowerCase() === "complete";
-          const baseOrCompleted = forceComplete
-            ? {
-                ...base,
-                stage: "Complete",
-                status: "Complete",
-                completedAt:
-                  prior?.completedAt ||
-                  completionKeysForBackendRow(row).map((k) => completedOverrides[k]?.completedAt).find(Boolean) ||
-                  ""
-              }
-            : base;
-          if (!prior) return baseOrCompleted;
+          if (!prior) return base;
           // Keep workflow-progress fields from current UI state so backend sync
           // does not reset clone/veg/flower task progress during polling.
           const mergedRow: CultivationBatch = {
-            ...baseOrCompleted,
-            stage: forceComplete ? "Complete" : prior.stage ?? baseOrCompleted.stage,
-            status: forceComplete ? "Complete" : prior.status ?? baseOrCompleted.status,
-            plants: Number.isFinite(Number(prior.plants)) ? Number(prior.plants) : baseOrCompleted.plants,
+            ...base,
+            stage: base.stage,
+            status: base.status,
+            plants: Number.isFinite(Number(prior.plants)) ? Number(prior.plants) : base.plants,
             originalPlants: Number.isFinite(Number(prior.originalPlants))
               ? Number(prior.originalPlants)
-              : baseOrCompleted.originalPlants,
-            flowerRoom: prior.flowerRoom ?? baseOrCompleted.room,
-            flowerBay: prior.flowerBay ?? baseOrCompleted.bay,
-            flowerTable: prior.flowerTable ?? baseOrCompleted.table,
+              : base.originalPlants,
+            flowerRoom: prior.flowerRoom ?? base.room,
+            flowerBay: prior.flowerBay ?? base.bay,
+            flowerTable: prior.flowerTable ?? base.table,
             flowerTables: Array.isArray(prior.flowerTables) ? prior.flowerTables : prior.flowerTables ?? [],
-            completedAt:
-              prior?.completedAt ||
-              completionKeysForBackendRow(row).map((k) => completedOverrides[k]?.completedAt).find(Boolean) ||
-              (baseOrCompleted as any).completedAt,
+            completedAt: base.status === "Complete" ? prior?.completedAt || "" : undefined,
             metrcSourceMotherPlantTag: String(prior?.metrcSourceMotherPlantTag || "").trim() || undefined,
             metrcFirstPlantTag: String(prior?.metrcFirstPlantTag || "").trim() || undefined,
             metrcPlantTags: Array.isArray(prior?.metrcPlantTags) ? prior.metrcPlantTags : [],
@@ -257,12 +195,18 @@ export async function updateCultivationBatch(batchId: string, patch: any) {
         table:
           patch?.table ??
           patch?.flowerTable ??
-          (Array.isArray(patch?.flowerTables) ? patch.flowerTables.join(",") : undefined)
+          (Array.isArray(patch?.flowerTables) ? patch.flowerTables.join(",") : undefined),
+        complete: patch?.complete === true ? true : undefined
       },
       token: localStorage.getItem("token")
     }
   );
-  const merge = (rows: any[]) => rows.map((row) => (row?.id === batchId ? { ...row, ...patch } : row));
+  const merge = (rows: any[]) =>
+    rows.map((row) =>
+      normalizeId(row?.id) === normalizeId(batchId) || normalizeId(row?.dbId) === normalizeId(dbId)
+        ? { ...row, ...patch }
+        : row
+    );
   store.cultivationBatches = merge(store.cultivationBatches || []);
   store.completedCultivationBatches = merge(store.completedCultivationBatches || []);
   store.save?.();

@@ -131,7 +131,8 @@ export const cultivationUpdateSchema = z.object({
   room: z.string().max(50).optional(),
   bay: z.string().max(50).optional(),
   table: z.string().max(50).optional(),
-  plantedAt: z.coerce.date().optional()
+  plantedAt: z.coerce.date().optional(),
+  complete: z.boolean().optional()
 });
 
 export const sourcePackageCreateSchema = z.object({
