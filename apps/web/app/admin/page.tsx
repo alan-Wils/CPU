@@ -77,6 +77,7 @@ function getDisplayStatus(user: AdminUser) {
 }
 
 export default function AdminPage() {
+  const [viewportWidth, setViewportWidth] = useState(1280);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [company, setCompany] = useState<any>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -180,6 +181,13 @@ export default function AdminPage() {
     setCurrentUser(getAuthUser());
     setCompany(getAuthCompany());
     loadAdminData();
+  }, []);
+
+  useEffect(() => {
+    const syncViewport = () => setViewportWidth(window.innerWidth);
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+    return () => window.removeEventListener("resize", syncViewport);
   }, []);
 
   async function handleCompanySwitch(companyId: string) {
@@ -606,6 +614,8 @@ export default function AdminPage() {
   }
 
   const allowedRoleOptions = getAllowedRoleOptions(currentUser?.role || "");
+  const isTabletOrLess = viewportWidth < 1024;
+  const isMobile = viewportWidth < 640;
 
   return (
     <PageAccessGate allowedRoles={["ADMIN", "OWNER"]}>
@@ -615,7 +625,7 @@ export default function AdminPage() {
           background:
             "radial-gradient(circle at top left, rgba(168,85,247,0.18), transparent 34%), radial-gradient(circle at top right, rgba(34,197,94,0.14), transparent 34%), #020617",
           color: "white",
-          padding: 24,
+          padding: isMobile ? 12 : 24,
         }}
       >
         <div style={{ maxWidth: 1180, margin: "0 auto" }}>
@@ -624,7 +634,7 @@ export default function AdminPage() {
               background: "rgba(15, 23, 42, 0.84)",
               border: "1px solid rgba(148, 163, 184, 0.22)",
               borderRadius: 24,
-              padding: 28,
+              padding: isMobile ? 16 : 28,
               boxShadow: "0 24px 70px rgba(0,0,0,0.35)",
               marginBottom: 22,
             }}
@@ -659,7 +669,7 @@ export default function AdminPage() {
 
                 <h1
                   style={{
-                    fontSize: "clamp(34px, 5vw, 56px)",
+                    fontSize: isMobile ? "clamp(24px, 8vw, 34px)" : "clamp(34px, 5vw, 56px)",
                     lineHeight: 1,
                     margin: 0,
                     letterSpacing: "-0.05em",
@@ -673,7 +683,7 @@ export default function AdminPage() {
                   style={{
                     maxWidth: 760,
                     color: "#cbd5e1",
-                    fontSize: 18,
+                    fontSize: isMobile ? 15 : 18,
                     lineHeight: 1.6,
                     marginTop: 16,
                     marginBottom: 0,
@@ -686,7 +696,7 @@ export default function AdminPage() {
 
               <div
                 style={{
-                  minWidth: 240,
+                  minWidth: isMobile ? "100%" : 240,
                   background: "rgba(2, 6, 23, 0.74)",
                   border: "1px solid rgba(148, 163, 184, 0.18)",
                   borderRadius: 18,
@@ -780,7 +790,7 @@ export default function AdminPage() {
               <section
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "minmax(280px, 420px) 1fr",
+                  gridTemplateColumns: isTabletOrLess ? "1fr" : "minmax(280px, 420px) 1fr",
                   gap: 18,
                   alignItems: "start",
                 }}
@@ -1131,9 +1141,9 @@ export default function AdminPage() {
                   <div
                     style={{
                       display: "flex",
-                      justifyContent: "space-between",
+                      justifyContent: isMobile ? "flex-start" : "space-between",
                       gap: 12,
-                      alignItems: "center",
+                      alignItems: isMobile ? "flex-start" : "center",
                       marginBottom: 16,
                       flexWrap: "wrap",
                     }}
@@ -1156,7 +1166,7 @@ export default function AdminPage() {
                           background: "rgba(37, 99, 235, 0.16)",
                           color: "#bfdbfe",
                           borderRadius: 12,
-                          padding: "10px 14px",
+                          padding: isMobile ? "9px 12px" : "10px 14px",
                           fontWeight: 800,
                           display: "inline-block",
                         }}
@@ -1172,7 +1182,7 @@ export default function AdminPage() {
                           background: "rgba(2, 6, 23, 0.72)",
                           color: "#cbd5e1",
                           borderRadius: 12,
-                          padding: "10px 13px",
+                          padding: isMobile ? "9px 12px" : "10px 13px",
                           fontWeight: 800,
                           cursor: "pointer",
                         }}
