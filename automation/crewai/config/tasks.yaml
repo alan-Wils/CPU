@@ -1,0 +1,32 @@
+tasks:
+  define_scope:
+    description: >
+      Normalize requirements into epics for multi-company auth, RBAC, workflow,
+      labor tracking, CPU analytics, audit logs, and cloud readiness.
+    expected_output: Prioritized backlog with acceptance criteria.
+
+  design_workflow:
+    description: >
+      Design cultivation, extraction, and packaging workflows with stage transitions,
+      validation rules, and traceability fields.
+    expected_output: Workflow blueprint and entity lifecycle rules.
+
+  design_financial_model:
+    description: >
+      Define labor cost model and CPU formulas for per-gram and per-unit calculations.
+    expected_output: Formula definitions and KPI specification.
+
+  design_data_platform:
+    description: >
+      Produce Prisma tenant-safe schema guidance and SQLite to PostgreSQL migration path.
+    expected_output: Data architecture decision record and migration checklist.
+
+  implementation_breakdown:
+    description: >
+      Convert architecture into executable backend/frontend tasks and milestones.
+    expected_output: Engineering implementation plan by phase.
+
+  quality_gate:
+    description: >
+      Create test strategy for RBAC, multi-tenancy, workflow, and audit trail reliability.
+    expected_output: QA matrix and release readiness checklist.

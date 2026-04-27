@@ -1,0 +1,431 @@
+// Local dev: SQLite. Use `npm run prisma:push` (not `prisma migrate`) for this schema.
+// Staging/prod: see `prisma/schema.postgresql.prisma` + `prisma/migrations` + `prisma:migrate:deploy`.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  OPERATIONS_MANAGER
+  CULTIVATION_SPECIALIST
+  EXTRACTION_SPECIALIST
+  PACKAGING_SPECIALIST
+  FINANCIAL_ANALYST
+  DATABASE_ARCHITECT
+  FULL_STACK_DEVELOPER
+  QA_TESTER
+  VIEW_ONLY
+}
+
+enum WorkflowStage {
+  CULTIVATION
+  EXTRACTION
+  PACKAGING
+}
+
+enum CultivationAutoStatus {
+  OPEN
+  AUTO_COMPLETED
+}
+
+enum SourceMaterialRole {
+  A_GRADE_FLOWER
+  POPCORN
+  DRY_TRIM
+  FRESH_FROZEN
+}
+
+enum ExtractionSourceType {
+  DRY_TRIM
+  FRESH_FROZEN
+}
+
+enum ExtractionProductCategory {
+  CURED_WAX
+  LIVE
+}
+
+enum ExtractionPhase {
+  PENDING_BIOMASS_PREP
+  BIOMASS_PREP_ACTIVE
+  READY_FOR_PROCESSING
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum PackagingRunStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum CultivationPackagingLine {
+  A_GRADE_FLOWER
+  POPCORN
+}
+
+model Company {
+  id                String @id @default(cuid())
+  name              String
+  slug              String @unique
+  nextChainSequence Int    @default(1)
+
+  users        User[]
+  configRows   CompanyConfig[]
+  inviteTokens InviteToken[]
+
+  cultivationBatches  CultivationBatch[]
+  sourceChains        SourceChain[]
+  extractionRuns      ExtractionRun[]
+  packagingLots       PackagingLot[]
+  cultivationPacks    CultivationPackagingRun[]
+  laborEntries        LaborEntry[]
+  cpuSnapshots        CpuSnapshot[]
+  auditLogs           AuditLog[]
+  taskLogs            TaskLog[]
+  trimFlowStates      TrimFlowState[]
+  freshFrozenAllocs   FreshFrozenAllocation[]
+  extractionBiomass   ExtractionBiomassInput[]
+  storeSnapshots      CompanyStore[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id           String  @id @default(cuid())
+  companyId    String
+  company      Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  email        String  @unique
+  passwordHash String
+  role         UserRole
+  isActive     Boolean @default(true)
+
+  laborEntries        LaborEntry[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  passwordResetTokens PasswordResetToken[]
+
+  @@index([companyId])
+}
+
+model SourceChain {
+  id                 String           @id @default(cuid())
+  companyId          String
+  company            Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  cultivationBatchId String           @unique
+  cultivationBatch   CultivationBatch @relation(fields: [cultivationBatchId], references: [id], onDelete: Cascade)
+  chainKey           String
+  sourcePackages     SourcePackage[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, chainKey])
+  @@index([companyId])
+}
+
+model SourcePackage {
+  id            String             @id @default(cuid())
+  sourceChainId String
+  sourceChain   SourceChain        @relation(fields: [sourceChainId], references: [id], onDelete: Cascade)
+  role          SourceMaterialRole
+  canonicalName String
+
+  createdAt DateTime @default(now())
+
+  @@unique([sourceChainId, role])
+  @@index([sourceChainId])
+}
+
+model TrimFlowState {
+  id                 String   @id @default(cuid())
+  companyId          String
+  company            Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  cultivationBatchId String   @unique
+  batch              CultivationBatch @relation(fields: [cultivationBatchId], references: [id], onDelete: Cascade)
+  toExtractionGrams  Float    @default(0)
+  consumedGrams      Float    @default(0)
+
+  updatedAt DateTime @updatedAt
+}
+
+model FreshFrozenAllocation {
+  id                 String   @id @default(cuid())
+  companyId          String
+  company            Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  cultivationBatchId String   @unique
+  batch              CultivationBatch @relation(fields: [cultivationBatchId], references: [id], onDelete: Cascade)
+  toExtractionGrams  Float   @default(0)
+  lastExtractionRunId String?
+
+  updatedAt DateTime @updatedAt
+}
+
+model CultivationBatch {
+  id    String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  strain     String
+  strainAcronym String
+  batchChainCode String
+  plantedAt  DateTime
+
+  /// Legacy: equals total harvest; maintained on create for Data Hub
+  expectedYieldGrams Float
+
+  aGradeFlowerGrams Float
+  popcornGrams     Float
+  trimGrams        Float
+  freshFrozenGrams Float
+
+  autoStatus      CultivationAutoStatus @default(OPEN)
+  autoCompletedAt DateTime?
+
+  room  String?
+  bay   String?
+  table String?
+
+  sourceChain        SourceChain?
+  extractionBiomass  ExtractionBiomassInput[] @relation("BiomassFromCultivation")
+  extractionRuns     ExtractionRun[] @relation("CultivationExtraction")
+  cultPackagingRuns  CultivationPackagingRun[]
+
+  trimState      TrimFlowState?
+  freshFrozen    FreshFrozenAllocation?
+
+  createdAt DateTime @default(now())
+
+  @@index([companyId])
+  @@index([autoStatus])
+}
+
+model CultivationPackagingRun {
+  id    String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  cultivationBatchId String
+  batch              CultivationBatch @relation(fields: [cultivationBatchId], references: [id], onDelete: Restrict)
+
+  line   CultivationPackagingLine
+  status PackagingRunStatus @default(IN_PROGRESS)
+
+  terpeneGramsCumulative       Float   @default(0)
+  netMaterialGramsInProgress  Float   @default(0)
+  netMaterialGramsCompleted   Float   @default(0)
+
+  sessions PackagingWeighSession[]
+
+  createdAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@index([companyId, cultivationBatchId, line, status])
+}
+
+model PackagingWeighSession {
+  id     String  @id @default(cuid())
+  packagingRunId String
+  run            CultivationPackagingRun @relation(fields: [packagingRunId], references: [id], onDelete: Cascade)
+  netProductGrams Float
+  terpeneGrams    Float @default(0)
+  note   String?
+  createdAt DateTime @default(now())
+
+  @@index([packagingRunId, createdAt])
+}
+
+model ExtractionRun {
+  id    String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  cultivationBatchId String
+  cultivationBatch   CultivationBatch @relation("CultivationExtraction", fields: [cultivationBatchId], references: [id], onDelete: Restrict)
+
+  phase ExtractionPhase @default(PENDING_BIOMASS_PREP)
+
+  productCategory ExtractionProductCategory?
+
+  biomassPrepStartedAt   DateTime?
+  socksStartAt            DateTime?
+  socksEndAt                DateTime?
+  biomassPrepDurationSeconds Int?
+
+  method      String @default("")
+  inputGrams  Float  @default(0)
+  outputGrams Float  @default(0)
+  supplyUsed  String?
+
+  biomassLines ExtractionBiomassInput[] @relation("RunBiomass")
+  packagingLots PackagingLot[]
+
+  createdAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@index([companyId, phase])
+  @@index([cultivationBatchId])
+}
+
+model ExtractionBiomassInput {
+  id    String  @id @default(cuid())
+  extractionRunId String
+  run               ExtractionRun @relation("RunBiomass", fields: [extractionRunId], references: [id], onDelete: Cascade)
+  companyId    String
+  company      Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  cultivationBatchId String
+  cultivationBatch  CultivationBatch @relation("BiomassFromCultivation", fields: [cultivationBatchId], references: [id], onDelete: Restrict)
+  sourceType  ExtractionSourceType
+  grams       Float
+  sockWeightGrams Float?
+
+  createdAt DateTime @default(now())
+
+  @@index([extractionRunId, cultivationBatchId])
+  @@index([companyId])
+}
+
+model PackagingLot {
+  id    String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  extractionRunId String
+  extractionRun   ExtractionRun @relation(fields: [extractionRunId], references: [id], onDelete: Restrict)
+
+  status PackagingRunStatus @default(IN_PROGRESS)
+  /// Net material only (terpenes excluded from weight caps)
+  netOutputGrams Float      @default(0)
+  terpeneGrams   Float      @default(0)
+
+  sku            String
+  units          Int   @default(0)
+  gramsPerUnit   Float
+  defaultTemplate String?
+
+  createdAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@index([companyId])
+  @@index([extractionRunId])
+  @@index([status])
+}
+
+model LaborEntry {
+  id          String        @id @default(cuid())
+  companyId   String
+  company     Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  stage       WorkflowStage
+  taskType    String @default("OPERATIONAL")
+  hours       Float
+  hourlyRate  Float
+  totalCost   Float
+  referenceId String?
+  cultivationBatchId String?
+
+  createdAt  DateTime      @default(now())
+
+  @@index([companyId])
+  @@index([userId])
+  @@index([cultivationBatchId])
+}
+
+model CpuSnapshot {
+  id           String   @id @default(cuid())
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  period       String
+  totalLabor   Float
+  totalOutputG Float
+  cpuPerGram   Float
+  createdAt    DateTime @default(now())
+
+  @@index([companyId, period])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  actorUserId String
+  action      String
+  entityType  String
+  entityId    String
+  beforeJson  String?
+  afterJson   String?
+  createdAt   DateTime @default(now())
+
+  @@index([companyId, createdAt])
+}
+
+model TaskLog {
+  id          String        @id @default(cuid())
+  companyId   String
+  company     Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  actorUserId String
+  stage       WorkflowStage
+  note        String
+  minutes     Int
+  referenceId String?
+  createdAt   DateTime      @default(now())
+
+  @@index([companyId, createdAt])
+}
+
+model CompanyConfig {
+  id         String   @id @default(cuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  key        String
+  valueJson  String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([companyId, key])
+}
+
+model CompanyStore {
+  id         String   @id @default(cuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  key        String   @default("legacy_frontend_store")
+  valueJson  String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([companyId, key])
+}
+
+model InviteToken {
+  id         String   @id @default(cuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  email      String
+  role       UserRole
+  tokenHash  String
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  @@index([companyId, email])
+}
+
+model PasswordResetToken {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, expiresAt])
+}

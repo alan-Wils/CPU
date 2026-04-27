@@ -1,0 +1,14 @@
+{
+  "name": "cannabis-cpu-platform",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm --workspace @cpu/web run dev",
+    "dev:api": "npm --workspace @cpu/api run dev",
+    "build": "npm --workspace @cpu/shared run build && npm --workspace @cpu/api run build && npm --workspace @cpu/web run build"
+  }
+}

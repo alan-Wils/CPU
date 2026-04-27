@@ -1,0 +1,23 @@
+# Render Blueprint — adjust names and env values in the dashboard after first deploy.
+# Use with: render.yaml in repo root, or create services manually from this template.
+
+services:
+  - type: web
+    name: cpu-api-staging
+    runtime: node
+    rootDir: apps/api
+    buildCommand: npm install && npm run build
+    preDeployCommand: npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma
+    startCommand: node dist/server.js
+    healthCheckPath: /health/live
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "4000"
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CORS_ORIGIN
+        sync: false
