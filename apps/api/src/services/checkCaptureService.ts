@@ -123,10 +123,30 @@ function parseCheckText(text: string) {
   }
 
   const memoLine = lines.find((line) => /^memo[:\s]/i.test(line)) || "";
-  const memo = memoLine ? memoLine.replace(/^memo[:\s]*/i, "").trim() : undefined;
+  let memo = memoLine ? memoLine.replace(/^memo[:\s]*/i, "").trim() : undefined;
+  if (!memo) {
+    const memoLabelIdx = lines.findIndex((line) => /^memo[:\s]*$/i.test(line));
+    if (memoLabelIdx >= 0) {
+      memo = String(lines[memoLabelIdx + 1] || "").trim() || undefined;
+    }
+  }
+  if (!memo) {
+    memo =
+      lines.find((line) => /\b\d{3,}\s+[A-Z]{1,4}\s+\d{3,}\b/i.test(line) && line.length <= 60) || undefined;
+  }
   const bankName =
     lines.find((line) => /(bank|credit union|financial|N\.A\.|N\.A\b)/i.test(line) && line.length <= 120) ||
     undefined;
+
+  if (!payerName) {
+    payerName =
+      lines.find(
+        (line) =>
+          /(llc|inc|corp|company|healthcare|holdings|enterprises|group|services)/i.test(line) &&
+          !/(bank|credit union|financial)/i.test(line) &&
+          line.length <= 200
+      ) || undefined;
+  }
 
   return {
     checkDate,
@@ -203,6 +223,25 @@ export class CheckCaptureService {
     }
 
     const payload = (await response.json()) as any;
+    const providerErrored = Boolean(payload?.IsErroredOnProcessing);
+    const hasResults = Array.isArray(payload?.ParsedResults) && payload.ParsedResults.length > 0;
+    if (providerErrored || !hasResults) {
+      return {
+        provider: "ocr-space-no-fields",
+        parsed: {
+          checkDate: undefined,
+          amount: undefined,
+          checkNumber: undefined,
+          payerName: undefined,
+          routingNumber: undefined,
+          accountNumber: undefined,
+          bankName: undefined,
+          memo: undefined
+        },
+        raw: payload
+      };
+    }
+
     const parsedText = String(payload?.ParsedResults?.[0]?.ParsedText || "");
     const parsed = parseCheckText(parsedText);
 

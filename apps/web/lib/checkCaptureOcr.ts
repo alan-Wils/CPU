@@ -9,6 +9,14 @@ export type ParsedCheckFields = {
   memo?: string;
 };
 
+export type LocalOcrBestResult = {
+  text: string;
+  angle: number;
+  parsed: ParsedCheckFields;
+  score: number;
+  fieldsDetected: number;
+};
+
 const MONTH_NAME =
   /(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})/i;
 const MONTH_MAP: Record<string, string> = {
@@ -96,10 +104,34 @@ export function parseCheckTextFromOcr(text: string): ParsedCheckFields {
   }
 
   const memoLine = lines.find((line) => /^memo[:\s]/i.test(line)) || "";
-  const memo = memoLine ? memoLine.replace(/^memo[:\s]*/i, "").trim() : undefined;
+  let memo = memoLine ? memoLine.replace(/^memo[:\s]*/i, "").trim() : undefined;
+
+  if (!memo) {
+    const memoLabelIdx = lines.findIndex((line) => /^memo[:\s]*$/i.test(line));
+    if (memoLabelIdx >= 0) {
+      memo = String(lines[memoLabelIdx + 1] || "").trim() || undefined;
+    }
+  }
+
+  if (!memo) {
+    // Common numeric memo format: "10081 CS 00611" (or similar token groups).
+    memo =
+      lines.find((line) => /\b\d{3,}\s+[A-Z]{1,4}\s+\d{3,}\b/i.test(line) && line.length <= 60) || undefined;
+  }
 
   const bankName =
     lines.find((line) => /(bank|credit union|financial|N\.A\.|N\.A\b)/i.test(line) && line.length <= 120) || undefined;
+
+  if (!payerName) {
+    // Fallback for business checks where payer name is printed in the top-left header.
+    payerName =
+      lines.find(
+        (line) =>
+          /(llc|inc|corp|company|healthcare|holdings|enterprises|group|services)/i.test(line) &&
+          !/(bank|credit union|financial)/i.test(line) &&
+          line.length <= 200
+      ) || undefined;
+  }
 
   return {
     checkDate,
@@ -170,33 +202,52 @@ function parsedFieldCount(p: ParsedCheckFields): number {
   ].filter((v) => v !== undefined && v !== "").length;
 }
 
+function scoreParsedResult(text: string, parsed: ParsedCheckFields): { score: number; fieldCount: number } {
+  const fieldCount = parsedFieldCount(parsed);
+  if (fieldCount <= 0) {
+    // If no fields were parsed, keep the score very low so we don't falsely prefer noisy OCR.
+    return { score: text.length * 0.001, fieldCount };
+  }
+  // Primary signal: parsed fields. Secondary signal: text length as tie-breaker only.
+  return { score: fieldCount * 1000 + Math.min(text.length, 500), fieldCount };
+}
+
 /**
  * Runs Tesseract in the browser on the image at 0° and 90° (common for phone photos of landscape checks).
  * Picks the orientation that yields the most parsed fields.
  */
-export async function runLocalCheckOcr(file: File): Promise<{ text: string; angle: number }> {
+export async function runLocalCheckOcr(file: File): Promise<LocalOcrBestResult> {
   const { createWorker } = await import("tesseract.js");
   const worker = await createWorker("eng");
 
-  let bestText = "";
-  let bestAngle = 0;
-  let bestScore = 0;
+  let best: LocalOcrBestResult = {
+    text: "",
+    angle: 0,
+    parsed: {},
+    score: -1,
+    fieldsDetected: 0
+  };
 
   try {
     for (const angle of [0, 90, 180, 270]) {
       const blob = await blobToPngWithRotation(file, angle);
       const { data } = await worker.recognize(blob);
       const text = String(data?.text || "");
-      const score = parsedFieldCount(parseCheckTextFromOcr(text)) * 100 + text.length;
-      if (score > bestScore) {
-        bestScore = score;
-        bestText = text;
-        bestAngle = angle;
+      const parsed = parseCheckTextFromOcr(text);
+      const { score, fieldCount } = scoreParsedResult(text, parsed);
+      if (score > best.score) {
+        best = {
+          text,
+          angle,
+          parsed,
+          score,
+          fieldsDetected: fieldCount
+        };
       }
     }
   } finally {
     await worker.terminate();
   }
 
-  return { text: bestText, angle: bestAngle };
+  return best;
 }

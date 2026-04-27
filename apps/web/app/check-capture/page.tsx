@@ -12,7 +12,12 @@ import {
   type CheckExtractedFields
 } from "@/lib/checksApi";
 import { getApiErrorMessage } from "@/lib/api";
-import { parseCheckTextFromOcr, runLocalCheckOcr, type ParsedCheckFields } from "@/lib/checkCaptureOcr";
+import {
+  parseCheckTextFromOcr,
+  runLocalCheckOcr,
+  type ParsedCheckFields,
+  type LocalOcrBestResult
+} from "@/lib/checkCaptureOcr";
 
 type FormState = {
   checkDate: string;
@@ -51,20 +56,44 @@ function isParsedEmpty(parsed: CheckExtractedFields) {
   );
 }
 
-function mergeExtractedToForm(imageUrl: string, server: CheckExtractedFields, local?: ParsedCheckFields) {
+function isDevLogEnabled() {
+  return process.env.NODE_ENV !== "production";
+}
+
+function debugLog(label: string, payload: unknown) {
+  if (!isDevLogEnabled()) return;
+  // eslint-disable-next-line no-console
+  console.info(`[check-capture] ${label}`, payload);
+}
+
+function mergeExtractedToForm(
+  prev: FormState,
+  imageUrl: string,
+  server: CheckExtractedFields,
+  local?: ParsedCheckFields
+) {
   const l = local || {};
   const amountStr = (v: number | undefined) =>
-    Number.isFinite(Number(v)) && Number(v) > 0 ? String(Number(v)) : "";
+    Number.isFinite(Number(v)) && Number(v) >= 0 ? String(Number(v)) : "";
+  const pick = (serverValue: string | undefined, localValue: string | undefined, prevValue: string) => {
+    const fromServer = String(serverValue || "").trim();
+    if (fromServer) return fromServer;
+    const fromLocal = String(localValue || "").trim();
+    if (fromLocal) return fromLocal;
+    return prevValue;
+  };
+  const amount =
+    amountStr(server.amount) || amountStr(l.amount) || (String(prev.amount || "").trim() ? String(prev.amount) : "");
   return {
     imageUrl,
-    checkDate: server.checkDate || l.checkDate || "",
-    amount: amountStr(server.amount) || amountStr(l.amount),
-    checkNumber: server.checkNumber || l.checkNumber || "",
-    payerName: server.payerName || l.payerName || "",
-    routingNumber: server.routingNumber || l.routingNumber || "",
-    accountNumber: server.accountNumber || l.accountNumber || "",
-    bankName: server.bankName || l.bankName || "",
-    memo: server.memo || l.memo || ""
+    checkDate: pick(server.checkDate, l.checkDate, prev.checkDate),
+    amount,
+    checkNumber: pick(server.checkNumber, l.checkNumber, prev.checkNumber),
+    payerName: pick(server.payerName, l.payerName, prev.payerName),
+    routingNumber: pick(server.routingNumber, l.routingNumber, prev.routingNumber),
+    accountNumber: pick(server.accountNumber, l.accountNumber, prev.accountNumber),
+    bankName: pick(server.bankName, l.bankName, prev.bankName),
+    memo: pick(server.memo, l.memo, prev.memo)
   };
 }
 
@@ -143,27 +172,53 @@ export default function CheckCapturePage() {
         dataBase64,
         mimeType
       });
+      debugLog("server raw OCR payload", extracted.raw);
 
-      let merged = mergeExtractedToForm(uploaded.imageUrl, extracted.parsed);
+      let localResult: LocalOcrBestResult | null = null;
+      let localParsed: ParsedCheckFields | undefined;
       lastOcrRawRef.current = extracted.raw;
 
       if (extracted.provider === "manual-review" || isParsedEmpty(extracted.parsed)) {
         setStatus("Running on-device OCR (first use may download language data)...");
-        const { text, angle } = await runLocalCheckOcr(file);
-        const localParsed = parseCheckTextFromOcr(text);
-        merged = mergeExtractedToForm(uploaded.imageUrl, extracted.parsed, localParsed);
+        localResult = await runLocalCheckOcr(file);
+        localParsed = localResult.parsed?.checkDate || localResult.parsed?.amount !== undefined
+          ? localResult.parsed
+          : parseCheckTextFromOcr(localResult.text);
+        debugLog("selected OCR rotation", {
+          angle: localResult.angle,
+          score: localResult.score,
+          fieldsDetected: localResult.fieldsDetected,
+          textLength: localResult.text.length
+        });
+        debugLog("parsed check object", localParsed);
         lastOcrRawRef.current = {
           server: extracted.raw,
-          localOcr: { angle, textLength: text.length, preview: text.slice(0, 500) }
+          localOcr: {
+            angle: localResult.angle,
+            score: localResult.score,
+            fieldsDetected: localResult.fieldsDetected,
+            textLength: localResult.text.length,
+            preview: localResult.text.slice(0, 500)
+          }
         };
-        setStatus(
-          `Extraction complete (browser OCR at ${angle}° + review). Edit any fields, then save.`
-        );
-      } else {
-        setStatus(`Extraction complete (${extracted.provider}). Review fields below before saving.`);
       }
 
-      patchForm(merged);
+      setForm((prev) => {
+        const merged = mergeExtractedToForm(prev, uploaded.imageUrl, extracted.parsed, localParsed);
+        debugLog("final form state after merge", merged);
+        return merged;
+      });
+
+      const hasAnyValue = !isParsedEmpty(extracted.parsed) || Boolean(localParsed && !isParsedEmpty(localParsed));
+      if (hasAnyValue) {
+        if (localResult) {
+          setStatus(`Extraction complete (browser OCR at ${localResult.angle}° + review). Edit any fields, then save.`);
+        } else {
+          setStatus(`Extraction complete (${extracted.provider}). Review fields below before saving.`);
+        }
+      } else {
+        setStatus("No fields detected automatically. Enter values manually, then save.");
+      }
     } catch (err) {
       setError(getApiErrorMessage(err, "Could not extract check data"));
       setStatus("");
@@ -231,6 +286,8 @@ export default function CheckCapturePage() {
                 setFile(selected);
                 setError("");
                 setStatus("");
+                lastOcrRawRef.current = undefined;
+                setForm(emptyForm);
                 if (previewUrl) URL.revokeObjectURL(previewUrl);
                 if (selected) {
                   setPreviewUrl(URL.createObjectURL(selected));
