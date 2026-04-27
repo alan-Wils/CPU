@@ -53,12 +53,48 @@ function loadInitial(): StoreShape {
   }
   try {
     const existingVersion = localStorage.getItem(STORE_VERSION_KEY);
+    // #region agent log
+    fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
+      body: JSON.stringify({
+        sessionId: "6beeea",
+        runId: "pre-fix",
+        hypothesisId: "H1",
+        location: "store.ts:loadInitial:version-check",
+        message: "Evaluating local store snapshot version",
+        data: {
+          existingVersion: existingVersion || "",
+          expectedVersion: STORE_VERSION
+        },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
     if (existingVersion !== STORE_VERSION) {
       localStorage.removeItem("cpuAppStore");
       localStorage.removeItem("cultivationStore");
       localStorage.setItem(STORE_VERSION_KEY, STORE_VERSION);
     }
     const raw = localStorage.getItem("cpuAppStore") || localStorage.getItem("cultivationStore");
+    // #region agent log
+    fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
+      body: JSON.stringify({
+        sessionId: "6beeea",
+        runId: "pre-fix",
+        hypothesisId: "H1",
+        location: "store.ts:loadInitial:raw-snapshot",
+        message: "Local store snapshot availability",
+        data: {
+          hasRawSnapshot: Boolean(raw),
+          snapshotBytes: raw ? raw.length : 0
+        },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
     if (!raw) {
       throw new Error("No local snapshot");
     }

@@ -475,6 +475,25 @@ export default function Cultivation() {
 
     async function loadSharedData() {
       try {
+        // #region agent log
+        fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
+          body: JSON.stringify({
+            sessionId: "6beeea",
+            runId: "pre-fix",
+            hypothesisId: "H4",
+            location: "cultivation/page.tsx:loadSharedData:start",
+            message: "Cultivation shared-data load started",
+            data: {
+              manualReloadTick,
+              activeInMemoryBefore: (s.cultivationBatches || []).length,
+              completedInMemoryBefore: (s.completedCultivationBatches || []).length
+            },
+            timestamp: Date.now()
+          })
+        }).catch(() => {});
+        // #endregion
         await loadBackendStore();
         await loadConfigStrains();
 
@@ -491,6 +510,26 @@ export default function Cultivation() {
           s.completedCultivationBatches = uniqueById(
             realCultivationBatches.filter((batch: any) => batch.status === "Complete")
           );
+          // #region agent log
+          fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
+            body: JSON.stringify({
+              sessionId: "6beeea",
+              runId: "pre-fix",
+              hypothesisId: "H4",
+              location: "cultivation/page.tsx:loadSharedData:partitioned",
+              message: "Cultivation shared-data load partitioned active/completed",
+              data: {
+                realCultivationCount: realCultivationBatches.length,
+                activeInMemoryAfter: (s.cultivationBatches || []).length,
+                completedInMemoryAfter: (s.completedCultivationBatches || []).length,
+                activeSample: (s.cultivationBatches || []).slice(0, 8).map((b: any) => String(b?.id || ""))
+              },
+              timestamp: Date.now()
+            })
+          }).catch(() => {});
+          // #endregion
         }
 
         setSelectedBatch((current: any) => {
