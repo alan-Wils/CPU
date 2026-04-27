@@ -156,6 +156,18 @@ export async function loadCultivationBatches() {
         })
         .filter(isValidCultivationBatch)
     );
+    const mappedKeys = new Set(
+      mapped.map((m: any) => normalizeId(m.dbId || m.id)).filter(Boolean)
+    );
+    for (const prior of existing) {
+      if (String(prior?.status || "").toLowerCase() !== "complete") continue;
+      const key = normalizeId(prior.dbId || prior.id);
+      if (!key || mappedKeys.has(key)) continue;
+      if (!isValidCultivationBatch(prior)) continue;
+      mapped.push(prior);
+      mappedKeys.add(key);
+    }
+    const mergedList = uniqueByNormalizedId(mapped);
     // #region agent log
     fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
       method: "POST",
@@ -167,10 +179,10 @@ export async function loadCultivationBatches() {
         location: "cultivationApi.ts:loadCultivationBatches:output",
         message: "Mapped cultivation rows after merge/dedupe/filter",
         data: {
-          mappedCount: mapped.length,
-          activeCount: mapped.filter((b: any) => b?.status !== "Complete").length,
-          completeCount: mapped.filter((b: any) => b?.status === "Complete").length,
-          mappedSample: mapped.slice(0, 8).map((b: any) => ({
+          mappedCount: mergedList.length,
+          activeCount: mergedList.filter((b: any) => b?.status !== "Complete").length,
+          completeCount: mergedList.filter((b: any) => b?.status === "Complete").length,
+          mappedSample: mergedList.slice(0, 8).map((b: any) => ({
             id: String(b?.id || ""),
             dbId: String(b?.dbId || ""),
             status: String(b?.status || ""),
@@ -182,9 +194,9 @@ export async function loadCultivationBatches() {
       })
     }).catch(() => {});
     // #endregion
-    store.cultivationBatches = mapped.filter((b: any) => b.status !== "Complete");
-    store.completedCultivationBatches = mapped.filter((b: any) => b.status === "Complete");
-    return mapped;
+    store.cultivationBatches = mergedList.filter((b: any) => b.status !== "Complete");
+    store.completedCultivationBatches = mergedList.filter((b: any) => b.status === "Complete");
+    return mergedList;
   } catch {
     return [];
   }

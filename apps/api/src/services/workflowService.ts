@@ -191,13 +191,24 @@ export class WorkflowService {
   }
 
   async listActive(companyId: string) {
-    const [cultivation, extraction, packaging, cultivationPacks, biomassRemaining] = await Promise.all([
-      prisma.cultivationBatch.findMany({ where: { companyId, autoStatus: "OPEN" }, orderBy: { createdAt: "desc" }, take: 25 }),
-      prisma.extractionRun.findMany({ where: { companyId, phase: { not: "COMPLETED" } }, orderBy: { createdAt: "desc" }, take: 25 }),
-      prisma.packagingLot.findMany({ where: { companyId, status: "IN_PROGRESS" }, orderBy: { createdAt: "desc" }, take: 25 }),
-      prisma.cultivationPackagingRun.findMany({ where: { companyId, status: "IN_PROGRESS" }, orderBy: { createdAt: "desc" }, take: 25 }),
-      this.computeSourceMaterialTension(companyId)
-    ]);
+    const [openCultivation, completedCultivation, extraction, packaging, cultivationPacks, biomassRemaining] =
+      await Promise.all([
+        prisma.cultivationBatch.findMany({
+          where: { companyId, autoStatus: "OPEN" },
+          orderBy: { createdAt: "desc" },
+          take: 25
+        }),
+        prisma.cultivationBatch.findMany({
+          where: { companyId, autoStatus: "AUTO_COMPLETED" },
+          orderBy: [{ autoCompletedAt: "desc" }, { updatedAt: "desc" }],
+          take: 25
+        }),
+        prisma.extractionRun.findMany({ where: { companyId, phase: { not: "COMPLETED" } }, orderBy: { createdAt: "desc" }, take: 25 }),
+        prisma.packagingLot.findMany({ where: { companyId, status: "IN_PROGRESS" }, orderBy: { createdAt: "desc" }, take: 25 }),
+        prisma.cultivationPackagingRun.findMany({ where: { companyId, status: "IN_PROGRESS" }, orderBy: { createdAt: "desc" }, take: 25 }),
+        this.computeSourceMaterialTension(companyId)
+      ]);
+    const cultivation = [...openCultivation, ...completedCultivation];
     return { cultivation, extraction, packaging, cultivationPacks, sourceMaterial: biomassRemaining };
   }
 
