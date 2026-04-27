@@ -23,7 +23,9 @@ export class ActivityRepository extends TenantRepository {
         return { updatedAt: ts };
     }
     async findUsersByIds(companyId, userIds) {
-        const unique = Array.from(new Set((userIds || []).filter((id) => Boolean(id && String(id).trim()))));
+        const unique = Array.from(
+            new Set((userIds || []).filter((id) => Boolean(id && String(id).trim())))
+        ) as string[];
         if (unique.length === 0)
             return [];
         return this.db.user.findMany({

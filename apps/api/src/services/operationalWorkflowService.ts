@@ -69,10 +69,10 @@ export class OperationalWorkflowService {
                 }
             });
             const roles = [
-                { r: "A_GRADE_FLOWER", name: `${acronym}-${code}-AG` },
-                { r: "POPCORN", name: `${acronym}-${code}-PC` },
-                { r: "DRY_TRIM", name: `${acronym}-${code}-DT` },
-                { r: "FRESH_FROZEN", name: `${acronym}-${code}-FF` }
+                { r: "A_GRADE_FLOWER" as const, name: `${acronym}-${code}-AG` },
+                { r: "POPCORN" as const, name: `${acronym}-${code}-PC` },
+                { r: "DRY_TRIM" as const, name: `${acronym}-${code}-DT` },
+                { r: "FRESH_FROZEN" as const, name: `${acronym}-${code}-FF` }
             ];
             for (const p of roles) {
                 await tx.sourcePackage.create({

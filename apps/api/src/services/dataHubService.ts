@@ -26,10 +26,10 @@ export class DataHubService {
         const trimByBatch = new Map(trimTotals.map((t) => [t.cultivationBatchId, t]));
         const freshByBatch = new Map(freshTotals.map((f) => [f.cultivationBatchId, f]));
         const dataHubBatches = batches.map((b) => {
-            const trimRow = trimByBatch.get(b.id) as Record<string, number> | undefined;
+            const trimRow = trimByBatch.get(b.id);
             const toEx = trimRow?.toExtractionGrams ?? 0;
             const con = trimRow?.consumedGrams ?? 0;
-            const freshRow = freshByBatch.get(b.id) as Record<string, number> | undefined;
+            const freshRow = freshByBatch.get(b.id);
             const f = freshRow?.toExtractionGrams ?? 0;
             const harvest = g(b.aGradeFlowerGrams + b.popcornGrams + b.trimGrams + b.freshFrozenGrams) || 1;
             return {

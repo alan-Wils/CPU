@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { extractPrimaryCheckAmount, parseCheckOcrTextWithConfidence } from "./checkCaptureParse.js";
+import {
+  extractPrimaryCheckAmount,
+  parseCheckOcrTextWithConfidence,
+  parseMicrFromRegionSnippet
+} from "./checkCaptureParse.js";
 
 describe("extractPrimaryCheckAmount", () => {
   it("prefers larger dollar amount over small noise", () => {
@@ -42,5 +46,26 @@ describe("parseCheckOcrTextWithConfidence", () => {
   it("handles handwritten-style noisy date", () => {
     const r = parseCheckOcrTextWithConfidence("Date 3/15/2025 smudge");
     expect(r.checkDate).toBe("2025-03-15");
+  });
+
+  it("prefers MICR crop over noisy full-page text", () => {
+    const noisy =
+      "PAY TO THE ORDER OF 123456789 99999999901234567890 noise\n" +
+      "123456789 12302075306 1001\n" +
+      "more junk 888888888";
+    const r = parseCheckOcrTextWithConfidence(noisy, {
+      micr: "|123456789| 12302075306 1001"
+    });
+    expect(r.routingNumber).toBe("123456789");
+    expect(r.accountNumber).toBe("12302075306");
+    expect(r.checkNumber).toBe("1001");
+  });
+});
+
+describe("parseMicrFromRegionSnippet", () => {
+  it("parses OCR-tolerant MICR line", () => {
+    const m = parseMicrFromRegionSnippet("l23456789  12302075306  1001");
+    expect(m.routingNumber).toBe("123456789");
+    expect(m.accountNumber).toBe("12302075306");
   });
 });

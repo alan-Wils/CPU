@@ -18,6 +18,7 @@ export {
   extractPrimaryCheckAmount,
   mergeCheckParsedPreferBetter,
   parseCheckOcrTextWithConfidence,
+  parseMicrFromRegionSnippet,
   toFlatParsedForApi,
   type CheckFieldKey,
   type CheckParseResult,
