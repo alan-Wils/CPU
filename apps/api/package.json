@@ -25,6 +25,11 @@
   "dependencies": {
     "@cpu/shared": "file:../../packages/shared",
     "@prisma/client": "6.16.2",
+    "@types/bcryptjs": "latest",
+    "@types/cors": "latest",
+    "@types/express": "latest",
+    "@types/jsonwebtoken": "latest",
+    "@types/node": "latest",
     "prisma": "6.16.2",
     "bcryptjs": "latest",
     "cors": "latest",
@@ -32,15 +37,10 @@
     "express": "latest",
     "helmet": "latest",
     "jsonwebtoken": "latest",
+    "typescript": "latest",
     "zod": "latest"
   },
   "devDependencies": {
-    "@types/bcryptjs": "latest",
-    "@types/cors": "latest",
-    "@types/express": "latest",
-    "@types/jsonwebtoken": "latest",
-    "@types/node": "latest",
-    "tsx": "latest",
-    "typescript": "latest"
+    "tsx": "latest"
   }
 }

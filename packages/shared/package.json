@@ -9,8 +9,10 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
+  "dependencies": {
+    "typescript": "latest"
+  },
   "devDependencies": {
-    "typescript": "latest",
     "vitest": "^2.1.9"
   }
 }
