@@ -1,8 +1,8 @@
 # Railway: Service → Settings → Root Directory: apps/api
 # Variables: see apps/api/.env.staging.example and RAILWAY.md
-#
-# Migrations: Custom Release Command in Deploy settings (or Procfile `release`):
-#   npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma
+# Release command intentionally disabled temporarily so deploy only builds/starts:
+#   buildCommand = npm install && npm run build
+#   startCommand = node dist/server.js
 
 [build]
 builder = "nixpacks"

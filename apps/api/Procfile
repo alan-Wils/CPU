@@ -1,2 +1,1 @@
 web: node dist/server.js
-release: npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma
