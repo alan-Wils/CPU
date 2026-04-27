@@ -32,8 +32,7 @@ import {
   updatePackagingBatch,
   deletePackagingBatchRecord,
 } from "@/lib/packagingApi";
-import { deleteAllLogs } from "@/lib/logsApi";
-import { getLogs } from "@/lib/api";
+import { deleteAllLogs, mergeRecentTaskLogsFromApi } from "@/lib/logsApi";
 import { getFlowerWeights } from "@/lib/dataHubChainMetrics";
 import { formatActorDisplay } from "@/lib/actorDisplay";
 
@@ -705,19 +704,15 @@ export default function DataHub() {
       try {
         await loadBackendStore();
 
-        const [
-          realCultivationBatches,
-          realSourceBatches,
-          realExtractionBatches,
-          realPackagingBatches,
-          realLogs,
-        ] = await Promise.all([
-          loadCultivationBatches(),
-          loadSourceBatches(),
-          loadExtractionBatches(),
-          loadPackagingBatches(),
-          getLogs(),
-        ]);
+        const [realCultivationBatches, realSourceBatches, realExtractionBatches, realPackagingBatches] =
+          await Promise.all([
+            loadCultivationBatches(),
+            loadSourceBatches(),
+            loadExtractionBatches(),
+            loadPackagingBatches()
+          ]);
+
+        await mergeRecentTaskLogsFromApi();
 
         if (!mounted) return;
 
@@ -725,9 +720,7 @@ export default function DataHub() {
         const sourceList = asArray(realSourceBatches);
         const extractionList = asArray(realExtractionBatches);
         const packagingList = asArray(realPackagingBatches);
-        const backendLogs = asArray(realLogs);
-        const syncedLogs = asArray(s.logs);
-        const logsList = backendLogs.length > 0 ? backendLogs : syncedLogs;
+        const logsList = asArray(s.logs);
 
         s.cultivationBatches = cultivationList.filter(
           (batch: any) => batch.status !== "Complete"

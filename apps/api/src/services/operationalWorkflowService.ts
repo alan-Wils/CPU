@@ -2,7 +2,18 @@ import { prisma } from "../config/prisma.js";
 import { AppError } from "../errors/AppError.js";
 import { aGradePopcornAvailable, isAgriculturallyCompleteForAutoStatus, productCategoryForSource } from "../domain/cultivationStateEngine.js";
 import { AuditService } from "./auditService.js";
+import { Prisma } from "@prisma/client";
 import type { CultivationPackagingLine, ExtractionProductCategory, ExtractionSourceType } from "@prisma/client";
+
+const MAX_UI_JSON_BYTES = 900_000;
+
+function assertUiJsonSize(field: string, value: unknown) {
+  if (value === undefined) return;
+  const s = JSON.stringify(value === null ? null : value);
+  if (s.length > MAX_UI_JSON_BYTES) {
+    throw new AppError(`${field} exceeds maximum size`, 400);
+  }
+}
 
 const EPS = 0.0001;
 const g = (n: number) => Number(n.toFixed(4));
@@ -781,19 +792,27 @@ export class OperationalWorkflowService {
     table?: string;
     plantedAt?: Date;
     complete?: boolean;
+    cultivationUiState?: Record<string, unknown> | null;
   }) {
     const batch = await prisma.cultivationBatch.findFirst({ where: { companyId: input.companyId, id: input.batchId } });
     if (!batch) throw new AppError("Cultivation batch not found", 404);
+    assertUiJsonSize("cultivationUiState", input.cultivationUiState);
+    const data: Prisma.CultivationBatchUpdateInput = {
+      room: input.room ?? batch.room,
+      bay: input.bay ?? batch.bay,
+      table: input.table ?? batch.table,
+      plantedAt: input.plantedAt ?? batch.plantedAt,
+      autoStatus: input.complete ? "AUTO_COMPLETED" : batch.autoStatus,
+      autoCompletedAt: input.complete ? new Date() : batch.autoCompletedAt
+    };
+    if (input.cultivationUiState === null) {
+      data.cultivationUiState = Prisma.DbNull;
+    } else if (input.cultivationUiState !== undefined) {
+      data.cultivationUiState = input.cultivationUiState as Prisma.InputJsonValue;
+    }
     const updated = await prisma.cultivationBatch.update({
       where: { id: batch.id },
-      data: {
-        room: input.room ?? batch.room,
-        bay: input.bay ?? batch.bay,
-        table: input.table ?? batch.table,
-        plantedAt: input.plantedAt ?? batch.plantedAt,
-        autoStatus: input.complete ? "AUTO_COMPLETED" : batch.autoStatus,
-        autoCompletedAt: input.complete ? new Date() : batch.autoCompletedAt
-      }
+      data
     });
     await this.audit.logAction({
       companyId: input.companyId,
@@ -806,7 +825,8 @@ export class OperationalWorkflowService {
         bay: updated.bay,
         table: updated.table,
         autoStatus: updated.autoStatus,
-        autoCompletedAt: updated.autoCompletedAt
+        autoCompletedAt: updated.autoCompletedAt,
+        hasCultivationUiState: Boolean(updated.cultivationUiState)
       }
     });
     return updated;
@@ -1040,15 +1060,23 @@ export class OperationalWorkflowService {
     runId: string;
     method?: string;
     supplyUsed?: string;
+    extractionUiState?: Record<string, unknown> | null;
   }) {
     const run = await prisma.extractionRun.findFirst({ where: { id: input.runId, companyId: input.companyId } });
     if (!run) throw new AppError("Extraction run not found", 404);
+    assertUiJsonSize("extractionUiState", input.extractionUiState);
+    const data: Prisma.ExtractionRunUpdateInput = {
+      method: input.method ?? run.method,
+      supplyUsed: input.supplyUsed ?? run.supplyUsed
+    };
+    if (input.extractionUiState === null) {
+      data.extractionUiState = Prisma.DbNull;
+    } else if (input.extractionUiState !== undefined) {
+      data.extractionUiState = input.extractionUiState as Prisma.InputJsonValue;
+    }
     const updated = await prisma.extractionRun.update({
       where: { id: run.id },
-      data: {
-        method: input.method ?? run.method,
-        supplyUsed: input.supplyUsed ?? run.supplyUsed
-      }
+      data
     });
     await this.audit.logAction({
       companyId: input.companyId,
@@ -1056,7 +1084,7 @@ export class OperationalWorkflowService {
       action: "extraction.run.update",
       entityType: "ExtractionRun",
       entityId: updated.id,
-      after: { method: updated.method, supplyUsed: updated.supplyUsed }
+      after: { method: updated.method, supplyUsed: updated.supplyUsed, hasExtractionUiState: Boolean(updated.extractionUiState) }
     });
     return updated;
   }
@@ -1084,17 +1112,25 @@ export class OperationalWorkflowService {
     sku?: string;
     gramsPerUnit?: number;
     defaultTemplate?: string;
+    packagingUiState?: Record<string, unknown> | null;
   }) {
     const lot = await prisma.packagingLot.findFirst({ where: { id: input.lotId, companyId: input.companyId } });
     if (!lot) throw new AppError("Packaging lot not found", 404);
     if (lot.status === "COMPLETED") throw new AppError("Cannot edit completed packaging lot", 400);
+    assertUiJsonSize("packagingUiState", input.packagingUiState);
+    const data: Prisma.PackagingLotUpdateInput = {
+      sku: input.sku ?? lot.sku,
+      gramsPerUnit: input.gramsPerUnit ?? lot.gramsPerUnit,
+      defaultTemplate: input.defaultTemplate ?? lot.defaultTemplate
+    };
+    if (input.packagingUiState === null) {
+      data.packagingUiState = Prisma.DbNull;
+    } else if (input.packagingUiState !== undefined) {
+      data.packagingUiState = input.packagingUiState as Prisma.InputJsonValue;
+    }
     const updated = await prisma.packagingLot.update({
       where: { id: lot.id },
-      data: {
-        sku: input.sku ?? lot.sku,
-        gramsPerUnit: input.gramsPerUnit ?? lot.gramsPerUnit,
-        defaultTemplate: input.defaultTemplate ?? lot.defaultTemplate
-      }
+      data
     });
     await this.audit.logAction({
       companyId: input.companyId,
@@ -1102,7 +1138,7 @@ export class OperationalWorkflowService {
       action: "packaging.lot.update",
       entityType: "PackagingLot",
       entityId: updated.id,
-      after: { sku: updated.sku, gramsPerUnit: updated.gramsPerUnit }
+      after: { sku: updated.sku, gramsPerUnit: updated.gramsPerUnit, hasPackagingUiState: Boolean(updated.packagingUiState) }
     });
     return updated;
   }

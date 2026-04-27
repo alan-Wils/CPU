@@ -127,12 +127,16 @@ export const extractionPackagingStartSchema = z.object({
   defaultTemplate: z.string().max(120).optional()
 });
 
+const jsonRecordSchema = z.record(z.string(), z.unknown());
+
 export const cultivationUpdateSchema = z.object({
   room: z.string().max(50).optional(),
   bay: z.string().max(50).optional(),
   table: z.string().max(50).optional(),
   plantedAt: z.coerce.date().optional(),
-  complete: z.boolean().optional()
+  complete: z.boolean().optional(),
+  /** Serialized cultivation page state (tasks, METRC fields, stage labels, etc.). */
+  cultivationUiState: z.union([jsonRecordSchema, z.null()]).optional()
 });
 
 export const checkUploadSchema = z.object({
@@ -176,13 +180,15 @@ export const sourcePackageConsumeSchema = z.object({
 
 export const extractionRunUpdateSchema = z.object({
   method: z.string().max(100).optional(),
-  supplyUsed: z.string().max(200).optional()
+  supplyUsed: z.string().max(200).optional(),
+  extractionUiState: z.union([jsonRecordSchema, z.null()]).optional()
 });
 
 export const packagingLotUpdateSchema = z.object({
   sku: z.string().min(1).max(100).optional(),
   gramsPerUnit: z.number().positive().max(100).optional(),
-  defaultTemplate: z.string().max(120).optional()
+  defaultTemplate: z.string().max(120).optional(),
+  packagingUiState: z.union([jsonRecordSchema, z.null()]).optional()
 });
 
 export const taskLogCreateSchema = z.object({

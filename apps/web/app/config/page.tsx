@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Nav from "@/components/Nav";
-import { publicApiOriginUrl } from "@/lib/publicEnv";
+import { getResolvedApiOriginUrl } from "@/lib/publicEnv";
 
 type Strain = {
   id: string;
@@ -78,8 +78,6 @@ type AppConfig = {
     supplies: Supply[];
   };
 };
-
-const API_BASE = publicApiOriginUrl;
 
 const emptyConfig: AppConfig = {
   company: {
@@ -162,7 +160,7 @@ export default function ConfigPage() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/config`, {
+      const res = await fetch(`${getResolvedApiOriginUrl()}/api/config`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -217,7 +215,7 @@ export default function ConfigPage() {
     setSaving(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/config`, {
+      const res = await fetch(`${getResolvedApiOriginUrl()}/api/config`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

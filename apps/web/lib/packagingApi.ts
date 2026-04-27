@@ -1,5 +1,6 @@
 import { store } from "./store";
-import { apiGet, apiPost } from "./api";
+import { apiDelete, apiGet, apiPost, apiRequest } from "./api";
+import { pickSerializableUiFields } from "./jsonUiState";
 
 function normalizeId(value: any) {
   return String(value || "").trim().toUpperCase();
@@ -23,23 +24,36 @@ function rows() {
 
 function setRows(next: any[]) {
   store.packagingBatches = uniqueById(next || []);
-  store.save?.();
+}
+
+function toUiPackaging(row: any) {
+  const ui =
+    row?.packagingUiState && typeof row.packagingUiState === "object"
+      ? ({ ...row.packagingUiState } as Record<string, unknown>)
+      : {};
+  const { packagingUiState: _drop, ...rest } = row || {};
+  void _drop;
+  return {
+    ...rest,
+    ...ui,
+    dbId: row.id,
+    id: String((ui as any).id || row.id)
+  };
 }
 
 export async function loadPackagingBatches() {
   try {
     const active = await apiGet<any>("/workflow/active", localStorage.getItem("token"));
     const relational = Array.isArray(active?.packaging) ? active.packaging : [];
-    const localReady = Array.isArray(store.packagingBatches) ? store.packagingBatches : [];
-    const localInProgress = Array.isArray((store as any).inProgressPackagingBatches)
-      ? (store as any).inProgressPackagingBatches
-      : [];
-    const localCompleted = Array.isArray((store as any).completedPackagingBatches)
-      ? (store as any).completedPackagingBatches
-      : [];
-    // Merge relational rows with current local packaging candidates so
-    // pending/ready rows don't flash then disappear on polling.
-    const deduped = uniqueById([...localReady, ...localInProgress, ...localCompleted, ...relational]);
+    const mapped = uniqueById((relational || []).map(toUiPackaging));
+    const locals = [
+      ...rows(),
+      ...(((store as any).inProgressPackagingBatches as any[]) || []),
+      ...(((store as any).completedPackagingBatches as any[]) || [])
+    ];
+    const byDb = new Set(mapped.map((m: any) => normalizeId(m.dbId)));
+    const pendingExtra = locals.filter((r: any) => !r?.dbId || !byDb.has(normalizeId(r.dbId)));
+    const deduped = uniqueById([...mapped, ...pendingExtra]);
     setRows(deduped);
     return deduped;
   } catch {
@@ -60,10 +74,18 @@ export async function createPackagingBatch(batch: any) {
         },
         localStorage.getItem("token")
       );
-      setRows([created, ...rows()]);
-      return created;
+      const ui = { ...batch, dbId: created.id, extractionRunId };
+      await apiRequest(`/workflow/packaging-lots/${created.id}`, {
+        method: "PATCH",
+        body: {
+          packagingUiState: pickSerializableUiFields(ui, new Set(["dbId"]))
+        },
+        token: localStorage.getItem("token")
+      });
+      await loadPackagingBatches();
+      return rows().find((r: any) => normalizeId(r?.dbId) === normalizeId(created.id)) || toUiPackaging(created);
     } catch {
-      // fallback below
+      /* fall through */
     }
   }
   const existing = rows().find((row: any) => normalizeId(row?.id) === normalizeId(batch?.id));
@@ -77,11 +99,35 @@ export async function createPackagingBatch(batch: any) {
 }
 
 export async function updatePackagingBatch(batchId: string, patch: any) {
-  setRows(rows().map((row: any) => (row?.id === batchId ? { ...row, ...patch } : row)));
+  const local = rows().find(
+    (row: any) => normalizeId(row?.id) === normalizeId(batchId) || normalizeId(row?.dbId) === normalizeId(batchId)
+  );
+  const dbId = String(patch?.dbId || local?.dbId || batchId);
+  const packagingUiState = pickSerializableUiFields(patch, new Set(["dbId"]));
+  await apiRequest(`/workflow/packaging-lots/${dbId}`, {
+    method: "PATCH",
+    body: {
+      sku: typeof patch?.sku === "string" ? patch.sku : undefined,
+      gramsPerUnit: Number.isFinite(Number(patch?.gramsPerUnit)) ? Number(patch.gramsPerUnit) : undefined,
+      defaultTemplate: typeof patch?.defaultTemplate === "string" ? patch.defaultTemplate : undefined,
+      packagingUiState: Object.keys(packagingUiState).length > 0 ? packagingUiState : undefined
+    },
+    token: localStorage.getItem("token")
+  });
+  await loadPackagingBatches();
   return patch;
 }
 
 export async function deletePackagingBatchRecord(batchId: string) {
-  setRows(rows().filter((row: any) => row?.id !== batchId));
+  const local = rows().find(
+    (row: any) => normalizeId(row?.id) === normalizeId(batchId) || normalizeId(row?.dbId) === normalizeId(batchId)
+  );
+  const dbId = String(local?.dbId || batchId);
+  try {
+    await apiDelete(`/workflow/packaging-lots/${dbId}`, localStorage.getItem("token"));
+  } catch {
+    /* ignore */
+  }
+  await loadPackagingBatches();
   return { ok: true };
 }

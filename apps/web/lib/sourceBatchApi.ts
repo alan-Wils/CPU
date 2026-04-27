@@ -53,7 +53,6 @@ export async function createSourceBatch(batch: any) {
   );
   if (existing) Object.assign(existing, enriched);
   else store.sourceBatches = uniqueById([enriched, ...(store.sourceBatches || [])]);
-  store.save?.();
   return enriched;
 }
 
@@ -106,7 +105,9 @@ export async function loadSourceBatches() {
       return out;
     });
     const local = Array.isArray(store.sourceBatches) ? store.sourceBatches : [];
-    const merged = uniqueById([...local, ...mapped]).map((row: any) => {
+    const mappedIds = new Set(mapped.map((m: any) => normalizeId(m?.id)));
+    const localExtra = local.filter((l: any) => !mappedIds.has(normalizeId(l?.id)));
+    const merged = uniqueById([...mapped, ...localExtra]).map((row: any) => {
       const amountLbs =
         row?.amount !== undefined ? normalizeAmountToLbs(row.amount) : Number(row?.remainingAmount || 0);
       const remainingRaw =
@@ -143,12 +144,10 @@ export async function updateSourceBatch(batchId: string, patch: any) {
     row?.id === batchId ? { ...row, ...patch } : row
   );
   store.sourceBatches = uniqueById(store.sourceBatches || []);
-  store.save?.();
   return patch;
 }
 
 export async function deleteSourceBatchRecord(batchId: string) {
   store.sourceBatches = (store.sourceBatches || []).filter((row: any) => row?.id !== batchId);
-  store.save?.();
   return { ok: true };
 }

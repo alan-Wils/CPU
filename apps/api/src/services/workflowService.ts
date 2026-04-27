@@ -28,7 +28,15 @@ export class WorkflowService {
   async updateCultivation(
     companyId: string,
     actorUserId: string,
-    body: { batchId: string; room?: string; bay?: string; table?: string; plantedAt?: Date; complete?: boolean }
+    body: {
+      batchId: string;
+      room?: string;
+      bay?: string;
+      table?: string;
+      plantedAt?: Date;
+      complete?: boolean;
+      cultivationUiState?: Record<string, unknown> | null;
+    }
   ) {
     return operational.updateCultivationBatch({ companyId, actorUserId, ...body });
   }
@@ -133,7 +141,11 @@ export class WorkflowService {
     return operational.completeExtractionRun({ companyId, actorUserId, ...body });
   }
 
-  async updateExtractionRun(companyId: string, actorUserId: string, body: { runId: string; method?: string; supplyUsed?: string }) {
+  async updateExtractionRun(
+    companyId: string,
+    actorUserId: string,
+    body: { runId: string; method?: string; supplyUsed?: string; extractionUiState?: Record<string, unknown> | null }
+  ) {
     return operational.updateExtractionRun({ companyId, actorUserId, ...body });
   }
 
@@ -164,7 +176,13 @@ export class WorkflowService {
   async updatePackagingLot(
     companyId: string,
     actorUserId: string,
-    body: { lotId: string; sku?: string; gramsPerUnit?: number; defaultTemplate?: string }
+    body: {
+      lotId: string;
+      sku?: string;
+      gramsPerUnit?: number;
+      defaultTemplate?: string;
+      packagingUiState?: Record<string, unknown> | null;
+    }
   ) {
     return operational.updatePackagingLot({ companyId, actorUserId, ...body });
   }
@@ -203,13 +221,49 @@ export class WorkflowService {
           orderBy: [{ autoCompletedAt: "desc" }, { updatedAt: "desc" }],
           take: 25
         }),
-        prisma.extractionRun.findMany({ where: { companyId, phase: { not: "COMPLETED" } }, orderBy: { createdAt: "desc" }, take: 25 }),
-        prisma.packagingLot.findMany({ where: { companyId, status: "IN_PROGRESS" }, orderBy: { createdAt: "desc" }, take: 25 }),
+        prisma.extractionRun.findMany({
+          where: { companyId, phase: { not: "COMPLETED" } },
+          orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+          take: 25
+        }),
+        prisma.packagingLot.findMany({
+          where: { companyId, status: "IN_PROGRESS" },
+          orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+          take: 25
+        }),
         prisma.cultivationPackagingRun.findMany({ where: { companyId, status: "IN_PROGRESS" }, orderBy: { createdAt: "desc" }, take: 25 }),
         this.computeSourceMaterialTension(companyId)
       ]);
     const cultivation = [...openCultivation, ...completedCultivation];
     return { cultivation, extraction, packaging, cultivationPacks, sourceMaterial: biomassRemaining };
+  }
+
+  /** Monotonic token for polling: bumps when workflow rows relevant to the SPA change. */
+  async getWorkflowRevision(companyId: string) {
+    const [cb, ex, pl, tl, trim, ff, cfg, legacyStore] = await Promise.all([
+      prisma.cultivationBatch.aggregate({ where: { companyId }, _max: { updatedAt: true } }),
+      prisma.extractionRun.aggregate({ where: { companyId }, _max: { updatedAt: true } }),
+      prisma.packagingLot.aggregate({ where: { companyId }, _max: { updatedAt: true } }),
+      prisma.taskLog.aggregate({ where: { companyId }, _max: { createdAt: true } }),
+      prisma.trimFlowState.aggregate({ where: { companyId }, _max: { updatedAt: true } }),
+      prisma.freshFrozenAllocation.aggregate({ where: { companyId }, _max: { updatedAt: true } }),
+      prisma.companyConfig.aggregate({ where: { companyId }, _max: { updatedAt: true } }),
+      prisma.companyStore.aggregate({ where: { companyId }, _max: { updatedAt: true } })
+    ]);
+    const times = [
+      cb._max?.updatedAt,
+      ex._max?.updatedAt,
+      pl._max?.updatedAt,
+      tl._max?.createdAt,
+      trim._max?.updatedAt,
+      ff._max?.updatedAt,
+      cfg._max?.updatedAt,
+      legacyStore._max?.updatedAt
+    ]
+      .filter((d): d is Date => Boolean(d))
+      .map((d) => d.getTime());
+    const maxMs = times.length ? Math.max(...times) : 0;
+    return { revision: String(maxMs) };
   }
 
   private async computeSourceMaterialTension(companyId: string) {

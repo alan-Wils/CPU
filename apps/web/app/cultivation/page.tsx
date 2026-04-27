@@ -15,7 +15,7 @@ import {
 } from "@/lib/cultivationApi";
 import { createSourceBatch } from "@/lib/sourceBatchApi";
 import { createLog, getTaskLogSaveStatus, mergeRecentTaskLogsFromApi } from "@/lib/logsApi";
-import { publicApiOriginUrl } from "@/lib/publicEnv";
+import { getResolvedApiOriginUrl } from "@/lib/publicEnv";
 import { formatActorDisplay, resolveActorIdentity } from "@/lib/actorDisplay";
 import type { SaveStatus } from "@/lib/taskLogTypes";
 
@@ -28,8 +28,6 @@ type ConfigStrain = {
   potency?: string;
   averageYield?: string;
 };
-
-const API_BASE = publicApiOriginUrl;
 
 const flowerRoomOptions = ["1", "2", "3", "4"] as const;
 const flowerBayOptions = ["A", "B", "C"] as const;
@@ -444,7 +442,7 @@ export default function Cultivation() {
       try {
         const token = typeof window !== "undefined" ? localStorage.getItem("token") || "" : "";
 
-        const res = await fetch(`${API_BASE}/api/config`, {
+        const res = await fetch(`${getResolvedApiOriginUrl()}/api/config`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
 
@@ -770,30 +768,15 @@ export default function Cultivation() {
 
   function persistStore() {
     if (typeof window === "undefined") return;
-
     try {
       if (typeof s.save === "function") {
         s.save();
       }
-
       if (typeof s.persist === "function") {
         s.persist();
       }
-
-      const snapshot = {
-        cultivationBatches: s.cultivationBatches || [],
-        completedCultivationBatches: s.completedCultivationBatches || [],
-        dryFlowerBatches: s.dryFlowerBatches || [],
-        productionBatches: s.productionBatches || [],
-        sourceBatches: s.sourceBatches || [],
-        packagingBatches: s.packagingBatches || [],
-        logs: s.logs || [],
-      };
-
-      window.localStorage.setItem("cpuAppStore", JSON.stringify(snapshot));
-      window.localStorage.setItem("cultivationStore", JSON.stringify(snapshot));
     } catch (error) {
-      console.error("Could not save CPU app store:", error);
+      console.error("Could not persist session metadata:", error);
     }
   }
 

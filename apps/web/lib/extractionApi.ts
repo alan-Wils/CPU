@@ -1,5 +1,6 @@
+import { apiDelete, apiGet, apiPost, apiRequest } from "./api";
+import { pickSerializableUiFields } from "./jsonUiState";
 import { store } from "./store";
-import { apiGet, apiPost } from "./api";
 
 function normalizeId(value: any) {
   return String(value || "").trim().toUpperCase();
@@ -21,65 +22,24 @@ function uniqueById(rows: any[]) {
   return out;
 }
 
-function mergePreferLocal(localRows: any[], backendRows: any[]) {
-  const byId = new Map<string, any>();
-  const localList = Array.isArray(localRows) ? localRows : [];
-  for (const row of backendRows || []) {
-    const backendKey = normalizeId(row?.id);
-    if (!backendKey) continue;
-    const candidate =
-      localList.find((l: any) => normalizeId(l?.dbId) === backendKey) ||
-      localList.find(
-        (l: any) =>
-          !l?.dbId &&
-          normalizeId(l?.cultivationBatchId) &&
-          normalizeId(l?.cultivationBatchId) === normalizeId(row?.cultivationBatchId)
-      ) ||
-      null;
-    if (candidate) {
-      byId.set(backendKey, {
-        ...row,
-        ...candidate,
-        dbId: row.id,
-        // keep rich UI workflow/task state from local object
-        completedTasks: candidate?.completedTasks ?? row?.completedTasks ?? [],
-        taskData: candidate?.taskData ?? row?.taskData ?? {},
-        status: candidate?.status ?? row?.status
-      });
-    } else {
-      byId.set(backendKey, row);
-    }
-  }
-  for (const row of localRows || []) {
-    const id = getRowKey(row);
-    if (!id) continue;
-    const current = byId.get(id);
-    byId.set(
-      id,
-      current
-        ? {
-            ...current,
-            ...row,
-            // keep rich UI workflow/task state from local object
-            completedTasks: row?.completedTasks ?? current?.completedTasks ?? [],
-            taskData: row?.taskData ?? current?.taskData ?? {},
-            status: row?.status ?? current?.status
-          }
-        : row
-    );
-  }
-  return Array.from(byId.values());
+function toUiExtraction(row: any) {
+  const ui =
+    row?.extractionUiState && typeof row.extractionUiState === "object"
+      ? ({ ...row.extractionUiState } as Record<string, unknown>)
+      : {};
+  const { extractionUiState: _drop, ...rest } = row || {};
+  void _drop;
+  return {
+    ...rest,
+    ...ui,
+    dbId: row.id,
+    id: String((ui as any).id || row.id)
+  };
 }
 
 function isRenderableExtractionRow(row: any) {
-  // Hide raw backend shells that don't have UI workflow fields yet.
-  const hasUiFields =
-    !!row?.name ||
-    !!row?.productType ||
-    !!row?.status ||
-    Array.isArray(row?.sources) ||
-    Array.isArray(row?.completedTasks);
-  return hasUiFields;
+  if (String(row?.phase || "").toUpperCase() === "COMPLETED") return false;
+  return Boolean(row?.dbId || row?.id);
 }
 
 function rows() {
@@ -88,15 +48,16 @@ function rows() {
 
 function setRows(next: any[]) {
   (store as any).extractionBatches = uniqueById(next || []);
-  store.save?.();
 }
 
 export async function loadExtractionBatches() {
   try {
     const active = await apiGet<any>("/workflow/active", localStorage.getItem("token"));
     const relational = Array.isArray(active?.extraction) ? active.extraction : [];
-    const merged = mergePreferLocal(rows(), relational);
-    const deduped = uniqueById(merged).filter(isRenderableExtractionRow);
+    const mapped = uniqueById((relational || []).map(toUiExtraction));
+    const pending = (rows() || []).filter((r: any) => !r?.dbId);
+    const merged = uniqueById([...pending, ...mapped]);
+    const deduped = merged.filter(isRenderableExtractionRow);
     setRows(deduped);
     return deduped;
   } catch {
@@ -121,13 +82,25 @@ export async function createExtractionBatch(batch: any) {
           dbId: created?.id,
           cultivationBatchId: created?.cultivationBatchId || cultivationBatchId
         });
-        setRows(rows());
+        await updateExtractionBatch(String(existing.dbId || created.id), existing);
         return existing;
       }
-      setRows([{ ...created, dbId: created?.id }, ...rows()]);
-      return created;
+      const ui = {
+        ...batch,
+        dbId: created.id,
+        cultivationBatchId: created.cultivationBatchId || cultivationBatchId
+      };
+      await apiRequest(`/workflow/extraction-runs/${created.id}`, {
+        method: "PATCH",
+        body: {
+          extractionUiState: pickSerializableUiFields(ui, new Set(["dbId"]))
+        },
+        token: localStorage.getItem("token")
+      });
+      await loadExtractionBatches();
+      return rows().find((r: any) => normalizeId(r?.dbId) === normalizeId(created.id)) || toUiExtraction(created);
     } catch {
-      // fallback below
+      /* fall through */
     }
   }
   const existing = rows().find((row: any) => normalizeId(row?.id) === normalizeId(batch?.id));
@@ -141,11 +114,32 @@ export async function createExtractionBatch(batch: any) {
 }
 
 export async function updateExtractionBatch(batchId: string, patch: any) {
-  setRows(rows().map((row: any) => (row?.id === batchId ? { ...row, ...patch } : row)));
+  const local = rows().find((row: any) => normalizeId(row?.id) === normalizeId(batchId) || normalizeId(row?.dbId) === normalizeId(batchId));
+  const dbId = String(patch?.dbId || local?.dbId || batchId);
+  const extractionUiState = pickSerializableUiFields(patch, new Set(["dbId"]));
+  await apiRequest(`/workflow/extraction-runs/${dbId}`, {
+    method: "PATCH",
+    body: {
+      method: typeof patch?.method === "string" ? patch.method : undefined,
+      supplyUsed: typeof patch?.supplyUsed === "string" ? patch.supplyUsed : undefined,
+      extractionUiState: Object.keys(extractionUiState).length > 0 ? extractionUiState : undefined
+    },
+    token: localStorage.getItem("token")
+  });
+  await loadExtractionBatches();
   return patch;
 }
 
 export async function deleteExtractionBatchRecord(batchId: string) {
-  setRows(rows().filter((row: any) => row?.id !== batchId));
+  const local = rows().find(
+    (row: any) => normalizeId(row?.id) === normalizeId(batchId) || normalizeId(row?.dbId) === normalizeId(batchId)
+  );
+  const dbId = String(local?.dbId || batchId);
+  try {
+    await apiDelete(`/workflow/extraction-runs/${dbId}`, localStorage.getItem("token"));
+  } catch {
+    /* ignore */
+  }
+  await loadExtractionBatches();
   return { ok: true };
 }

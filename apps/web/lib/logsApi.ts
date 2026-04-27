@@ -82,7 +82,6 @@ export async function mergeRecentTaskLogsFromApi() {
       return Number.isFinite(n) ? n : 0;
     };
     store.logs = [...localOnly, ...serverMapped].sort((a, b) => tsec(b) - tsec(a));
-    store.save?.();
   } catch {
     /* ignore */
   }
@@ -129,7 +128,6 @@ export async function createLog(payload: CreateTaskLogPayload): Promise<UiTaskLo
     // Fallback keeps UI stable if reference id shape mismatches.
     taskLogSaveStatus = "retry";
     store.logs = [next, ...(store.logs || [])];
-    store.save?.();
   }
 
   return next as UiTaskLogRow;
@@ -141,6 +139,5 @@ export async function deleteAllLogs() {
   const deletedCount = Array.isArray(existing?.rows) ? existing.rows.length : 0;
   // No bulk-delete API exists yet; keep local clear for UI compatibility.
   store.logs = [];
-  store.save?.();
   return { ok: true, deletedCount, compatibilityOnly: true };
 }

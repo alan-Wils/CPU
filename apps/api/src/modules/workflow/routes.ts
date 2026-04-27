@@ -68,7 +68,8 @@ workflowRouter.patch(
       bay: req.body.bay,
       table: req.body.table,
       plantedAt: req.body.plantedAt,
-      complete: req.body.complete
+      complete: req.body.complete,
+      cultivationUiState: req.body.cultivationUiState
     });
     res.json(updated);
   })
@@ -183,7 +184,8 @@ workflowRouter.patch(
     const run = await workflowService.updateExtractionRun(req.auth!.companyId, req.auth!.userId, {
       runId,
       method: req.body.method,
-      supplyUsed: req.body.supplyUsed
+      supplyUsed: req.body.supplyUsed,
+      extractionUiState: req.body.extractionUiState
     });
     res.json(run);
   })
@@ -226,7 +228,8 @@ workflowRouter.patch(
       lotId,
       sku: req.body.sku,
       gramsPerUnit: req.body.gramsPerUnit,
-      defaultTemplate: req.body.defaultTemplate
+      defaultTemplate: req.body.defaultTemplate,
+      packagingUiState: req.body.packagingUiState
     });
     res.json(lot);
   })
@@ -406,34 +409,17 @@ workflowRouter.post(
 );
 
 workflowRouter.get(
+  "/revision",
+  asyncHandler(async (req, res) => {
+    const out = await workflowService.getWorkflowRevision(req.auth!.companyId);
+    res.json(out);
+  })
+);
+
+workflowRouter.get(
   "/active",
   asyncHandler(async (req, res) => {
     const rows = await workflowService.listActive(req.auth!.companyId);
-    // #region agent log
-    fetch("http://127.0.0.1:7632/ingest/2f728e3e-c43e-4540-9407-a3bbee548e0f", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6beeea" },
-      body: JSON.stringify({
-        sessionId: "6beeea",
-        runId: "pre-fix",
-        hypothesisId: "H2",
-        location: "api/workflow/routes.ts:GET/active",
-        message: "Workflow active endpoint returning cultivation payload",
-        data: {
-          cultivationCount: Array.isArray((rows as any)?.cultivation) ? (rows as any).cultivation.length : 0,
-          cultivationSample: (Array.isArray((rows as any)?.cultivation) ? (rows as any).cultivation : [])
-            .slice(0, 5)
-            .map((r: any) => ({
-              id: String(r?.id || ""),
-              strainAcronym: String(r?.strainAcronym || ""),
-              batchChainCode: String(r?.batchChainCode || ""),
-              autoStatus: String(r?.autoStatus || "")
-            }))
-        },
-        timestamp: Date.now()
-      })
-    }).catch(() => {});
-    // #endregion
     res.json(rows);
   })
 );

@@ -201,7 +201,11 @@ model CultivationBatch {
   trimState      TrimFlowState?
   freshFrozen    FreshFrozenAllocation?
 
+  /// Client-side operational UI (stages, tasks, METRC fields, etc.); relational fields remain columns above.
+  cultivationUiState Json?
+
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([companyId])
   @@index([autoStatus])
@@ -267,7 +271,11 @@ model ExtractionRun {
   biomassLines ExtractionBiomassInput[] @relation("RunBiomass")
   packagingLots PackagingLot[]
 
+  /// Rich extraction UI state (tasks, labels, workflow); merged with columns on read.
+  extractionUiState Json?
+
   createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
   finishedAt DateTime?
 
   @@index([companyId, phase])
@@ -310,7 +318,11 @@ model PackagingLot {
   gramsPerUnit   Float
   defaultTemplate String?
 
+  /// Packaging UI-only fields merged with relational columns on read.
+  packagingUiState Json?
+
   createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
   finishedAt DateTime?
 
   @@index([companyId])

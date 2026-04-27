@@ -1,6 +1,11 @@
-import { publicApiBaseUrl } from "./publicEnv";
+import { getResolvedApiBaseUrl, publicApiBaseUrl } from "./publicEnv";
 
-const API = publicApiBaseUrl;
+function apiBase(): string {
+  if (typeof window !== "undefined") {
+    return getResolvedApiBaseUrl();
+  }
+  return publicApiBaseUrl;
+}
 
 export class ApiError extends Error {
   public readonly status: number;
@@ -95,12 +100,12 @@ async function unwrap<T>(res: Response): Promise<T> {
 }
 
 export async function apiGet<T>(path: string, token?: string | null): Promise<T> {
-  const res = await fetch(`${API}${normalizePath(path)}`, { cache: "no-store", headers: headers(token) });
+  const res = await fetch(`${apiBase()}${normalizePath(path)}`, { cache: "no-store", headers: headers(token) });
   return unwrap<T>(res);
 }
 
 export async function apiPost<T>(path: string, body: unknown, token?: string | null): Promise<T> {
-  const res = await fetch(`${API}${normalizePath(path)}`, {
+  const res = await fetch(`${apiBase()}${normalizePath(path)}`, {
     method: "POST",
     cache: "no-store",
     headers: headers(token, true),
@@ -110,7 +115,7 @@ export async function apiPost<T>(path: string, body: unknown, token?: string | n
 }
 
 export async function apiPut<T>(path: string, body: unknown, token?: string | null): Promise<T> {
-  const res = await fetch(`${API}${normalizePath(path)}`, {
+  const res = await fetch(`${apiBase()}${normalizePath(path)}`, {
     method: "PUT",
     cache: "no-store",
     headers: headers(token, true),
@@ -120,7 +125,7 @@ export async function apiPut<T>(path: string, body: unknown, token?: string | nu
 }
 
 export async function apiDelete<T>(path: string, token?: string | null): Promise<T> {
-  const res = await fetch(`${API}${normalizePath(path)}`, {
+  const res = await fetch(`${apiBase()}${normalizePath(path)}`, {
     method: "DELETE",
     cache: "no-store",
     headers: headers(token)
@@ -194,7 +199,7 @@ export async function apiRequest<T>(
       ? `${mappedPath.includes("?") ? "&" : "?"}companyId=${encodeURIComponent(options.companyId)}`
       : "";
 
-  const res = await fetch(`${API}${mappedPath}${query}`, {
+  const res = await fetch(`${apiBase()}${mappedPath}${query}`, {
     method,
     cache: "no-store",
     headers: headers(options.token ?? localStorage.getItem("token"), withBody),
@@ -272,4 +277,4 @@ export async function getLogs() {
   return data;
 }
 
-export { API as API_BASE };
+export { publicApiBaseUrl as API_BASE };
