@@ -36,6 +36,33 @@ function resendConfigured(): boolean {
   return Boolean(env.RESEND_API_KEY?.trim());
 }
 
+/** Hide mailbox in logs; supports `noreply@dom` or `Name <noreply@dom>`. */
+function maskFromForLog(raw: string): string {
+  const t = raw.trim();
+  const angled = /<([^>]+)>\s*$/.exec(t);
+  const mailbox = angled ? angled[1].trim() : t.trim();
+  const at = mailbox.indexOf("@");
+  if (at < 1) return "***";
+  return `${mailbox.slice(0, 1)}***${mailbox.slice(at)}`;
+}
+
+function resendSmtpFallbackEnabled(): boolean {
+  return process.env.RESEND_FALLBACK_SMTP?.toLowerCase() !== "false";
+}
+
+function parseResendErrorHint(bodyText: string): string | undefined {
+  try {
+    const j = JSON.parse(bodyText) as { message?: string; name?: string };
+    const m =
+      typeof j.message === "string" ? j.message : undefined;
+    if (m) return m;
+    if (typeof j.name === "string") return j.name;
+  } catch {
+    /* not JSON */
+  }
+  return undefined;
+}
+
 /** Outbound SMTP is often blocked on PaaS; Resend uses HTTPS (port 443). */
 async function sendInviteViaResend(payload: {
   from: string;
@@ -55,28 +82,51 @@ async function sendInviteViaResend(payload: {
       event: "mail_resend_attempt",
       ts: new Date().toISOString(),
       to: payload.to,
-      fromMasked: payload.from.replace(/(^.).*(@.*)$/, "$1***$2"),
+      fromMasked: maskFromForLog(payload.from),
     }),
   );
 
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: payload.from,
-      to: [payload.to],
-      subject: payload.subject,
-      html: payload.html,
-    }),
-    signal: AbortSignal.timeout(abortMs),
-  });
+  const ctl = new AbortController();
+  const timer = setTimeout(
+    () => ctl.abort(new Error(`Resend request timeout (${abortMs}ms)`)),
+    abortMs,
+  );
+  let res: Response;
+  try {
+    res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: payload.from,
+        to: [payload.to],
+        subject: payload.subject,
+        html: payload.html,
+      }),
+      signal: ctl.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 
   const bodyText = await res.text();
   if (!res.ok) {
-    throw new Error(`Resend HTTP ${res.status}: ${bodyText.slice(0, 500)}`);
+    const hint = parseResendErrorHint(bodyText);
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "mail_resend_failed",
+        ts: new Date().toISOString(),
+        httpStatus: res.status,
+        resendHint: hint ?? null,
+        bodySnippet: bodyText.slice(0, 800),
+      }),
+    );
+    throw new Error(
+      `Resend HTTP ${res.status}${hint ? `: ${hint}` : `: ${bodyText.slice(0, 500)}`}`,
+    );
   }
 }
 
@@ -214,6 +264,13 @@ export async function sendInviteEmail(opts: {
           "[mail] Resend send failed; will try SMTP if configured:",
           err,
         );
+        if (!resendSmtpFallbackEnabled()) {
+          console.warn(
+            "[mail] SMTP fallback disabled (RESEND_FALLBACK_SMTP=false); fix Resend/domain or unset this. Invite URL:",
+            opts.inviteUrl,
+          );
+          return;
+        }
       }
     }
   }
