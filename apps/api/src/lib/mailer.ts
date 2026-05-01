@@ -50,6 +50,18 @@ function resendSmtpFallbackEnabled(): boolean {
   return process.env.RESEND_FALLBACK_SMTP?.toLowerCase() !== "false";
 }
 
+/**
+ * Resend 4xx means misconfiguration (domain/key/from), not egress — SMTP will not fix it on PaaS
+ * and often burns ~60s on blocked Gmail ports. Skip unless overridden.
+ */
+function shouldRetrySmtpAfterResendError(err: unknown): boolean {
+  if (process.env.RESEND_SMTP_AFTER_RESEND_4XX?.toLowerCase() === "true") {
+    return true;
+  }
+  const msg = String(err instanceof Error ? err.message : err);
+  return !/^Resend HTTP 4\d\d/.test(msg);
+}
+
 function parseResendErrorHint(bodyText: string): string | undefined {
   try {
     const j = JSON.parse(bodyText) as { message?: string; name?: string };
@@ -267,6 +279,13 @@ export async function sendInviteEmail(opts: {
         if (!resendSmtpFallbackEnabled()) {
           console.warn(
             "[mail] SMTP fallback disabled (RESEND_FALLBACK_SMTP=false); fix Resend/domain or unset this. Invite URL:",
+            opts.inviteUrl,
+          );
+          return;
+        }
+        if (!shouldRetrySmtpAfterResendError(err)) {
+          console.warn(
+            "[mail] Skipping SMTP after Resend 4xx — fix domain/key/from in Resend (set RESEND_SMTP_AFTER_RESEND_4XX=true to force SMTP). Invite URL:",
             opts.inviteUrl,
           );
           return;
