@@ -1,5 +1,5 @@
 import { AppError } from "../errors/AppError.js";
-import { env } from "../config/env.js";
+import { resolvePublicWebBaseUrl } from "../config/publicWebUrl.js";
 import { sendInviteEmail } from "../lib/mailer.js";
 import { AdminRepository } from "../repositories/adminRepository.js";
 import { AuditService } from "./auditService.js";
@@ -44,7 +44,7 @@ export class AdminService {
             where: { id: input.companyId },
             select: { name: true }
         });
-        const baseUrl = env.APP_URL?.replace(/\/$/, "") ?? "http://localhost:3000";
+        const baseUrl = resolvePublicWebBaseUrl();
         const inviteUrl = `${baseUrl}/accept-invite?token=${encodeURIComponent(payload.token)}`;
 
         await this.auditService.logAction({
