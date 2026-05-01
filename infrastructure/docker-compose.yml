@@ -1,0 +1,30 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cpu
+      POSTGRES_PASSWORD: cpu
+      POSTGRES_DB: cannabis_cpu
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: ../apps/api
+    environment:
+      DATABASE_PROVIDER: postgresql
+      DATABASE_URL: postgresql://cpu:cpu@postgres:5432/cannabis_cpu
+      JWT_SECRET: replace_me_with_secure_secret
+      JWT_EXPIRES_IN: 15m
+      PORT: 4000
+    ports:
+      - "4000:4000"
+    depends_on:
+      - postgres
+
+volumes:
+  pg_data:

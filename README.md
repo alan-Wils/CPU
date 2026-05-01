@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Cannabis CPU Platform Monorepo
 
-## Getting Started
+Production-ready foundation for a multi-company cannabis operations platform with a CrewAI planning swarm and a web stack based on Next.js, Node.js, Prisma, and SQLite -> PostgreSQL migration readiness.
 
-First, run the development server:
+## Stack
+- Frontend: Next.js 16 (App Router), TypeScript
+- Backend: Node.js + Express + TypeScript
+- ORM: Prisma
+- Databases: SQLite default, PostgreSQL migration target
+- Auth: JWT, password reset request foundation, invite foundation
+- Multi-tenancy: Company-scoped data model enforced by repository/service layer
+- RBAC: Owner (application-level), Admin (highest company-level), specialist roles
+- Workflow: Cultivation -> Extraction -> Packaging
+- Automation: CrewAI multi-agent orchestration
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Staging & production (Vercel, Railway/Render, Neon)
+- [docs/STAGING_DEPLOYMENT.md](docs/STAGING_DEPLOYMENT.md) — Prisma, Neon, API host, checklists
+- [apps/web/VERCEL.md](apps/web/VERCEL.md) — Vercel project root `apps/web`, `NEXT_PUBLIC_*` env, smoke tests
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Monorepo Layout
+- `apps/web`: Next.js dashboard frontend (live API integration)
+- `apps/api`: Node API + Prisma + seed system
+- `packages/shared`: shared role and permission constants
+- `automation/crewai`: CrewAI agents/tasks/crew orchestration
+- `docs`: architecture and implementation plan
+- `infrastructure`: docker/deploy assets
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Quick Start
+1. Install deps: `npm install`
+2. Prepare API env: copy `apps/api/.env.example` to `apps/api/.env`
+3. Prepare web env: copy `apps/web/.env.example` to `apps/web/.env.local`
+4. Push schema: `npm --workspace @cpu/api run prisma:push`
+5. Seed data: `npm --workspace @cpu/api run prisma:seed`
+6. Run API: `npm --workspace @cpu/api run dev`
+7. Run web: `npm --workspace @cpu/web run dev`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Demo Seed Credentials
+- owner@budfox.com / OwnerPass!234
+- admin@budfox.com / AdminPass!234
+- cultivation@budfox.com / CultivationPass!234
+- extraction@budfox.com / ExtractionPass!234
+- packaging@budfox.com / PackagingPass!234
+- viewer@budfox.com / ViewerPass!234
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Production Notes
+- Owner is preserved as application-level control.
+- Admin remains highest company-level role.
+- Route payloads use strict Zod validation.
+- Routes never query Prisma directly; services + repositories enforce company scoping.
+- See `docs/IMPLEMENTATION_PLAN.md` for phase roadmap.
