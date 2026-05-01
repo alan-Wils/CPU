@@ -1,5 +1,6 @@
-import { AppError } from "../errors/AppError.js";
 import { resolvePublicWebBaseUrl } from "../config/publicWebUrl.js";
+import { AppError } from "../errors/AppError.js";
+import { logInfo } from "../lib/logger.js";
 import { sendInviteEmail } from "../lib/mailer.js";
 import { AdminRepository } from "../repositories/adminRepository.js";
 import { AuditService } from "./auditService.js";
@@ -46,6 +47,7 @@ export class AdminService {
         });
         const baseUrl = resolvePublicWebBaseUrl();
         const inviteUrl = `${baseUrl}/accept-invite?token=${encodeURIComponent(payload.token)}`;
+        logInfo("admin_invite_url_resolved", { webBaseUrl: baseUrl });
 
         await this.auditService.logAction({
             companyId: input.companyId,

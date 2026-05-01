@@ -10,7 +10,7 @@ const envSchema = z
     JWT_EXPIRES_IN: z.string().default("15m"),
     PORT: z.coerce.number().int().positive().default(4000),
     CORS_ORIGIN: z.string().default("*"),
-    /** Public web app (Vercel) base URL; required when NODE_ENV=production. */
+    /** Browser app origin for pages like /accept-invite — not the Railway API hostname. Required in production. */
     APP_URL: z.preprocess((v) => (v === "" || v === null || v === undefined ? undefined : v), z.string().url().optional()),
     OWNER_BOOTSTRAP_EMAIL: z.string().email().optional(),
     SMTP_HOST: z.string().optional(),
