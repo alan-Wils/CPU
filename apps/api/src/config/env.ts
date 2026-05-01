@@ -16,7 +16,9 @@ const envSchema = z
     SMTP_HOST: z.string().optional(),
     SMTP_PORT: z.coerce.number().int().positive().optional(),
     SMTP_USER: z.string().optional(),
-    SMTP_PASS: z.string().optional(),
+    /** Gmail app passwords are sometimes pasted with spaces; strip for auth. */
+    SMTP_PASS: z.preprocess((v) => (typeof v === "string" ? v.replace(/\s+/g, "") : v), z.string().optional()),
+    EMAIL_FROM: z.preprocess((v) => (v === "" || v === null || v === undefined ? undefined : v), z.string().email().optional()),
     SMTP_FROM: z.preprocess((v) => (v === "" || v === null || v === undefined ? undefined : v), z.string().email().optional()),
     OCR_SPACE_API_KEY: z.string().optional(),
     CHECK_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(8 * 1024 * 1024)
@@ -52,13 +54,20 @@ const envSchema = z
             message: "APP_URL (https://...) is required in production for consistent invite/reset and absolute URLs."
         });
     }
-    const hasAnySmtp = data.SMTP_HOST || data.SMTP_PORT || data.SMTP_USER || data.SMTP_PASS || data.SMTP_FROM;
+    const hasAnySmtp =
+        data.SMTP_HOST ||
+        data.SMTP_PORT ||
+        data.SMTP_USER ||
+        data.SMTP_PASS ||
+        data.SMTP_FROM ||
+        data.EMAIL_FROM;
     if (hasAnySmtp) {
-        if (!data.SMTP_HOST || !data.SMTP_PORT || !data.SMTP_FROM) {
+        const hasFrom = Boolean(data.SMTP_FROM || data.EMAIL_FROM);
+        if (!data.SMTP_HOST || !data.SMTP_PORT || !hasFrom) {
             ctx.addIssue({
                 code: z.ZodIssueCode.custom,
                 path: ["SMTP_HOST"],
-                message: "If SMTP is enabled, set SMTP_HOST, SMTP_PORT, SMTP_FROM, and (if required) SMTP_USER / SMTP_PASS."
+                message: "If SMTP is enabled, set SMTP_HOST, SMTP_PORT, SMTP_FROM or EMAIL_FROM, and SMTP_USER/SMTP_PASS for authenticated SMTP."
             });
         }
     }

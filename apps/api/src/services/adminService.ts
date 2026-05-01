@@ -1,4 +1,6 @@
 import { AppError } from "../errors/AppError.js";
+import { env } from "../config/env.js";
+import { sendInviteEmail } from "../lib/mailer.js";
 import { AdminRepository } from "../repositories/adminRepository.js";
 import { AuditService } from "./auditService.js";
 export class AdminService {
@@ -38,6 +40,25 @@ export class AdminService {
             createdBy: input.actorUserId,
             expiresAt
         });
+        const company = await this.repo.db.company.findUnique({
+            where: { id: input.companyId },
+            select: { name: true }
+        });
+        const baseUrl = env.APP_URL?.replace(/\/$/, "") ?? "http://localhost:3000";
+        const inviteUrl = `${baseUrl}/accept-invite?token=${encodeURIComponent(payload.token)}`;
+
+        try {
+            await sendInviteEmail({
+                to: input.email,
+                inviteUrl,
+                companyName: company?.name ?? "Cannabis CPU",
+                role: String(input.role)
+            });
+        } catch (err) {
+            console.error("[mail] Failed to send invite email:", err);
+            // Invite row exists; UI still receives token to share manually if needed.
+        }
+
         await this.auditService.logAction({
             companyId: input.companyId,
             actorUserId: input.actorUserId,
@@ -51,7 +72,8 @@ export class AdminService {
             email: payload.invite.email,
             role: payload.invite.role,
             expiresAt,
-            token: payload.token
+            token: payload.token,
+            inviteUrl
         };
     }
     async listUsers(input) {
