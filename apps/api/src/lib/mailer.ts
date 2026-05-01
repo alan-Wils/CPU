@@ -32,6 +32,54 @@ function smtpFullyConfigured(): boolean {
   );
 }
 
+function resendConfigured(): boolean {
+  return Boolean(env.RESEND_API_KEY?.trim());
+}
+
+/** Outbound SMTP is often blocked on PaaS; Resend uses HTTPS (port 443). */
+async function sendInviteViaResend(payload: {
+  from: string;
+  to: string;
+  html: string;
+  subject: string;
+}): Promise<void> {
+  const key = env.RESEND_API_KEY!.trim();
+  const abortMs =
+    Number(process.env.RESEND_TIMEOUT_MS) > 0
+      ? Number(process.env.RESEND_TIMEOUT_MS)
+      : 30_000;
+
+  console.log(
+    JSON.stringify({
+      level: "info",
+      event: "mail_resend_attempt",
+      ts: new Date().toISOString(),
+      to: payload.to,
+      fromMasked: payload.from.replace(/(^.).*(@.*)$/, "$1***$2"),
+    }),
+  );
+
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: payload.from,
+      to: [payload.to],
+      subject: payload.subject,
+      html: payload.html,
+    }),
+    signal: AbortSignal.timeout(abortMs),
+  });
+
+  const bodyText = await res.text();
+  if (!res.ok) {
+    throw new Error(`Resend HTTP ${res.status}: ${bodyText.slice(0, 500)}`);
+  }
+}
+
 export function inviteFromAddress(): string {
   return env.EMAIL_FROM || env.SMTP_FROM || env.SMTP_USER || "";
 }
@@ -67,7 +115,7 @@ function explainSmtpConnectivityFailure(err: unknown): void {
   if (!isTcpTimeoutLike(err)) return;
   console.error(
     "[mail] SMTP TCP timed out — outbound 587/465 may be blocked from this host, or Gmail is delaying. " +
-      "Try: SMTP_PORT=465 & SMTP_SECURE=true, or switch to an HTTP email API (Resend/SendGrid/Postmark). " +
+      "Set RESEND_API_KEY + RESEND_FROM (HTTPS), or try SMTP_PORT=465 & SMTP_SECURE=true. " +
       "Optional: SMTP_CONNECTION_MS=45000.",
   );
 }
@@ -122,7 +170,8 @@ async function deliverOnce(opts: {
 }
 
 /**
- * Sends invite mail when SMTP is fully configured; otherwise logs the URL (Railway/logs).
+ * Sends invite mail via Resend (HTTPS) when configured, else SMTP when fully configured;
+ * otherwise logs the invite URL for operators.
  */
 export async function sendInviteEmail(opts: {
   to: string;
@@ -130,11 +179,50 @@ export async function sendInviteEmail(opts: {
   companyName: string;
   role: string;
 }): Promise<void> {
+  const subject = `You're invited to ${opts.companyName}`;
+  const html = `
+      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+        <h2>You were invited to ${escapeHtml(opts.companyName)}</h2>
+        <p>Your role: <strong>${escapeHtml(opts.role)}</strong></p>
+        <p>Accept your invite and set your password:</p>
+        <p><a href="${opts.inviteUrl}">Accept invite</a></p>
+        <p style="font-size: 12px; color: #666;">${escapeHtml(opts.inviteUrl)}</p>
+      </div>
+    `;
+
+  if (resendConfigured()) {
+    const resendFrom =
+      env.RESEND_FROM?.trim() ||
+      inviteFromAddress();
+    if (!resendFrom) {
+      console.warn(
+        "[mail] RESEND_API_KEY set but need RESEND_FROM or EMAIL_FROM / SMTP_FROM. Invite URL:",
+        opts.inviteUrl,
+      );
+    } else {
+      try {
+        await sendInviteViaResend({
+          from: resendFrom,
+          to: opts.to,
+          subject,
+          html,
+        });
+        console.log("[mail] Invite email sent via Resend to", opts.to);
+        return;
+      } catch (err) {
+        console.error(
+          "[mail] Resend send failed; will try SMTP if configured:",
+          err,
+        );
+      }
+    }
+  }
+
   const from = inviteFromAddress();
 
   if (!smtpFullyConfigured()) {
     console.warn(
-      "[mail] SMTP incomplete (needs SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS on the API host). Invite URL:",
+      "[mail] No email transport: set RESEND_API_KEY + RESEND_FROM, or SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS. Invite URL:",
       opts.inviteUrl,
     );
     return;
@@ -153,17 +241,6 @@ export async function sendInviteEmail(opts: {
   const port = Number(env.SMTP_PORT ?? 587);
   const { connectHost, tlsServername } =
     await smtpIpv4ConnectionTarget(textualHost);
-
-  const subject = `You're invited to ${opts.companyName}`;
-  const html = `
-      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
-        <h2>You were invited to ${escapeHtml(opts.companyName)}</h2>
-        <p>Your role: <strong>${escapeHtml(opts.role)}</strong></p>
-        <p>Accept your invite and set your password:</p>
-        <p><a href="${opts.inviteUrl}">Accept invite</a></p>
-        <p style="font-size: 12px; color: #666;">${escapeHtml(opts.inviteUrl)}</p>
-      </div>
-    `;
 
   const profiles: Array<{ port: number; secure: boolean }> = [
     { port, secure },

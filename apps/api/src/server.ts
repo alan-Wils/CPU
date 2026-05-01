@@ -41,7 +41,12 @@ async function start() {
     try {
         await prisma.$connect();
         app.listen(env.PORT, () => {
-            logInfo("server_start", { port: env.PORT, env: env.NODE_ENV });
+            logInfo("server_start", {
+                port: env.PORT,
+                env: env.NODE_ENV,
+                mail_resend: Boolean(env.RESEND_API_KEY?.trim()),
+                mail_smtp: Boolean(env.SMTP_HOST && env.SMTP_PORT && env.SMTP_USER && env.SMTP_PASS),
+            });
         });
     }
     catch (error) {

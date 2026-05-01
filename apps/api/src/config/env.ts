@@ -20,6 +20,24 @@ const envSchema = z
     SMTP_PASS: z.preprocess((v) => (typeof v === "string" ? v.replace(/\s+/g, "") : v), z.string().optional()),
     EMAIL_FROM: z.preprocess((v) => (v === "" || v === null || v === undefined ? undefined : v), z.string().email().optional()),
     SMTP_FROM: z.preprocess((v) => (v === "" || v === null || v === undefined ? undefined : v), z.string().email().optional()),
+    /** HTTPS API (works on hosts that block SMTP egress, e.g. some Railway plans). */
+    RESEND_API_KEY: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().optional()),
+    /** Resend `from`: plain email or `Name <email@domain>` (Zod `.email()` rejects the latter). */
+    RESEND_FROM: z.preprocess(
+        (v) => (v === "" || v === null || v === undefined ? undefined : String(v).trim()),
+        z
+            .union([
+                z.undefined(),
+                z
+                    .string()
+                    .max(320)
+                    .refine((val) => {
+                        const m = /<([^>]+)>\s*$/.exec(val.trim());
+                        const addr = (m ? m[1] : val).trim();
+                        return z.string().email().safeParse(addr).success;
+                    }, "RESEND_FROM must be a valid email or Name <email>"),
+            ]),
+    ),
     OCR_SPACE_API_KEY: z.string().optional(),
     CHECK_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(8 * 1024 * 1024)
 })
