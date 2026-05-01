@@ -1,3 +1,7 @@
+/* Prefer IPv4 first when resolving SMTP hosts (Railway/cloud often hang on broken IPv6 to Gmail). */
+import dns from "node:dns";
+dns.setDefaultResultOrder("ipv4first");
+
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";

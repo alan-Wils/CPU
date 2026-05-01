@@ -40,21 +40,28 @@ export async function sendInviteEmail(opts: {
 
   const secure = process.env.SMTP_SECURE?.toLowerCase() === "true";
 
+  const port = Number(env.SMTP_PORT ?? 587);
   const transporter = nodemailer.createTransport({
     host: env.SMTP_HOST,
-    port: Number(env.SMTP_PORT ?? 587),
+    port,
     secure,
+    /** Avoid hanging requests when SMTP is blocked or TLS stalls (default can be ~minutes). */
+    connectionTimeout: 12_000,
+    greetingTimeout: 12_000,
+    socketTimeout: 20_000,
+    requireTLS: port === 587 && !secure,
     auth: {
       user: env.SMTP_USER,
       pass: env.SMTP_PASS,
     },
   });
 
-  await transporter.sendMail({
-    from,
-    to: opts.to,
-    subject: `You're invited to ${opts.companyName}`,
-    html: `
+  try {
+    await transporter.sendMail({
+      from,
+      to: opts.to,
+      subject: `You're invited to ${opts.companyName}`,
+      html: `
       <div style="font-family: Arial, sans-serif; line-height: 1.5;">
         <h2>You were invited to ${escapeHtml(opts.companyName)}</h2>
         <p>Your role: <strong>${escapeHtml(opts.role)}</strong></p>
@@ -63,7 +70,10 @@ export async function sendInviteEmail(opts: {
         <p style="font-size: 12px; color: #666;">${escapeHtml(opts.inviteUrl)}</p>
       </div>
     `,
-  });
+    });
+  } finally {
+    transporter.close();
+  }
 }
 
 function escapeHtml(text: string): string {

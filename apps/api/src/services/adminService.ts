@@ -47,18 +47,6 @@ export class AdminService {
         const baseUrl = env.APP_URL?.replace(/\/$/, "") ?? "http://localhost:3000";
         const inviteUrl = `${baseUrl}/accept-invite?token=${encodeURIComponent(payload.token)}`;
 
-        try {
-            await sendInviteEmail({
-                to: input.email,
-                inviteUrl,
-                companyName: company?.name ?? "Cannabis CPU",
-                role: String(input.role)
-            });
-        } catch (err) {
-            console.error("[mail] Failed to send invite email:", err);
-            // Invite row exists; UI still receives token to share manually if needed.
-        }
-
         await this.auditService.logAction({
             companyId: input.companyId,
             actorUserId: input.actorUserId,
@@ -67,6 +55,18 @@ export class AdminService {
             entityId: payload.invite.id,
             after: { email: input.email, role: input.role }
         });
+
+        const mailOpts = {
+            to: input.email,
+            inviteUrl,
+            companyName: company?.name ?? "Cannabis CPU",
+            role: String(input.role)
+        };
+        void sendInviteEmail(mailOpts).then(
+            () => console.log(`[mail] invite sent to ${input.email}`),
+            (err: unknown) => console.error("[mail] Failed to send invite email:", err)
+        );
+
         return {
             id: payload.invite.id,
             email: payload.invite.email,
