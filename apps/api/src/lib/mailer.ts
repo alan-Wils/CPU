@@ -1,5 +1,30 @@
+import dns from "node:dns/promises";
+import net from "node:net";
 import nodemailer from "nodemailer";
 import { env } from "../config/env.js";
+
+/**
+ * Railway/container hosts often lack working IPv6 egress; Gmail AAAA resolves first
+ * can yield ENETUNREACH. Prefer a single IPv4 address and keep TLS SNI on the real hostname.
+ */
+async function smtpIpv4ConnectionTarget(hostname: string): Promise<{
+  connectHost: string;
+  tlsServername?: string;
+}> {
+  const name = hostname.trim();
+  if (net.isIP(name)) {
+    return { connectHost: name };
+  }
+  try {
+    const { address } = await dns.lookup(name, { family: 4 });
+    return { connectHost: address, tlsServername: name };
+  } catch {
+    console.warn(
+      `[mail] Could not resolve ${name} to IPv4; using hostname (may hit IPv6 ENETUNREACH on some hosts)`
+    );
+    return { connectHost: name };
+  }
+}
 
 function smtpFullyConfigured(): boolean {
   return Boolean(
@@ -41,8 +66,12 @@ export async function sendInviteEmail(opts: {
   const secure = process.env.SMTP_SECURE?.toLowerCase() === "true";
 
   const port = Number(env.SMTP_PORT ?? 587);
+  const { connectHost, tlsServername } = await smtpIpv4ConnectionTarget(
+    String(env.SMTP_HOST),
+  );
+
   const transporter = nodemailer.createTransport({
-    host: env.SMTP_HOST,
+    host: connectHost,
     port,
     secure,
     /** Avoid hanging requests when SMTP is blocked or TLS stalls (default can be ~minutes). */
@@ -54,6 +83,7 @@ export async function sendInviteEmail(opts: {
       user: env.SMTP_USER,
       pass: env.SMTP_PASS,
     },
+    tls: tlsServername ? { servername: tlsServername } : undefined,
   });
 
   try {
