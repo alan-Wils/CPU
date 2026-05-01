@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  users     User[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id                 String    @id @default(cuid())
+  companyId          String
+  company            Company   @relation(fields: [companyId], references: [id])
+  username           String
+  email              String?
+  passwordHash       String
+  role               String    @default("VIEW_ONLY")
+  active             Boolean   @default(true)
+
+  inviteToken         String?
+  inviteTokenExpires  DateTime?
+  emailVerified       Boolean   @default(false)
+  mustChangePassword  Boolean   @default(false)
+  status              String    @default("ACTIVE")
+
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([companyId, username])
+}
+
+model CultivationBatch {
+  id        String   @id
+  companyId String
+  data      Json
+  createdBy String?
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SourceBatch {
+  id        String   @id
+  companyId String
+  data      Json
+  createdBy String?
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ExtractionBatch {
+  id        String   @id
+  companyId String
+  data      Json
+  createdBy String?
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PackagingBatch {
+  id        String   @id
+  companyId String
+  data      Json
+  createdBy String?
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TaskLog {
+  id        String   @id @default(cuid())
+  companyId String
+  area      String
+  batch     String?
+  task      String
+  output    String?
+  data      Json?
+  createdBy String?
+  createdAt DateTime @default(now())
+}
+
+model AppState {
+  id        String   @id @default(cuid())
+  companyId String   @unique
+  data      Json
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CompanyConfig {
+  id        String   @id @default(cuid())
+  companyId String   @unique
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
