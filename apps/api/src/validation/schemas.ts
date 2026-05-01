@@ -1,10 +1,28 @@
 import { z } from "zod";
-export const loginSchema = z.object({
+
+/** Legacy UI sends `username` + optional `companyCode: ""`. Normalize before validation. */
+export const loginSchema = z.preprocess((raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+        return raw;
+    const o = { ...(raw as Record<string, unknown>) };
+    const userPart =
+        typeof o.username === "string" ? o.username.trim() : "";
+    const emailPart =
+        typeof o.email === "string" ? o.email.trim() : "";
+    o.email = emailPart || userPart || "";
+    delete o.username;
+    if (o.companyCode === "" || o.companyCode === null || o.companyCode === undefined)
+        delete o.companyCode;
+    else if (typeof o.companyCode === "string")
+        o.companyCode = o.companyCode.trim().toLowerCase();
+    return o;
+}, z.object({
     companyCode: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/).optional(),
-    email: z.string().email(),
+    /** Full email, or local-part only when `companyCode` is set (AuthService). */
+    email: z.string().min(1).max(200),
     password: z.string().min(8).max(128),
-    remember: z.boolean().optional()
-});
+    remember: z.coerce.boolean().optional(),
+}));
 export const resetRequestSchema = z.object({
     email: z.string().email()
 });
@@ -18,10 +36,26 @@ export const createCompanySchema = z.object({
     ownerEmail: z.string().email(),
     ownerPassword: z.string().min(12).max(128)
 });
-export const updateCompanySchema = z.object({
+export const updateCompanySchema = z.preprocess((raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+        return raw;
+    const o = { ...(raw as Record<string, unknown>) };
+    if (typeof o.code === "string" && o.slug === undefined) {
+        const normalized = o.code
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9-]+/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^-+|-+$/g, "");
+        if (normalized.length >= 2)
+            o.slug = normalized;
+    }
+    delete o.code;
+    return o;
+}, z.object({
     name: z.string().min(2).max(100).optional(),
-    slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/).optional()
-});
+    slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/).optional(),
+}));
 export const companyIdParam = z.object({ companyId: z.string().cuid() });
 export const assignOwnerSchema = z.object({
     targetUserId: z.string().cuid()

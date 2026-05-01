@@ -28,6 +28,8 @@ type CompanyItem = {
   id: string;
   name: string;
   code: string;
+  /** Present when using `@cpu/api` responses */
+  slug?: string;
   createdAt?: string;
   usersCount?: number;
 };
@@ -138,7 +140,16 @@ export default function AdminPage() {
       setCompany(me.company);
 
       if (me.user?.role === "OWNER") {
-        const loadedCompanies = await apiRequest<CompanyItem[]>("/api/auth/companies");
+        const raw = await apiRequest<
+          CompanyItem[] | { companies: CompanyItem[] }
+        >("/api/companies/all");
+        const list = Array.isArray(raw) ? raw : raw.companies ?? [];
+        const loadedCompanies = list.map((c) => ({
+          ...c,
+          code:
+            c.code ||
+            String((c as { slug?: string }).slug ?? "").toUpperCase(),
+        }));
         setCompanies(loadedCompanies);
 
         let savedCompanyId = getSelectedCompanyId();
@@ -321,7 +332,7 @@ export default function AdminPage() {
 
     try {
       const updatedCompany = await apiRequest<CompanyItem>(
-        `/api/auth/companies/${companyItem.id}`,
+        `/api/companies/${encodeURIComponent(companyItem.id)}`,
         {
           method: "PATCH",
           body: {

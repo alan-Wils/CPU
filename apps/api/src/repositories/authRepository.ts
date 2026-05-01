@@ -1,7 +1,30 @@
 import { TenantRepository } from "./TenantRepository.js";
 export class AuthRepository extends TenantRepository {
     async findUserByEmail(email) {
-        return this.db.user.findUnique({ where: { email }, include: { company: true } });
+        const e = email.trim().toLowerCase();
+        return this.db.user.findFirst({
+            where: { email: { equals: e, mode: "insensitive" } },
+            include: { company: true },
+        });
+    }
+    /** Login with short handle (`Alan.w`) when company slug matches (case-insensitive). */
+    async findUsersByCompanySlugAndEmailLocalPart(slugInput, localPart) {
+        const slug = slugInput.trim().toLowerCase();
+        const lp = localPart.trim();
+        const company = await this.db.company.findFirst({
+            where: { slug: { equals: slug, mode: "insensitive" } },
+        });
+        if (!company)
+            return [];
+        const prefix = `${lp}@`;
+        return this.db.user.findMany({
+            where: {
+                companyId: company.id,
+                email: { startsWith: prefix, mode: "insensitive" },
+                isActive: true,
+            },
+            include: { company: true },
+        });
     }
     async findCompanyByCode(slug) {
         return this.db.company.findUnique({ where: { slug } });

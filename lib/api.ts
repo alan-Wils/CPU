@@ -1,6 +1,17 @@
 import { getAuthToken } from "./auth";
 
-export const API_BASE_URL = "http://localhost:4000";
+function resolveApiBaseUrl(): string {
+  const fromEnv =
+    typeof process !== "undefined"
+      ? process.env.NEXT_PUBLIC_API_URL?.trim()
+      : "";
+  if (fromEnv)
+    return fromEnv.replace(/\/+$/, "");
+  return "http://localhost:4000";
+}
+
+/** Railway / local `@cpu/api` origin; set `NEXT_PUBLIC_API_URL` on Vercel (no trailing slash). */
+export const API_BASE_URL = resolveApiBaseUrl();
 
 const SELECTED_COMPANY_KEY = "cpu_selected_company_id";
 
@@ -226,7 +237,14 @@ export async function createUser(payload: {
 }
 
 export async function getCompanies() {
-  return apiRequest("/api/auth/companies");
+  const raw = await apiRequest<
+    { companies: Array<{ code?: string; slug?: string; [k: string]: unknown }> }
+  >("/api/companies/all");
+  const list = raw.companies ?? [];
+  return list.map((c) => ({
+    ...c,
+    code: c.code || String(c.slug ?? "").toUpperCase(),
+  }));
 }
 
 export async function getCompanyData<T = any[]>(

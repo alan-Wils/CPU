@@ -37,16 +37,51 @@ export class CompanyRepository extends TenantRepository {
         });
     }
     async listCompanies() {
-        return this.db.company.findMany({
+        const rows = await this.db.company.findMany({
             orderBy: { createdAt: "desc" },
-            select: { id: true, name: true, slug: true, createdAt: true }
+            select: {
+                id: true,
+                name: true,
+                slug: true,
+                createdAt: true,
+                _count: { select: { users: true } },
+            },
         });
+        return rows.map((r) => ({
+            id: r.id,
+            name: r.name,
+            slug: r.slug,
+            /** Legacy admin UI “company code” (uppercase display of slug). */
+            code: r.slug.toUpperCase(),
+            createdAt: r.createdAt,
+            usersCount: r._count.users,
+        }));
     }
     async updateCompany(companyId, data) {
-        return this.db.company.update({
+        await this.db.company.update({
             where: { id: companyId },
-            data
+            data,
         });
+        const row = await this.db.company.findUnique({
+            where: { id: companyId },
+            select: {
+                id: true,
+                name: true,
+                slug: true,
+                createdAt: true,
+                _count: { select: { users: true } },
+            },
+        });
+        if (!row)
+            throw new Error("Company missing after update");
+        return {
+            id: row.id,
+            name: row.name,
+            slug: row.slug,
+            code: row.slug.toUpperCase(),
+            createdAt: row.createdAt,
+            usersCount: row._count.users,
+        };
     }
     async findCompanyUser(companyId, userId) {
         return this.db.user.findFirst({

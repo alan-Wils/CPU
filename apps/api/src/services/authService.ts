@@ -7,12 +7,34 @@ import { AuthRepository } from "../repositories/authRepository.js";
 export class AuthService {
     repo = new AuthRepository();
     async login(input) {
-        const { email, password, companyCode } = input;
-        const user = await this.repo.findUserByEmail(email);
+        const identifier = String(input.email ?? "").trim();
+        const password = input.password;
+        const companyCodeRaw = input.companyCode;
+        const companyCode =
+            typeof companyCodeRaw === "string" ? companyCodeRaw.trim().toLowerCase() : undefined;
+
+        let user = null;
+        if (identifier.includes("@")) {
+            user = await this.repo.findUserByEmail(identifier);
+        }
+        else if (companyCode) {
+            const matches = await this.repo.findUsersByCompanySlugAndEmailLocalPart(companyCode, identifier);
+            if (matches.length === 1)
+                user = matches[0];
+            else if (matches.length > 1)
+                throw new AppError("Multiple accounts match; sign in with your full email address.", 400);
+        }
+        else {
+            throw new AppError("Enter your full email address when company code is blank (e.g. you@company.com).", 400);
+        }
+
         if (!user || !user.isActive) {
             throw new AppError("Invalid credentials", 401);
         }
-        if (companyCode && user.company.slug !== companyCode && user.role !== "OWNER") {
+        const slug = user.company.slug.toLowerCase();
+        if (companyCode &&
+            slug !== companyCode &&
+            user.role !== "OWNER") {
             throw new AppError("Company code does not match this account", 403);
         }
         const valid = await bcrypt.compare(password, user.passwordHash);
