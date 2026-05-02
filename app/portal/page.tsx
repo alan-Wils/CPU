@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { apiRequest, setSelectedCompanyId } from "@/lib/api";
 import {
   canCreatePlatformCompanies,
-  getPortalCompanies,
   isLoggedIn,
   isPortalSession,
   saveAuthSession,
@@ -97,10 +96,8 @@ function PortalBody() {
       const platformCanCreate = canCreatePlatformCompanies();
 
       try {
-        let list = getPortalCompanies();
-        if (!list.length) {
-          list = await fetchAccessibleList();
-        }
+        /** Always load from API — cached `cpu_portal_companies_json` skips new / invited tenants. */
+        const list = await fetchAccessibleList();
         if (cancelled) return;
 
         if (list.length === 0) {
