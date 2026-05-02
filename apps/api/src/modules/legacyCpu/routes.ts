@@ -153,9 +153,18 @@ function cultivationIdFromSourceRowInSnap(sourceId: string, snap: unknown): stri
  * all must map to the same cultivation id.
  */
 async function resolveCultivationBatchIdForExtractionCreate(companyId: string, body: Record<string, unknown>, snap: unknown): Promise<string> {
+    const direct = String(body.cultivationBatchId ?? "").trim();
+    if (direct) {
+        const row = await prisma.cultivationBatch.findFirst({
+            where: { id: direct, companyId }
+        });
+        if (row) {
+            return direct;
+        }
+    }
     const sources = Array.isArray(body.sources) ? body.sources : [];
     if (sources.length === 0) {
-        throw new AppError("At least one source is required", 400);
+        throw new AppError("At least one source or cultivationBatchId is required", 400);
     }
     const ids: string[] = [];
     for (const row of sources) {
@@ -554,9 +563,28 @@ legacyCpuRouter.put("/extraction/:runId", requireRole(extractionWriteRoles), asy
     const companyId = getScopedCompanyId(req);
     const runId = String(req.params.runId || "");
     const body = req.body || {};
-    const existing = await prisma.extractionRun.findFirst({ where: { id: runId, companyId } });
+    let existing = await prisma.extractionRun.findFirst({ where: { id: runId, companyId } });
     if (!existing) {
-        throw new AppError("Extraction run not found", 404);
+        const snap = await storeService.load(companyId);
+        const cultivationBatchId = await resolveCultivationBatchIdForExtractionCreate(companyId, asUiRecord(body), snap);
+        const shellUi = mergeRecord({}, body);
+        if (shellUi.id)
+            delete shellUi.id;
+        existing = await prisma.extractionRun.create({
+            data: {
+                id: runId,
+                companyId,
+                cultivationBatchId,
+                phase: "PENDING_BIOMASS_PREP",
+                method: "",
+                extractionUiState: shellUi as Prisma.InputJsonValue
+            }
+        });
+        logInfo("[WORKFLOW_FIX] extraction_run_materialized_on_put", {
+            entityType: "ExtractionRun",
+            entityId: runId,
+            cultivationBatchId
+        });
     }
     const prevUi = asUiRecord(existing.extractionUiState);
     const prevPhase = String(existing.phase ?? "");
