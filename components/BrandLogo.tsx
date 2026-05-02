@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import Link from "next/link";
 
 type BrandLogoProps = {
@@ -5,17 +6,35 @@ type BrandLogoProps = {
   linkToHome?: boolean;
   /** Visual height in px; width scales with aspect ratio. */
   height?: number;
-  /** Cap logo width (px); defaults from height for wide wordmarks. */
+  /** Cap logo width (px); defaults from height for wide wordmarks. Ignored when `fitWithinParent` is true. */
   maxWidth?: number;
+  /**
+   * When true, logo uses `width: 100%`, `height: auto`, and `maxHeight` from `height`
+   * so it scales down inside narrow parents (e.g. login form) while staying large on wide screens.
+   */
+  fitWithinParent?: boolean;
 };
 
 export default function BrandLogo({
   linkToHome = true,
   height = 44,
   maxWidth: maxWidthProp,
+  fitWithinParent = false,
 }: BrandLogoProps) {
   const maxWidth = maxWidthProp ?? Math.min(520, Math.round(height * 5.5));
-  const img = (
+  const img = fitWithinParent ? (
+    <img
+      src="/logo.png"
+      alt="NexBatch"
+      style={{
+        width: "100%",
+        height: "auto",
+        maxHeight: height,
+        objectFit: "contain",
+        display: "block",
+      }}
+    />
+  ) : (
     <img
       src="/logo.png"
       alt="NexBatch"
@@ -30,20 +49,21 @@ export default function BrandLogo({
     />
   );
 
+  const outerStyle: CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    lineHeight: 0,
+    ...(fitWithinParent
+      ? { width: "100%", maxWidth: "100%", flexShrink: 1, minWidth: 0 }
+      : { flexShrink: 0 }),
+  };
+
   if (!linkToHome) {
-    return <span style={{ display: "inline-flex", alignItems: "center" }}>{img}</span>;
+    return <span style={outerStyle}>{img}</span>;
   }
 
   return (
-    <Link
-      href="/"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        flexShrink: 0,
-        lineHeight: 0,
-      }}
-    >
+    <Link href="/" style={outerStyle}>
       {img}
     </Link>
   );

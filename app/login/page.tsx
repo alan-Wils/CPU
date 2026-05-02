@@ -189,9 +189,11 @@ export default function LoginPage() {
               fontSize: 0,
               display: "flex",
               justifyContent: "center",
+              width: "100%",
+              minWidth: 0,
             }}
           >
-            <BrandLogo height={84} maxWidth={440} />
+            <BrandLogo height={252} fitWithinParent />
           </h1>
 
           <p style={{ color: "#93c5fd", margin: 0, fontSize: 20 }}>
