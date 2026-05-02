@@ -13,18 +13,31 @@ export class AuthService {
             code: company.slug.toUpperCase()
         };
     }
+    /** SPA `CpuUser` expects `username` + `email`; DB only stores `email`. */
+    sessionUserFields(user) {
+        if (!user?.company) {
+            throw new AppError("Invalid user session shape", 500);
+        }
+        const email = String(user.email ?? "").trim().toLowerCase();
+        const username = email.includes("@")
+            ? email.slice(0, email.indexOf("@"))
+            : (email || "user");
+        return {
+            id: user.id,
+            role: user.role,
+            companyId: user.companyId,
+            companyCode: user.company.slug,
+            email: email || null,
+            username
+        };
+    }
     async getSession(userId) {
         const user = await this.repo.findUserByIdWithCompany(userId);
         if (!user || !user.isActive) {
             throw new AppError("Unauthorized", 401);
         }
         return {
-            user: {
-                id: user.id,
-                role: user.role,
-                companyId: user.companyId,
-                companyCode: user.company.slug
-            },
+            user: this.sessionUserFields(user),
             company: this.companyPayload(user.company)
         };
     }
@@ -67,12 +80,7 @@ export class AuthService {
         const token = jwt.sign({ userId: user.id, companyId: user.companyId, role: user.role }, env.JWT_SECRET, signOpts);
         return {
             token,
-            user: {
-                id: user.id,
-                role: user.role,
-                companyId: user.companyId,
-                companyCode: user.company.slug
-            },
+            user: this.sessionUserFields(user),
             company: this.companyPayload(user.company)
         };
     }
@@ -104,12 +112,7 @@ export class AuthService {
         const authToken = jwt.sign({ userId: user.id, companyId: user.companyId, role: user.role }, env.JWT_SECRET, inviteSignOpts);
         return {
             token: authToken,
-            user: {
-                id: user.id,
-                role: user.role,
-                companyId: user.companyId,
-                companyCode: user.company.slug
-            },
+            user: this.sessionUserFields(user),
             company: this.companyPayload(user.company)
         };
     }

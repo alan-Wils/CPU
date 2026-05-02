@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import { store } from "@/lib/store";
-import { getAuthUser } from "@/lib/auth";
+import { displayNameFromLogActor, getAuthUser } from "@/lib/auth";
 import { loadBackendStore, saveBackendStore } from "@/lib/backendStore";
 import {
   loadCultivationBatches,
@@ -40,13 +40,11 @@ function formatLoggedBy(value: any) {
 
   if (typeof value === "string") return value || "—";
 
-  const username =
-    value.username ||
-    value.name ||
-    value.email ||
-    value.userName ||
-    value.user ||
-    "—";
+  let username = displayNameFromLogActor(value);
+  if (username === "Unknown User") {
+    username =
+      String(value.name || value.userName || value.user || "").trim() || "—";
+  }
   const role = value.role ? ` (${value.role})` : "";
 
   return `${username}${role}`;

@@ -45,6 +45,37 @@ export function getAuthUser(): CpuUser | null {
   }
 }
 
+/** Display handle for logs and UI when `username` is missing (older `@cpu/api` login payloads). */
+export function displayNameFromAuthUser(user: CpuUser | null): string {
+  if (!user) return "Unknown User";
+  const fromUsername = String(user.username || "").trim();
+  if (fromUsername && fromUsername !== "Unknown User") return fromUsername;
+  const email = String(user.email || "").trim();
+  if (email) {
+    const i = email.indexOf("@");
+    return i > 0 ? email.slice(0, i) : email;
+  }
+  return "Unknown User";
+}
+
+export function getAuthDisplayName(): string {
+  return displayNameFromAuthUser(getAuthUser());
+}
+
+/** For `loggedBy` objects on task logs (handles legacy "Unknown User" + `email` if present). */
+export function displayNameFromLogActor(actor: unknown): string {
+  if (!actor || typeof actor !== "object") return "Unknown User";
+  const o = actor as { username?: unknown; email?: unknown };
+  const u = String(o.username || "").trim();
+  if (u && u !== "Unknown User") return u;
+  const e = String(o.email || "").trim();
+  if (e) {
+    const i = e.indexOf("@");
+    return i > 0 ? e.slice(0, i) : e;
+  }
+  return "Unknown User";
+}
+
 export function getAuthCompany(): CpuCompany | null {
   if (typeof window === "undefined") return null;
 

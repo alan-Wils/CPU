@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import { store } from "@/lib/store";
-import { getAuthUser } from "@/lib/auth";
+import {
+  displayNameFromLogActor,
+  getAuthDisplayName,
+  getAuthUser,
+} from "@/lib/auth";
 import { loadBackendStore, saveBackendStore } from "@/lib/backendStore";
 import {
   loadSourceBatches,
@@ -118,7 +122,8 @@ function getLoggedBy() {
 
   return {
     userId: user?.id || user?.userId || "",
-    username: user?.username || "Unknown User",
+    username: getAuthDisplayName(),
+    email: user?.email || undefined,
     role: user?.role || "",
   };
 }
@@ -126,7 +131,7 @@ function getLoggedBy() {
 function formatLoggedBy(loggedBy: any) {
   if (!loggedBy) return "Unknown User";
 
-  const username = loggedBy.username || "Unknown User";
+  const username = displayNameFromLogActor(loggedBy);
   const role = loggedBy.role ? ` (${loggedBy.role})` : "";
 
   return `${username}${role}`;
