@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { z } from "zod";
 import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
@@ -8,7 +9,7 @@ import { requireRole } from "../../middleware/rbac.js";
 export const configRouter = Router();
 const configService = new ConfigService();
 configRouter.get("/", asyncHandler(async (req, res) => {
-    const rows = await configService.list(req.auth.companyId);
+    const rows = await configService.list(getScopedCompanyId(req));
     const merged = rows.reduce((acc, row) => {
         acc[row.key] = row.value;
         return acc;
@@ -19,7 +20,7 @@ configRouter.put("/", requireRole(["OWNER", "ADMIN", "OPERATIONS_MANAGER"]), val
     const payload = req.body;
     for (const [key, value] of Object.entries(payload)) {
         await configService.upsert({
-            companyId: req.auth.companyId,
+            companyId: getScopedCompanyId(req),
             actorUserId: req.auth.userId,
             key,
             value: value
@@ -30,7 +31,7 @@ configRouter.put("/", requireRole(["OWNER", "ADMIN", "OPERATIONS_MANAGER"]), val
 configRouter.post("/", requireRole(["OWNER", "ADMIN", "OPERATIONS_MANAGER"]), validate({ body: configUpsertSchema }), asyncHandler(async (req, res) => {
     const payload = req.body;
     const row = await configService.upsert({
-        companyId: req.auth.companyId,
+        companyId: getScopedCompanyId(req),
         actorUserId: req.auth.userId,
         key: payload.key,
         value: payload.value

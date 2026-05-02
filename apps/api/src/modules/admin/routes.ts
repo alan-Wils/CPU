@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { adminUserStatusSchema, adminUserUpdateSchema, inviteCreateSchema } from "../../validation/schemas.js";
@@ -7,13 +8,13 @@ import { requireRole } from "../../middleware/rbac.js";
 export const adminRouter = Router();
 const adminService = new AdminService();
 adminRouter.get("/users", requireRole(["OWNER", "ADMIN"]), asyncHandler(async (req, res) => {
-    const users = await adminService.listUsers({ companyId: req.auth.companyId });
+    const users = await adminService.listUsers({ companyId: getScopedCompanyId(req) });
     res.json({ users });
 }));
 adminRouter.post("/users/:userId/status", requireRole(["OWNER", "ADMIN"]), validate({ body: adminUserStatusSchema }), asyncHandler(async (req, res) => {
     const payload = req.body;
     const result = await adminService.setUserStatus({
-        companyId: req.auth.companyId,
+        companyId: getScopedCompanyId(req),
         actorUserId: req.auth.userId,
         targetUserId: String(req.params.userId),
         isActive: payload.isActive
@@ -23,7 +24,7 @@ adminRouter.post("/users/:userId/status", requireRole(["OWNER", "ADMIN"]), valid
 adminRouter.patch("/users/:userId", requireRole(["OWNER", "ADMIN"]), validate({ body: adminUserUpdateSchema }), asyncHandler(async (req, res) => {
     const payload = req.body;
     const updated = await adminService.updateUser({
-        companyId: req.auth.companyId,
+        companyId: getScopedCompanyId(req),
         actorUserId: req.auth.userId,
         actorRole: req.auth.role,
         targetUserId: String(req.params.userId),
@@ -35,7 +36,7 @@ adminRouter.patch("/users/:userId", requireRole(["OWNER", "ADMIN"]), validate({ 
 }));
 adminRouter.delete("/users/:userId", requireRole(["OWNER", "ADMIN"]), asyncHandler(async (req, res) => {
     const out = await adminService.deleteUser({
-        companyId: req.auth.companyId,
+        companyId: getScopedCompanyId(req),
         actorUserId: req.auth.userId,
         actorRole: req.auth.role,
         targetUserId: String(req.params.userId)
@@ -43,13 +44,13 @@ adminRouter.delete("/users/:userId", requireRole(["OWNER", "ADMIN"]), asyncHandl
     res.json(out);
 }));
 adminRouter.get("/invites", requireRole(["OWNER", "ADMIN"]), asyncHandler(async (req, res) => {
-    const invites = await adminService.listInvites({ companyId: req.auth.companyId });
+    const invites = await adminService.listInvites({ companyId: getScopedCompanyId(req) });
     res.json({ invites });
 }));
 adminRouter.post("/invites", requireRole(["OWNER", "ADMIN"]), validate({ body: inviteCreateSchema }), asyncHandler(async (req, res) => {
     const payload = req.body;
     const result = await adminService.createInvite({
-        companyId: req.auth.companyId,
+        companyId: getScopedCompanyId(req),
         actorUserId: req.auth.userId,
         email: payload.email,
         role: payload.role

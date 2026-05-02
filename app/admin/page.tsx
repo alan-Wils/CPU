@@ -101,15 +101,23 @@ const INVITE_ROLE_OPTIONS: {
   },
 ];
 
-const roleOptions = [
-  { value: "VIEW_ONLY", label: "View Only", description: "Can view company data but cannot create or edit records." },
-  { value: "CULTIVATION", label: "Cultivation", description: "Can work in cultivation areas." },
-  { value: "EXTRACTION", label: "Extraction", description: "Can work in extraction areas." },
-  { value: "PACKAGING", label: "Packaging", description: "Can work in packaging areas." },
-  { value: "MANAGER", label: "Manager", description: "Can view users and manage production workflows." },
-  { value: "ADMIN", label: "Admin", description: "Can create users and grant permissions." },
-  { value: "OWNER", label: "Owner", description: "Application owner access." },
-];
+/** Roles allowed when editing a user — must match `@cpu/api` `adminUserUpdateSchema` / Prisma `UserRole`. */
+function getEditUserRoleOptions(currentActorRole: string) {
+  const ownerOption = {
+    value: "OWNER",
+    label: "Application Owner",
+    description: "Application owner access.",
+  };
+  if (currentActorRole === "OWNER") {
+    return [...INVITE_ROLE_OPTIONS, ownerOption];
+  }
+  return [...INVITE_ROLE_OPTIONS];
+}
+
+function getAllowedRoleOptions(currentRole: string) {
+  if (currentRole === "OWNER") return getEditUserRoleOptions("OWNER");
+  return getEditUserRoleOptions(currentRole).filter((option) => option.value !== "OWNER");
+}
 
 function getRoleColor(role: string) {
   if (role === "OWNER") return "#f59e0b";
@@ -140,11 +148,6 @@ function canEditTargetUser(currentRole: string, targetRole: string) {
   if (currentRole === "OWNER") return true;
   if (currentRole === "ADMIN" && targetRole !== "OWNER") return true;
   return false;
-}
-
-function getAllowedRoleOptions(currentRole: string) {
-  if (currentRole === "OWNER") return roleOptions;
-  return roleOptions.filter((option) => option.value !== "OWNER");
 }
 
 function getDisplayStatus(user: AdminUser) {
@@ -1557,7 +1560,9 @@ export default function AdminPage() {
                                     lineHeight: 1.45,
                                   }}
                                 >
-                                  {roleOptions.find((option) => option.value === editRole)?.description}
+                                  {getAllowedRoleOptions(currentUser?.role || "").find(
+                                    (option) => option.value === editRole,
+                                  )?.description}
                                 </div>
 
                                 <div

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { taskLogCreateSchema, taskLogIdParam } from "../../validation/schemas.js";
@@ -8,20 +9,20 @@ const taskService = new TaskService();
 tasksRouter.post("/logs", validate({ body: taskLogCreateSchema }), asyncHandler(async (req, res) => {
     const payload = req.body;
     const row = await taskService.create({
-        companyId: req.auth.companyId,
+        companyId: getScopedCompanyId(req),
         actorUserId: req.auth.userId,
         ...payload
     });
     res.status(201).json(row);
 }));
 tasksRouter.get("/logs/recent", asyncHandler(async (req, res) => {
-    const rows = await taskService.listRecent(req.auth.companyId);
+    const rows = await taskService.listRecent(getScopedCompanyId(req));
     res.json({ rows });
 }));
 tasksRouter.delete("/logs/:taskLogId", validate({ params: taskLogIdParam }), asyncHandler(async (req, res) => {
     const { taskLogId } = req.params;
     const out = await taskService.deleteById({
-        companyId: req.auth.companyId,
+        companyId: getScopedCompanyId(req),
         actorUserId: req.auth.userId,
         role: req.auth.role,
         taskLogId
@@ -30,7 +31,7 @@ tasksRouter.delete("/logs/:taskLogId", validate({ params: taskLogIdParam }), asy
 }));
 tasksRouter.delete("/logs", asyncHandler(async (req, res) => {
     const out = await taskService.deleteAll({
-        companyId: req.auth.companyId,
+        companyId: getScopedCompanyId(req),
         actorUserId: req.auth.userId,
         role: req.auth.role
     });

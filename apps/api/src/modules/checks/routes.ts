@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { requireRole } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
@@ -20,7 +21,7 @@ const listQuerySchema = z.object({
 export const checksRouter = Router();
 const service = new CheckCaptureService();
 checksRouter.get("/", validate({ query: listQuerySchema }), asyncHandler(async (req, res) => {
-    const companyId = String(req.auth?.companyId ?? "").trim();
+    const companyId = getScopedCompanyId(req);
     if (!companyId) {
         throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
     }
@@ -31,7 +32,7 @@ checksRouter.get("/", validate({ query: listQuerySchema }), asyncHandler(async (
 checksRouter.post("/upload", requireRole([...writeRoles]), validate({ body: checkUploadSchema }), asyncHandler(async (req, res) => {
     const origin = `${req.protocol}://${req.get("host") || ""}`;
     const uploaded = await service.uploadImage({
-        companyId: req.auth.companyId,
+        companyId: getScopedCompanyId(req),
         fileName: req.body.fileName,
         mimeType: req.body.mimeType,
         dataBase64: req.body.dataBase64,
@@ -49,7 +50,7 @@ checksRouter.post("/extract", requireRole([...writeRoles]), validate({ body: che
 }));
 checksRouter.post("/", requireRole([...writeRoles]), validate({ body: checkSaveSchema }), asyncHandler(async (req, res) => {
     const saved = await service.saveCheck({
-        companyId: req.auth.companyId,
+        companyId: getScopedCompanyId(req),
         createdByUserId: req.auth.userId,
         checkDate: req.body.checkDate,
         amount: req.body.amount,

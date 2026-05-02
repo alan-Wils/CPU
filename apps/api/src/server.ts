@@ -7,7 +7,7 @@ import cors from "cors";
 import helmet from "helmet";
 import path from "path";
 import { env } from "./config/env.js";
-import { parseCorsOrigin } from "./config/cors.js";
+import { createCorsOriginResolver, describeCorsAllowlist } from "./config/cors.js";
 import { resolvePublicWebBaseUrl } from "./config/publicWebUrl.js";
 import { appRouter } from "./router.js";
 import { errorMiddleware } from "./middleware/error.js";
@@ -15,7 +15,7 @@ import { prisma } from "./config/prisma.js";
 import { logInfo, logError } from "./lib/logger.js";
 const app = express();
 app.use(helmet());
-app.use(cors({ origin: parseCorsOrigin(env.CORS_ORIGIN) }));
+app.use(cors({ origin: createCorsOriginResolver(env.CORS_ORIGIN) }));
 app.use(express.json({ limit: "15mb" }));
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 /** Liveness: process is up; does not hit the database. */
@@ -88,6 +88,7 @@ async function start() {
                 env: env.NODE_ENV,
                 mail_resend: Boolean(env.RESEND_API_KEY?.trim()),
                 mail_smtp: Boolean(env.SMTP_HOST && env.SMTP_PORT && env.SMTP_USER && env.SMTP_PASS),
+                cors_allowlist: describeCorsAllowlist(env.CORS_ORIGIN),
             });
         });
     }

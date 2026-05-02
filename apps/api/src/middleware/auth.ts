@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
+import { attachScopedCompanyId } from "./companyScope.js";
 export function authMiddleware(req, res, next) {
     const authHeader = req.header("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -10,6 +11,7 @@ export function authMiddleware(req, res, next) {
     try {
         const payload = jwt.verify(token, env.JWT_SECRET);
         req.auth = payload;
+        attachScopedCompanyId(req);
         next();
     }
     catch {
