@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
 import Nav from "@/components/Nav";
+import {
+  API_BASE_URL,
+  appendCompanyIdQuery,
+  getSelectedCompanyId,
+} from "@/lib/api";
 
 type Strain = {
   id: string;
@@ -78,9 +84,6 @@ type AppConfig = {
   };
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-
 const emptyConfig: AppConfig = {
   company: {
     metrc: {
@@ -116,6 +119,7 @@ function makeId(prefix: string) {
 }
 
 export default function ConfigPage() {
+  const pathname = usePathname();
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -162,17 +166,24 @@ export default function ConfigPage() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/config`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const companyId = getSelectedCompanyId().trim();
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+      };
+      if (companyId) {
+        headers["X-Company-Id"] = companyId;
+      }
+      const path = appendCompanyIdQuery("/api/config", companyId);
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        headers,
       });
 
       if (!res.ok) {
         throw new Error("Could not load config");
       }
 
-      const data = await res.json();
+      const raw = await res.json();
+      const { rows: _rows, ...data } = raw as AppConfig & { rows?: unknown };
       setConfig({
         ...emptyConfig,
         ...data,
@@ -217,12 +228,18 @@ export default function ConfigPage() {
     setSaving(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/config`, {
+      const companyId = getSelectedCompanyId().trim();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      };
+      if (companyId) {
+        headers["X-Company-Id"] = companyId;
+      }
+      const path = appendCompanyIdQuery("/api/config", companyId);
+      const res = await fetch(`${API_BASE_URL}${path}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
         body: JSON.stringify(config),
       });
 
@@ -242,8 +259,8 @@ export default function ConfigPage() {
   }
 
   useEffect(() => {
-    loadConfig();
-  }, []);
+    void loadConfig();
+  }, [pathname, token]);
 
   function addStrain() {
     if (!strainForm.name.trim() || !strainForm.acronym.trim()) {

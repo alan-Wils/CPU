@@ -241,7 +241,8 @@ export async function inviteUser(payload: {
   });
 }
 
-function appendCompanyIdQuery(path: string, companyId: string): string {
+/** Appends `?companyId=` / `&companyId=` for OWNER tenant scoping when proxies drop `X-Company-Id` on GET. */
+export function appendCompanyIdQuery(path: string, companyId: string): string {
   const id = String(companyId || "").trim();
   if (!id) return path;
   const sep = path.includes("?") ? "&" : "?";
