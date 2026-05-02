@@ -6,6 +6,7 @@ import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import {
   apiRequest,
+  deletePendingInvite,
   getMe,
   getSelectedCompanyId,
   inviteUser,
@@ -285,6 +286,7 @@ export default function AdminPage() {
   const [editRole, setEditRole] = useState("VIEW_ONLY");
   const [editActive, setEditActive] = useState(true);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
+  const [savingInviteId, setSavingInviteId] = useState<string | null>(null);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -312,6 +314,17 @@ export default function AdminPage() {
     [users, pendingInvites],
   );
 
+  function inviteAdminCompanyId(): string {
+    return (
+      (currentUser?.role === "OWNER"
+        ? String(selectedCompanyId || "").trim()
+        : "") ||
+      getSelectedCompanyId().trim() ||
+      String(getAuthCompany()?.id || "").trim() ||
+      ""
+    );
+  }
+
   async function loadPendingInvitesForCompany(companyId: string) {
     /** OWNER uses selected tenant in localStorage; ADMIN often has no `cpu_selected_company_id` — use session company from login. */
     const effective =
@@ -327,6 +340,52 @@ export default function AdminPage() {
       companyId: effective,
     });
     setPendingInvites(normalizePendingInvites(raw));
+  }
+
+  function confirmRevokePendingInvite(inv: PendingInvite) {
+    setError("");
+    setSuccess("");
+    if (!canManageUsers(currentUser?.role || "")) {
+      setError("Only OWNER or ADMIN can revoke invites.");
+      return;
+    }
+    showConfirm(
+      "Revoke invite",
+      `Remove the pending invite for ${inv.email}? They will not be able to accept it.`,
+      () => {
+        void (async () => {
+          const cid = inviteAdminCompanyId();
+          if (!cid) {
+            setError("Company is required to revoke an invite.");
+            return;
+          }
+          setSavingInviteId(inv.id);
+          try {
+            await deletePendingInvite(inv.id, cid);
+            setPendingInvites((p) => p.filter((x) => x.id !== inv.id));
+            setUsers((rows) =>
+              rows.filter((u) => u.id !== `${PENDING_INVITE_ROW_PREFIX}${inv.id}`),
+            );
+            setSuccess(`Revoked invite for ${inv.email}.`);
+          } catch (err: any) {
+            setError(err?.message || "Could not revoke invite.");
+          } finally {
+            setSavingInviteId(null);
+          }
+        })();
+      },
+    );
+  }
+
+  function confirmRevokeInviteFromGridRow(user: AdminUser) {
+    if (!isPendingInviteGridRow(user)) return;
+    const rawId = user.id.slice(PENDING_INVITE_ROW_PREFIX.length);
+    const inv = pendingInvites.find((p) => p.id === rawId);
+    if (!inv) {
+      setError("Could not find that invite. Try Refresh.");
+      return;
+    }
+    confirmRevokePendingInvite(inv);
   }
 
   async function loadAdminData() {
@@ -1414,6 +1473,25 @@ export default function AdminPage() {
                               timeStyle: "short",
                             })}
                           </div>
+                          {canManageUsers(currentUser?.role || "") && (
+                            <div style={{ marginTop: 8 }}>
+                              <button
+                                type="button"
+                                disabled={savingInviteId === inv.id}
+                                onClick={() => confirmRevokePendingInvite(inv)}
+                                style={{
+                                  ...smallButtonStyle,
+                                  background: "rgba(127, 29, 29, 0.38)",
+                                  border: "1px solid rgba(248, 113, 113, 0.46)",
+                                  color: "#fecaca",
+                                  cursor:
+                                    savingInviteId === inv.id ? "wait" : "pointer",
+                                }}
+                              >
+                                {savingInviteId === inv.id ? "Revoking…" : "Revoke invite"}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ))
                     )}
@@ -1563,70 +1641,100 @@ export default function AdminPage() {
                                     justifyContent: "flex-end",
                                   }}
                                 >
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      !canManageThisUser ||
-                                      savingUserId === user.id ||
-                                      inviteGridRow
-                                    }
-                                    onClick={() => startEditUser(user)}
-                                    style={{
-                                      ...smallButtonStyle,
-                                      background: canManageThisUser
-                                        ? "rgba(56, 189, 248, 0.16)"
-                                        : "rgba(71, 85, 105, 0.45)",
-                                      border: canManageThisUser
-                                        ? "1px solid rgba(56, 189, 248, 0.4)"
-                                        : "1px solid rgba(71, 85, 105, 0.5)",
-                                      color: canManageThisUser ? "#bae6fd" : "#94a3b8",
-                                      cursor: canManageThisUser ? "pointer" : "not-allowed",
-                                    }}
-                                  >
-                                    Edit
-                                  </button>
+                                  {inviteGridRow &&
+                                  canManageUsers(currentUser?.role || "") ? (
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        savingInviteId ===
+                                        user.id.slice(PENDING_INVITE_ROW_PREFIX.length)
+                                      }
+                                      onClick={() => confirmRevokeInviteFromGridRow(user)}
+                                      style={{
+                                        ...smallButtonStyle,
+                                        background: "rgba(127, 29, 29, 0.38)",
+                                        border: "1px solid rgba(248, 113, 113, 0.46)",
+                                        color: "#fecaca",
+                                        cursor:
+                                          savingInviteId ===
+                                          user.id.slice(PENDING_INVITE_ROW_PREFIX.length)
+                                            ? "wait"
+                                            : "pointer",
+                                      }}
+                                    >
+                                      {savingInviteId ===
+                                      user.id.slice(PENDING_INVITE_ROW_PREFIX.length)
+                                        ? "Revoking…"
+                                        : "Revoke invite"}
+                                    </button>
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          !canManageThisUser ||
+                                          savingUserId === user.id ||
+                                          inviteGridRow
+                                        }
+                                        onClick={() => startEditUser(user)}
+                                        style={{
+                                          ...smallButtonStyle,
+                                          background: canManageThisUser
+                                            ? "rgba(56, 189, 248, 0.16)"
+                                            : "rgba(71, 85, 105, 0.45)",
+                                          border: canManageThisUser
+                                            ? "1px solid rgba(56, 189, 248, 0.4)"
+                                            : "1px solid rgba(71, 85, 105, 0.5)",
+                                          color: canManageThisUser ? "#bae6fd" : "#94a3b8",
+                                          cursor: canManageThisUser ? "pointer" : "not-allowed",
+                                        }}
+                                      >
+                                        Edit
+                                      </button>
 
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      !canManageThisUser ||
-                                      savingUserId === user.id ||
-                                      inviteGridRow
-                                    }
-                                    onClick={() => toggleUserActive(user)}
-                                    style={{
-                                      ...smallButtonStyle,
-                                      background: user.active
-                                        ? "rgba(245, 158, 11, 0.14)"
-                                        : "rgba(34, 197, 94, 0.14)",
-                                      border: user.active
-                                        ? "1px solid rgba(245, 158, 11, 0.42)"
-                                        : "1px solid rgba(34, 197, 94, 0.42)",
-                                      color: user.active ? "#fde68a" : "#bbf7d0",
-                                      cursor: canManageThisUser ? "pointer" : "not-allowed",
-                                    }}
-                                  >
-                                    {user.active ? "Deactivate" : "Reactivate"}
-                                  </button>
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          !canManageThisUser ||
+                                          savingUserId === user.id ||
+                                          inviteGridRow
+                                        }
+                                        onClick={() => toggleUserActive(user)}
+                                        style={{
+                                          ...smallButtonStyle,
+                                          background: user.active
+                                            ? "rgba(245, 158, 11, 0.14)"
+                                            : "rgba(34, 197, 94, 0.14)",
+                                          border: user.active
+                                            ? "1px solid rgba(245, 158, 11, 0.42)"
+                                            : "1px solid rgba(34, 197, 94, 0.42)",
+                                          color: user.active ? "#fde68a" : "#bbf7d0",
+                                          cursor: canManageThisUser ? "pointer" : "not-allowed",
+                                        }}
+                                      >
+                                        {user.active ? "Deactivate" : "Reactivate"}
+                                      </button>
 
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      !canManageThisUser ||
-                                      savingUserId === user.id ||
-                                      inviteGridRow
-                                    }
-                                    onClick={() => deleteUser(user)}
-                                    style={{
-                                      ...smallButtonStyle,
-                                      background: "rgba(127, 29, 29, 0.38)",
-                                      border: "1px solid rgba(248, 113, 113, 0.46)",
-                                      color: "#fecaca",
-                                      cursor: canManageThisUser ? "pointer" : "not-allowed",
-                                    }}
-                                  >
-                                    Delete
-                                  </button>
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          !canManageThisUser ||
+                                          savingUserId === user.id ||
+                                          inviteGridRow
+                                        }
+                                        onClick={() => deleteUser(user)}
+                                        style={{
+                                          ...smallButtonStyle,
+                                          background: "rgba(127, 29, 29, 0.38)",
+                                          border: "1px solid rgba(248, 113, 113, 0.46)",
+                                          color: "#fecaca",
+                                          cursor: canManageThisUser ? "pointer" : "not-allowed",
+                                        }}
+                                      >
+                                        Delete
+                                      </button>
+                                    </>
+                                  )}
                                 </div>
                               </>
                             ) : (

@@ -89,6 +89,7 @@ export const updateCompanySchema = z.preprocess((raw) => {
     slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/).optional(),
 }));
 export const companyIdParam = z.object({ companyId: z.string().cuid() });
+export const inviteIdParam = z.object({ inviteId: z.string().cuid() });
 export const assignOwnerSchema = z.object({
     targetUserId: z.string().cuid()
 });

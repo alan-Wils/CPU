@@ -2,7 +2,7 @@ import { Router } from "express";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
-import { adminUserStatusSchema, adminUserUpdateSchema, inviteCreateSchema } from "../../validation/schemas.js";
+import { adminUserStatusSchema, adminUserUpdateSchema, inviteCreateSchema, inviteIdParam } from "../../validation/schemas.js";
 import { AdminService } from "../../services/adminService.js";
 import { requireRole } from "../../middleware/rbac.js";
 export const adminRouter = Router();
@@ -56,4 +56,12 @@ adminRouter.post("/invites", requireRole(["OWNER", "ADMIN"]), validate({ body: i
         role: payload.role
     });
     res.status(201).json(result);
+}));
+adminRouter.delete("/invites/:inviteId", requireRole(["OWNER", "ADMIN"]), validate({ params: inviteIdParam }), asyncHandler(async (req, res) => {
+    const out = await adminService.deleteInvite({
+        companyId: getScopedCompanyId(req),
+        actorUserId: req.auth.userId,
+        inviteId: String(req.params.inviteId),
+    });
+    res.json(out);
 }));

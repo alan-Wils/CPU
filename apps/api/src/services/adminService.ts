@@ -88,6 +88,30 @@ export class AdminService {
             createdAt: r.createdAt.toISOString(),
         }));
     }
+    async deleteInvite(input) {
+        const existing = await this.repo.db.inviteToken.findFirst({
+            where: {
+                id: input.inviteId,
+                companyId: input.companyId,
+                acceptedAt: null,
+            },
+            select: { id: true, email: true },
+        });
+        if (!existing)
+            throw new AppError("Pending invite not found", 404);
+        const changed = await this.repo.deletePendingInvite(input.companyId, input.inviteId);
+        if (changed.count === 0)
+            throw new AppError("Pending invite not found", 404);
+        await this.auditService.logAction({
+            companyId: input.companyId,
+            actorUserId: input.actorUserId,
+            action: "admin.invite.delete",
+            entityType: "InviteToken",
+            entityId: input.inviteId,
+            after: { email: existing.email },
+        });
+        return { ok: true };
+    }
     async listUsers(input) {
         const rows = await this.repo.listUsers(input.companyId);
         return rows.map((u) => ({

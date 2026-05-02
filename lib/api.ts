@@ -241,6 +241,23 @@ export async function inviteUser(payload: {
   });
 }
 
+function appendCompanyIdQuery(path: string, companyId: string): string {
+  const id = String(companyId || "").trim();
+  if (!id) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}companyId=${encodeURIComponent(id)}`;
+}
+
+export async function deletePendingInvite(inviteId: string, companyId?: string) {
+  const cid = String(companyId ?? "").trim() || getSelectedCompanyId();
+  const base = `/api/admin/invites/${encodeURIComponent(inviteId)}`;
+  const path = appendCompanyIdQuery(base, cid);
+  return apiRequest(path, {
+    method: "DELETE",
+    companyId: cid || companyId,
+  });
+}
+
 export async function createUser(payload: {
   username?: string;
   email: string;

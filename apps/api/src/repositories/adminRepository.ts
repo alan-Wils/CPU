@@ -60,4 +60,13 @@ export class AdminRepository extends TenantRepository {
             },
         });
     }
+    async deletePendingInvite(companyId, inviteId) {
+        return this.db.inviteToken.deleteMany({
+            where: {
+                companyId,
+                id: inviteId,
+                acceptedAt: null,
+            },
+        });
+    }
 }
