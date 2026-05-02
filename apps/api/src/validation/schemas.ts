@@ -78,21 +78,13 @@ export const createCompanySchema = z.object({
     slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/),
     ownerEmail: z.string().email()
 });
-/** Values must match Prisma `NexBatchPlatformRole`. */
-export const createNexBatchStaffSchema = z.object({
+/**
+ * UI tier for NexBatch portal invites; maps to `NexBatchPlatformRole` on the server.
+ * `staff` → Prisma `admin` (generic NexBatch Staff).
+ */
+export const inviteNexBatchStaffSchema = z.object({
     email: z.string().email().max(200),
-    password: z.string().min(12).max(128),
-    platformRole: z.enum([
-        "grow_staff",
-        "extraction_staff",
-        "packaging_staff",
-        "trimming_staff",
-        "lead_staff",
-        "management",
-        "admin",
-        "nexbatch_admin",
-        "owner",
-    ]),
+    tier: z.enum(["owner", "nexbatch_admin", "management", "staff"]),
 });
 export const updateCompanySchema = z.preprocess((raw) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw))

@@ -13,6 +13,8 @@ import {
   type CpuCompany,
   type CpuUser,
 } from "@/lib/auth";
+
+type NexBatchInviteTier = "owner" | "nexbatch_admin" | "management" | "staff";
 import { loadBackendStore } from "@/lib/backendStore";
 
 function codeToSlug(code: string): string {
@@ -63,8 +65,7 @@ function PortalBody() {
   } | null>(null);
 
   const [staffEmail, setStaffEmail] = useState("");
-  const [staffPassword, setStaffPassword] = useState("");
-  const [staffPlatformRole, setStaffPlatformRole] = useState("admin");
+  const [staffTier, setStaffTier] = useState<NexBatchInviteTier>("staff");
   const [staffBusy, setStaffBusy] = useState(false);
   const [staffErr, setStaffErr] = useState("");
   const [staffOk, setStaffOk] = useState<string | null>(null);
@@ -204,47 +205,41 @@ function PortalBody() {
     }
   }
 
-  async function onCreateStaff(e: React.FormEvent) {
+  async function onInviteStaff(e: React.FormEvent) {
     e.preventDefault();
     setStaffErr("");
     setStaffOk(null);
 
     const email = staffEmail.trim().toLowerCase();
-    const password = staffPassword;
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setStaffErr("Enter a valid email.");
-      return;
-    }
-    if (password.length < 12) {
-      setStaffErr("Password must be at least 12 characters.");
       return;
     }
 
     setStaffBusy(true);
     try {
       const out = await apiRequest<{
-        id: string;
         email: string;
         platformRole: string;
+        roleLabel: string;
         companiesGranted: number;
-      }>("/api/nexbatch/staff", {
+        expiresAt: string;
+      }>("/api/nexbatch/staff/invite", {
         method: "POST",
         omitCompanyHeader: true,
         body: {
           email,
-          password,
-          platformRole: staffPlatformRole,
+          tier: staffTier,
         },
       });
       setStaffOk(
-        `Created portal access for ${out.email} (${out.platformRole}). They can sign in at NexBatch portal with this email; company workspaces granted: ${out.companiesGranted}.`,
+        `Invitation sent to ${out.email} (${out.roleLabel}). They will open the link in the email, set a password, and land on the NexBatch portal with access to ${out.companiesGranted} workspace(s). Expires ${new Date(out.expiresAt).toLocaleString()}.`,
       );
       setStaffEmail("");
-      setStaffPassword("");
-      setStaffPlatformRole("admin");
+      setStaffTier("staff");
     } catch (err: unknown) {
       setStaffErr(
-        err instanceof Error ? err.message : "Could not create NexBatch staff.",
+        err instanceof Error ? err.message : "Could not send NexBatch staff invite.",
       );
     } finally {
       setStaffBusy(false);
@@ -420,15 +415,14 @@ function PortalBody() {
             }}
           >
             <h2 style={{ margin: "0 0 12px", fontSize: 20, fontWeight: 800 }}>
-              Add NexBatch staff
+              Invite NexBatch staff
             </h2>
             <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.55 }}>
-              Create another <strong style={{ color: "#cbd5e1" }}>portal</strong> account
-              (full email + password). They receive access to the{" "}
+              Sends an <strong style={{ color: "#cbd5e1" }}>email invite</strong> (same
+              delivery as company user invites). They open the link, set a password, and sign
+              in at the NexBatch portal with access to the{" "}
               <strong style={{ color: "#cbd5e1" }}>same company workspaces</strong> you see
-              in the list above, with the platform role you choose. You need at least one
-              workspace in that list to grant access. Share the password securely; they can
-              change it after sign-in when password reset is enabled.
+              in the list above. You need at least one workspace in that list to grant access.
             </p>
             {staffOk && (
               <div
@@ -463,7 +457,7 @@ function PortalBody() {
               </div>
             )}
             <form
-              onSubmit={onCreateStaff}
+              onSubmit={onInviteStaff}
               style={{ marginTop: 16, display: "grid", gap: 14 }}
               autoComplete="off"
             >
@@ -479,39 +473,24 @@ function PortalBody() {
                 />
               </label>
               <label style={labelStyle}>
-                Initial password (min. 12 characters)
-                <input
-                  value={staffPassword}
-                  onChange={(e) => setStaffPassword(e.target.value)}
-                  style={inputStyle}
-                  type="password"
-                  placeholder="••••••••••••"
-                  name="nb-staff-password"
-                  autoComplete="new-password"
-                />
-              </label>
-              <label style={labelStyle}>
-                Platform role
+                NexBatch role
                 <select
-                  value={staffPlatformRole}
-                  onChange={(e) => setStaffPlatformRole(e.target.value)}
+                  value={staffTier}
+                  onChange={(e) =>
+                    setStaffTier(e.target.value as NexBatchInviteTier)
+                  }
                   style={{
                     ...inputStyle,
                     marginTop: 6,
                     cursor: "pointer",
                   }}
-                  name="nb-staff-role"
+                  name="nb-staff-tier"
                 >
                   {(
                     [
-                      ["grow_staff", "Grow staff"],
-                      ["extraction_staff", "Extraction staff"],
-                      ["packaging_staff", "Packaging staff"],
-                      ["trimming_staff", "Trimming staff"],
-                      ["lead_staff", "Lead staff"],
+                      ["staff", "NexBatch Staff"],
                       ["management", "Management"],
-                      ["admin", "Admin"],
-                      ["nexbatch_admin", "NexBatch admin"],
+                      ["nexbatch_admin", "NexBatch Admin"],
                       ["owner", "Owner (full platform)"],
                     ] as const
                   )
@@ -542,7 +521,7 @@ function PortalBody() {
                   cursor: staffBusy ? "wait" : "pointer",
                 }}
               >
-                {staffBusy ? "Creating…" : "Create NexBatch staff account"}
+                {staffBusy ? "Sending…" : "Send invite email"}
               </button>
             </form>
           </section>

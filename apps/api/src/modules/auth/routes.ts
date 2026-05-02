@@ -26,6 +26,11 @@ authRouter.post("/accept-invite", validate({ body: acceptInviteSchema }), asyncH
     const result = await authService.acceptInvite(payload);
     res.json(result);
 }));
+authRouter.post("/accept-nexbatch-invite", validate({ body: acceptInviteSchema }), asyncHandler(async (req, res) => {
+    const payload = req.body;
+    const result = await authService.acceptNexBatchStaffInvite(payload);
+    res.json(result);
+}));
 authRouter.post("/password-reset/request", validate({ body: resetRequestSchema }), asyncHandler(async (req, res) => {
     const payload = req.body;
     const result = await authService.requestPasswordReset(payload.email);

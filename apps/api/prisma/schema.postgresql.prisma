@@ -503,6 +503,23 @@ model InviteToken {
   @@index([companyId, email])
 }
 
+/// NexBatch portal operator invite (email + accept link); `companyIds` JSON array snapshot at invite time.
+model PlatformStaffInvite {
+  id             String    @id @default(cuid())
+  email          String
+  /// Prisma `NexBatchPlatformRole` value (e.g. owner, nexbatch_admin, management, admin for “staff”).
+  platformRole   String
+  companyIds     Json
+  tokenHash      String    @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  createdBy      String
+  createdAt      DateTime  @default(now())
+
+  @@index([email])
+  @@index([createdBy])
+}
+
 model PasswordResetToken {
   id         String   @id @default(cuid())
   userId     String

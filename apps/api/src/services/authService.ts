@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import jwt, { type SignOptions } from "jsonwebtoken";
 import crypto from "node:crypto";
+import { Prisma } from "@prisma/client";
 import type { Company, User } from "@prisma/client";
 import { env } from "../config/env.js";
 import { AppError } from "../errors/AppError.js";
@@ -297,6 +298,95 @@ export class AuthService {
             token: authToken,
             user: this.sessionUserFields(u, legacyRole, co),
             company: this.companyPayload(co)
+        };
+    }
+
+    /**
+     * Accept NexBatch portal staff email invite (sets password, returns portal session like portal login).
+     */
+    async acceptNexBatchStaffInvite(input: { token: string; password: string }) {
+        const tokenHash = crypto.createHash("sha256").update(input.token).digest("hex");
+        const invite = await this.repo.findOpenPlatformStaffInviteByTokenHash(tokenHash);
+        if (!invite) {
+            throw new AppError("Invite is invalid or expired", 400);
+        }
+        const email = invite.email.trim().toLowerCase();
+        if (await this.repo.findUserByEmail(email)) {
+            throw new AppError("That email is already registered.", 409);
+        }
+        const passwordHash = await bcrypt.hash(input.password, 12);
+        let created;
+        try {
+            created = await this.repo.acceptPlatformStaffInviteAcceptUser({
+                inviteId: invite.id,
+                passwordHash,
+            });
+        }
+        catch (err: unknown) {
+            if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+                throw new AppError("That email is already registered.", 409);
+            }
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg === "PLATFORM_STAFF_INVITE_INVALID" || msg === "PLATFORM_STAFF_INVITE_EMPTY") {
+                throw new AppError("Invite is invalid or expired", 400);
+            }
+            throw err;
+        }
+        const u = created as UserWithRelations;
+        if (!u?.isActive) {
+            throw new AppError("Invite setup incomplete", 500);
+        }
+        const accessible = await this.companyService.listAccessibleCompanies(u.id, {
+            platformRole: u.platformRole ?? null,
+        });
+        if (!accessible.length) {
+            throw new AppError("No company access configured for this platform account", 403);
+        }
+        const remember = false;
+        if (accessible.length > 1) {
+            const jwtPayloadNoCompany: JwtSession = {
+                userId: u.id,
+                companyId: "",
+                role: platformRoleToLegacyRbac(u.platformRole),
+                sessionKind: "portal",
+                platformRole: u.platformRole,
+            };
+            const token = this.issueToken(jwtPayloadNoCompany, remember);
+            return {
+                token,
+                user: this.sessionUserFields(u, platformRoleToLegacyRbac(u.platformRole), null),
+                company: null,
+                needsCompanySelection: true,
+                companies: accessible.map((c) =>
+                    this.companyPayload({
+                        id: c.id,
+                        name: c.name,
+                        slug: c.slug,
+                        lifecycleStatus: c.lifecycleStatus,
+                    } as Company),
+                ),
+            };
+        }
+        const row0 = accessible[0];
+        const co = {
+            id: row0.id,
+            name: row0.name,
+            slug: row0.slug,
+        } as Company;
+        const mergedRole = platformRoleToLegacyRbac(u.platformRole);
+        const jwtPayload: JwtSession = {
+            userId: u.id,
+            companyId: co.id,
+            role: mergedRole,
+            sessionKind: "portal",
+            platformRole: u.platformRole,
+        };
+        const token = this.issueToken(jwtPayload, remember);
+        return {
+            token,
+            user: this.sessionUserFields(u, mergedRole, co),
+            company: this.companyPayload(co),
+            needsCompanySelection: false,
         };
     }
 }

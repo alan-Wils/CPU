@@ -501,6 +501,21 @@ model InviteToken {
   @@index([companyId, email])
 }
 
+model PlatformStaffInvite {
+  id             String    @id @default(cuid())
+  email          String
+  platformRole   String
+  companyIds     Json
+  tokenHash      String    @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  createdBy      String
+  createdAt      DateTime  @default(now())
+
+  @@index([email])
+  @@index([createdBy])
+}
+
 model PasswordResetToken {
   id         String   @id @default(cuid())
   userId     String

@@ -1,4 +1,4 @@
-import { clearAuthSession, getAuthToken } from "./auth";
+import { clearAuthSession, getAuthToken, type LoginResponse } from "./auth";
 
 function resolveApiBaseUrl(): string {
   const raw =
@@ -196,7 +196,11 @@ export async function apiRequest<T = any>(
       !options.skipAuthRedirectOn401
     ) {
       const path = window.location.pathname || "";
-      if (!path.startsWith("/login") && !path.startsWith("/accept-invite")) {
+      if (
+        !path.startsWith("/login") &&
+        !path.startsWith("/accept-invite") &&
+        !path.startsWith("/accept-nexbatch-invite")
+      ) {
         clearAuthSession();
         const next = encodeURIComponent(path + (window.location.search || ""));
         window.location.replace(`/login?next=${next}`);
@@ -227,6 +231,17 @@ export async function acceptInvite(payload: {
   password: string;
 }) {
   return apiRequest("/api/auth/accept-invite", {
+    method: "POST",
+    auth: false,
+    body: payload,
+  });
+}
+
+export async function acceptNexBatchInvite(payload: {
+  token: string;
+  password: string;
+}) {
+  return apiRequest<LoginResponse>("/api/auth/accept-nexbatch-invite", {
     method: "POST",
     auth: false,
     body: payload,

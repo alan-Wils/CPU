@@ -19,7 +19,7 @@ function allowsMissingCompany(req: Request): boolean {
         return true;
     if (method === "POST" && /\/companies$/.test(path))
         return true;
-    if (method === "POST" && /\/nexbatch\/staff$/.test(path))
+    if (method === "POST" && /\/nexbatch\/staff\/invite$/.test(path))
         return true;
     return false;
 }

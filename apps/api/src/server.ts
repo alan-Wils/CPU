@@ -43,6 +43,43 @@ app.get("/health", healthReady);
  * Emails occasionally link to this API hostname by mistake (APP_URL=CORS=RAILway).
  * Browsers GET /accept-invite here → forward to the real web app origin.
  */
+app.get("/accept-nexbatch-invite", (req, res) => {
+    const token = typeof req.query.token === "string" ? req.query.token : "";
+    if (!token.trim()) {
+        res.status(400)
+            .type("text/plain")
+            .send("Missing invite token. Use the link from your invitation.");
+        return;
+    }
+    const base = resolvePublicWebBaseUrl().replace(/\/+$/, "");
+    let redirectHref: string;
+    try {
+        const dest = new URL(`${base}/accept-nexbatch-invite`);
+        dest.searchParams.set("token", token);
+        redirectHref = dest.href;
+    }
+    catch {
+        res.status(500).type("text/plain").send("Invalid APP_URL; cannot redirect to the invite page.");
+        return;
+    }
+    const reqHost = (req.hostname || "").toLowerCase();
+    let destHost: string;
+    try {
+        destHost = new URL(redirectHref).hostname.toLowerCase();
+    }
+    catch {
+        res.status(500).type("text/plain").send("Invalid redirect URL derived from APP_URL.");
+        return;
+    }
+    if (reqHost && destHost === reqHost) {
+        res.status(503)
+            .type("text/plain")
+            .send("APP_URL/CORS resolves to this API host, so invites cannot reach the frontend. Set APP_URL on Railway to your deployed web app (e.g. https://your-project.vercel.app), redeploy, then open a new invite or replace the hostname in this URL with that frontend origin.");
+        return;
+    }
+    logInfo("nexbatch_invite_browser_redirect_to_web", { destinationHost: destHost });
+    res.redirect(302, redirectHref);
+});
 app.get("/accept-invite", (req, res) => {
     const token = typeof req.query.token === "string" ? req.query.token : "";
     if (!token.trim()) {

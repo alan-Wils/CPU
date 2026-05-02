@@ -1,4 +1,5 @@
 import BrandLogo from "@/components/BrandLogo";
+import HomeCurrentAccess from "@/components/HomeCurrentAccess";
 import Nav from "@/components/Nav";
 
 const dashboardCards = [
@@ -113,32 +114,7 @@ export default function Home() {
               </p>
             </div>
 
-            <div
-              style={{
-                minWidth: 220,
-                background: "rgba(2, 6, 23, 0.74)",
-                border: "1px solid rgba(148, 163, 184, 0.18)",
-                borderRadius: 18,
-                padding: 16,
-              }}
-            >
-              <div
-                style={{
-                  color: "#94a3b8",
-                  fontSize: 13,
-                  fontWeight: 800,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                  marginBottom: 8,
-                }}
-              >
-                Current Access
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 900 }}>BudFox Supply</div>
-              <div style={{ color: "#64748b", marginTop: 4 }}>
-                Multi-user backend ready
-              </div>
-            </div>
+            <HomeCurrentAccess />
           </div>
 
           <div style={{ marginTop: 24 }}>

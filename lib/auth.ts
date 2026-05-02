@@ -30,6 +30,9 @@ const USER_KEY = "cpu_auth_user";
 const COMPANY_KEY = "cpu_auth_company";
 const PORTAL_COMPANIES_KEY = "cpu_portal_companies_json";
 
+/** Fired after `saveAuthSession` so client UI (e.g. home “Current access”) can resync from storage in the same tab. */
+export const CPU_AUTH_CHANGED_EVENT = "cpu-auth-changed";
+
 export function saveAuthSession(data: LoginResponse) {
   if (typeof window === "undefined") return;
 
@@ -48,6 +51,7 @@ export function saveAuthSession(data: LoginResponse) {
   } else if (String(data.user?.sessionKind) !== "portal") {
     window.localStorage.removeItem(PORTAL_COMPANIES_KEY);
   }
+  window.dispatchEvent(new Event(CPU_AUTH_CHANGED_EVENT));
 }
 
 export function setPortalCompanies(companies: CpuCompany[]) {
@@ -172,4 +176,5 @@ export function clearAuthSession() {
   for (const k of LEGACY_AUTH_KEYS) {
     window.localStorage.removeItem(k);
   }
+  window.dispatchEvent(new Event(CPU_AUTH_CHANGED_EVENT));
 }

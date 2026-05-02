@@ -62,3 +62,32 @@ export function isPlatformOperator(role: NexBatchPlatformRole | null | undefined
 export function canCreateCompanyAsPlatform(role: NexBatchPlatformRole | string | null | undefined): boolean {
     return role === "nexbatch_admin" || role === "owner";
 }
+
+/** Portal “Add NexBatch staff” UI tiers → stored `NexBatchPlatformRole` (`staff` → `admin`). */
+export type NexBatchInviteUiTier = "owner" | "nexbatch_admin" | "management" | "staff";
+
+export function nexBatchInviteTierToPlatformRole(tier: NexBatchInviteUiTier): NexBatchPlatformRole {
+    if (tier === "owner")
+        return "owner";
+    if (tier === "nexbatch_admin")
+        return "nexbatch_admin";
+    if (tier === "management")
+        return "management";
+    if (tier === "staff")
+        return "admin";
+    throw new Error(`Invalid NexBatch invite tier: ${tier}`);
+}
+
+/** Human label for invite email / UI copy. */
+export function nexBatchPlatformRoleInviteLabel(role: NexBatchPlatformRole | string): string {
+    const r = String(role || "").trim();
+    if (r === "owner")
+        return "Owner (full platform)";
+    if (r === "nexbatch_admin")
+        return "NexBatch Admin";
+    if (r === "management")
+        return "Management";
+    if (r === "admin")
+        return "NexBatch Staff";
+    return r || "NexBatch portal";
+}
