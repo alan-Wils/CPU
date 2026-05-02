@@ -133,6 +133,126 @@ function mapPackagingLotToLegacy(lot) {
         units: lot.units
     };
 }
+/** Matches operational deriveStrainAcronym for clone batches without acronym. */
+function legacyDeriveAcronym(strain) {
+    const parts = String(strain || "").trim().split(/\s+/).filter(Boolean);
+    const raw = (parts.length ? parts : [strain])
+        .map((p) => p[0] ?? "")
+        .join("")
+        .toUpperCase();
+    return (raw.length > 0 ? raw : "X").slice(0, 6);
+}
+function gFixed(n) {
+    return Number(Number(n).toFixed(4));
+}
+/**
+ * SPA uses human-readable ids (e.g. GRCR.050226). Prisma defaults to cuid; legacy POST/PUT
+ * materialize those rows with the same string primary key plus required operational children.
+ */
+async function createLegacyCultivationShell(companyId, actorUserId, batchId, body) {
+    const strain = String(body.strain ?? "").trim().slice(0, 80);
+    if (!strain) {
+        throw new AppError("Strain is required to create cultivation batch", 400);
+    }
+    const rawAc = String(body.acronym ?? "").trim().toUpperCase();
+    const strainAcronym = (rawAc.length > 0 ? rawAc : legacyDeriveAcronym(strain)).slice(0, 6);
+    let plantedAt = new Date();
+    if (body.cloneDate) {
+        const d = new Date(String(body.cloneDate));
+        if (!Number.isNaN(d.getTime()))
+            plantedAt = d;
+    }
+    else if (body.plantedAt) {
+        const d = new Date(String(body.plantedAt));
+        if (!Number.isNaN(d.getTime()))
+            plantedAt = d;
+    }
+    const gram = 0.25;
+    const total = gram * 4;
+    const chainKey = `SPA-${batchId.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 100)}`;
+    const batchChainCode = `LG${String(batchId).replace(/[^a-zA-Z0-9]/g, "").slice(-28)}`.slice(0, 40) || "LG1";
+    const initialUi = mergeRecord({}, body);
+    if (initialUi.id)
+        delete initialUi.id;
+    await prisma.$transaction(async (tx) => {
+        const batch = await tx.cultivationBatch.create({
+            data: {
+                id: batchId,
+                companyId,
+                strain,
+                strainAcronym,
+                batchChainCode,
+                plantedAt,
+                expectedYieldGrams: total,
+                aGradeFlowerGrams: gFixed(gram),
+                popcornGrams: gFixed(gram),
+                trimGrams: gFixed(gram),
+                freshFrozenGrams: gFixed(gram),
+                cultivationUiState: initialUi
+            }
+        });
+        const chain = await tx.sourceChain.create({
+            data: {
+                companyId,
+                cultivationBatchId: batch.id,
+                chainKey
+            }
+        });
+        const roles = ["A_GRADE_FLOWER", "POPCORN", "DRY_TRIM", "FRESH_FROZEN"];
+        const suffix = `${strainAcronym}-${batchChainCode}`;
+        const names = [
+            `${suffix}-AG`,
+            `${suffix}-PC`,
+            `${suffix}-DT`,
+            `${suffix}-FF`
+        ];
+        for (let i = 0; i < roles.length; i++) {
+            await tx.sourcePackage.create({
+                data: {
+                    sourceChainId: chain.id,
+                    role: roles[i],
+                    canonicalName: names[i].slice(0, 120)
+                }
+            });
+        }
+        await tx.trimFlowState.create({
+            data: { companyId, cultivationBatchId: batch.id, toExtractionGrams: 0, consumedGrams: 0 }
+        });
+        await tx.freshFrozenAllocation.create({
+            data: { companyId, cultivationBatchId: batch.id, toExtractionGrams: 0 }
+        });
+    });
+    logInfo("[WORKFLOW_FIX] legacy_cultivation_shell_created", {
+        entityType: "CultivationBatch",
+        entityId: batchId,
+        strain,
+        strainAcronym
+    });
+}
+const cultivationWriteRoles = [
+    "OWNER",
+    "ADMIN",
+    "OPERATIONS_MANAGER",
+    "CULTIVATION_SPECIALIST"
+];
+legacyCpuRouter.post("/cultivation", requireRole(cultivationWriteRoles), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body || {};
+    const batchId = String(body.id || "").trim();
+    if (!batchId) {
+        throw new AppError("Batch id is required", 400);
+    }
+    const hit = await prisma.cultivationBatch.findFirst({ where: { id: batchId, companyId } });
+    if (hit) {
+        throw new AppError("Cultivation batch already exists", 409);
+    }
+    await createLegacyCultivationShell(companyId, req.auth.userId, batchId, body);
+    const row = await prisma.cultivationBatch.findFirst({ where: { id: batchId, companyId } });
+    if (!row) {
+        throw new AppError("Cultivation batch create failed", 500);
+    }
+    res.status(201).json(mapCultivationRowToLegacy(row));
+}));
 legacyCpuRouter.get("/logs", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const rows = await prisma.taskLog.findMany({
@@ -178,18 +298,18 @@ legacyCpuRouter.get("/cultivation", asyncHandler(async (req, res) => {
     });
     res.json(rows.map(mapCultivationRowToLegacy));
 }));
-legacyCpuRouter.put("/cultivation/:batchId", requireRole([
-    "OWNER",
-    "ADMIN",
-    "OPERATIONS_MANAGER",
-    "CULTIVATION_SPECIALIST"
-]), asyncHandler(async (req, res) => {
+legacyCpuRouter.put("/cultivation/:batchId", requireRole(cultivationWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const batchId = String(req.params.batchId || "");
     const body = req.body || {};
-    const existing = await prisma.cultivationBatch.findFirst({ where: { id: batchId, companyId } });
+    let existing = await prisma.cultivationBatch.findFirst({ where: { id: batchId, companyId } });
     if (!existing) {
-        throw new AppError("Cultivation batch not found", 404);
+        await createLegacyCultivationShell(companyId, req.auth.userId, batchId, body);
+        existing = await prisma.cultivationBatch.findFirst({ where: { id: batchId, companyId } });
+        if (!existing) {
+            throw new AppError("Cultivation batch not found after create", 500);
+        }
+        logInfo("[WORKFLOW_FIX] legacy_cultivation_materialized_on_put", { entityType: "CultivationBatch", entityId: batchId });
     }
     const prevUi = existing.cultivationUiState && typeof existing.cultivationUiState === "object"
         ? existing.cultivationUiState
