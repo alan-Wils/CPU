@@ -72,6 +72,8 @@ function PortalBody() {
       name: c.name,
       code:
         c.code || String((c as { slug?: string }).slug || "").toUpperCase(),
+      lifecycleStatus:
+        (c as { lifecycleStatus?: string }).lifecycleStatus || "active",
     }));
     setPortalCompanies(list);
     return list;
@@ -320,9 +322,36 @@ function PortalBody() {
                     cursor: loading ? "wait" : "pointer",
                   }}
                 >
-                  {c.name}{" "}
-                  <span style={{ color: "#64748b", fontWeight: 600 }}>
-                    ({c.code})
+                  <span
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <span>
+                      {c.name}{" "}
+                      <span style={{ color: "#64748b", fontWeight: 600 }}>
+                        ({c.code})
+                      </span>
+                    </span>
+                    {c.lifecycleStatus === "invited" ? (
+                      <span
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 800,
+                          padding: "4px 10px",
+                          borderRadius: 999,
+                          background: "rgba(251, 191, 36, 0.2)",
+                          border: "1px solid rgba(251, 191, 36, 0.55)",
+                          color: "#fde68a",
+                        }}
+                      >
+                        Invited
+                      </span>
+                    ) : null}
                   </span>
                 </button>
               </li>
@@ -367,7 +396,8 @@ function PortalBody() {
               >
                 <strong>Created {createSuccess.companyName}</strong> (slug{" "}
                 <code style={{ color: "#86efac" }}>{createSuccess.slug}</code>
-                ). An invitation was sent to{" "}
+                ). It appears in your list as <strong>Invited</strong> until the owner
+                accepts. An invitation was sent to{" "}
                 <code style={{ color: "#86efac" }}>{createSuccess.ownerEmail}</code>{" "}
                 with a link to accept and set their password (check spam if it does
                 not arrive within a few minutes).

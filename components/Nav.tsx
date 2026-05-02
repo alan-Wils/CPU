@@ -253,6 +253,7 @@ export default function Nav() {
               {portalCompanies.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name} ({c.code})
+                  {c.lifecycleStatus === "invited" ? " — Invited" : ""}
                 </option>
               ))}
             </select>

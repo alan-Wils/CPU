@@ -97,6 +97,12 @@ export class AuthRepository extends TenantRepository {
                 where: { id: inviteId },
                 data: { acceptedAt: new Date() }
             });
+            if (data.role === "OWNER") {
+                await tx.company.update({
+                    where: { id: data.companyId },
+                    data: { lifecycleStatus: "active" }
+                });
+            }
             return user;
         });
     }

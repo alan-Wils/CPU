@@ -13,6 +13,8 @@ export type CpuCompany = {
   id: string;
   name: string;
   code: string;
+  /** `invited` until the OWNER invite is accepted; `active` when the tenant is live. */
+  lifecycleStatus?: "invited" | "active" | string;
 };
 
 export type LoginResponse = {

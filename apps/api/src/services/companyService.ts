@@ -24,7 +24,8 @@ export class CompanyService {
             name: input.name,
             slug,
             ownerEmail: email,
-            createdBy: input.actorUserId
+            createdBy: input.actorUserId,
+            platformOperatorUserId: input.actorUserId
         });
         await this.auditService.logAction({
             companyId: input.actorCompanyId || company.id,
@@ -51,7 +52,8 @@ export class CompanyService {
             slug: company.slug,
             code: company.slug.toUpperCase(),
             createdAt: company.createdAt,
-            usersCount: 0,
+            lifecycleStatus: company.lifecycleStatus ?? "invited",
+            usersCount: 1,
             ownerInvite: {
                 id: invite.id,
                 email: invite.email,

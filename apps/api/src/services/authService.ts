@@ -28,10 +28,12 @@ export type JwtSession = {
 export class AuthService {
     repo = new AuthRepository();
     companyPayload(company: Company) {
+        const c = company as Company & { lifecycleStatus?: string };
         return {
             id: company.id,
             name: company.name,
-            code: company.slug.toUpperCase()
+            code: company.slug.toUpperCase(),
+            lifecycleStatus: c.lifecycleStatus ?? "active",
         };
     }
     issueToken(payload: JwtSession, remember?: boolean) {

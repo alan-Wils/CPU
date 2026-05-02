@@ -21,6 +21,14 @@ export class CompanyRepository extends TenantRepository {
                     name: input.name,
                     slug: input.slug,
                     nextChainSequence: 0,
+                    lifecycleStatus: "invited",
+                },
+            });
+            await tx.companyMembership.create({
+                data: {
+                    userId: input.platformOperatorUserId,
+                    companyId: company.id,
+                    role: legacyUserRoleToCompanyRole("ADMIN"),
                 },
             });
             const rawToken = crypto.randomBytes(24).toString("hex");
@@ -77,6 +85,7 @@ export class CompanyRepository extends TenantRepository {
                         id: true,
                         name: true,
                         slug: true,
+                        lifecycleStatus: true,
                         createdAt: true,
                         _count: { select: { memberships: true } },
                     },
@@ -91,6 +100,7 @@ export class CompanyRepository extends TenantRepository {
             code: r.company.slug.toUpperCase(),
             createdAt: r.company.createdAt,
             usersCount: r.company._count.memberships,
+            lifecycleStatus: r.company.lifecycleStatus ?? "active",
         }));
     }
     async listCompanies() {
@@ -100,6 +110,7 @@ export class CompanyRepository extends TenantRepository {
                 id: true,
                 name: true,
                 slug: true,
+                lifecycleStatus: true,
                 createdAt: true,
                 _count: { select: { memberships: true } },
             },
@@ -111,6 +122,7 @@ export class CompanyRepository extends TenantRepository {
             code: r.slug.toUpperCase(),
             createdAt: r.createdAt,
             usersCount: r._count.memberships,
+            lifecycleStatus: r.lifecycleStatus ?? "active",
         }));
     }
     async updateCompany(companyId, data) {
@@ -124,6 +136,7 @@ export class CompanyRepository extends TenantRepository {
                 id: true,
                 name: true,
                 slug: true,
+                lifecycleStatus: true,
                 createdAt: true,
                 _count: { select: { memberships: true } },
             },
@@ -137,6 +150,7 @@ export class CompanyRepository extends TenantRepository {
             code: row.slug.toUpperCase(),
             createdAt: row.createdAt,
             usersCount: row._count.memberships,
+            lifecycleStatus: row.lifecycleStatus ?? "active",
         };
     }
     async findCompanyUser(companyId, userId) {

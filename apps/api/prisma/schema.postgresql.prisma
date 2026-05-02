@@ -99,6 +99,8 @@ model Company {
   name              String
   slug              String @unique
   nextChainSequence Int    @default(1)
+  /// `invited` until the OWNER invite is accepted; then `active`.
+  lifecycleStatus   String @default("invited")
 
   users        User[]
   memberships CompanyMembership[]
