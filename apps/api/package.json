@@ -12,7 +12,7 @@
     "prisma:sync-pg": "node scripts/sync-prisma-postgres-schema.mjs",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:pg": "prisma migrate dev --schema=prisma/schema.postgresql.prisma",
-    "prisma:migrate:deploy": "prisma migrate deploy --schema=prisma/schema.postgresql.prisma",
+    "prisma:migrate:deploy": "node scripts/prisma-migrate-pg-deploy.mjs",
     "prisma:validate:pg": "prisma validate --schema=prisma/schema.postgresql.prisma",
     "prisma:validate:sqlite": "prisma validate --schema=prisma/schema.prisma",
     "prisma:validate": "prisma validate && prisma validate --schema=prisma/schema.postgresql.prisma",
