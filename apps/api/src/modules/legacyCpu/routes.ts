@@ -11,11 +11,13 @@ import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { requireRole } from "../../middleware/rbac.js";
 import { WorkflowService } from "../../services/workflowService.js";
 import { StoreService } from "../../services/storeService.js";
+import { TaskService } from "../../services/taskService.js";
 import { logInfo } from "../../lib/logger.js";
 import { AppError } from "../../errors/AppError.js";
 export const legacyCpuRouter = Router();
 const workflowService = new WorkflowService();
 const storeService = new StoreService();
+const taskService = new TaskService();
 function snapshotForStoreSave(snap) {
     return {
         cultivationBatches: snap.cultivationBatches ?? [],
@@ -227,7 +229,7 @@ function mapExtractionRunToLegacy(run) {
     };
 }
 function mapPackagingLotToLegacy(lot) {
-    const ui = lot.packagingUiState && typeof lot.packagingUiState === "object" ? lot.packagingUiState : {};
+    const ui = asUiRecord(lot.packagingUiState);
     const statusLabel = lot.status === "COMPLETED" ? "Complete" : lot.status === "IN_PROGRESS" ? "In Progress" : String(lot.status || "");
     return {
         ...ui,
@@ -369,6 +371,29 @@ legacyCpuRouter.get("/logs", asyncHandler(async (req, res) => {
     });
     res.json(rows.map(taskRowToLegacyLog));
 }));
+/** SPA `lib/logsApi.deleteAllLogs` — must be registered before `DELETE /logs/:id`. */
+legacyCpuRouter.delete("/logs/all/clear", asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const out = await taskService.deleteAll({
+        companyId,
+        actorUserId: req.auth.userId,
+        role: req.auth.role
+    });
+    logInfo("[WORKFLOW_FIX] legacy_task_logs_cleared", { entityType: "TaskLog", entityId: "ALL" });
+    res.json(out);
+}));
+legacyCpuRouter.delete("/logs/:taskLogId", asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const taskLogId = String(req.params.taskLogId || "").trim();
+    const out = await taskService.deleteById({
+        companyId,
+        actorUserId: req.auth.userId,
+        role: req.auth.role,
+        taskLogId
+    });
+    logInfo("[WORKFLOW_FIX] legacy_task_log_deleted", { entityType: "TaskLog", entityId: taskLogId });
+    res.json(out);
+}));
 legacyCpuRouter.post("/logs", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const body = req.body || {};
@@ -469,12 +494,28 @@ legacyCpuRouter.delete("/cultivation/:batchId", requireRole(cultivationDeleteRol
 }));
 legacyCpuRouter.get("/extraction", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
+    const snap = await storeService.load(companyId);
     const rows = await prisma.extractionRun.findMany({
         where: { companyId },
         orderBy: { updatedAt: "desc" },
         take: 200
     });
-    res.json(rows.map(mapExtractionRunToLegacy));
+    const fromDb = rows.map(mapExtractionRunToLegacy);
+    const byId = new Map();
+    for (const row of fromDb) {
+        const id = String(row?.id || "").trim();
+        if (id)
+            byId.set(id, row);
+    }
+    const fromStore = Array.isArray(snap.extractionBatches) ? snap.extractionBatches : [];
+    for (const row of fromStore) {
+        const id = String(row?.id || "").trim();
+        if (!id)
+            continue;
+        const prev = byId.get(id);
+        byId.set(id, prev ? mergeRecord(asUiRecord(prev), row) : row);
+    }
+    res.json([...byId.values()]);
 }));
 legacyCpuRouter.post("/extraction", requireRole(extractionWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
@@ -548,21 +589,88 @@ legacyCpuRouter.delete("/extraction/:runId", requireRole(extractionWriteRoles), 
     logInfo("[WORKFLOW_FIX] legacy_extraction_deleted", { entityType: "ExtractionRun", entityId: runId });
     res.json(out);
 }));
+const packagingWriteRoles = [
+    "OWNER",
+    "ADMIN",
+    "OPERATIONS_MANAGER",
+    "PACKAGING_SPECIALIST"
+];
 legacyCpuRouter.get("/packaging", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
+    const snap = await storeService.load(companyId);
     const rows = await prisma.packagingLot.findMany({
         where: { companyId },
         orderBy: { updatedAt: "desc" },
         take: 200
     });
-    res.json(rows.map(mapPackagingLotToLegacy));
+    const fromDb = rows.map(mapPackagingLotToLegacy);
+    const byId = new Map();
+    for (const row of fromDb) {
+        const id = String(row?.id || "").trim();
+        if (id)
+            byId.set(id, row);
+    }
+    for (const key of ["packagingBatches", "inProgressPackagingBatches", "completedPackagingBatches"]) {
+        const arr = Array.isArray(snap[key]) ? snap[key] : [];
+        for (const row of arr) {
+            const id = String(row?.id || "").trim();
+            if (!id)
+                continue;
+            const prev = byId.get(id);
+            byId.set(id, prev ? mergeRecord(asUiRecord(prev), row) : row);
+        }
+    }
+    res.json([...byId.values()]);
 }));
-legacyCpuRouter.put("/packaging/:lotId", requireRole([
-    "OWNER",
-    "ADMIN",
-    "OPERATIONS_MANAGER",
-    "PACKAGING_SPECIALIST"
-]), asyncHandler(async (req, res) => {
+legacyCpuRouter.post("/packaging", requireRole(packagingWriteRoles), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = asUiRecord(req.body);
+    const customId = String(body.id ?? "").trim();
+    if (!customId) {
+        throw new AppError("Packaging lot id is required", 400);
+    }
+    const dup = await prisma.packagingLot.findFirst({ where: { id: customId, companyId } });
+    if (dup) {
+        throw new AppError("Packaging lot already exists", 409);
+    }
+    const extractionRunId = String(body.extractionBatchId || body.sourceBatchId || body.id || "").trim();
+    if (!extractionRunId) {
+        throw new AppError("extractionBatchId is required to link packaging to an extraction run", 400);
+    }
+    const run = await prisma.extractionRun.findFirst({ where: { id: extractionRunId, companyId } });
+    if (!run) {
+        throw new AppError("Extraction run not found for packaging lot", 404);
+    }
+    const mergedUi = mergeRecord({}, body);
+    if (mergedUi.id)
+        delete mergedUi.id;
+    const skuRaw = String(body.sku || body.name || body.productType || body.type || "PACKAGING").trim();
+    const sku = skuRaw.length > 0 ? skuRaw.slice(0, 120) : "PACKAGING";
+    const gTry = Number(body.gramsPerUnit);
+    const gramsPerUnit = Number.isFinite(gTry) && gTry > 0 ? gTry : 1;
+    const lot = await prisma.packagingLot.create({
+        data: {
+            id: customId,
+            companyId,
+            extractionRunId: run.id,
+            sku,
+            status: "IN_PROGRESS",
+            netOutputGrams: 0,
+            terpeneGrams: 0,
+            units: 0,
+            gramsPerUnit,
+            defaultTemplate: body.defaultTemplate != null ? String(body.defaultTemplate).slice(0, 200) : null,
+            packagingUiState: mergedUi as Prisma.InputJsonValue
+        }
+    });
+    logInfo("[WORKFLOW_FIX] packaging_lot_legacy_created", {
+        entityType: "PackagingLot",
+        entityId: lot.id,
+        extractionRunId: run.id
+    });
+    res.status(201).json(mapPackagingLotToLegacy(lot));
+}));
+legacyCpuRouter.put("/packaging/:lotId", requireRole(packagingWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const lotId = String(req.params.lotId || "");
     const body = req.body || {};
@@ -570,9 +678,7 @@ legacyCpuRouter.put("/packaging/:lotId", requireRole([
     if (!existing) {
         throw new AppError("Packaging lot not found", 404);
     }
-    const prevUi = existing.packagingUiState && typeof existing.packagingUiState === "object"
-        ? existing.packagingUiState
-        : {};
+    const prevUi = asUiRecord(existing.packagingUiState);
     const prevStatus = String(existing.status ?? "");
     const mergedUi = mergeRecord(prevUi, body);
     if (mergedUi.id)
@@ -582,7 +688,7 @@ legacyCpuRouter.put("/packaging/:lotId", requireRole([
         sku: body.sku ?? existing.sku,
         gramsPerUnit: body.gramsPerUnit ?? existing.gramsPerUnit,
         defaultTemplate: body.defaultTemplate ?? existing.defaultTemplate ?? undefined,
-        packagingUiState: mergedUi
+        packagingUiState: mergedUi as Prisma.InputJsonValue
     });
     const mapped = mapPackagingLotToLegacy(updated);
     logInfo("[WORKFLOW_FIX] packaging_lot_parent_updated", {
@@ -595,6 +701,13 @@ legacyCpuRouter.put("/packaging/:lotId", requireRole([
         responseSummary: { id: mapped.id, status: mapped.status }
     });
     res.json(mapped);
+}));
+legacyCpuRouter.delete("/packaging/:lotId", requireRole(packagingWriteRoles), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const lotId = String(req.params.lotId || "");
+    const out = await workflowService.deletePackagingLot(companyId, req.auth.userId, lotId);
+    logInfo("[WORKFLOW_FIX] legacy_packaging_deleted", { entityType: "PackagingLot", entityId: lotId });
+    res.json(out);
 }));
 const sourceBatchWriteRoles = [
     "OWNER",
@@ -657,7 +770,7 @@ legacyCpuRouter.put("/source-batches/:id", requireRole(sourceBatchWriteRoles), a
     await storeService.save(companyId, req.auth.userId, base);
     res.json(current[idx]);
 }));
-legacyCpuRouter.delete("/source-batches/:id", requireRole(["OWNER", "ADMIN"]), asyncHandler(async (req, res) => {
+legacyCpuRouter.delete("/source-batches/:id", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const id = String(req.params.id || "").trim();
     const snap = await storeService.load(companyId);

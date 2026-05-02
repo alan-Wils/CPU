@@ -26,7 +26,7 @@ import {
   updatePackagingBatch,
   deletePackagingBatchRecord,
 } from "@/lib/packagingApi";
-import { deleteAllLogs } from "@/lib/logsApi";
+import { deleteAllLogs, deleteLog as deleteTaskLogRemote } from "@/lib/logsApi";
 import { getLogs } from "@/lib/api";
 import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
 
@@ -755,7 +755,27 @@ export default function DataHub() {
         const packagingList = asArray(realPackagingBatches);
         const backendLogs = asArray(realLogs);
         const syncedLogs = asArray(s.logs);
-        const logsList = backendLogs.length > 0 ? backendLogs : syncedLogs;
+        const logById = new Map<string, any>();
+        for (const row of backendLogs) {
+          const id = row?.id != null ? String(row.id).trim() : "";
+          if (id)
+            logById.set(id, row);
+        }
+        for (const row of syncedLogs) {
+          const id = row?.id != null ? String(row.id).trim() : "";
+          if (id && !logById.has(id))
+            logById.set(id, row);
+        }
+        const logsWithIds = [...logById.values()];
+        const logsNoId = [
+          ...syncedLogs.filter(
+            (l: any) => l?.id == null || String(l.id).trim() === ""
+          ),
+          ...backendLogs.filter(
+            (l: any) => l?.id == null || String(l.id).trim() === ""
+          ),
+        ];
+        const logsList = [...logsWithIds, ...logsNoId];
 
         s.cultivationBatches = cultivationList.filter(
           (batch: any) => batch.status !== "Complete"
@@ -1047,12 +1067,32 @@ export default function DataHub() {
     );
   }
 
-  function runDeleteLog(index: number) {
+  async function runDeleteLog(index: number) {
+    const log = s.logs[index];
+    if (!log) return;
+
+    const remoteId =
+      log?.id != null && String(log.id).trim() ? String(log.id).trim() : "";
+
+    if (remoteId) {
+      try {
+        await deleteTaskLogRemote(remoteId);
+      } catch (error) {
+        console.error("Could not delete log from backend:", error);
+        showNotice(
+          "Delete Log Failed",
+          "This log was not removed from the database.",
+          "Check the backend terminal for errors."
+        );
+        return;
+      }
+    }
+
     s.logs.splice(index, 1);
     forceRefresh();
   }
 
-  function deleteLog(index: number) {
+  function deleteLogRow(index: number) {
     if (!canDeleteAllLogs()) {
       showNotice(
         "Access Denied",
@@ -1064,8 +1104,10 @@ export default function DataHub() {
     showConfirm(
       "Delete Log",
       "Delete this log?",
-      () => runDeleteLog(index),
-      "This removes the selected log from the Data Hub log list."
+      () => {
+        void runDeleteLog(index);
+      },
+      "This removes the selected log from the Data Hub log list and the database when it has an id."
     );
   }
 
@@ -1754,7 +1796,7 @@ export default function DataHub() {
                   </div>
 
                   {canDeleteAllLogs() && (
-                    <button style={deleteButtonStyle} onClick={() => deleteLog(i)}>Delete</button>
+                    <button style={deleteButtonStyle} onClick={() => deleteLogRow(i)}>Delete</button>
                   )}
                 </div>
               ))}
