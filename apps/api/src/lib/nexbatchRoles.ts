@@ -57,3 +57,8 @@ export function platformRoleToLegacyRbac(role: NexBatchPlatformRole | null | und
 export function isPlatformOperator(role: NexBatchPlatformRole | null | undefined): boolean {
     return Boolean(role);
 }
+
+/** Matches `POST /companies` — only these platform roles bootstrap new tenants. */
+export function canCreateCompanyAsPlatform(role: NexBatchPlatformRole | string | null | undefined): boolean {
+    return role === "nexbatch_admin" || role === "owner";
+}

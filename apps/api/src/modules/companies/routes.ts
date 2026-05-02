@@ -21,11 +21,15 @@ companiesRouter.post("/", requirePlatformRoles(["nexbatch_admin", "owner"]), val
     res.status(201).json(created);
 }));
 companiesRouter.get("/accessible", asyncHandler(async (req, res) => {
-    const companies = await companyService.listAccessibleCompanies(req.auth.userId);
+    const companies = await companyService.listAccessibleCompanies(req.auth.userId, {
+        platformRole: req.auth.platformRole ?? null,
+    });
     res.json({ companies });
 }));
 companiesRouter.get("/all", asyncHandler(async (req, res) => {
-    const companies = await companyService.listAccessibleCompanies(req.auth.userId);
+    const companies = await companyService.listAccessibleCompanies(req.auth.userId, {
+        platformRole: req.auth.platformRole ?? null,
+    });
     res.json({ companies });
 }));
 companiesRouter.patch("/:companyId", requireCompanyOwnerOfTargetOrPlatform, validate({ params: companyIdParam, body: updateCompanySchema }), asyncHandler(async (req, res) => {

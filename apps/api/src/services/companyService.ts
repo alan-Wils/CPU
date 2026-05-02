@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { resolvePublicWebBaseUrl } from "../config/publicWebUrl.js";
 import { AppError } from "../errors/AppError.js";
+import { isPlatformOperator } from "../lib/nexbatchRoles.js";
 import { logInfo } from "../lib/logger.js";
 import { sendInviteEmail } from "../lib/mailer.js";
 import { CompanyRepository } from "../repositories/companyRepository.js";
@@ -89,8 +90,10 @@ export class CompanyService {
     async listCompanies() {
         return this.repo.listCompanies();
     }
-    async listAccessibleCompanies(userId) {
-        return this.repo.listAccessibleCompaniesForUser(userId);
+    async listAccessibleCompanies(userId, opts) {
+        return this.repo.listAccessibleCompaniesForUser(userId, {
+            includeBootstrapInvites: isPlatformOperator(opts?.platformRole),
+        });
     }
     async updateCompany(input) {
         const updated = await this.repo.updateCompany(input.companyId, {

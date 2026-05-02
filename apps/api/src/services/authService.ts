@@ -6,11 +6,14 @@ import { env } from "../config/env.js";
 import { AppError } from "../errors/AppError.js";
 import { AuthRepository } from "../repositories/authRepository.js";
 import {
+    canCreateCompanyAsPlatform,
     companyRoleToLegacyRbac,
     isPlatformOperator,
     legacyUserRoleToCompanyRole,
     platformRoleToLegacyRbac,
 } from "../lib/nexbatchRoles.js";
+import { CompanyRepository } from "../repositories/companyRepository.js";
+import { CompanyService } from "./companyService.js";
 
 type UserWithRelations = User & {
     company: Company | null;
@@ -27,6 +30,8 @@ export type JwtSession = {
 
 export class AuthService {
     repo = new AuthRepository();
+    companyRepo = new CompanyRepository();
+    companyService = new CompanyService();
     companyPayload(company: Company) {
         const c = company as Company & { lifecycleStatus?: string };
         return {
@@ -160,14 +165,14 @@ export class AuthService {
             throw new AppError("Company code is required for this account", 403);
         }
 
-        const memberships = await this.repo.listMembershipsWithCompanies(user.id);
-        if (!memberships.length) {
+        const accessible = await this.companyService.listAccessibleCompanies(user.id, {
+            platformRole: user.platformRole ?? null,
+        });
+        if (!accessible.length) {
             throw new AppError("No company access configured for this platform account", 403);
         }
 
-        let selected = memberships[0];
-        if (memberships.length > 1) {
-            selected = memberships[0];
+        if (accessible.length > 1) {
             const jwtPayloadNoCompany: JwtSession = {
                 userId: user.id,
                 companyId: "",
@@ -181,12 +186,23 @@ export class AuthService {
                 user: this.sessionUserFields(user, platformRoleToLegacyRbac(user.platformRole), null),
                 company: null,
                 needsCompanySelection: true,
-                companies: memberships.map((m) => this.companyPayload(m.company)),
+                companies: accessible.map((c) =>
+                    this.companyPayload({
+                        id: c.id,
+                        name: c.name,
+                        slug: c.slug,
+                        lifecycleStatus: c.lifecycleStatus,
+                    } as Company),
+                ),
             };
         }
 
-        const co = selected.company;
-        const legacyRole = companyRoleToLegacyRbac(selected.role as never);
+        const row0 = accessible[0];
+        const co = {
+            id: row0.id,
+            name: row0.name,
+            slug: row0.slug,
+        } as Company;
         const mergedRole = platformRoleToLegacyRbac(user.platformRole);
         const jwtPayload: JwtSession = {
             userId: user.id,
@@ -208,7 +224,13 @@ export class AuthService {
         if (!isPlatformOperator(platformRole as never)) {
             throw new AppError("Company switching is only for NexBatch portal accounts", 403);
         }
-        const membership = await this.repo.findMembership(userId, companyId);
+        let membership = await this.repo.findMembership(userId, companyId);
+        if (!membership?.company && canCreateCompanyAsPlatform(platformRole)) {
+            const repaired = await this.companyRepo.ensureOperatorMembershipFromOwnerInviteBootstrap(userId, companyId);
+            if (repaired) {
+                membership = await this.repo.findMembership(userId, companyId);
+            }
+        }
         if (!membership?.company) {
             throw new AppError("No access to this company", 403);
         }

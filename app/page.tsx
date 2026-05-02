@@ -1,3 +1,4 @@
+import BrandLogo from "@/components/BrandLogo";
 import Nav from "@/components/Nav";
 
 const dashboardCards = [
@@ -86,17 +87,15 @@ export default function Home() {
                 Live Company Workspace
               </div>
 
-              <h1
+              <div
                 style={{
-                  fontSize: "clamp(34px, 5vw, 58px)",
-                  lineHeight: 1,
                   margin: 0,
-                  letterSpacing: "-0.05em",
-                  fontWeight: 950,
+                  maxWidth: "min(720px, 100%)",
+                  width: "100%",
                 }}
               >
-                CPU Tracking System
-              </h1>
+                <BrandLogo height={160} fitWithinParent linkToHome={false} />
+              </div>
 
               <p
                 style={{

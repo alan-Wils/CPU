@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { UserRole } from "@prisma/client";
 import { TenantRepository } from "./TenantRepository.js";
 import { legacyUserRoleToCompanyRole } from "../lib/nexbatchRoles.js";
 export class CompanyRepository extends TenantRepository {
@@ -76,7 +77,50 @@ export class CompanyRepository extends TenantRepository {
         });
         return rows.map((r) => r.user);
     }
-    async listAccessibleCompaniesForUser(userId) {
+    /**
+     * If this user created the OWNER invite for the company but has no membership (data skew),
+     * add the same admin membership as `createCompanyAndOwnerInvite` so portal switch and API scope work.
+     */
+    async ensureOperatorMembershipFromOwnerInviteBootstrap(userId, companyId) {
+        const has = await this.db.companyMembership.findFirst({
+            where: { userId, companyId },
+            select: { id: true },
+        });
+        if (has)
+            return true;
+        const invite = await this.db.inviteToken.findFirst({
+            where: { createdBy: userId, companyId, role: UserRole.OWNER },
+            select: { id: true },
+        });
+        if (!invite)
+            return false;
+        await this.db.companyMembership.create({
+            data: {
+                userId,
+                companyId,
+                role: legacyUserRoleToCompanyRole("ADMIN"),
+            },
+        });
+        return true;
+    }
+    rowToAccessibleCompany(company) {
+        return {
+            id: company.id,
+            name: company.name,
+            slug: company.slug,
+            code: company.slug.toUpperCase(),
+            createdAt: company.createdAt,
+            usersCount: company._count.memberships,
+            lifecycleStatus: company.lifecycleStatus ?? "active",
+        };
+    }
+    /**
+     * Tenants the user may open from the NexBatch portal: memberships, plus (for platform operators)
+     * any company where this user created the OWNER bootstrap invite — covers missing `CompanyMembership`
+     * rows from older deploys or failed transactions without duplicating entries when both exist.
+     */
+    async listAccessibleCompaniesForUser(userId, opts) {
+        const includeBootstrapInvites = Boolean(opts?.includeBootstrapInvites);
         const rows = await this.db.companyMembership.findMany({
             where: { userId },
             include: {
@@ -93,15 +137,38 @@ export class CompanyRepository extends TenantRepository {
             },
             orderBy: { createdAt: "asc" },
         });
-        return rows.map((r) => ({
-            id: r.company.id,
-            name: r.company.name,
-            slug: r.company.slug,
-            code: r.company.slug.toUpperCase(),
-            createdAt: r.company.createdAt,
-            usersCount: r.company._count.memberships,
-            lifecycleStatus: r.company.lifecycleStatus ?? "active",
-        }));
+        const map = new Map();
+        for (const r of rows) {
+            map.set(r.company.id, this.rowToAccessibleCompany(r.company));
+        }
+        if (includeBootstrapInvites) {
+            const bootstrapInvites = await this.db.inviteToken.findMany({
+                where: { createdBy: userId, role: UserRole.OWNER },
+                include: {
+                    company: {
+                        select: {
+                            id: true,
+                            name: true,
+                            slug: true,
+                            lifecycleStatus: true,
+                            createdAt: true,
+                            _count: { select: { memberships: true } },
+                        },
+                    },
+                },
+                orderBy: { createdAt: "desc" },
+            });
+            const seenCompanyId = new Set();
+            for (const inv of bootstrapInvites) {
+                if (seenCompanyId.has(inv.companyId))
+                    continue;
+                seenCompanyId.add(inv.companyId);
+                if (map.has(inv.company.id))
+                    continue;
+                map.set(inv.company.id, this.rowToAccessibleCompany(inv.company));
+            }
+        }
+        return [...map.values()].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
     }
     async listCompanies() {
         const rows = await this.db.company.findMany({
