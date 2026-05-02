@@ -193,7 +193,9 @@ export default function LoginPage() {
               minWidth: 0,
             }}
           >
-            <BrandLogo height={252} fitWithinParent />
+            <span className="login-brand-logo-glow">
+              <BrandLogo height={252} fitWithinParent />
+            </span>
           </h1>
 
           <p style={{ color: "#93c5fd", margin: 0, fontSize: 20 }}>
