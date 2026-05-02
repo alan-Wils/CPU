@@ -371,7 +371,12 @@ function PortalBody() {
             <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.5 }}>
               Creates the tenant and an application owner account with the email
               and temporary password you set. Share the password securely; the owner
-              should sign in and change it.
+              should sign in and change it.{" "}
+              <strong style={{ color: "#cbd5e1" }}>
+                The owner email cannot match an account that already exists
+              </strong>{" "}
+              (including your NexBatch login)—use a dedicated company-owner inbox or
+              alias.
             </p>
 
             {createSuccess && (

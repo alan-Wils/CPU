@@ -101,6 +101,36 @@ export function errorMiddleware(err, req, res, _next) {
             });
             return;
         }
+        if (code === "P2002") {
+            const rawTarget = meta && typeof meta === "object" && "target" in meta
+                ? (meta as { target?: unknown }).target
+                : undefined;
+            const parts = Array.isArray(rawTarget)
+                ? rawTarget.map((t) => String(t).toLowerCase())
+                : rawTarget != null
+                    ? [String(rawTarget).toLowerCase()]
+                    : [];
+            const joined = parts.join(" ");
+            let message = "This value conflicts with an existing record.";
+            if (joined.includes("email")) {
+                message =
+                    "That email is already used by another login. Each account email must be unique across the platform—use a different owner address (for example a role-based alias), or create the company with another person as owner and invite your address afterward.";
+            }
+            else if (joined.includes("slug")) {
+                message =
+                    "That company code is already taken. Choose a different code (slug), for example infini-print or infiniprint-ops.";
+            }
+            logError("prisma_unique_conflict", { code, meta, path: req.path });
+            res.status(409).json({
+                error: {
+                    code: "UNIQUE_CONSTRAINT",
+                    message,
+                    details: { prismaCode: code, meta },
+                },
+                message,
+            });
+            return;
+        }
         logError("prisma_client_error", { code, meta, path: req.path });
         res.status(500).json({
             error: {
