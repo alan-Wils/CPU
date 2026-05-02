@@ -348,6 +348,9 @@ export default function Extraction() {
   const [selectedCompletedSourceIds, setSelectedCompletedSourceIds] = useState<
     Record<string, boolean>
   >({});
+  const [selectedExtractionBatchIds, setSelectedExtractionBatchIds] = useState<
+    Record<string, boolean>
+  >({});
 
   const [type, setType] = useState(productTypes[0]);
   const [sourceInputs, setSourceInputs] = useState<any[]>([
@@ -1324,6 +1327,62 @@ export default function Extraction() {
         })();
       },
       "Same as single delete: removes from database where applicable."
+    );
+  }
+
+  function toggleExtractionBatchSelected(batchId: string) {
+    setSelectedExtractionBatchIds((prev) => ({
+      ...prev,
+      [batchId]: !prev[batchId],
+    }));
+  }
+
+  function selectAllExtractionBatches() {
+    const next: Record<string, boolean> = {};
+    for (const b of s.extractionBatches) {
+      next[String(b.id)] = true;
+    }
+    setSelectedExtractionBatchIds(next);
+  }
+
+  function clearExtractionBatchSelection() {
+    setSelectedExtractionBatchIds({});
+  }
+
+  function getSelectedExtractionBatchIdList() {
+    return s.extractionBatches
+      .map((b: any) => String(b.id))
+      .filter((id) => selectedExtractionBatchIds[id]);
+  }
+
+  function deleteSelectedExtractionBatches() {
+    const ids = getSelectedExtractionBatchIdList();
+    if (ids.length === 0) {
+      showNotice(
+        "Nothing selected",
+        "Select one or more extraction batches with the checkboxes."
+      );
+      return;
+    }
+    if (!userCanDelete) {
+      showNotice(
+        "Access Denied",
+        "Only Manager, Admin, or Owner users can delete records."
+      );
+      return;
+    }
+    showConfirm(
+      "Delete selected extraction batches",
+      `Permanently delete ${ids.length} extraction batch(es)? Packaging rows that share the same id are removed too.`,
+      () => {
+        void (async () => {
+          for (const id of ids) {
+            await runDeleteBatch(id);
+          }
+          clearExtractionBatchSelection();
+        })();
+      },
+      "This cannot be undone."
     );
   }
 
@@ -2484,6 +2543,42 @@ export default function Extraction() {
             ) : null}
           </div>
 
+          {userCanDelete && s.extractionBatches.length > 0 ? (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 10,
+                marginTop: 14,
+                alignItems: "center",
+              }}
+            >
+              <button
+                type="button"
+                style={buttonStyle}
+                onClick={selectAllExtractionBatches}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                style={buttonStyle}
+                onClick={clearExtractionBatchSelection}
+              >
+                Clear selection
+              </button>
+              <button
+                type="button"
+                style={deleteButtonStyle}
+                onClick={deleteSelectedExtractionBatches}
+                disabled={getSelectedExtractionBatchIdList().length === 0}
+              >
+                Delete selected (
+                {getSelectedExtractionBatchIdList().length})
+              </button>
+            </div>
+          ) : null}
+
           <div style={lockedListStyle}>
             {s.extractionBatches.length === 0 ? (
               <p style={{ color: "#94a3b8" }}>No extraction batches yet.</p>
@@ -2498,9 +2593,25 @@ export default function Extraction() {
                     color: selectedExt?.id === b.id ? "black" : "white",
                   }}
                 >
+                  {userCanDelete ? (
+                    <input
+                      type="checkbox"
+                      checked={!!selectedExtractionBatchIds[b.id]}
+                      onChange={() => toggleExtractionBatchSelected(b.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        width: 20,
+                        height: 20,
+                        cursor: "pointer",
+                        flexShrink: 0,
+                        accentColor: "#22c55e",
+                      }}
+                      aria-label={`Select extraction batch ${b.id}`}
+                    />
+                  ) : null}
                   <div
                     onClick={() => setSelectedExt(b)}
-                    style={{ flex: 1, cursor: "pointer" }}
+                    style={{ flex: 1, cursor: "pointer", minWidth: 0 }}
                   >
                     <b>{b.id}</b> | {b.name} | Biomass Used:{" "}
                     {b.totalBiomassUsed || b.amount || "—"} lbs | Final:{" "}
