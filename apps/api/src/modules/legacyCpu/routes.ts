@@ -10,10 +10,47 @@ import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { requireRole } from "../../middleware/rbac.js";
 import { WorkflowService } from "../../services/workflowService.js";
+import { StoreService } from "../../services/storeService.js";
 import { logInfo } from "../../lib/logger.js";
 import { AppError } from "../../errors/AppError.js";
 export const legacyCpuRouter = Router();
 const workflowService = new WorkflowService();
+const storeService = new StoreService();
+function snapshotForStoreSave(snap) {
+    return {
+        cultivationBatches: snap.cultivationBatches ?? [],
+        completedCultivationBatches: snap.completedCultivationBatches ?? [],
+        dryFlowerBatches: snap.dryFlowerBatches ?? [],
+        productionBatches: snap.productionBatches ?? [],
+        sourceBatches: snap.sourceBatches ?? [],
+        completedSourceBatches: snap.completedSourceBatches ?? [],
+        extractionBatches: snap.extractionBatches ?? [],
+        packagingBatches: snap.packagingBatches ?? [],
+        inProgressPackagingBatches: snap.inProgressPackagingBatches ?? [],
+        completedPackagingBatches: snap.completedPackagingBatches ?? [],
+        logs: snap.logs ?? []
+    };
+}
+function mapSourcePackageToLegacyBatch(p) {
+    const batch = p.sourceChain?.cultivationBatch;
+    const typeMap = {
+        A_GRADE_FLOWER: "A Grade Flower",
+        POPCORN: "Popcorn",
+        DRY_TRIM: "Dry Trim",
+        FRESH_FROZEN: "Fresh Frozen"
+    };
+    return {
+        id: p.id,
+        name: p.canonicalName,
+        type: typeMap[p.role] || p.role,
+        source: p.sourceChain.cultivationBatchId,
+        strain: batch?.strain ?? "",
+        status: "Available for Extraction",
+        amount: "",
+        grams: 0,
+        bundles: 0
+    };
+}
 function mapAreaToWorkflowStage(area) {
     const a = String(area || "").toLowerCase();
     if (a.includes("extract"))
@@ -458,4 +495,74 @@ legacyCpuRouter.put("/packaging/:lotId", requireRole([
         responseSummary: { id: mapped.id, status: mapped.status }
     });
     res.json(mapped);
+}));
+const sourceBatchWriteRoles = [
+    "OWNER",
+    "ADMIN",
+    "OPERATIONS_MANAGER",
+    "CULTIVATION_SPECIALIST",
+    "EXTRACTION_SPECIALIST"
+];
+legacyCpuRouter.get("/source-batches", asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const snap = await storeService.load(companyId);
+    const fromStore = Array.isArray(snap.sourceBatches) ? snap.sourceBatches : [];
+    const pkgRows = await prisma.sourcePackage.findMany({
+        where: { sourceChain: { companyId } },
+        include: { sourceChain: { include: { cultivationBatch: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 300
+    });
+    const derived = pkgRows.map(mapSourcePackageToLegacyBatch);
+    const byId = new Map();
+    for (const row of derived)
+        byId.set(String(row.id), row);
+    for (const row of fromStore)
+        byId.set(String(row?.id || ""), row);
+    res.json([...byId.values()].filter((row) => Boolean(row?.id)));
+}));
+legacyCpuRouter.post("/source-batches", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body || {};
+    const id = String(body.id || "").trim();
+    if (!id) {
+        throw new AppError("Source batch id is required", 400);
+    }
+    const snap = await storeService.load(companyId);
+    const base = snapshotForStoreSave(snap);
+    const current = Array.isArray(base.sourceBatches) ? [...base.sourceBatches] : [];
+    const idx = current.findIndex((b) => String(b?.id || "") === id);
+    if (idx >= 0)
+        current[idx] = { ...current[idx], ...body };
+    else
+        current.unshift(body);
+    base.sourceBatches = current;
+    await storeService.save(companyId, req.auth.userId, base);
+    logInfo("[WORKFLOW_FIX] legacy_source_batch_saved", { entityType: "LegacySourceBatch", entityId: id });
+    res.status(201).json(body);
+}));
+legacyCpuRouter.put("/source-batches/:id", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const id = String(req.params.id || "").trim();
+    const body = req.body || {};
+    const snap = await storeService.load(companyId);
+    const base = snapshotForStoreSave(snap);
+    const current = Array.isArray(base.sourceBatches) ? [...base.sourceBatches] : [];
+    const idx = current.findIndex((b) => String(b?.id || "") === id);
+    if (idx < 0) {
+        throw new AppError("Source batch not found", 404);
+    }
+    current[idx] = { ...current[idx], ...body, id: current[idx].id };
+    base.sourceBatches = current;
+    await storeService.save(companyId, req.auth.userId, base);
+    res.json(current[idx]);
+}));
+legacyCpuRouter.delete("/source-batches/:id", requireRole(["OWNER", "ADMIN"]), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const id = String(req.params.id || "").trim();
+    const snap = await storeService.load(companyId);
+    const base = snapshotForStoreSave(snap);
+    base.sourceBatches = (base.sourceBatches || []).filter((b) => String(b?.id || "") !== id);
+    await storeService.save(companyId, req.auth.userId, base);
+    res.json({ ok: true });
 }));
