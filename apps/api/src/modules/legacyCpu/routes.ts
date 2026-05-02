@@ -130,6 +130,72 @@ function asUiRecord(value: unknown): Record<string, unknown> {
 function mergeRecord(base: unknown, patch: unknown): Record<string, unknown> {
     return { ...asUiRecord(base), ...asUiRecord(patch) };
 }
+/** SPA source row id → cultivation batch id from company store snapshot. */
+function cultivationIdFromSourceRowInSnap(sourceId: string, snap: unknown): string | null {
+    const list = Array.isArray((snap as { sourceBatches?: unknown })?.sourceBatches)
+        ? (snap as { sourceBatches: unknown[] }).sourceBatches
+        : [];
+    const fromStore = list.find((s) => String((s as { id?: unknown })?.id) === String(sourceId));
+    if (!fromStore || typeof fromStore !== "object")
+        return null;
+    const row = fromStore as {
+        source?: unknown;
+        parentCultivationBatch?: unknown;
+        cultivationBatchId?: unknown;
+    };
+    const cid = row.source ?? row.parentCultivationBatch ?? row.cultivationBatchId;
+    return cid != null && String(cid).length > 0 ? String(cid) : null;
+}
+/**
+ * Every extraction run ties to one cultivation batch. Resolve from each source (store or SourcePackage);
+ * all must map to the same cultivation id.
+ */
+async function resolveCultivationBatchIdForExtractionCreate(companyId: string, body: Record<string, unknown>, snap: unknown): Promise<string> {
+    const sources = Array.isArray(body.sources) ? body.sources : [];
+    if (sources.length === 0) {
+        throw new AppError("At least one source is required", 400);
+    }
+    const ids: string[] = [];
+    for (const row of sources) {
+        const r = row && typeof row === "object" ? (row as { sourceId?: unknown }) : {};
+        const sid = String(r.sourceId ?? "").trim();
+        if (!sid) {
+            throw new AppError("Each source row must have sourceId", 400);
+        }
+        const fromSnap = cultivationIdFromSourceRowInSnap(sid, snap);
+        if (fromSnap) {
+            ids.push(fromSnap);
+            continue;
+        }
+        const pack = await prisma.sourcePackage.findFirst({
+            where: { id: sid, sourceChain: { companyId } },
+            include: { sourceChain: true }
+        });
+        if (pack?.sourceChain?.cultivationBatchId) {
+            ids.push(pack.sourceChain.cultivationBatchId);
+            continue;
+        }
+        throw new AppError(`Could not resolve cultivation batch for source ${sid}`, 400);
+    }
+    const unique = [...new Set(ids)];
+    if (unique.length > 1) {
+        throw new AppError("All sources must belong to the same cultivation batch for one extraction run", 400);
+    }
+    const cultivationBatchId = unique[0];
+    const batchRow = await prisma.cultivationBatch.findFirst({
+        where: { id: cultivationBatchId, companyId }
+    });
+    if (!batchRow) {
+        throw new AppError("Cultivation batch not found for extraction", 404);
+    }
+    return cultivationBatchId;
+}
+const extractionWriteRoles = [
+    "OWNER",
+    "ADMIN",
+    "OPERATIONS_MANAGER",
+    "EXTRACTION_SPECIALIST"
+];
 function mapCultivationRowToLegacy(batch) {
     const ui = asUiRecord(batch.cultivationUiState);
     const autoDone = batch.autoStatus === "AUTO_COMPLETED";
@@ -148,7 +214,7 @@ function mapCultivationRowToLegacy(batch) {
     };
 }
 function mapExtractionRunToLegacy(run) {
-    const ui = run.extractionUiState && typeof run.extractionUiState === "object" ? run.extractionUiState : {};
+    const ui = asUiRecord(run.extractionUiState);
     return {
         ...ui,
         id: run.id,
@@ -410,12 +476,40 @@ legacyCpuRouter.get("/extraction", asyncHandler(async (req, res) => {
     });
     res.json(rows.map(mapExtractionRunToLegacy));
 }));
-legacyCpuRouter.put("/extraction/:runId", requireRole([
-    "OWNER",
-    "ADMIN",
-    "OPERATIONS_MANAGER",
-    "EXTRACTION_SPECIALIST"
-]), asyncHandler(async (req, res) => {
+legacyCpuRouter.post("/extraction", requireRole(extractionWriteRoles), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = asUiRecord(req.body);
+    const customId = String(body.id ?? "").trim();
+    if (!customId) {
+        throw new AppError("Extraction batch id is required", 400);
+    }
+    const dup = await prisma.extractionRun.findFirst({ where: { id: customId, companyId } });
+    if (dup) {
+        throw new AppError("Extraction batch already exists", 409);
+    }
+    const snap = await storeService.load(companyId);
+    const cultivationBatchId = await resolveCultivationBatchIdForExtractionCreate(companyId, body, snap);
+    const mergedUi = mergeRecord({}, body);
+    if (mergedUi.id)
+        delete mergedUi.id;
+    const run = await prisma.extractionRun.create({
+        data: {
+            id: customId,
+            companyId,
+            cultivationBatchId,
+            phase: "PENDING_BIOMASS_PREP",
+            method: "",
+            extractionUiState: mergedUi as Prisma.InputJsonValue
+        }
+    });
+    logInfo("[WORKFLOW_FIX] extraction_run_legacy_created", {
+        entityType: "ExtractionRun",
+        entityId: run.id,
+        cultivationBatchId
+    });
+    res.status(201).json(mapExtractionRunToLegacy(run));
+}));
+legacyCpuRouter.put("/extraction/:runId", requireRole(extractionWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const runId = String(req.params.runId || "");
     const body = req.body || {};
@@ -423,9 +517,7 @@ legacyCpuRouter.put("/extraction/:runId", requireRole([
     if (!existing) {
         throw new AppError("Extraction run not found", 404);
     }
-    const prevUi = existing.extractionUiState && typeof existing.extractionUiState === "object"
-        ? existing.extractionUiState
-        : {};
+    const prevUi = asUiRecord(existing.extractionUiState);
     const prevPhase = String(existing.phase ?? "");
     const mergedUi = mergeRecord(prevUi, body);
     if (mergedUi.id)
@@ -434,7 +526,7 @@ legacyCpuRouter.put("/extraction/:runId", requireRole([
         runId,
         method: body.method ?? existing.method,
         supplyUsed: body.supplyUsed ?? existing.supplyUsed,
-        extractionUiState: mergedUi
+        extractionUiState: mergedUi as Prisma.InputJsonValue
     });
     const mapped = mapExtractionRunToLegacy(updated);
     logInfo("[WORKFLOW_FIX] extraction_run_parent_updated", {
