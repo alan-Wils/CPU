@@ -383,7 +383,8 @@ export default function Cultivation() {
 
     async function loadSharedData() {
       try {
-        await loadBackendStore();
+        /** CompanyStore JSON often lags `/api/cultivation`; applying it to cultivation lists causes stage flicker (e.g. Veg → Flower). */
+        await loadBackendStore({ omitCultivation: true });
         await loadConfigStrains();
 
         const realCultivationBatches = await loadCultivationBatches();

@@ -27,18 +27,31 @@ export function getStoreSnapshot() {
   return snapshot;
 }
 
-export function applyStoreSnapshot(snapshot: any) {
+export type ApplyStoreSnapshotOptions = {
+  /**
+   * When true, snapshot does not overwrite these keys (keep in-memory values until
+   * workflow API hydrates them — avoids Veg/Flower flicker from stale CompanyStore JSON).
+   */
+  omitCultivation?: boolean;
+};
+
+export function applyStoreSnapshot(snapshot: any, options?: ApplyStoreSnapshotOptions) {
   if (!snapshot || typeof snapshot !== "object") return;
 
+  const omitCult = Boolean(options?.omitCultivation);
+
   for (const key of STORE_KEYS) {
+    if (omitCult && (key === "cultivationBatches" || key === "completedCultivationBatches")) {
+      continue;
+    }
     (store as any)[key] = Array.isArray(snapshot[key]) ? snapshot[key] : [];
   }
 }
 
 /** `@cpu/api` exposes `/api/store` (legacy Node backend used `/api/sync`). */
-export async function loadBackendStore() {
+export async function loadBackendStore(options?: ApplyStoreSnapshotOptions) {
   const snapshot = await apiRequest("/api/store");
-  applyStoreSnapshot(snapshot);
+  applyStoreSnapshot(snapshot, options);
   return snapshot;
 }
 

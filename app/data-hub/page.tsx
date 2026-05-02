@@ -28,6 +28,7 @@ import {
 } from "@/lib/packagingApi";
 import { deleteAllLogs } from "@/lib/logsApi";
 import { getLogs } from "@/lib/api";
+import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
 
 function show(value: any) {
   if (value === undefined || value === null || value === "") return "—";
@@ -717,13 +718,20 @@ export default function DataHub() {
 
   const [refresh, setRefresh] = useState(0);
   const [selectedChain, setSelectedChain] = useState<any>(null);
+  const [tenantEpoch, setTenantEpoch] = useState(0);
+
+  useEffect(() => {
+    const bump = () => setTenantEpoch((n) => n + 1);
+    window.addEventListener(CPU_TENANT_CHANGED_EVENT, bump);
+    return () => window.removeEventListener(CPU_TENANT_CHANGED_EVENT, bump);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
 
     async function loadSharedData() {
       try {
-        await loadBackendStore();
+        await loadBackendStore({ omitCultivation: true });
 
         const [
           realCultivationBatches,
@@ -800,7 +808,7 @@ export default function DataHub() {
       mounted = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [tenantEpoch]);
 
   const [notificationModal, setNotificationModal] = useState<{
     open: boolean;
