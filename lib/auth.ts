@@ -140,6 +140,13 @@ export function isPortalSession(): boolean {
   return String(u?.sessionKind || "") === "portal";
 }
 
+/** NexBatch platform operators may create companies via `POST /api/companies`. */
+export function canCreatePlatformCompanies(): boolean {
+  const u = getAuthUser();
+  const pr = String(u?.platformRole || "").trim();
+  return pr === "nexbatch_admin" || pr === "owner";
+}
+
 /** Legacy keys written by older login code — clear so stale tokens cannot confuse other code paths. */
 const LEGACY_AUTH_KEYS = [
   "token",

@@ -4,7 +4,7 @@ import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { assignOwnerSchema, companyIdParam, createCompanySchema, createUserSchema, updateCompanySchema } from "../../validation/schemas.js";
 import { CompanyService } from "../../services/companyService.js";
-import { requirePlatformRoles, requireRole } from "../../middleware/rbac.js";
+import { requireCompanyOwnerOfTargetOrPlatform, requirePlatformRoles, requireRole } from "../../middleware/rbac.js";
 export const companiesRouter = Router();
 const companyService = new CompanyService();
 companiesRouter.get("/me", asyncHandler(async (req, res) => {
@@ -28,7 +28,7 @@ companiesRouter.get("/all", asyncHandler(async (req, res) => {
     const companies = await companyService.listAccessibleCompanies(req.auth.userId);
     res.json({ companies });
 }));
-companiesRouter.patch("/:companyId", requireRole(["OWNER"]), validate({ params: companyIdParam, body: updateCompanySchema }), asyncHandler(async (req, res) => {
+companiesRouter.patch("/:companyId", requireCompanyOwnerOfTargetOrPlatform, validate({ params: companyIdParam, body: updateCompanySchema }), asyncHandler(async (req, res) => {
     const { companyId } = req.params;
     const payload = req.body;
     const updated = await companyService.updateCompany({
@@ -40,7 +40,7 @@ companiesRouter.patch("/:companyId", requireRole(["OWNER"]), validate({ params: 
     });
     res.json(updated);
 }));
-companiesRouter.post("/:companyId/assign-owner", requireRole(["OWNER"]), validate({ params: companyIdParam, body: assignOwnerSchema }), asyncHandler(async (req, res) => {
+companiesRouter.post("/:companyId/assign-owner", requireCompanyOwnerOfTargetOrPlatform, validate({ params: companyIdParam, body: assignOwnerSchema }), asyncHandler(async (req, res) => {
     const { companyId } = req.params;
     const payload = req.body;
     const out = await companyService.assignOwner({
