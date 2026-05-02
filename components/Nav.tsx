@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { clearAuthSession, getAuthUser } from "@/lib/auth";
+import { clearSelectedCompanyId } from "@/lib/api";
 
 export default function Nav() {
   const pathname = usePathname();
@@ -11,6 +12,7 @@ export default function Nav() {
 
   function logout() {
     clearAuthSession();
+    clearSelectedCompanyId();
     router.push("/login");
   }
 

@@ -1,4 +1,4 @@
-import { getAuthToken } from "./auth";
+import { clearAuthSession, getAuthToken } from "./auth";
 
 function resolveApiBaseUrl(): string {
   const raw =
@@ -22,6 +22,8 @@ type ApiOptions = {
   body?: any;
   auth?: boolean;
   companyId?: string;
+  /** When true, a 401 response does not clear the session or redirect (e.g. probing token validity). */
+  skipAuthRedirectOn401?: boolean;
 };
 
 export function getSelectedCompanyId() {
@@ -179,6 +181,19 @@ export async function apiRequest<T = any>(
   }
 
   if (!res.ok) {
+    if (
+      res.status === 401 &&
+      typeof window !== "undefined" &&
+      options.auth !== false &&
+      !options.skipAuthRedirectOn401
+    ) {
+      const path = window.location.pathname || "";
+      if (!path.startsWith("/login") && !path.startsWith("/accept-invite")) {
+        clearAuthSession();
+        const next = encodeURIComponent(path + (window.location.search || ""));
+        window.location.replace(`/login?next=${next}`);
+      }
+    }
     throw new Error(stringifyApiFailureBody(data));
   }
 
@@ -189,6 +204,8 @@ export async function loginCompany(payload: {
   companyCode?: string;
   username: string;
   password: string;
+  /** When true, API issues a longer-lived JWT (7d vs `JWT_EXPIRES_IN`, default 15m). */
+  remember?: boolean;
 }) {
   return apiRequest("/api/auth/login", {
     method: "POST",

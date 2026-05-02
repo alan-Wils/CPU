@@ -1,11 +1,24 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { loginCompany, setSelectedCompanyId } from "@/lib/api";
+import { clearSelectedCompanyId, loginCompany, setSelectedCompanyId } from "@/lib/api";
 import { clearAuthSession, saveAuthSession } from "@/lib/auth";
 import { loadBackendStore } from "@/lib/backendStore";
 
 const SAVED_LOGIN_KEY = "cannabis_cpu_saved_login";
+/** Persists preference for longer JWT (`remember` on `/api/auth/login`). */
+const STAY_SIGNED_IN_KEY = "cpu_stay_signed_in_pref";
+
+function resolvePostLoginHref(role: string): string {
+  if (typeof window === "undefined") {
+    return "/";
+  }
+  const next = new URLSearchParams(window.location.search).get("next");
+  if (next && next.startsWith("/") && !next.startsWith("//")) {
+    return next;
+  }
+  return role === "OWNER" ? "/admin" : "/";
+}
 
 export default function LoginPage() {
   const [companyCode, setCompanyCode] = useState("");
@@ -13,7 +26,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
 
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberLogin, setRememberLogin] = useState(false);
+  const [rememberUsername, setRememberUsername] = useState(false);
+  const [staySignedIn, setStaySignedIn] = useState(true);
   const [capsLockOn, setCapsLockOn] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -27,10 +41,17 @@ export default function LoginPage() {
         const parsed = JSON.parse(saved);
         setCompanyCode(parsed.companyCode || "");
         setUsername(parsed.username || "");
-        setRememberLogin(true);
+        setRememberUsername(true);
       } catch {
         localStorage.removeItem(SAVED_LOGIN_KEY);
       }
+    }
+
+    const stayPref = localStorage.getItem(STAY_SIGNED_IN_KEY);
+    if (stayPref === "0" || stayPref === "false") {
+      setStaySignedIn(false);
+    } else {
+      setStaySignedIn(true);
     }
   }, []);
 
@@ -60,9 +81,12 @@ export default function LoginPage() {
         companyCode: cleanedCompanyCode,
         username: cleanedUsername,
         password,
+        remember: staySignedIn,
       });
 
-      if (rememberLogin) {
+      localStorage.setItem(STAY_SIGNED_IN_KEY, staySignedIn ? "1" : "0");
+
+      if (rememberUsername) {
         localStorage.setItem(
           SAVED_LOGIN_KEY,
           JSON.stringify({
@@ -96,10 +120,11 @@ export default function LoginPage() {
 
       await loadBackendStore();
 
-      window.location.href = data.user?.role === "OWNER" ? "/admin" : "/";
+      window.location.href = resolvePostLoginHref(String(data.user?.role || ""));
     } catch (err: any) {
       if (sessionWritten) {
         clearAuthSession();
+        clearSelectedCompanyId();
         localStorage.removeItem("token");
         localStorage.removeItem("authToken");
         localStorage.removeItem("cannabis_cpu_token");
@@ -122,7 +147,7 @@ export default function LoginPage() {
     setCompanyCode("");
     setUsername("");
     setPassword("");
-    setRememberLogin(false);
+    setRememberUsername(false);
     setError("");
   }
 
@@ -240,6 +265,37 @@ export default function LoginPage() {
           </div>
         )}
 
+        <label
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
+            color: "#dbeafe",
+            fontWeight: 800,
+            cursor: "pointer",
+            fontSize: 16,
+            marginBottom: 14,
+            lineHeight: 1.45,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={staySignedIn}
+            onChange={(e) => setStaySignedIn(e.target.checked)}
+            style={{
+              width: 18,
+              height: 18,
+              marginTop: 3,
+              accentColor: "#22c55e",
+              flexShrink: 0,
+            }}
+          />
+          <span>
+            Stay signed in for 7 days (recommended). If unchecked, the session
+            expires sooner per server policy (often within a few hours).
+          </span>
+        </label>
+
         <div
           style={{
             display: "flex",
@@ -257,20 +313,20 @@ export default function LoginPage() {
               color: "#dbeafe",
               fontWeight: 900,
               cursor: "pointer",
-              fontSize: 20,
+              fontSize: 18,
             }}
           >
             <input
               type="checkbox"
-              checked={rememberLogin}
-              onChange={(e) => setRememberLogin(e.target.checked)}
+              checked={rememberUsername}
+              onChange={(e) => setRememberUsername(e.target.checked)}
               style={{
                 width: 18,
                 height: 18,
                 accentColor: "#22c55e",
               }}
             />
-            Save login
+            Remember username on this device
           </label>
 
           <button
@@ -285,7 +341,7 @@ export default function LoginPage() {
               fontSize: 15,
             }}
           >
-            Clear
+            Clear saved username
           </button>
         </div>
 
@@ -332,7 +388,8 @@ export default function LoginPage() {
             lineHeight: 1.5,
           }}
         >
-          Saved login stores only optional company code and username on this device.
+          “Stay signed in” requests a longer API token. “Remember username” only
+          saves company code and username in this browser (not your password).
         </div>
       </form>
     </main>

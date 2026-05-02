@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getAuthUser, isLoggedIn } from "@/lib/auth";
 
@@ -48,11 +49,21 @@ export default function PageAccessGate({
   allowedRoles,
   children,
 }: PageAccessGateProps) {
+  const pathname = usePathname();
+  const router = useRouter();
+  /** Avoid SSR/client mismatch: token only exists in `localStorage` after hydration. */
+  const [hydrated, setHydrated] = useState(false);
   const [checking, setChecking] = useState(true);
   const [allowed, setAllowed] = useState(false);
   const [userRole, setUserRole] = useState("");
 
   useEffect(() => {
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+
     const loggedIn = isLoggedIn();
     const user = getAuthUser();
     const role = normalizeRole(user?.role);
@@ -62,14 +73,19 @@ export default function PageAccessGate({
     if (!loggedIn) {
       setAllowed(false);
       setChecking(false);
+      const path = pathname || "/";
+      const search =
+        typeof window !== "undefined" ? window.location.search || "" : "";
+      const next = encodeURIComponent(`${path}${search}`);
+      router.replace(`/login?next=${next}`);
       return;
     }
 
     setAllowed(hasAccess(role, allowedRoles));
     setChecking(false);
-  }, [allowedRoles]);
+  }, [hydrated, allowedRoles, pathname, router]);
 
-  if (checking) {
+  if (!hydrated || checking) {
     return (
       <main style={pageStyle}>
         <div style={cardStyle}>
@@ -84,12 +100,14 @@ export default function PageAccessGate({
     return (
       <main style={pageStyle}>
         <div style={cardStyle}>
-          <h1 style={{ marginTop: 0 }}>Login Required</h1>
-          <p style={mutedStyle}>You need to sign in before using this page.</p>
-
-          <Link href="/login" style={buttonStyle}>
-            Go To Login
-          </Link>
+          <h1 style={{ marginTop: 0 }}>Redirecting to sign in…</h1>
+          <p style={mutedStyle}>
+            If you are not redirected,{" "}
+            <Link href="/login" style={{ color: "#93c5fd" }}>
+              open the login page
+            </Link>
+            .
+          </p>
         </div>
       </main>
     );
