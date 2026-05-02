@@ -196,7 +196,13 @@ export default function LoginPage() {
               marginBottom: 18,
             }}
           >
-            <BrandLogo linkToHome={false} height={72} maxWidth={420} loginGlow />
+            <BrandLogo
+              linkToHome={false}
+              height={360}
+              maxWidth={520}
+              fitWithinParent
+              loginGlow
+            />
           </div>
 
           <p style={{ color: "#93c5fd", margin: 0, fontSize: 20 }}>
