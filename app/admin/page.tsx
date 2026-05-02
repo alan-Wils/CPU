@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import {
@@ -67,6 +67,44 @@ function normalizePendingInvites(raw: unknown): PendingInvite[] {
     return (raw as { invites: PendingInvite[] }).invites;
   }
   return [];
+}
+
+const PENDING_INVITE_ROW_PREFIX = "pending-invite:";
+
+/**
+ * `InviteToken` rows are not `User` rows until accept-invite. Merge them into the
+ * Company Users grid so invited people stay visible after reload (same as having a saved user).
+ */
+function mergeUsersWithPendingInvites(
+  userRows: AdminUser[],
+  invites: PendingInvite[],
+): AdminUser[] {
+  const seen = new Set(
+    userRows
+      .map((u) => String(u.email || "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const extras: AdminUser[] = [];
+  for (const inv of invites) {
+    const em = inv.email.trim().toLowerCase();
+    if (!em || seen.has(em)) continue;
+    extras.push({
+      id: `${PENDING_INVITE_ROW_PREFIX}${inv.id}`,
+      username: inv.email.split("@")[0] || inv.email,
+      email: inv.email,
+      role: inv.role,
+      active: false,
+      status: "INVITED",
+      mustChangePassword: true,
+      createdAt: inv.createdAt,
+    });
+    seen.add(em);
+  }
+  return [...userRows, ...extras];
+}
+
+function isPendingInviteGridRow(user: AdminUser) {
+  return user.id.startsWith(PENDING_INVITE_ROW_PREFIX);
 }
 
 /**
@@ -258,6 +296,11 @@ export default function AdminPage() {
     cancelText: "",
     onConfirm: null,
   });
+
+  const companyUsersDisplay = useMemo(
+    () => mergeUsersWithPendingInvites(users, pendingInvites),
+    [users, pendingInvites],
+  );
 
   async function loadPendingInvitesForCompany(companyId: string) {
     if (!companyId) {
@@ -1306,8 +1349,8 @@ export default function AdminPage() {
                     }}
                   >
                     Stored in the database until accepted or expired (7 days).
-                    Users appear in &quot;Company Users&quot; after they set a
-                    password.
+                    Open invites are also listed under Company Users as
+                    &quot;Invited&quot; until the person accepts.
                   </p>
                   <div style={{ display: "grid", gap: 10 }}>
                     {pendingInvites.length === 0 ? (
@@ -1406,12 +1449,14 @@ export default function AdminPage() {
                   </div>
 
                   <div style={{ display: "grid", gap: 12 }}>
-                    {users.length === 0 ? (
+                    {companyUsersDisplay.length === 0 ? (
                       <div style={{ color: "#94a3b8" }}>No users found.</div>
                     ) : (
-                      users.map((user) => {
+                      companyUsersDisplay.map((user) => {
                         const isEditing = editingUserId === user.id;
+                        const inviteGridRow = isPendingInviteGridRow(user);
                         const canManageThisUser =
+                          !inviteGridRow &&
                           canManageUsers(currentUser?.role || "") &&
                           canEditTargetUser(currentUser?.role || "", user.role);
 
@@ -1493,7 +1538,11 @@ export default function AdminPage() {
                                 >
                                   <button
                                     type="button"
-                                    disabled={!canManageThisUser || savingUserId === user.id}
+                                    disabled={
+                                      !canManageThisUser ||
+                                      savingUserId === user.id ||
+                                      inviteGridRow
+                                    }
                                     onClick={() => startEditUser(user)}
                                     style={{
                                       ...smallButtonStyle,
@@ -1512,7 +1561,11 @@ export default function AdminPage() {
 
                                   <button
                                     type="button"
-                                    disabled={!canManageThisUser || savingUserId === user.id}
+                                    disabled={
+                                      !canManageThisUser ||
+                                      savingUserId === user.id ||
+                                      inviteGridRow
+                                    }
                                     onClick={() => toggleUserActive(user)}
                                     style={{
                                       ...smallButtonStyle,
@@ -1531,7 +1584,11 @@ export default function AdminPage() {
 
                                   <button
                                     type="button"
-                                    disabled={!canManageThisUser || savingUserId === user.id}
+                                    disabled={
+                                      !canManageThisUser ||
+                                      savingUserId === user.id ||
+                                      inviteGridRow
+                                    }
                                     onClick={() => deleteUser(user)}
                                     style={{
                                       ...smallButtonStyle,
