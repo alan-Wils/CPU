@@ -1,5 +1,11 @@
 import { TenantRepository } from "./TenantRepository.js";
 export class AuthRepository extends TenantRepository {
+    async findUserByIdWithCompany(userId) {
+        return this.db.user.findFirst({
+            where: { id: userId },
+            include: { company: true }
+        });
+    }
     async findUserByEmail(email) {
         const e = email.trim().toLowerCase();
         return this.db.user.findFirst({

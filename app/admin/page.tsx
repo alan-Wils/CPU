@@ -57,6 +57,18 @@ function normalizeAdminUsersList(raw: unknown): AdminUser[] {
   return [];
 }
 
+function normalizePendingInvites(raw: unknown): PendingInvite[] {
+  if (Array.isArray(raw)) return raw as PendingInvite[];
+  if (
+    raw &&
+    typeof raw === "object" &&
+    Array.isArray((raw as { invites?: unknown }).invites)
+  ) {
+    return (raw as { invites: PendingInvite[] }).invites;
+  }
+  return [];
+}
+
 /**
  * `GET /api/auth/me` on `@cpu/api` returns `{ auth: { userId, companyId, role } }`.
  * Admin must still treat OWNER correctly so company + pending-invite loads match the UI.
@@ -252,15 +264,8 @@ export default function AdminPage() {
       setPendingInvites([]);
       return;
     }
-    try {
-      const raw = await apiRequest<{ invites: PendingInvite[] }>(
-        "/api/admin/invites",
-        { companyId },
-      );
-      setPendingInvites(raw.invites ?? []);
-    } catch {
-      setPendingInvites([]);
-    }
+    const raw = await apiRequest("/api/admin/invites", { companyId });
+    setPendingInvites(normalizePendingInvites(raw));
   }
 
   async function loadAdminData() {

@@ -6,6 +6,28 @@ import { AppError } from "../errors/AppError.js";
 import { AuthRepository } from "../repositories/authRepository.js";
 export class AuthService {
     repo = new AuthRepository();
+    companyPayload(company) {
+        return {
+            id: company.id,
+            name: company.name,
+            code: company.slug.toUpperCase()
+        };
+    }
+    async getSession(userId) {
+        const user = await this.repo.findUserByIdWithCompany(userId);
+        if (!user || !user.isActive) {
+            throw new AppError("Unauthorized", 401);
+        }
+        return {
+            user: {
+                id: user.id,
+                role: user.role,
+                companyId: user.companyId,
+                companyCode: user.company.slug
+            },
+            company: this.companyPayload(user.company)
+        };
+    }
     async login(input) {
         const identifier = String(input.email ?? "").trim();
         const password = input.password;
@@ -50,7 +72,8 @@ export class AuthService {
                 role: user.role,
                 companyId: user.companyId,
                 companyCode: user.company.slug
-            }
+            },
+            company: this.companyPayload(user.company)
         };
     }
     async requestPasswordReset(email) {
@@ -86,7 +109,8 @@ export class AuthService {
                 role: user.role,
                 companyId: user.companyId,
                 companyCode: user.company.slug
-            }
+            },
+            company: this.companyPayload(user.company)
         };
     }
 }

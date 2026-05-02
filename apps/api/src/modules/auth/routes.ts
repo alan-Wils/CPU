@@ -12,7 +12,8 @@ authRouter.post("/login", validate({ body: loginSchema }), asyncHandler(async (r
     res.json(result);
 }));
 authRouter.get("/me", authMiddleware, asyncHandler(async (req, res) => {
-    res.json({ auth: req.auth });
+    const session = await authService.getSession(req.auth.userId);
+    res.json(session);
 }));
 authRouter.post("/accept-invite", validate({ body: acceptInviteSchema }), asyncHandler(async (req, res) => {
     const payload = req.body;
