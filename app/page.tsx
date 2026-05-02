@@ -1,14 +1,4 @@
 import Nav from "@/components/Nav";
-import BrandLogo from "@/components/BrandLogo";
-import { API_BASE_URL } from "@/lib/api";
-
-const serverDatabaseOnly =
-  typeof process !== "undefined" &&
-  ["1", "true", "yes"].includes(
-    String(process.env.NEXT_PUBLIC_SERVER_DATABASE_ONLY || "")
-      .trim()
-      .toLowerCase()
-  );
 
 const dashboardCards = [
   {
@@ -49,19 +39,13 @@ export default function Home() {
         background:
           "radial-gradient(circle at top left, rgba(34,197,94,0.18), transparent 32%), radial-gradient(circle at top right, rgba(56,189,248,0.14), transparent 35%), #020617",
         color: "white",
-        padding: 16,
-        boxSizing: "border-box",
-        maxWidth: "100vw",
-        overflowX: "hidden",
+        padding: 24,
       }}
     >
       <div
         style={{
           maxWidth: 1180,
           margin: "0 auto",
-          minWidth: 0,
-          width: "100%",
-          boxSizing: "border-box",
         }}
       >
         <header
@@ -72,37 +56,8 @@ export default function Home() {
             padding: 28,
             boxShadow: "0 24px 70px rgba(0,0,0,0.35)",
             marginBottom: 22,
-            minWidth: 0,
-            maxWidth: "100%",
-            boxSizing: "border-box",
-            overflow: "hidden",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              width: "100%",
-              marginBottom: 20,
-            }}
-          >
-            <h1
-              style={{
-                margin: 0,
-                padding: 0,
-                lineHeight: 0,
-                fontSize: 0,
-                fontWeight: "inherit",
-                display: "flex",
-                justifyContent: "center",
-                width: "100%",
-                minWidth: 0,
-              }}
-            >
-                <BrandLogo height={792} fitWithinParent />
-            </h1>
-          </div>
-
           <div
             style={{
               display: "flex",
@@ -130,6 +85,18 @@ export default function Home() {
               >
                 Live Company Workspace
               </div>
+
+              <h1
+                style={{
+                  fontSize: "clamp(34px, 5vw, 58px)",
+                  lineHeight: 1,
+                  margin: 0,
+                  letterSpacing: "-0.05em",
+                  fontWeight: 950,
+                }}
+              >
+                CPU Tracking System
+              </h1>
 
               <p
                 style={{
@@ -251,95 +218,7 @@ export default function Home() {
             </a>
           ))}
         </section>
-
-        <section
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-            gap: 18,
-          }}
-        >
-          <div style={infoPanelStyle}>
-            <h3 style={panelTitleStyle}>Backend Status</h3>
-            <p style={panelTextStyle}>
-              API base URL:{" "}
-              <span style={{ color: "#86efac", fontWeight: 800 }}>
-                {API_BASE_URL}
-              </span>
-              . Production batches, extraction runs, packaging lots, source
-              material, cultivation rows, and task logs are written through this
-              API into the company PostgreSQL database (not the in-browser store).
-            </p>
-          </div>
-
-          <div style={infoPanelStyle}>
-            <h3 style={panelTitleStyle}>Persistence Mode</h3>
-            <p style={panelTextStyle}>
-              {serverDatabaseOnly ? (
-                <>
-                  <strong style={{ color: "#86efac" }}>Server database only</strong>{" "}
-                  is enabled: the app does not push a full JSON snapshot to{" "}
-                  <code style={{ color: "#e2e8f0" }}>/api/store</code>. Set{" "}
-                  <code style={{ color: "#e2e8f0" }}>
-                    NEXT_PUBLIC_SERVER_DATABASE_ONLY=false
-                  </code>{" "}
-                  locally if you still want the legacy company-store backup sync.
-                </>
-              ) : (
-                <>
-                  Entity pages save to PostgreSQL via the API. The app may still
-                  call{" "}
-                  <code style={{ color: "#e2e8f0" }}>PUT /api/store</code> as a
-                  backup. For hosted production, set{" "}
-                  <code style={{ color: "#e2e8f0" }}>
-                    NEXT_PUBLIC_SERVER_DATABASE_ONLY=true
-                  </code>{" "}
-                  on Vercel so only the database receives writes.
-                </>
-              )}
-            </p>
-          </div>
-
-          <div style={infoPanelStyle}>
-            <h3 style={panelTitleStyle}>Login Enabled</h3>
-            <p style={panelTextStyle}>
-              Company login ties each user to a company, role, and permission
-              level. All scoped reads and writes go to the API with your session
-              and tenant headers.
-            </p>
-          </div>
-
-          <div style={infoPanelStyle}>
-            <h3 style={panelTitleStyle}>Data Hub</h3>
-            <p style={panelTextStyle}>
-              Cultivation, Extraction, Packaging, and Data Hub all load from the
-              same API-backed records so every user sees the same live company
-              state (with a small legacy hydrate from GET /api/store where a
-              slice is not yet in Prisma).
-            </p>
-          </div>
-        </section>
       </div>
     </main>
   );
 }
-
-const infoPanelStyle: React.CSSProperties = {
-  background: "rgba(15, 23, 42, 0.7)",
-  border: "1px solid rgba(148, 163, 184, 0.18)",
-  borderRadius: 20,
-  padding: 20,
-};
-
-const panelTitleStyle: React.CSSProperties = {
-  margin: 0,
-  marginBottom: 10,
-  fontSize: 18,
-  fontWeight: 900,
-};
-
-const panelTextStyle: React.CSSProperties = {
-  color: "#94a3b8",
-  lineHeight: 1.55,
-  margin: 0,
-};
