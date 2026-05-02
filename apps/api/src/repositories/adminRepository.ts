@@ -43,4 +43,21 @@ export class AdminRepository extends TenantRepository {
         });
         return { invite, token: rawToken };
     }
+    async listPendingInvites(companyId) {
+        return this.db.inviteToken.findMany({
+            where: {
+                companyId,
+                acceptedAt: null,
+                expiresAt: { gt: new Date() },
+            },
+            orderBy: { createdAt: "desc" },
+            select: {
+                id: true,
+                email: true,
+                role: true,
+                expiresAt: true,
+                createdAt: true,
+            },
+        });
+    }
 }

@@ -78,6 +78,16 @@ export class AdminService {
             inviteUrl
         };
     }
+    async listInvites(input) {
+        const rows = await this.repo.listPendingInvites(input.companyId);
+        return rows.map((r) => ({
+            id: r.id,
+            email: r.email,
+            role: r.role,
+            expiresAt: r.expiresAt.toISOString(),
+            createdAt: r.createdAt.toISOString(),
+        }));
+    }
     async listUsers(input) {
         const rows = await this.repo.listUsers(input.companyId);
         return rows.map((u) => ({

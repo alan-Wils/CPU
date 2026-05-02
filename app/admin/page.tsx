@@ -8,6 +8,7 @@ import {
   apiRequest,
   getMe,
   getSelectedCompanyId,
+  inviteUser,
   setSelectedCompanyId,
 } from "@/lib/api";
 import { getAuthCompany, getAuthUser } from "@/lib/auth";
@@ -34,6 +35,72 @@ type CompanyItem = {
   usersCount?: number;
 };
 
+/** Matches `inviteCreateSchema` on `@cpu/api` */
+type PendingInvite = {
+  id: string;
+  email: string;
+  role: string;
+  expiresAt: string;
+  createdAt: string;
+};
+
+const INVITE_ROLE_OPTIONS: {
+  value: string;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: "VIEW_ONLY",
+    label: "View Only",
+    description: "Can view company data but cannot create or edit records.",
+  },
+  {
+    value: "ADMIN",
+    label: "Company Admin",
+    description: "Can manage users and permissions for this company.",
+  },
+  {
+    value: "OPERATIONS_MANAGER",
+    label: "Operations Manager",
+    description: "Operational oversight across workflows.",
+  },
+  {
+    value: "CULTIVATION_SPECIALIST",
+    label: "Cultivation",
+    description: "Cultivation areas and batches.",
+  },
+  {
+    value: "EXTRACTION_SPECIALIST",
+    label: "Extraction",
+    description: "Extraction runs and inputs.",
+  },
+  {
+    value: "PACKAGING_SPECIALIST",
+    label: "Packaging",
+    description: "Packaging lots and outputs.",
+  },
+  {
+    value: "FINANCIAL_ANALYST",
+    label: "Financial Analyst",
+    description: "Financial views and reporting.",
+  },
+  {
+    value: "DATABASE_ARCHITECT",
+    label: "Database Architect",
+    description: "Data structures and integrations.",
+  },
+  {
+    value: "FULL_STACK_DEVELOPER",
+    label: "Full Stack Developer",
+    description: "Application development and fixes.",
+  },
+  {
+    value: "QA_TESTER",
+    label: "QA Tester",
+    description: "Quality assurance and test coverage.",
+  },
+];
+
 const roleOptions = [
   { value: "VIEW_ONLY", label: "View Only", description: "Can view company data but cannot create or edit records." },
   { value: "CULTIVATION", label: "Cultivation", description: "Can work in cultivation areas." },
@@ -47,10 +114,17 @@ const roleOptions = [
 function getRoleColor(role: string) {
   if (role === "OWNER") return "#f59e0b";
   if (role === "ADMIN") return "#a855f7";
-  if (role === "MANAGER") return "#38bdf8";
-  if (role === "CULTIVATION") return "#22c55e";
-  if (role === "EXTRACTION") return "#14b8a6";
-  if (role === "PACKAGING") return "#ec4899";
+  if (role === "MANAGER" || role === "OPERATIONS_MANAGER") return "#38bdf8";
+  if (role === "CULTIVATION" || role === "CULTIVATION_SPECIALIST")
+    return "#22c55e";
+  if (role === "EXTRACTION" || role === "EXTRACTION_SPECIALIST")
+    return "#14b8a6";
+  if (role === "PACKAGING" || role === "PACKAGING_SPECIALIST")
+    return "#ec4899";
+  if (role === "FINANCIAL_ANALYST") return "#eab308";
+  if (role === "DATABASE_ARCHITECT") return "#6366f1";
+  if (role === "FULL_STACK_DEVELOPER") return "#06b6d4";
+  if (role === "QA_TESTER") return "#f472b6";
   return "#94a3b8";
 }
 
@@ -82,6 +156,7 @@ export default function AdminPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [company, setCompany] = useState<any>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [companies, setCompanies] = useState<CompanyItem[]>([]);
   const [selectedCompanyId, setSelectedCompanyIdState] = useState("");
   const [loading, setLoading] = useState(true);
@@ -130,6 +205,22 @@ export default function AdminPage() {
     onConfirm: null,
   });
 
+  async function loadPendingInvitesForCompany(companyId: string) {
+    if (!companyId) {
+      setPendingInvites([]);
+      return;
+    }
+    try {
+      const raw = await apiRequest<{ invites: PendingInvite[] }>(
+        "/api/admin/invites",
+        { companyId },
+      );
+      setPendingInvites(raw.invites ?? []);
+    } catch {
+      setPendingInvites([]);
+    }
+  }
+
   async function loadAdminData() {
     setError("");
     setLoading(true);
@@ -173,12 +264,15 @@ export default function AdminPage() {
             companyId: selectedCompany.id,
           });
           setUsers(loadedUsers);
+          await loadPendingInvitesForCompany(selectedCompany.id);
         } else {
           setUsers([]);
+          setPendingInvites([]);
         }
       } else {
         const loadedUsers = await apiRequest<AdminUser[]>("/api/users");
         setUsers(loadedUsers);
+        await loadPendingInvitesForCompany(getSelectedCompanyId());
       }
     } catch (err: any) {
       setError(err?.message || "Could not load admin data.");
@@ -212,6 +306,7 @@ export default function AdminPage() {
       });
 
       setUsers(loadedUsers);
+      await loadPendingInvitesForCompany(companyId);
       setSuccess("Switched company view.");
     } catch (err: any) {
       setError(err?.message || "Could not switch company.");
@@ -385,11 +480,6 @@ export default function AdminPage() {
       return;
     }
 
-    if (!username.trim()) {
-      setError("Username is required.");
-      return;
-    }
-
     if (!email.trim()) {
       setError("Email is required for invites.");
       return;
@@ -408,28 +498,29 @@ export default function AdminPage() {
     setSaving(true);
 
     try {
-      const response = await apiRequest<any>("/api/users/invite", {
-        method: "POST",
-        body: {
-          username: username.trim(),
-          email: email.trim(),
-          role,
-          companyId: currentUser?.role === "OWNER" ? selectedCompanyId : undefined,
-        },
-        companyId: currentUser?.role === "OWNER" ? selectedCompanyId : undefined,
+      const response = await inviteUser({
+        email: email.trim(),
+        role,
+        companyId:
+          currentUser?.role === "OWNER" ? selectedCompanyId : undefined,
       });
 
-      const newUser = response?.user || response;
-
-      setUsers((current) => [newUser, ...current]);
+      const handle = username.trim() || email.trim().split("@")[0] || "user";
+      await loadPendingInvitesForCompany(
+        currentUser?.role === "OWNER"
+          ? selectedCompanyId
+          : getSelectedCompanyId(),
+      );
       setUsername("");
       setEmail("");
       setRole("VIEW_ONLY");
 
       if (response?.inviteUrl) {
-        setSuccess(`Invite created for ${newUser.username}. Invite link: ${response.inviteUrl}`);
+        setSuccess(
+          `Invite created for ${handle}. Invite link: ${response.inviteUrl}`,
+        );
       } else {
-        setSuccess(`Invite created for ${newUser.username}.`);
+        setSuccess(`Invite created for ${handle}.`);
       }
     } catch (err: any) {
       setError(err?.message || "Could not invite user.");
@@ -818,12 +909,12 @@ export default function AdminPage() {
                     )}
 
                     <label style={labelStyle}>
-                      Username
+                      Display name (optional)
                       <input
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         style={inputStyle}
-                        placeholder="example: john"
+                        placeholder="Not stored — invite uses email only"
                         autoComplete="off"
                         name="invite-user-username"
                       />
@@ -849,7 +940,7 @@ export default function AdminPage() {
                         onChange={(e) => setRole(e.target.value)}
                         style={inputStyle}
                       >
-                        {allowedRoleOptions.map((option) => (
+                        {INVITE_ROLE_OPTIONS.map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}
                           </option>
@@ -870,8 +961,9 @@ export default function AdminPage() {
                       }}
                     >
                       {
-                        roleOptions.find((option) => option.value === role)
-                          ?.description
+                        INVITE_ROLE_OPTIONS.find(
+                          (option) => option.value === role,
+                        )?.description
                       }
                     </div>
 
@@ -1137,6 +1229,73 @@ export default function AdminPage() {
                     </section>
                   )}
                 </div>
+
+                <section style={panelStyle}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      alignItems: "center",
+                      marginBottom: 16,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <h2 style={sectionTitleStyle}>Pending invites</h2>
+                  </div>
+                  <p
+                    style={{
+                      color: "#94a3b8",
+                      fontSize: 14,
+                      marginTop: 0,
+                      marginBottom: 14,
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    Stored in the database until accepted or expired (7 days).
+                    Users appear in &quot;Company Users&quot; after they set a
+                    password.
+                  </p>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {pendingInvites.length === 0 ? (
+                      <div style={{ color: "#94a3b8" }}>No pending invites.</div>
+                    ) : (
+                      pendingInvites.map((inv) => (
+                        <div
+                          key={inv.id}
+                          style={{
+                            background: "rgba(2, 6, 23, 0.72)",
+                            border: "1px solid rgba(168, 85, 247, 0.28)",
+                            borderRadius: 14,
+                            padding: 14,
+                            display: "grid",
+                            gap: 6,
+                          }}
+                        >
+                          <div style={{ fontWeight: 900 }}>{inv.email}</div>
+                          <div style={{ color: "#64748b", fontSize: 13 }}>
+                            Role:{" "}
+                            <span
+                              style={{
+                                color: getRoleColor(inv.role),
+                                fontWeight: 800,
+                              }}
+                            >
+                              {inv.role}
+                            </span>
+                          </div>
+                          <div style={{ color: "#64748b", fontSize: 12 }}>
+                            Expires:{" "}
+                            {new Date(inv.expiresAt).toLocaleString(undefined, {
+                              dateStyle: "medium",
+                              timeStyle: "short",
+                            })}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
 
                 <section style={panelStyle}>
                   <div

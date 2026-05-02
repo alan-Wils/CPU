@@ -42,6 +42,10 @@ adminRouter.delete("/users/:userId", requireRole(["OWNER", "ADMIN"]), asyncHandl
     });
     res.json(out);
 }));
+adminRouter.get("/invites", requireRole(["OWNER", "ADMIN"]), asyncHandler(async (req, res) => {
+    const invites = await adminService.listInvites({ companyId: req.auth.companyId });
+    res.json({ invites });
+}));
 adminRouter.post("/invites", requireRole(["OWNER", "ADMIN"]), validate({ body: inviteCreateSchema }), asyncHandler(async (req, res) => {
     const payload = req.body;
     const result = await adminService.createInvite({

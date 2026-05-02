@@ -209,20 +209,20 @@ export async function getUsers(companyId?: string) {
 }
 
 export async function inviteUser(payload: {
-  username: string;
+  username?: string;
   email: string;
   role: string;
   companyId?: string;
 }) {
-  return apiRequest("/api/users/invite", {
+  return apiRequest("/api/admin/invites", {
     method: "POST",
-    body: payload,
+    body: { email: payload.email.trim().toLowerCase(), role: payload.role },
     companyId: payload.companyId,
   });
 }
 
 export async function createUser(payload: {
-  username: string;
+  username?: string;
   email: string;
   password?: string;
   role: string;
