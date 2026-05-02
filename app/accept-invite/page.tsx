@@ -2,6 +2,7 @@
 
 import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useState } from "react";
+import BrandLogo from "@/components/BrandLogo";
 import { acceptInvite } from "@/lib/api";
 import { saveAuthSession } from "@/lib/auth";
 
@@ -59,11 +60,14 @@ function AcceptInvitePageInner() {
         background: "#020617",
         color: "white",
         display: "flex",
+        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
+        gap: 28,
         padding: 24,
       }}
     >
+      <BrandLogo height={52} />
       <form
         onSubmit={submit}
         style={{

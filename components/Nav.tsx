@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import BrandLogo from "@/components/BrandLogo";
 import { clearAuthSession, getAuthUser } from "@/lib/auth";
 import { clearSelectedCompanyId } from "@/lib/api";
 
@@ -87,7 +88,18 @@ export default function Nav() {
         flexWrap: "wrap",
       }}
     >
-      {!isHomePage && (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 18,
+          flexWrap: "wrap",
+          flex: "1 1 auto",
+          minWidth: 0,
+        }}
+      >
+        <BrandLogo height={42} />
+        {!isHomePage && (
         <div
           style={{
             display: "flex",
@@ -130,14 +142,16 @@ export default function Nav() {
             Data Hub
           </Link>
         </div>
-      )}
+        )}
+      </div>
 
       <div
         style={{
           display: "flex",
           gap: 14,
           alignItems: "center",
-          marginLeft: isHomePage ? 0 : "auto",
+          marginLeft: "auto",
+          flexShrink: 0,
         }}
       >
         {(user?.role === "ADMIN" || user?.role === "OWNER") && (

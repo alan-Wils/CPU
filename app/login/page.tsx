@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import BrandLogo from "@/components/BrandLogo";
 import { clearSelectedCompanyId, loginCompany, setSelectedCompanyId } from "@/lib/api";
 import { clearAuthSession, saveAuthSession } from "@/lib/auth";
 import { loadBackendStore } from "@/lib/backendStore";
@@ -159,11 +160,14 @@ export default function LoginPage() {
           "radial-gradient(circle at top, #1e293b 0, #020617 45%, #000 100%)",
         color: "white",
         display: "flex",
+        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
+        gap: 28,
         padding: 24,
       }}
     >
+      <BrandLogo height={52} />
       <form
         onSubmit={handleLogin}
         style={{
