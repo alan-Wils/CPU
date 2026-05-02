@@ -108,8 +108,26 @@ function stringifyApiFailureBody(data: unknown): string {
   const fromErrors =
     Array.isArray(obj.errors) ? formatErrorsArray(obj.errors as unknown[]) : null;
 
+  const nestedErr = obj.error;
+  let fromNestedDetails: string | null = null;
+  if (
+    nestedErr &&
+    typeof nestedErr === "object" &&
+    !Array.isArray(nestedErr) &&
+    primary &&
+    /^validation failed$/i.test(String(primary).trim())
+  ) {
+    const d = (nestedErr as { details?: unknown }).details;
+    if (Array.isArray(d) && d.length) {
+      fromNestedDetails = formatErrorsArray(d as unknown[]);
+    }
+  }
+
   if (fromErrors && primary && /^validation failed$/i.test(primary.trim())) {
     return `${primary}: ${fromErrors}`;
+  }
+  if (fromNestedDetails) {
+    return `${primary}: ${fromNestedDetails}`;
   }
   if (primary) return primary;
   if (fromErrors) return fromErrors;

@@ -1,5 +1,37 @@
 import { z } from "zod";
 
+/** Map short / display labels from older clients to Prisma `UserRole` strings. */
+export function normalizeLegacyUserRoleInput(raw: string): string {
+    const t = raw.trim();
+    const exact: Record<string, string> = {
+        MANAGER: "OPERATIONS_MANAGER",
+        CULTIVATION: "CULTIVATION_SPECIALIST",
+        EXTRACTION: "EXTRACTION_SPECIALIST",
+        PACKAGING: "PACKAGING_SPECIALIST",
+    };
+    if (exact[t])
+        return exact[t];
+    const loose = t.toLowerCase().replace(/\s+/g, "");
+    const fuzzy: Record<string, string> = {
+        manager: "OPERATIONS_MANAGER",
+        cultivation: "CULTIVATION_SPECIALIST",
+        extraction: "EXTRACTION_SPECIALIST",
+        packaging: "PACKAGING_SPECIALIST",
+    };
+    if (fuzzy[loose])
+        return fuzzy[loose];
+    return t;
+}
+
+function preprocessBodyNormalizeUserRole(raw: unknown): unknown {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+        return raw;
+    const o = { ...(raw as Record<string, unknown>) };
+    if (typeof o.role === "string")
+        o.role = normalizeLegacyUserRoleInput(o.role);
+    return o;
+}
+
 /** Legacy UI sends `username` + optional `companyCode: ""`. Normalize before validation. */
 export const loginSchema = z.preprocess((raw) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw))
@@ -60,23 +92,24 @@ export const companyIdParam = z.object({ companyId: z.string().cuid() });
 export const assignOwnerSchema = z.object({
     targetUserId: z.string().cuid()
 });
-export const createUserSchema = z.object({
+const createUserRoleEnum = z.enum([
+    "OWNER",
+    "ADMIN",
+    "OPERATIONS_MANAGER",
+    "CULTIVATION_SPECIALIST",
+    "EXTRACTION_SPECIALIST",
+    "PACKAGING_SPECIALIST",
+    "FINANCIAL_ANALYST",
+    "DATABASE_ARCHITECT",
+    "FULL_STACK_DEVELOPER",
+    "QA_TESTER",
+    "VIEW_ONLY"
+]);
+export const createUserSchema = z.preprocess(preprocessBodyNormalizeUserRole, z.object({
     email: z.string().email(),
     password: z.string().min(12).max(128),
-    role: z.enum([
-        "OWNER",
-        "ADMIN",
-        "OPERATIONS_MANAGER",
-        "CULTIVATION_SPECIALIST",
-        "EXTRACTION_SPECIALIST",
-        "PACKAGING_SPECIALIST",
-        "FINANCIAL_ANALYST",
-        "DATABASE_ARCHITECT",
-        "FULL_STACK_DEVELOPER",
-        "QA_TESTER",
-        "VIEW_ONLY"
-    ])
-});
+    role: createUserRoleEnum
+}));
 const positiveGrams = z.number().nonnegative().max(1_000_000_000);
 const positiveGramsStrict = z.number().positive().max(1_000_000_000);
 export const cultivationCreateSchema = z.object({
@@ -211,40 +244,40 @@ export const laborEntryCreateSchema = z.object({
 export const adminUserStatusSchema = z.object({
     isActive: z.boolean()
 });
-export const adminUserUpdateSchema = z.object({
+const adminUserUpdateRoleEnum = z.enum([
+    "OWNER",
+    "ADMIN",
+    "OPERATIONS_MANAGER",
+    "CULTIVATION_SPECIALIST",
+    "EXTRACTION_SPECIALIST",
+    "PACKAGING_SPECIALIST",
+    "FINANCIAL_ANALYST",
+    "DATABASE_ARCHITECT",
+    "FULL_STACK_DEVELOPER",
+    "QA_TESTER",
+    "VIEW_ONLY"
+]);
+export const adminUserUpdateSchema = z.preprocess(preprocessBodyNormalizeUserRole, z.object({
     email: z.string().email().optional(),
-    role: z
-        .enum([
-        "OWNER",
-        "ADMIN",
-        "OPERATIONS_MANAGER",
-        "CULTIVATION_SPECIALIST",
-        "EXTRACTION_SPECIALIST",
-        "PACKAGING_SPECIALIST",
-        "FINANCIAL_ANALYST",
-        "DATABASE_ARCHITECT",
-        "FULL_STACK_DEVELOPER",
-        "QA_TESTER",
-        "VIEW_ONLY"
-    ])
-        .optional(),
+    role: adminUserUpdateRoleEnum.optional(),
     isActive: z.boolean().optional()
-});
-export const inviteCreateSchema = z.object({
+}));
+const inviteCreateRoleEnum = z.enum([
+    "ADMIN",
+    "OPERATIONS_MANAGER",
+    "CULTIVATION_SPECIALIST",
+    "EXTRACTION_SPECIALIST",
+    "PACKAGING_SPECIALIST",
+    "FINANCIAL_ANALYST",
+    "DATABASE_ARCHITECT",
+    "FULL_STACK_DEVELOPER",
+    "QA_TESTER",
+    "VIEW_ONLY"
+]);
+export const inviteCreateSchema = z.preprocess(preprocessBodyNormalizeUserRole, z.object({
     email: z.string().email(),
-    role: z.enum([
-        "ADMIN",
-        "OPERATIONS_MANAGER",
-        "CULTIVATION_SPECIALIST",
-        "EXTRACTION_SPECIALIST",
-        "PACKAGING_SPECIALIST",
-        "FINANCIAL_ANALYST",
-        "DATABASE_ARCHITECT",
-        "FULL_STACK_DEVELOPER",
-        "QA_TESTER",
-        "VIEW_ONLY"
-    ])
-});
+    role: inviteCreateRoleEnum
+}));
 export const configUpsertSchema = z.object({
     key: z.string().min(2).max(100),
     value: z.union([z.record(z.string(), z.unknown()), z.array(z.unknown())])
