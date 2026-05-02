@@ -95,9 +95,11 @@ export default function Home() {
                 fontWeight: "inherit",
                 display: "flex",
                 justifyContent: "center",
+                width: "100%",
+                minWidth: 0,
               }}
             >
-                <BrandLogo height={132} maxWidth={640} />
+                <BrandLogo height={264} fitWithinParent />
             </h1>
           </div>
 
