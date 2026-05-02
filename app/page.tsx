@@ -81,6 +81,29 @@ export default function Home() {
           <div
             style={{
               display: "flex",
+              justifyContent: "center",
+              width: "100%",
+              marginBottom: 20,
+            }}
+          >
+            <h1
+              style={{
+                margin: 0,
+                padding: 0,
+                lineHeight: 0,
+                fontSize: 0,
+                fontWeight: "inherit",
+                display: "flex",
+                justifyContent: "center",
+              }}
+            >
+              <BrandLogo height={88} maxWidth={480} />
+            </h1>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
               justifyContent: "space-between",
               gap: 18,
               alignItems: "flex-start",
@@ -105,18 +128,6 @@ export default function Home() {
               >
                 Live Company Workspace
               </div>
-
-              <h1
-                style={{
-                  margin: "4px 0",
-                  padding: 0,
-                  lineHeight: 0,
-                  fontSize: 0,
-                  fontWeight: "inherit",
-                }}
-              >
-                <BrandLogo height={88} maxWidth={480} />
-              </h1>
 
               <p
                 style={{
