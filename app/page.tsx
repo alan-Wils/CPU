@@ -1,4 +1,5 @@
 import Nav from "@/components/Nav";
+import BrandLogo from "@/components/BrandLogo";
 import { API_BASE_URL } from "@/lib/api";
 
 const serverDatabaseOnly =
@@ -97,14 +98,14 @@ export default function Home() {
 
               <h1
                 style={{
-                  fontSize: "clamp(34px, 5vw, 58px)",
-                  lineHeight: 1,
-                  margin: 0,
-                  letterSpacing: "-0.05em",
-                  fontWeight: 950,
+                  margin: "4px 0",
+                  padding: 0,
+                  lineHeight: 0,
+                  fontSize: 0,
+                  fontWeight: "inherit",
                 }}
               >
-                CPU Tracking System
+                <BrandLogo height={88} maxWidth={480} />
               </h1>
 
               <p

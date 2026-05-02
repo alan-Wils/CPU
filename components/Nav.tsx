@@ -98,7 +98,7 @@ export default function Nav() {
           minWidth: 0,
         }}
       >
-        <BrandLogo height={42} />
+        <BrandLogo height={52} />
         {!isHomePage && (
         <div
           style={{

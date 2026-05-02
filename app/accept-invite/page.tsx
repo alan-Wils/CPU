@@ -67,7 +67,7 @@ function AcceptInvitePageInner() {
         padding: 24,
       }}
     >
-      <BrandLogo height={52} />
+      <BrandLogo height={72} maxWidth={400} />
       <form
         onSubmit={submit}
         style={{

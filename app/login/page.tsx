@@ -163,11 +163,10 @@ export default function LoginPage() {
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: 28,
+        gap: 0,
         padding: 24,
       }}
     >
-      <BrandLogo height={52} />
       <form
         onSubmit={handleLogin}
         style={{
@@ -182,8 +181,17 @@ export default function LoginPage() {
         }}
       >
         <div style={{ marginBottom: 28, textAlign: "center" }}>
-          <h1 style={{ fontSize: 42, fontWeight: 900, marginBottom: 12 }}>
-            Cannabis CPU
+          <h1
+            style={{
+              margin: "0 0 20px",
+              padding: 0,
+              lineHeight: 0,
+              fontSize: 0,
+              display: "flex",
+              justifyContent: "center",
+            }}
+          >
+            <BrandLogo height={84} maxWidth={440} />
           </h1>
 
           <p style={{ color: "#93c5fd", margin: 0, fontSize: 20 }}>
