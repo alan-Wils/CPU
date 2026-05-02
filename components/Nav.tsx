@@ -188,6 +188,27 @@ export default function Nav() {
           </div>
         )}
 
+        {isPortalSession() && pathname !== "/portal" && (
+          <Link
+            href="/portal?pick=1"
+            style={{
+              padding: "12px 18px",
+              borderRadius: 14,
+              border: "1px solid rgba(56, 189, 248, 0.45)",
+              background: "rgba(8, 47, 73, 0.75)",
+              color: "#7dd3fc",
+              fontWeight: 800,
+              fontSize: 15,
+              textDecoration: "none",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            NexBatch menu
+          </Link>
+        )}
+
         {isPortalSession() && portalCompanies.length > 1 && (
           <label
             style={{

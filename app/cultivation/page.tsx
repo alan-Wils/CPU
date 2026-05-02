@@ -12,6 +12,7 @@ import {
   updateCultivationBatch,
   deleteCultivationBatch,
 } from "@/lib/cultivationApi";
+import { apiRequest } from "@/lib/api";
 import { createSourceBatch } from "@/lib/sourceBatchApi";
 import { createLog } from "@/lib/logsApi";
 
@@ -24,9 +25,6 @@ type ConfigStrain = {
   potency?: string;
   averageYield?: string;
 };
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 const flowerRoomOptions = ["1", "2", "3", "4"] as const;
 const flowerBayOptions = ["A", "B", "C"] as const;
@@ -151,6 +149,33 @@ function getConfigStrainAcronym(item: ConfigStrain) {
 
 function getCloneStrainByName(strainName: string, strainList: ConfigStrain[]) {
   return (strainList || []).find((item) => getConfigStrainName(item) === strainName) || null;
+}
+
+/** API merges `CompanyConfig` rows by key at top level (`strains`, …); admin UI nests under `cultivation`. */
+function pickStrainsFromConfigPayload(data: {
+  cultivation?: { strains?: unknown };
+  strains?: unknown;
+}): Array<ConfigStrain | string> {
+  const nested = data?.cultivation?.strains;
+  if (Array.isArray(nested)) return nested as Array<ConfigStrain | string>;
+  const flat = data?.strains;
+  if (Array.isArray(flat)) return flat as Array<ConfigStrain | string>;
+  return [];
+}
+
+function normalizeStrainConfigList(raw: Array<ConfigStrain | string>): ConfigStrain[] {
+  return raw.map((item) => {
+    if (typeof item === "string") {
+      const name = String(item).trim();
+      const acronym = name
+        .split(/\s+/)
+        .map((w) => (w[0] ? w[0].toUpperCase() : ""))
+        .join("")
+        .slice(0, 6) || name.slice(0, 3).toUpperCase();
+      return { id: name, name, strain: name, acronym };
+    }
+    return item;
+  });
 }
 
 function formatFlowerTables(batchOrTables: any) {
@@ -350,20 +375,11 @@ export default function Cultivation() {
 
     async function loadConfigStrains() {
       try {
-        const token = typeof window !== "undefined" ? localStorage.getItem("token") || "" : "";
-
-        const res = await fetch(`${API_BASE}/api/config`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-
-        if (!res.ok) {
-          throw new Error("Could not load company config strains");
-        }
-
-        const data = await res.json();
-        const strains = Array.isArray(data?.cultivation?.strains)
-          ? data.cultivation.strains
-          : [];
+        const data = await apiRequest<{
+          cultivation?: { strains?: ConfigStrain[] };
+          strains?: ConfigStrain[] | string[];
+        }>("/api/config");
+        const strains = normalizeStrainConfigList(pickStrainsFromConfigPayload(data));
 
         if (!mounted) return;
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Nav from "@/components/Nav";
 import {
@@ -8,6 +8,7 @@ import {
   appendCompanyIdQuery,
   getSelectedCompanyId,
 } from "@/lib/api";
+import { getAuthToken } from "@/lib/auth";
 
 type Strain = {
   id: string;
@@ -157,15 +158,11 @@ export default function ConfigPage() {
     productName: "",
   });
 
-  const token = useMemo(() => {
-    if (typeof window === "undefined") return "";
-    return localStorage.getItem("token") || "";
-  }, []);
-
   async function loadConfig() {
     setLoading(true);
 
     try {
+      const token = getAuthToken();
       const companyId = getSelectedCompanyId().trim();
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
@@ -228,6 +225,7 @@ export default function ConfigPage() {
     setSaving(true);
 
     try {
+      const token = getAuthToken();
       const companyId = getSelectedCompanyId().trim();
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
@@ -260,7 +258,7 @@ export default function ConfigPage() {
 
   useEffect(() => {
     void loadConfig();
-  }, [pathname, token]);
+  }, [pathname]);
 
   function addStrain() {
     if (!strainForm.name.trim() || !strainForm.acronym.trim()) {

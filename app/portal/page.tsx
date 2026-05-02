@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { apiRequest, setSelectedCompanyId } from "@/lib/api";
 import {
   getPortalCompanies,
@@ -34,8 +34,9 @@ async function selectCompanyAndGoHome(companyId: string) {
   window.location.href = "/";
 }
 
-export default function PortalSelectCompanyPage() {
+function PortalBody() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [companies, setCompanies] = useState<CpuCompany[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -77,7 +78,8 @@ export default function PortalSelectCompanyPage() {
           setLoading(false);
           return;
         }
-        if (list.length === 1) {
+        const forcePick = searchParams.get("pick") === "1";
+        if (list.length === 1 && !forcePick) {
           await selectCompanyAndGoHome(list[0].id);
           return;
         }
@@ -92,7 +94,7 @@ export default function PortalSelectCompanyPage() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [router, searchParams]);
 
   async function onPick(companyId: string) {
     setError("");
@@ -200,5 +202,30 @@ export default function PortalSelectCompanyPage() {
         </ul>
       </div>
     </main>
+  );
+}
+
+export default function PortalSelectCompanyPage() {
+  return (
+    <Suspense
+      fallback={
+        <main
+          style={{
+            minHeight: "100vh",
+            background:
+              "radial-gradient(circle at top, #1e293b 0, #020617 45%, #000 100%)",
+            color: "white",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+          }}
+        >
+          <p style={{ color: "#93c5fd", fontWeight: 800 }}>Loading…</p>
+        </main>
+      }
+    >
+      <PortalBody />
+    </Suspense>
   );
 }
