@@ -279,8 +279,14 @@ export default function Extraction() {
         const sourceList = asArray(realSourceBatches);
         const extractionList = asArray(realExtractionBatches);
 
-        s.sourceBatches = sourceList.filter((batch: any) => !isCompletedSourceBatch(batch));
-        s.completedSourceBatches = sourceList.filter((batch: any) => isCompletedSourceBatch(batch));
+        s.sourceBatches = sourceList.filter(
+          (batch: any) =>
+            !isCompletedSourceBatch(batch) && getSourceAvailable(batch) > 0
+        );
+        s.completedSourceBatches = sourceList.filter(
+          (batch: any) =>
+            isCompletedSourceBatch(batch) || getSourceAvailable(batch) <= 0
+        );
         s.extractionBatches = extractionList;
 
         setSelectedExt((current: any) => {
@@ -334,6 +340,14 @@ export default function Extraction() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [viewBatch, setViewBatch] = useState<any>(null);
+
+  /** Multi-select for bulk delete in Available / Completed source lists. */
+  const [selectedAvailableSourceIds, setSelectedAvailableSourceIds] = useState<
+    Record<string, boolean>
+  >({});
+  const [selectedCompletedSourceIds, setSelectedCompletedSourceIds] = useState<
+    Record<string, boolean>
+  >({});
 
   const [type, setType] = useState(productTypes[0]);
   const [sourceInputs, setSourceInputs] = useState<any[]>([
@@ -1198,6 +1212,118 @@ export default function Extraction() {
       `Delete completed source batch "${batchId}"?`,
       () => runDeleteCompletedSourceBatch(batchId),
       "This removes it from the completed / used source batch list."
+    );
+  }
+
+  function toggleAvailableSourceSelected(batchId: string) {
+    setSelectedAvailableSourceIds((prev) => ({
+      ...prev,
+      [batchId]: !prev[batchId],
+    }));
+  }
+
+  function selectAllAvailableSources() {
+    const next: Record<string, boolean> = {};
+    for (const b of s.sourceBatches) {
+      next[String(b.id)] = true;
+    }
+    setSelectedAvailableSourceIds(next);
+  }
+
+  function clearAvailableSourceSelection() {
+    setSelectedAvailableSourceIds({});
+  }
+
+  function getSelectedAvailableSourceIdList() {
+    return s.sourceBatches
+      .map((b: any) => String(b.id))
+      .filter((id) => selectedAvailableSourceIds[id]);
+  }
+
+  function deleteSelectedAvailableSources() {
+    const ids = getSelectedAvailableSourceIdList();
+    if (ids.length === 0) {
+      showNotice(
+        "Nothing selected",
+        "Use the checkboxes to pick one or more source batches, then try again."
+      );
+      return;
+    }
+    if (!userCanDelete) {
+      showNotice(
+        "Access Denied",
+        "Only Manager, Admin, or Owner users can delete records."
+      );
+      return;
+    }
+    showConfirm(
+      "Delete selected source batches",
+      `Permanently delete ${ids.length} source batch record(s)? This cannot be undone.`,
+      () => {
+        void (async () => {
+          for (const id of ids) {
+            await runDeleteSourceBatch(id);
+          }
+          clearAvailableSourceSelection();
+        })();
+      },
+      "Removes workflow SourcePackage rows (when applicable) and legacy store entries."
+    );
+  }
+
+  function toggleCompletedSourceSelected(batchId: string) {
+    setSelectedCompletedSourceIds((prev) => ({
+      ...prev,
+      [batchId]: !prev[batchId],
+    }));
+  }
+
+  function selectAllCompletedSources() {
+    const next: Record<string, boolean> = {};
+    for (const b of s.completedSourceBatches) {
+      next[String(b.id)] = true;
+    }
+    setSelectedCompletedSourceIds(next);
+  }
+
+  function clearCompletedSourceSelection() {
+    setSelectedCompletedSourceIds({});
+  }
+
+  function getSelectedCompletedSourceIdList() {
+    return s.completedSourceBatches
+      .map((b: any) => String(b.id))
+      .filter((id) => selectedCompletedSourceIds[id]);
+  }
+
+  function deleteSelectedCompletedSources() {
+    const ids = getSelectedCompletedSourceIdList();
+    if (ids.length === 0) {
+      showNotice(
+        "Nothing selected",
+        "Select one or more completed / used rows first."
+      );
+      return;
+    }
+    if (!userCanDelete) {
+      showNotice(
+        "Access Denied",
+        "Only Manager, Admin, or Owner users can delete records."
+      );
+      return;
+    }
+    showConfirm(
+      "Delete selected completed batches",
+      `Permanently delete ${ids.length} completed / used source record(s)?`,
+      () => {
+        void (async () => {
+          for (const id of ids) {
+            await runDeleteCompletedSourceBatch(id);
+          }
+          clearCompletedSourceSelection();
+        })();
+      },
+      "Same as single delete: removes from database where applicable."
     );
   }
 
@@ -2150,6 +2276,42 @@ export default function Extraction() {
             ) : null}
           </div>
 
+          {userCanDelete && s.sourceBatches.length > 0 ? (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 10,
+                marginTop: 14,
+                alignItems: "center",
+              }}
+            >
+              <button
+                type="button"
+                style={buttonStyle}
+                onClick={selectAllAvailableSources}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                style={buttonStyle}
+                onClick={clearAvailableSourceSelection}
+              >
+                Clear selection
+              </button>
+              <button
+                type="button"
+                style={deleteButtonStyle}
+                onClick={deleteSelectedAvailableSources}
+                disabled={getSelectedAvailableSourceIdList().length === 0}
+              >
+                Delete selected (
+                {getSelectedAvailableSourceIdList().length})
+              </button>
+            </div>
+          ) : null}
+
           <div style={lockedListStyle}>
             {s.sourceBatches.length === 0 ? (
               <p style={{ color: "#94a3b8" }}>
@@ -2161,6 +2323,10 @@ export default function Extraction() {
                 const isEmpty =
                   available <= 0 || b.status === "Used in Extraction";
                 const materialType = getSourceMaterialType(b);
+                const statusLabel =
+                  isEmpty && String(b.status || "").toLowerCase() !== "used in extraction"
+                    ? `Depleted · ${b.status || "no weight on file"}`
+                    : b.status || "—";
 
                 return (
                   <div
@@ -2172,19 +2338,34 @@ export default function Extraction() {
                       opacity: isEmpty ? 0.75 : 1,
                     }}
                   >
-                    <div style={{ flex: 1 }}>
+                    {userCanDelete ? (
+                      <input
+                        type="checkbox"
+                        checked={!!selectedAvailableSourceIds[b.id]}
+                        onChange={() => toggleAvailableSourceSelected(b.id)}
+                        style={{
+                          width: 20,
+                          height: 20,
+                          cursor: "pointer",
+                          flexShrink: 0,
+                          accentColor: "#22c55e",
+                        }}
+                        aria-label={`Select source batch ${b.id}`}
+                      />
+                    ) : null}
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <b>{b.id}</b> | {b.name || b.type} | Material:{" "}
                       {materialType === "freshFrozen"
                         ? "Fresh Frozen"
                         : materialType === "dryTrim"
                         ? "Dry Trim"
                         : "Unknown"}{" "}
-                      | Status: {isEmpty ? "Used in Extraction" : b.status} |
-                      Available: {available} lbs
+                      | Status: {statusLabel} | Available: {available} lbs
                     </div>
 
                     {userCanDelete ? (
                       <button
+                        type="button"
                         style={deleteButtonStyle}
                         onClick={() => deleteSourceBatch(b.id)}
                       >
@@ -2201,6 +2382,42 @@ export default function Extraction() {
         <div style={cardStyle}>
           <h2 style={{ marginTop: 0 }}>Completed / Used Source Batches</h2>
 
+          {userCanDelete && s.completedSourceBatches.length > 0 ? (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 10,
+                marginTop: 12,
+                alignItems: "center",
+              }}
+            >
+              <button
+                type="button"
+                style={buttonStyle}
+                onClick={selectAllCompletedSources}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                style={buttonStyle}
+                onClick={clearCompletedSourceSelection}
+              >
+                Clear selection
+              </button>
+              <button
+                type="button"
+                style={deleteButtonStyle}
+                onClick={deleteSelectedCompletedSources}
+                disabled={getSelectedCompletedSourceIdList().length === 0}
+              >
+                Delete selected (
+                {getSelectedCompletedSourceIdList().length})
+              </button>
+            </div>
+          ) : null}
+
           <div style={lockedListStyle}>
             {s.completedSourceBatches.length === 0 ? (
               <p style={{ color: "#94a3b8" }}>
@@ -2209,13 +2426,30 @@ export default function Extraction() {
             ) : (
               s.completedSourceBatches.map((b: any) => (
                 <div key={b.id} style={{ ...rowStyle, background: "#111827" }}>
-                  <div style={{ flex: 1 }}>
-                    <b>{b.id}</b> | {b.name || b.type} | Status: Complete |
-                    Completed: {b.completedAt}
+                  {userCanDelete ? (
+                    <input
+                      type="checkbox"
+                      checked={!!selectedCompletedSourceIds[b.id]}
+                      onChange={() => toggleCompletedSourceSelected(b.id)}
+                      style={{
+                        width: 20,
+                        height: 20,
+                        cursor: "pointer",
+                        flexShrink: 0,
+                        accentColor: "#22c55e",
+                      }}
+                      aria-label={`Select completed source ${b.id}`}
+                    />
+                  ) : null}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <b>{b.id}</b> | {b.name || b.type} | Status:{" "}
+                    {b.status || "Complete"}
+                    {b.completedAt ? ` | Completed: ${b.completedAt}` : ""}
                   </div>
 
                   {userCanDelete ? (
                     <button
+                      type="button"
                       style={deleteButtonStyle}
                       onClick={() => deleteCompletedSourceBatch(b.id)}
                     >
