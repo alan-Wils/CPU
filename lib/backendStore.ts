@@ -1,6 +1,26 @@
 import { apiRequest } from "@/lib/api";
 import { store } from "@/lib/store";
 
+/**
+ * When `NEXT_PUBLIC_SERVER_DATABASE_ONLY` is `true` / `1` / `yes`, the UI does **not** send
+ * `PUT /api/store` (the company JSON snapshot). Writes go through entity APIs only
+ * (`/api/cultivation`, `/api/extraction`, `/api/packaging`, `/api/source-batches`, `/api/logs`, …),
+ * which persist in PostgreSQL via `@cpu/api`.
+ *
+ * `loadBackendStore()` still runs so legacy slices only kept in the company store
+ * (e.g. dry-flower / production staging rows) continue to hydrate until those flows are migrated.
+ */
+export function shouldWriteCompanyStoreSnapshot(): boolean {
+  if (typeof process === "undefined")
+    return true;
+  const v = String(process.env.NEXT_PUBLIC_SERVER_DATABASE_ONLY || "")
+    .trim()
+    .toLowerCase();
+  if (v === "1" || v === "true" || v === "yes")
+    return false;
+  return true;
+}
+
 const STORE_KEYS = [
   "cultivationBatches",
   "completedCultivationBatches",
@@ -56,6 +76,9 @@ export async function loadBackendStore(options?: ApplyStoreSnapshotOptions) {
 }
 
 export async function saveBackendStore() {
+  if (!shouldWriteCompanyStoreSnapshot()) {
+    return { ok: true, skippedCompanyStoreSnapshot: true as const };
+  }
   const snapshot = getStoreSnapshot();
 
   return apiRequest("/api/store", {

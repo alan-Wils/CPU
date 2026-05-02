@@ -1,4 +1,13 @@
 import Nav from "@/components/Nav";
+import { API_BASE_URL } from "@/lib/api";
+
+const serverDatabaseOnly =
+  typeof process !== "undefined" &&
+  ["1", "true", "yes"].includes(
+    String(process.env.NEXT_PUBLIC_SERVER_DATABASE_ONLY || "")
+      .trim()
+      .toLowerCase()
+  );
 
 const dashboardCards = [
   {
@@ -229,29 +238,60 @@ export default function Home() {
           <div style={infoPanelStyle}>
             <h3 style={panelTitleStyle}>Backend Status</h3>
             <p style={panelTextStyle}>
-              Backend is running on{" "}
+              API base URL:{" "}
               <span style={{ color: "#86efac", fontWeight: 800 }}>
-                localhost:4000
+                {API_BASE_URL}
               </span>
-              . The next step is moving each page from local store data to
-              shared company database data.
+              . Production batches, extraction runs, packaging lots, source
+              material, cultivation rows, and task logs are written through this
+              API into the company PostgreSQL database (not the in-browser store).
+            </p>
+          </div>
+
+          <div style={infoPanelStyle}>
+            <h3 style={panelTitleStyle}>Persistence Mode</h3>
+            <p style={panelTextStyle}>
+              {serverDatabaseOnly ? (
+                <>
+                  <strong style={{ color: "#86efac" }}>Server database only</strong>{" "}
+                  is enabled: the app does not push a full JSON snapshot to{" "}
+                  <code style={{ color: "#e2e8f0" }}>/api/store</code>. Set{" "}
+                  <code style={{ color: "#e2e8f0" }}>
+                    NEXT_PUBLIC_SERVER_DATABASE_ONLY=false
+                  </code>{" "}
+                  locally if you still want the legacy company-store backup sync.
+                </>
+              ) : (
+                <>
+                  Entity pages save to PostgreSQL via the API. The app may still
+                  call{" "}
+                  <code style={{ color: "#e2e8f0" }}>PUT /api/store</code> as a
+                  backup. For hosted production, set{" "}
+                  <code style={{ color: "#e2e8f0" }}>
+                    NEXT_PUBLIC_SERVER_DATABASE_ONLY=true
+                  </code>{" "}
+                  on Vercel so only the database receives writes.
+                </>
+              )}
             </p>
           </div>
 
           <div style={infoPanelStyle}>
             <h3 style={panelTitleStyle}>Login Enabled</h3>
             <p style={panelTextStyle}>
-              Company login is now available. Users can be tied to a company,
-              role, and permission level before accessing shared production
-              records.
+              Company login ties each user to a company, role, and permission
+              level. All scoped reads and writes go to the API with your session
+              and tenant headers.
             </p>
           </div>
 
           <div style={infoPanelStyle}>
-            <h3 style={panelTitleStyle}>Next Build Step</h3>
+            <h3 style={panelTitleStyle}>Data Hub</h3>
             <p style={panelTextStyle}>
-              Connect Cultivation first, then Extraction, Packaging, and finally
-              Data Hub so every user sees the same live company records.
+              Cultivation, Extraction, Packaging, and Data Hub all load from the
+              same API-backed records so every user sees the same live company
+              state (with a small legacy hydrate from GET /api/store where a
+              slice is not yet in Prisma).
             </p>
           </div>
         </section>
