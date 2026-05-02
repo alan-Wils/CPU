@@ -88,12 +88,16 @@ export function errorMiddleware(err, req, res, _next) {
         if (code === "P2021" || code === "P2022") {
             logError("prisma_schema_mismatch", { code, meta, path: req.path });
             res.status(503).json({
+                message: "This environment’s database is not on the latest schema yet (usually fixed automatically on the next API deploy). If sign-in keeps failing, ask your admin to run Prisma migrations against production Postgres.",
                 error: {
                     code: "DATABASE_SCHEMA_MISMATCH",
-                    message: "The database is missing a table or column for this API version. Run: npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma (with DATABASE_URL set).",
-                    details: meta
+                    message: "Missing database table or column for this API build.",
+                    details: {
+                        prismaCode: code,
+                        prismaMeta: meta,
+                        operatorHint: "From apps/api with DATABASE_URL set: npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma",
+                    },
                 },
-                message: "Database schema is out of date."
             });
             return;
         }

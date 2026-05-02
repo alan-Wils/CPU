@@ -8,7 +8,7 @@
 4. **Settings** → **Build** (or watch Nixpacks use `railway.toml`):
    - **Build command:** `npm install && npm run build`
 5. **Settings** → **Deploy**:
-   - **Start command:** Prefer the value from `railway.toml` (`prisma migrate deploy` then `node dist/server.js`) so migrations always run on boot.
+   - **Start command:** Leave blank to use repo `apps/api/railway.toml` (`prisma migrate deploy` then `node dist/server.js`) so migrations always run on boot. If you override Start in the dashboard, paste the same command as in that file.
    - Optionally set **Custom release command** instead:  
      `npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma`  
      (If you use only a release command, you can set **Start command** back to `node dist/server.js`.)

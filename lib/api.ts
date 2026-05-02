@@ -103,11 +103,17 @@ function stringifyApiFailureBody(data: unknown): string {
   const obj = data as Record<string, unknown>;
 
   let primary: string | null = null;
-  for (const key of ["error", "message", "details"] as const) {
-    const s = coerceUnknownToMessage(obj[key]);
-    if (s) {
-      primary = s;
-      break;
+  /** Prefer top-level `message` when present (API often puts user-facing copy here). */
+  const topMessage = coerceUnknownToMessage(obj.message);
+  if (topMessage) {
+    primary = topMessage;
+  } else {
+    for (const key of ["error", "message", "details"] as const) {
+      const s = coerceUnknownToMessage(obj[key]);
+      if (s) {
+        primary = s;
+        break;
+      }
     }
   }
 

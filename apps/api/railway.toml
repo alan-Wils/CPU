@@ -1,0 +1,8 @@
+# Railway: set the service **Root directory** to `apps/api` so this file is picked up.
+# Ensures Postgres migrations run before the server binds (avoids P2021/P2022 after deploy).
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma && node dist/server.js"
