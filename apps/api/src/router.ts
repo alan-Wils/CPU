@@ -13,6 +13,7 @@ import { dataHubRouter } from "./modules/dataHub/routes.js";
 import { activityRouter } from "./modules/activity/routes.js";
 import { storeRouter } from "./modules/store/routes.js";
 import { checksRouter } from "./modules/checks/routes.js";
+import { legacyCpuRouter } from "./modules/legacyCpu/routes.js";
 export const appRouter = Router();
 appRouter.use("/auth", authRouter);
 appRouter.use(authMiddleware);
@@ -30,3 +31,5 @@ appRouter.use("/store", storeRouter);
 /** Legacy CPU web app called `/api/sync` against the old Express server. */
 appRouter.use("/sync", storeRouter);
 appRouter.use("/checks", checksRouter);
+/** Legacy SPA paths (`/api/cultivation`, `/api/logs`, …) used before `@cpu/api` workflow router. */
+appRouter.use(legacyCpuRouter);

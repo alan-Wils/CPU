@@ -1897,7 +1897,10 @@ export default function Extraction() {
     });
 
     try {
-      await updateExtractionBatch(selectedExt.id, selectedExt);
+      const updated = await updateExtractionBatch(selectedExt.id, selectedExt);
+      if (updated && typeof updated === "object") {
+        Object.assign(selectedExt, updated);
+      }
     } catch (error) {
       console.error("Could not update extraction real table:", error);
       showNotice(

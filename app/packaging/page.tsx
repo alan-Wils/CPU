@@ -325,7 +325,10 @@ export default function Packaging() {
     if (!batch?.id || !canWriteRecords) return;
 
     try {
-      await updatePackagingBatch(batch.id, batch);
+      const updated = await updatePackagingBatch(batch.id, batch);
+      if (updated && typeof updated === "object") {
+        Object.assign(batch, updated);
+      }
     } catch (error) {
       console.error("Could not update packaging batch in real table:", error);
       showNotice(

@@ -654,12 +654,17 @@ export default function Cultivation() {
     setRefresh((n) => n + 1);
   }
 
-  function saveRealCultivationBatch(batch: any) {
+  async function saveRealCultivationBatch(batch: any) {
     if (!batch?.id || !canWriteRecords) return;
 
-    updateCultivationBatch(batch.id, batch).catch((error) => {
+    try {
+      const updated = await updateCultivationBatch(batch.id, batch);
+      if (updated && typeof updated === "object") {
+        Object.assign(batch, updated);
+      }
+    } catch (error) {
       console.error("Could not update real cultivation table:", error);
-    });
+    }
   }
 
   function createRealCultivationBatch(batch: any) {
@@ -1113,7 +1118,7 @@ export default function Cultivation() {
     setFreshFrozenBundles("");
     setFreshFrozenGrams("");
     setShowTaskWindow(false);
-    saveRealCultivationBatch(selectedBatch);
+    await saveRealCultivationBatch(selectedBatch);
     forceRefresh();
   }
 
@@ -1550,7 +1555,7 @@ export default function Cultivation() {
     );
   }
 
-  function save() {
+  async function save() {
     if (!canWriteRecords) {
       showReadOnlyNotice();
       return;
@@ -1630,7 +1635,7 @@ export default function Cultivation() {
     setFlowerBay("A");
     setFlowerTables([]);
     setShowTaskWindow(false);
-    saveRealCultivationBatch(selectedBatch);
+    await saveRealCultivationBatch(selectedBatch);
     forceRefresh();
   }
 
