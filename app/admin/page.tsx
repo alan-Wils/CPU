@@ -59,12 +59,14 @@ function normalizeAdminUsersList(raw: unknown): AdminUser[] {
 
 function normalizePendingInvites(raw: unknown): PendingInvite[] {
   if (Array.isArray(raw)) return raw as PendingInvite[];
-  if (
-    raw &&
-    typeof raw === "object" &&
-    Array.isArray((raw as { invites?: unknown }).invites)
-  ) {
-    return (raw as { invites: PendingInvite[] }).invites;
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    if (Array.isArray(o.invites)) return o.invites as PendingInvite[];
+    if (Array.isArray(o.data)) return o.data as PendingInvite[];
+    const nested = o.data;
+    if (nested && typeof nested === "object" && Array.isArray((nested as { invites?: unknown }).invites)) {
+      return (nested as { invites: PendingInvite[] }).invites;
+    }
   }
   return [];
 }
@@ -105,6 +107,14 @@ function mergeUsersWithPendingInvites(
 
 function isPendingInviteGridRow(user: AdminUser) {
   return user.id.startsWith(PENDING_INVITE_ROW_PREFIX);
+}
+
+/** GET requests may lose `X-Company-Id` through some CDNs; OWNER scoping also reads `companyId` query on API. */
+function withCompanyQuery(path: string, companyId: string): string {
+  const id = String(companyId || "").trim();
+  if (!id) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}companyId=${encodeURIComponent(id)}`;
 }
 
 /**
@@ -307,7 +317,9 @@ export default function AdminPage() {
       setPendingInvites([]);
       return;
     }
-    const raw = await apiRequest("/api/admin/invites", { companyId });
+    const raw = await apiRequest(withCompanyQuery("/api/admin/invites", companyId), {
+      companyId,
+    });
     setPendingInvites(normalizePendingInvites(raw));
   }
 
@@ -353,9 +365,12 @@ export default function AdminPage() {
           setSelectedCompanyId(selectedCompany.id);
           setCompany(selectedCompany);
 
-          const rawUsers = await apiRequest("/api/admin/users", {
-            companyId: selectedCompany.id,
-          });
+          const rawUsers = await apiRequest(
+            withCompanyQuery("/api/admin/users", selectedCompany.id),
+            {
+              companyId: selectedCompany.id,
+            },
+          );
           setUsers(normalizeAdminUsersList(rawUsers));
           await loadPendingInvitesForCompany(selectedCompany.id);
         } else {
@@ -363,8 +378,9 @@ export default function AdminPage() {
           setPendingInvites([]);
         }
       } else {
-        const rawUsers = await apiRequest("/api/admin/users", {
-          companyId: getSelectedCompanyId() || undefined,
+        const cid = getSelectedCompanyId();
+        const rawUsers = await apiRequest(withCompanyQuery("/api/admin/users", cid), {
+          companyId: cid || undefined,
         });
         setUsers(normalizeAdminUsersList(rawUsers));
         await loadPendingInvitesForCompany(getSelectedCompanyId());
@@ -396,7 +412,7 @@ export default function AdminPage() {
         setCompany(selected);
       }
 
-      const rawUsers = await apiRequest("/api/admin/users", {
+      const rawUsers = await apiRequest(withCompanyQuery("/api/admin/users", companyId), {
         companyId,
       });
 

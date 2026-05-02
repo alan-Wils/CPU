@@ -15,7 +15,10 @@ import { prisma } from "./config/prisma.js";
 import { logInfo, logError } from "./lib/logger.js";
 const app = express();
 app.use(helmet());
-app.use(cors({ origin: createCorsOriginResolver(env.CORS_ORIGIN) }));
+app.use(cors({
+    origin: createCorsOriginResolver(env.CORS_ORIGIN),
+    allowedHeaders: ["Content-Type", "Authorization", "X-Company-Id"],
+}));
 app.use(express.json({ limit: "15mb" }));
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 /** Liveness: process is up; does not hit the database. */
