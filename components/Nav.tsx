@@ -43,7 +43,7 @@ export default function Nav() {
   });
 
   const adminButtonStyle: React.CSSProperties = {
-    padding: "14px 26px",
+    padding: "14px 16px",
     borderRadius: 18,
     border: "1px solid #8b5cf6",
     background:
@@ -55,12 +55,14 @@ export default function Nav() {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    minWidth: 120,
+    minWidth: 0,
+    width: "100%",
+    boxSizing: "border-box",
     cursor: "pointer",
   };
 
   const logoutButtonStyle: React.CSSProperties = {
-    padding: "14px 26px",
+    padding: "14px 16px",
     borderRadius: 18,
     border: "1px solid #ef4444",
     background:
@@ -69,7 +71,9 @@ export default function Nav() {
     fontWeight: 800,
     fontSize: 16,
     cursor: "pointer",
-    minWidth: 120,
+    minWidth: 0,
+    width: "100%",
+    boxSizing: "border-box",
   };
 
   return (
@@ -79,12 +83,16 @@ export default function Nav() {
         justifyContent: "space-between",
         alignItems: "center",
         gap: 16,
-        padding: "18px 24px",
+        padding: "18px 16px",
         background:
           "linear-gradient(90deg, #020617 0%, #0f172a 50%, #1e293b 100%)",
         borderRadius: 20,
         marginBottom: 20,
         flexWrap: "wrap",
+        width: "100%",
+        maxWidth: "100%",
+        boxSizing: "border-box",
+        minWidth: 0,
       }}
     >
       {!isHomePage && (
@@ -93,6 +101,8 @@ export default function Nav() {
             display: "flex",
             gap: 14,
             flexWrap: "wrap",
+            minWidth: 0,
+            flex: "1 1 auto",
           }}
         >
           <Link
@@ -134,11 +144,16 @@ export default function Nav() {
 
       <div
         style={{
-          display: "flex",
-          gap: 14,
-          alignItems: "center",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(132px, 1fr))",
+          gap: 12,
+          alignItems: "stretch",
           marginLeft: isHomePage ? 0 : "auto",
-          flexShrink: 0,
+          minWidth: 0,
+          width: isHomePage ? "100%" : "auto",
+          maxWidth: "100%",
+          flexShrink: 1,
+          boxSizing: "border-box",
         }}
       >
         {(user?.role === "ADMIN" || user?.role === "OWNER") && (

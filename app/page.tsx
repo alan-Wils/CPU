@@ -49,13 +49,19 @@ export default function Home() {
         background:
           "radial-gradient(circle at top left, rgba(34,197,94,0.18), transparent 32%), radial-gradient(circle at top right, rgba(56,189,248,0.14), transparent 35%), #020617",
         color: "white",
-        padding: 24,
+        padding: 16,
+        boxSizing: "border-box",
+        maxWidth: "100vw",
+        overflowX: "hidden",
       }}
     >
       <div
         style={{
           maxWidth: 1180,
           margin: "0 auto",
+          minWidth: 0,
+          width: "100%",
+          boxSizing: "border-box",
         }}
       >
         <header
@@ -66,6 +72,10 @@ export default function Home() {
             padding: 28,
             boxShadow: "0 24px 70px rgba(0,0,0,0.35)",
             marginBottom: 22,
+            minWidth: 0,
+            maxWidth: "100%",
+            boxSizing: "border-box",
+            overflow: "hidden",
           }}
         >
           <div
