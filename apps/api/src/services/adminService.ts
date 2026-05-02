@@ -61,7 +61,7 @@ export class AdminService {
         const mailOpts = {
             to: input.email,
             inviteUrl,
-            companyName: company?.name ?? "Cannabis CPU",
+            companyName: company?.name ?? "NexBatch",
             role: String(input.role)
         };
         void sendInviteEmail(mailOpts).then(

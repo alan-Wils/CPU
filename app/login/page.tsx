@@ -8,6 +8,7 @@ import {
 } from "@/lib/api";
 import { clearAuthSession, saveAuthSession } from "@/lib/auth";
 import { loadBackendStore } from "@/lib/backendStore";
+import BrandLogo from "@/components/BrandLogo";
 
 const SAVED_LOGIN_KEY = "cannabis_cpu_saved_login";
 /** Persists preference for longer JWT (`remember` on `/api/auth/login`). */
@@ -188,9 +189,15 @@ export default function LoginPage() {
         }}
       >
         <div style={{ marginBottom: 28, textAlign: "center" }}>
-          <h1 style={{ fontSize: 42, fontWeight: 900, marginBottom: 12 }}>
-            Cannabis CPU
-          </h1>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              marginBottom: 18,
+            }}
+          >
+            <BrandLogo linkToHome={false} height={72} maxWidth={420} loginGlow />
+          </div>
 
           <p style={{ color: "#93c5fd", margin: 0, fontSize: 20 }}>
             Sign in to your workspace
