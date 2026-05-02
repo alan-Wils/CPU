@@ -17,7 +17,7 @@ export class CompanyService {
             ownerPasswordHash
         });
         await this.auditService.logAction({
-            companyId: input.actorCompanyId,
+            companyId: input.actorCompanyId || created.id,
             actorUserId: input.actorUserId,
             action: "company.create",
             entityType: "Company",
@@ -51,6 +51,9 @@ export class CompanyService {
     }
     async listCompanies() {
         return this.repo.listCompanies();
+    }
+    async listAccessibleCompanies(userId) {
+        return this.repo.listAccessibleCompaniesForUser(userId);
     }
     async updateCompany(input) {
         const updated = await this.repo.updateCompany(input.companyId, {

@@ -24,6 +24,8 @@ type ApiOptions = {
   companyId?: string;
   /** When true, a 401 response does not clear the session or redirect (e.g. probing token validity). */
   skipAuthRedirectOn401?: boolean;
+  /** Omit `X-Company-Id` (portal pre-selector or company switch refresh). */
+  omitCompanyHeader?: boolean;
 };
 
 export function getSelectedCompanyId() {
@@ -161,7 +163,7 @@ export async function apiRequest<T = any>(
     headers.Authorization = `Bearer ${token}`;
   }
 
-  if (selectedCompanyId) {
+  if (!options.omitCompanyHeader && selectedCompanyId) {
     headers["X-Company-Id"] = selectedCompanyId;
   }
 
@@ -237,6 +239,18 @@ export async function changePassword(payload: {
 
 export async function getMe() {
   return apiRequest("/api/auth/me");
+}
+
+export async function selectPortalCompany(companyId: string) {
+  return apiRequest<{
+    token: string;
+    user: Record<string, unknown>;
+    company: { id: string; name: string; code: string };
+  }>("/api/auth/select-company", {
+    method: "POST",
+    body: { companyId },
+    omitCompanyHeader: true,
+  });
 }
 
 export async function getUsers(companyId?: string) {

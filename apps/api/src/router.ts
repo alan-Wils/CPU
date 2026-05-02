@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { authMiddleware } from "./middleware/auth.js";
+import { companyContextMiddleware } from "./middleware/companyContext.js";
+import { asyncHandler } from "./middleware/asyncHandler.js";
 import { authRouter } from "./modules/auth/routes.js";
 import { companiesRouter } from "./modules/companies/routes.js";
 import { workflowRouter } from "./modules/workflow/routes.js";
@@ -17,6 +19,7 @@ import { legacyCpuRouter } from "./modules/legacyCpu/routes.js";
 export const appRouter = Router();
 appRouter.use("/auth", authRouter);
 appRouter.use(authMiddleware);
+appRouter.use(asyncHandler(companyContextMiddleware));
 appRouter.use("/companies", companiesRouter);
 appRouter.use("/workflow", workflowRouter);
 appRouter.use("/labor", laborRouter);

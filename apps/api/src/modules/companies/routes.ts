@@ -4,21 +4,29 @@ import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { assignOwnerSchema, companyIdParam, createCompanySchema, createUserSchema, updateCompanySchema } from "../../validation/schemas.js";
 import { CompanyService } from "../../services/companyService.js";
-import { requireRole } from "../../middleware/rbac.js";
+import { requirePlatformRoles, requireRole } from "../../middleware/rbac.js";
 export const companiesRouter = Router();
 const companyService = new CompanyService();
 companiesRouter.get("/me", asyncHandler(async (req, res) => {
     const company = await companyService.getMyCompany(getScopedCompanyId(req));
     res.json({ company });
 }));
-companiesRouter.post("/", requireRole(["OWNER"]), validate({ body: createCompanySchema }), asyncHandler(async (req, res) => {
+companiesRouter.post("/", requirePlatformRoles(["nexbatch_admin", "owner"]), validate({ body: createCompanySchema }), asyncHandler(async (req, res) => {
     const payload = req.body;
     const created = await companyService.createCompany({
         ...payload,
         actorUserId: req.auth.userId,
-        actorCompanyId: req.auth.companyId
+        actorCompanyId: String(req.auth.companyId || "").trim() || undefined
     });
     res.status(201).json(created);
+}));
+companiesRouter.get("/accessible", asyncHandler(async (req, res) => {
+    const companies = await companyService.listAccessibleCompanies(req.auth.userId);
+    res.json({ companies });
+}));
+companiesRouter.get("/all", asyncHandler(async (req, res) => {
+    const companies = await companyService.listAccessibleCompanies(req.auth.userId);
+    res.json({ companies });
 }));
 companiesRouter.patch("/:companyId", requireRole(["OWNER"]), validate({ params: companyIdParam, body: updateCompanySchema }), asyncHandler(async (req, res) => {
     const { companyId } = req.params;
@@ -51,10 +59,6 @@ companiesRouter.post("/users", requireRole(["OWNER", "ADMIN"]), validate({ body:
         ...payload
     });
     res.status(201).json(created);
-}));
-companiesRouter.get("/all", requireRole(["OWNER"]), asyncHandler(async (_req, res) => {
-    const companies = await companyService.listCompanies();
-    res.json({ companies });
 }));
 companiesRouter.get("/users", requireRole(["OWNER", "ADMIN"]), asyncHandler(async (req, res) => {
     const users = await companyService.listUsers(getScopedCompanyId(req));

@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import BrandLogo from "@/components/BrandLogo";
-import { clearSelectedCompanyId, loginCompany, setSelectedCompanyId } from "@/lib/api";
+import {
+  clearSelectedCompanyId,
+  loginCompany,
+  setSelectedCompanyId,
+} from "@/lib/api";
 import { clearAuthSession, saveAuthSession } from "@/lib/auth";
 import { loadBackendStore } from "@/lib/backendStore";
 
@@ -102,6 +105,12 @@ export default function LoginPage() {
       saveAuthSession(data);
       sessionWritten = true;
 
+      if ((data as { needsCompanySelection?: boolean }).needsCompanySelection) {
+        clearSelectedCompanyId();
+        window.location.href = "/portal";
+        return;
+      }
+
       localStorage.setItem("token", data.token || "");
       localStorage.setItem("authToken", data.token || "");
       localStorage.setItem("cannabis_cpu_token", data.token || "");
@@ -160,10 +169,8 @@ export default function LoginPage() {
           "radial-gradient(circle at top, #1e293b 0, #020617 45%, #000 100%)",
         color: "white",
         display: "flex",
-        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: 0,
         padding: 24,
       }}
     >
@@ -181,19 +188,8 @@ export default function LoginPage() {
         }}
       >
         <div style={{ marginBottom: 28, textAlign: "center" }}>
-          <h1
-            style={{
-              margin: "0 0 20px",
-              padding: 0,
-              lineHeight: 0,
-              fontSize: 0,
-              display: "flex",
-              justifyContent: "center",
-              width: "100%",
-              minWidth: 0,
-            }}
-          >
-            <BrandLogo height={252} fitWithinParent loginGlow />
+          <h1 style={{ fontSize: 42, fontWeight: 900, marginBottom: 12 }}>
+            Cannabis CPU
           </h1>
 
           <p style={{ color: "#93c5fd", margin: 0, fontSize: 20 }}>
@@ -201,17 +197,18 @@ export default function LoginPage() {
           </p>
 
           <p style={{ color: "#64748b", marginTop: 10, fontSize: 14 }}>
-            Platform owners can leave Company Code blank.
+            Company sign-in: enter company code (e.g. BUDFOX). NexBatch portal
+            accounts: leave code blank and use your full NexBatch email.
           </p>
         </div>
 
         <label style={{ display: "block", marginBottom: 18 }}>
-          <div style={labelStyle}>Company Code Optional for Owner</div>
+          <div style={labelStyle}>Company code (required for company users)</div>
           <input
             value={companyCode}
             onChange={(e) => setCompanyCode(e.target.value)}
             style={inputStyle}
-            placeholder="Enter company code or leave blank as owner"
+            placeholder="e.g. BUDFOX — leave blank only for NexBatch portal login"
             autoComplete="organization"
           />
         </label>

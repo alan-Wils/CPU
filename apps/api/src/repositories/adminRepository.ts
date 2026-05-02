@@ -1,32 +1,67 @@
 import crypto from "node:crypto";
 import { TenantRepository } from "./TenantRepository.js";
+import { legacyUserRoleToCompanyRole } from "../lib/nexbatchRoles.js";
 export class AdminRepository extends TenantRepository {
     async listUsers(companyId) {
-        return this.db.user.findMany({
+        const rows = await this.db.companyMembership.findMany({
             where: { companyId },
+            include: {
+                user: {
+                    select: { id: true, email: true, role: true, isActive: true, createdAt: true },
+                },
+            },
             orderBy: { createdAt: "desc" },
-            select: { id: true, email: true, role: true, isActive: true, createdAt: true }
         });
+        return rows.map((r) => r.user);
     }
     async updateUserStatus(companyId, userId, isActive) {
+        const u = await this.findUserById(companyId, userId);
+        if (!u)
+            return { count: 0 };
         return this.db.user.updateMany({
-            where: { companyId, id: userId },
-            data: { isActive }
+            where: { id: userId },
+            data: { isActive },
         });
     }
     async findUserById(companyId, userId) {
-        return this.db.user.findFirst({ where: { companyId, id: userId } });
+        const m = await this.db.companyMembership.findFirst({
+            where: { companyId, userId },
+            include: { user: true },
+        });
+        return m?.user ?? null;
     }
     async updateUser(companyId, userId, data) {
+        const m = await this.db.companyMembership.findFirst({
+            where: { companyId, userId },
+        });
+        if (!m)
+            return { count: 0 };
+        if (data.role) {
+            const nex = legacyUserRoleToCompanyRole(data.role);
+            await this.db.companyMembership.update({
+                where: { id: m.id },
+                data: { role: nex },
+            });
+        }
         return this.db.user.updateMany({
-            where: { companyId, id: userId },
-            data
+            where: { id: userId },
+            data,
         });
     }
     async deleteUser(companyId, userId) {
-        return this.db.user.deleteMany({
-            where: { companyId, id: userId }
+        const before = await this.db.companyMembership.findFirst({
+            where: { companyId, userId },
         });
+        if (!before)
+            return { count: 0 };
+        await this.db.companyMembership.deleteMany({
+            where: { companyId, userId },
+        });
+        const remaining = await this.db.companyMembership.count({ where: { userId } });
+        if (remaining === 0) {
+            return this.db.user.deleteMany({ where: { id: userId } });
+        }
+        return { count: 1 };
     }
     async createInvite(input) {
         const rawToken = crypto.randomBytes(24).toString("hex");

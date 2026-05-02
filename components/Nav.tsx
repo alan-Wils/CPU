@@ -2,13 +2,43 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { clearAuthSession, getAuthUser } from "@/lib/auth";
-import { clearSelectedCompanyId } from "@/lib/api";
+import { useEffect, useState } from "react";
+import {
+  clearAuthSession,
+  getAuthCompany,
+  getAuthUser,
+  getPortalCompanies,
+  isLoggedIn,
+  isPortalSession,
+  saveAuthSession,
+  type CpuCompany,
+  type CpuUser,
+} from "@/lib/auth";
+import { clearSelectedCompanyId, selectPortalCompany, setSelectedCompanyId } from "@/lib/api";
 
 export default function Nav() {
   const pathname = usePathname();
   const router = useRouter();
   const user = getAuthUser();
+  const company = getAuthCompany();
+  const [portalCompanies, setPortalCompaniesState] = useState<CpuCompany[]>([]);
+
+  useEffect(() => {
+    setPortalCompaniesState(getPortalCompanies());
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!isLoggedIn()) return;
+    if (
+      isPortalSession() &&
+      !getAuthCompany()?.id &&
+      pathname !== "/login" &&
+      pathname !== "/portal" &&
+      !pathname?.startsWith("/accept-invite")
+    ) {
+      router.replace("/portal");
+    }
+  }, [pathname, router]);
 
   function logout() {
     clearAuthSession();
@@ -43,7 +73,7 @@ export default function Nav() {
   });
 
   const adminButtonStyle: React.CSSProperties = {
-    padding: "14px 16px",
+    padding: "14px 26px",
     borderRadius: 18,
     border: "1px solid #8b5cf6",
     background:
@@ -55,14 +85,12 @@ export default function Nav() {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    minWidth: 0,
-    width: "100%",
-    boxSizing: "border-box",
+    minWidth: 120,
     cursor: "pointer",
   };
 
   const logoutButtonStyle: React.CSSProperties = {
-    padding: "14px 16px",
+    padding: "14px 26px",
     borderRadius: 18,
     border: "1px solid #ef4444",
     background:
@@ -71,9 +99,7 @@ export default function Nav() {
     fontWeight: 800,
     fontSize: 16,
     cursor: "pointer",
-    minWidth: 0,
-    width: "100%",
-    boxSizing: "border-box",
+    minWidth: 120,
   };
 
   return (
@@ -83,16 +109,12 @@ export default function Nav() {
         justifyContent: "space-between",
         alignItems: "center",
         gap: 16,
-        padding: "18px 16px",
+        padding: "18px 24px",
         background:
           "linear-gradient(90deg, #020617 0%, #0f172a 50%, #1e293b 100%)",
         borderRadius: 20,
         marginBottom: 20,
         flexWrap: "wrap",
-        width: "100%",
-        maxWidth: "100%",
-        boxSizing: "border-box",
-        minWidth: 0,
       }}
     >
       {!isHomePage && (
@@ -101,8 +123,6 @@ export default function Nav() {
             display: "flex",
             gap: 14,
             flexWrap: "wrap",
-            minWidth: 0,
-            flex: "1 1 auto",
           }}
         >
           <Link
@@ -144,18 +164,80 @@ export default function Nav() {
 
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(132px, 1fr))",
-          gap: 12,
-          alignItems: "stretch",
+          display: "flex",
+          gap: 14,
+          alignItems: "center",
           marginLeft: isHomePage ? 0 : "auto",
-          minWidth: 0,
-          width: isHomePage ? "100%" : "auto",
-          maxWidth: "100%",
-          flexShrink: 1,
-          boxSizing: "border-box",
+          flexWrap: "wrap",
         }}
       >
+        {company && (
+          <div
+            style={{
+              color: "#cbd5e1",
+              fontWeight: 800,
+              fontSize: 15,
+              padding: "8px 12px",
+              borderRadius: 12,
+              border: "1px solid rgba(148, 163, 184, 0.35)",
+              background: "rgba(2, 6, 23, 0.65)",
+            }}
+          >
+            {company.name}{" "}
+            <span style={{ color: "#64748b" }}>({company.code})</span>
+          </div>
+        )}
+
+        {isPortalSession() && portalCompanies.length > 1 && (
+          <label
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              color: "#dbeafe",
+              fontWeight: 700,
+              fontSize: 14,
+            }}
+          >
+            <span>Company</span>
+            <select
+              value={company?.id || ""}
+              onChange={async (e) => {
+                const id = e.target.value;
+                if (!id) return;
+                try {
+                  const out = await selectPortalCompany(id);
+                  saveAuthSession({
+                    token: out.token,
+                    user: out.user as CpuUser,
+                    company: out.company,
+                  });
+                  setSelectedCompanyId(out.company.id);
+                  setPortalCompaniesState(getPortalCompanies());
+                  router.refresh();
+                } catch {
+                  /* ignore */
+                }
+              }}
+              style={{
+                minWidth: 200,
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid rgba(148, 163, 184, 0.35)",
+                background: "#020617",
+                color: "white",
+                fontWeight: 700,
+              }}
+            >
+              {portalCompanies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.code})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
         {(user?.role === "ADMIN" || user?.role === "OWNER") && (
           <Link href="/admin" style={adminButtonStyle}>
             Admin

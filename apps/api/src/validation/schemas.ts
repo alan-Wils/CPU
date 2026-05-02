@@ -54,7 +54,18 @@ export const loginSchema = z.preprocess((raw) => {
     email: z.string().min(1).max(200),
     password: z.string().min(8).max(128),
     remember: z.coerce.boolean().optional(),
+}).superRefine((val, ctx) => {
+    if (!val.companyCode && !String(val.email).includes("@")) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "NexBatch portal sign-in requires your full email address.",
+            path: ["email"],
+        });
+    }
 }));
+export const selectCompanySchema = z.object({
+    companyId: z.string().min(8).max(80),
+});
 export const resetRequestSchema = z.object({
     email: z.string().email()
 });

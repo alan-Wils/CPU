@@ -23,6 +23,31 @@ enum UserRole {
   VIEW_ONLY
 }
 
+/// Workflow / org role inside a company (NexBatch portal + company login).
+enum NexBatchCompanyRole {
+  grow_staff
+  extraction_staff
+  packaging_staff
+  trimming_staff
+  lead_staff
+  management
+  admin
+  owner
+}
+
+/// Platform-level identity for NexBatch operators (portal login without company code).
+enum NexBatchPlatformRole {
+  grow_staff
+  extraction_staff
+  packaging_staff
+  trimming_staff
+  lead_staff
+  management
+  admin
+  owner
+  nexbatch_admin
+}
+
 enum WorkflowStage {
   CULTIVATION
   EXTRACTION
@@ -76,6 +101,7 @@ model Company {
   nextChainSequence Int    @default(1)
 
   users        User[]
+  memberships CompanyMembership[]
   configRows   CompanyConfig[]
   inviteTokens InviteToken[]
 
@@ -100,13 +126,18 @@ model Company {
 
 model User {
   id           String  @id @default(cuid())
-  companyId    String
-  company      Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  /// Optional “home” company row; access to tenant data is driven by `CompanyMembership`.
+  companyId    String?
+  company      Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
   email        String  @unique
   passwordHash String
+  /// Legacy Prisma role; kept for invites, audits, and gradual UI mapping.
   role         UserRole
   isActive     Boolean @default(true)
+  /// Set only for NexBatch portal operators (login without company code).
+  platformRole NexBatchPlatformRole?
 
+  memberships         CompanyMembership[]
   laborEntries        LaborEntry[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
@@ -114,6 +145,21 @@ model User {
   checkCaptures       CheckCapture[]       @relation("CheckCaptureCreatedBy")
 
   @@index([companyId])
+}
+
+model CompanyMembership {
+  id        String              @id @default(cuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyId String
+  company   Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  role      NexBatchCompanyRole
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@unique([userId, companyId])
+  @@index([companyId])
+  @@index([userId])
 }
 
 model SourceChain {

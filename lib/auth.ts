@@ -3,6 +3,10 @@ export type CpuUser = {
   username: string;
   email?: string | null;
   role: string;
+  sessionKind?: "company" | "portal";
+  platformRole?: string | null;
+  companyId?: string;
+  companyCode?: string;
 };
 
 export type CpuCompany = {
@@ -14,19 +18,58 @@ export type CpuCompany = {
 export type LoginResponse = {
   token: string;
   user: CpuUser;
-  company: CpuCompany;
+  company: CpuCompany | null;
+  needsCompanySelection?: boolean;
+  companies?: CpuCompany[];
 };
 
 const TOKEN_KEY = "cpu_auth_token";
 const USER_KEY = "cpu_auth_user";
 const COMPANY_KEY = "cpu_auth_company";
+const PORTAL_COMPANIES_KEY = "cpu_portal_companies_json";
 
 export function saveAuthSession(data: LoginResponse) {
   if (typeof window === "undefined") return;
 
   window.localStorage.setItem(TOKEN_KEY, data.token);
   window.localStorage.setItem(USER_KEY, JSON.stringify(data.user));
-  window.localStorage.setItem(COMPANY_KEY, JSON.stringify(data.company));
+  if (data.company) {
+    window.localStorage.setItem(COMPANY_KEY, JSON.stringify(data.company));
+  } else {
+    window.localStorage.removeItem(COMPANY_KEY);
+  }
+  if (String(data.user?.sessionKind) === "portal" && data.companies?.length) {
+    window.localStorage.setItem(
+      PORTAL_COMPANIES_KEY,
+      JSON.stringify(data.companies)
+    );
+  } else if (String(data.user?.sessionKind) !== "portal") {
+    window.localStorage.removeItem(PORTAL_COMPANIES_KEY);
+  }
+}
+
+export function setPortalCompanies(companies: CpuCompany[]) {
+  if (typeof window === "undefined") return;
+  if (companies.length) {
+    window.localStorage.setItem(
+      PORTAL_COMPANIES_KEY,
+      JSON.stringify(companies)
+    );
+  } else {
+    window.localStorage.removeItem(PORTAL_COMPANIES_KEY);
+  }
+}
+
+export function getPortalCompanies(): CpuCompany[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(PORTAL_COMPANIES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 export function getAuthToken() {
@@ -91,6 +134,12 @@ export function isLoggedIn() {
   return Boolean(getAuthToken());
 }
 
+/** True when signed in as a NexBatch portal operator (may switch allowed companies). */
+export function isPortalSession(): boolean {
+  const u = getAuthUser();
+  return String(u?.sessionKind || "") === "portal";
+}
+
 /** Legacy keys written by older login code — clear so stale tokens cannot confuse other code paths. */
 const LEGACY_AUTH_KEYS = [
   "token",
@@ -110,6 +159,7 @@ export function clearAuthSession() {
   window.localStorage.removeItem(TOKEN_KEY);
   window.localStorage.removeItem(USER_KEY);
   window.localStorage.removeItem(COMPANY_KEY);
+  window.localStorage.removeItem(PORTAL_COMPANIES_KEY);
   for (const k of LEGACY_AUTH_KEYS) {
     window.localStorage.removeItem(k);
   }
