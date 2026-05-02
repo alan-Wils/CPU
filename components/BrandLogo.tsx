@@ -13,6 +13,8 @@ type BrandLogoProps = {
    * so it scales down inside narrow parents (e.g. login form) while staying large on wide screens.
    */
   fitWithinParent?: boolean;
+  /** Adds class on the root link for login-page CSS glow (see `globals.css`). */
+  loginGlow?: boolean;
 };
 
 export default function BrandLogo({
@@ -20,6 +22,7 @@ export default function BrandLogo({
   height = 44,
   maxWidth: maxWidthProp,
   fitWithinParent = false,
+  loginGlow = false,
 }: BrandLogoProps) {
   const maxWidth = maxWidthProp ?? Math.min(520, Math.round(height * 5.5));
   const img = fitWithinParent ? (
@@ -59,11 +62,22 @@ export default function BrandLogo({
   };
 
   if (!linkToHome) {
-    return <span style={outerStyle}>{img}</span>;
+    return (
+      <span
+        style={outerStyle}
+        className={loginGlow ? "login-brand-logo-glow-link" : undefined}
+      >
+        {img}
+      </span>
+    );
   }
 
   return (
-    <Link href="/" style={outerStyle}>
+    <Link
+      href="/"
+      style={outerStyle}
+      className={loginGlow ? "login-brand-logo-glow-link" : undefined}
+    >
       {img}
     </Link>
   );
