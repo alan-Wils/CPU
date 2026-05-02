@@ -19,6 +19,8 @@ function allowsMissingCompany(req: Request): boolean {
         return true;
     if (method === "POST" && /\/companies$/.test(path))
         return true;
+    if (method === "POST" && /\/nexbatch\/staff$/.test(path))
+        return true;
     return false;
 }
 

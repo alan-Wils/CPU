@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { apiRequest, setSelectedCompanyId } from "@/lib/api";
 import {
   canCreatePlatformCompanies,
+  getAuthUser,
   isLoggedIn,
   isPortalSession,
   saveAuthSession,
@@ -60,6 +61,13 @@ function PortalBody() {
     slug: string;
     ownerEmail: string;
   } | null>(null);
+
+  const [staffEmail, setStaffEmail] = useState("");
+  const [staffPassword, setStaffPassword] = useState("");
+  const [staffPlatformRole, setStaffPlatformRole] = useState("admin");
+  const [staffBusy, setStaffBusy] = useState(false);
+  const [staffErr, setStaffErr] = useState("");
+  const [staffOk, setStaffOk] = useState<string | null>(null);
 
   const fetchAccessibleList = useCallback(async (): Promise<CpuCompany[]> => {
     const raw = await apiRequest<{ companies: CpuCompany[] }>(
@@ -196,6 +204,53 @@ function PortalBody() {
     }
   }
 
+  async function onCreateStaff(e: React.FormEvent) {
+    e.preventDefault();
+    setStaffErr("");
+    setStaffOk(null);
+
+    const email = staffEmail.trim().toLowerCase();
+    const password = staffPassword;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setStaffErr("Enter a valid email.");
+      return;
+    }
+    if (password.length < 12) {
+      setStaffErr("Password must be at least 12 characters.");
+      return;
+    }
+
+    setStaffBusy(true);
+    try {
+      const out = await apiRequest<{
+        id: string;
+        email: string;
+        platformRole: string;
+        companiesGranted: number;
+      }>("/api/nexbatch/staff", {
+        method: "POST",
+        omitCompanyHeader: true,
+        body: {
+          email,
+          password,
+          platformRole: staffPlatformRole,
+        },
+      });
+      setStaffOk(
+        `Created portal access for ${out.email} (${out.platformRole}). They can sign in at NexBatch portal with this email; company workspaces granted: ${out.companiesGranted}.`,
+      );
+      setStaffEmail("");
+      setStaffPassword("");
+      setStaffPlatformRole("admin");
+    } catch (err: unknown) {
+      setStaffErr(
+        err instanceof Error ? err.message : "Could not create NexBatch staff.",
+      );
+    } finally {
+      setStaffBusy(false);
+    }
+  }
+
   const inputStyle: React.CSSProperties = {
     width: "100%",
     marginTop: 6,
@@ -251,7 +306,7 @@ function PortalBody() {
       <div
         style={{
           width: "100%",
-          maxWidth: canCreate ? 640 : 560,
+          maxWidth: canCreate ? 720 : 560,
           background: "rgba(15, 23, 42, 0.92)",
           border: "1px solid rgba(148, 163, 184, 0.25)",
           borderRadius: 18,
@@ -355,6 +410,143 @@ function PortalBody() {
             ))
           )}
         </ul>
+
+        {canCreate && (
+          <section
+            style={{
+              marginTop: 28,
+              paddingTop: 28,
+              borderTop: "1px solid rgba(148, 163, 184, 0.2)",
+            }}
+          >
+            <h2 style={{ margin: "0 0 12px", fontSize: 20, fontWeight: 800 }}>
+              Add NexBatch staff
+            </h2>
+            <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.55 }}>
+              Create another <strong style={{ color: "#cbd5e1" }}>portal</strong> account
+              (full email + password). They receive access to the{" "}
+              <strong style={{ color: "#cbd5e1" }}>same company workspaces</strong> you see
+              in the list above, with the platform role you choose. You need at least one
+              workspace in that list to grant access. Share the password securely; they can
+              change it after sign-in when password reset is enabled.
+            </p>
+            {staffOk && (
+              <div
+                style={{
+                  marginTop: 14,
+                  padding: 14,
+                  borderRadius: 12,
+                  background: "rgba(20, 83, 45, 0.45)",
+                  border: "1px solid rgba(34, 197, 94, 0.45)",
+                  color: "#bbf7d0",
+                  fontSize: 14,
+                  lineHeight: 1.55,
+                }}
+              >
+                {staffOk}
+              </div>
+            )}
+            {staffErr && (
+              <div
+                style={{
+                  marginTop: 14,
+                  padding: 12,
+                  borderRadius: 12,
+                  background: "rgba(127, 29, 29, 0.55)",
+                  border: "1px solid rgba(248, 113, 113, 0.45)",
+                  color: "#fecaca",
+                  fontWeight: 600,
+                  fontSize: 14,
+                }}
+              >
+                {staffErr}
+              </div>
+            )}
+            <form
+              onSubmit={onCreateStaff}
+              style={{ marginTop: 16, display: "grid", gap: 14 }}
+              autoComplete="off"
+            >
+              <label style={labelStyle}>
+                Work email
+                <input
+                  value={staffEmail}
+                  onChange={(e) => setStaffEmail(e.target.value)}
+                  style={inputStyle}
+                  type="email"
+                  placeholder="colleague@nexbatch.com"
+                  name="nb-staff-email"
+                />
+              </label>
+              <label style={labelStyle}>
+                Initial password (min. 12 characters)
+                <input
+                  value={staffPassword}
+                  onChange={(e) => setStaffPassword(e.target.value)}
+                  style={inputStyle}
+                  type="password"
+                  placeholder="••••••••••••"
+                  name="nb-staff-password"
+                  autoComplete="new-password"
+                />
+              </label>
+              <label style={labelStyle}>
+                Platform role
+                <select
+                  value={staffPlatformRole}
+                  onChange={(e) => setStaffPlatformRole(e.target.value)}
+                  style={{
+                    ...inputStyle,
+                    marginTop: 6,
+                    cursor: "pointer",
+                  }}
+                  name="nb-staff-role"
+                >
+                  {(
+                    [
+                      ["grow_staff", "Grow staff"],
+                      ["extraction_staff", "Extraction staff"],
+                      ["packaging_staff", "Packaging staff"],
+                      ["trimming_staff", "Trimming staff"],
+                      ["lead_staff", "Lead staff"],
+                      ["management", "Management"],
+                      ["admin", "Admin"],
+                      ["nexbatch_admin", "NexBatch admin"],
+                      ["owner", "Owner (full platform)"],
+                    ] as const
+                  )
+                    .filter(([value]) =>
+                      value === "owner"
+                        ? String(getAuthUser()?.platformRole || "") === "owner"
+                        : true,
+                    )
+                    .map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <button
+                type="submit"
+                disabled={staffBusy}
+                style={{
+                  marginTop: 4,
+                  border: "none",
+                  borderRadius: 12,
+                  padding: "12px 16px",
+                  background: staffBusy ? "#475569" : "#6366f1",
+                  color: "white",
+                  fontWeight: 900,
+                  fontSize: 15,
+                  cursor: staffBusy ? "wait" : "pointer",
+                }}
+              >
+                {staffBusy ? "Creating…" : "Create NexBatch staff account"}
+              </button>
+            </form>
+          </section>
+        )}
 
         {canCreate && (
           <section

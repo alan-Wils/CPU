@@ -1,3 +1,4 @@
+import type { NexBatchPlatformRole } from "@prisma/client";
 import { TenantRepository } from "./TenantRepository.js";
 export class AuthRepository extends TenantRepository {
     async findUserByIdWithCompany(userId) {
@@ -103,6 +104,37 @@ export class AuthRepository extends TenantRepository {
                     data: { lifecycleStatus: "active" }
                 });
             }
+            return user;
+        });
+    }
+    /**
+     * NexBatch portal operator: `platformRole` set, legacy `role` OWNER (matches seed operators),
+     * company `membership.role` `owner` on each granted tenant for full scoped access.
+     */
+    async createPlatformStaffUser(input: {
+        email: string;
+        passwordHash: string;
+        platformRole: NexBatchPlatformRole;
+        companyIds: string[];
+    }) {
+        return this.db.$transaction(async (tx) => {
+            const user = await tx.user.create({
+                data: {
+                    email: input.email,
+                    passwordHash: input.passwordHash,
+                    role: "OWNER",
+                    companyId: null,
+                    platformRole: input.platformRole,
+                    isActive: true,
+                    memberships: {
+                        create: input.companyIds.map((companyId) => ({
+                            companyId,
+                            role: "owner",
+                        })),
+                    },
+                },
+                select: { id: true, email: true, platformRole: true },
+            });
             return user;
         });
     }
