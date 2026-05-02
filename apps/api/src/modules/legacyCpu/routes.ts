@@ -540,6 +540,14 @@ legacyCpuRouter.put("/extraction/:runId", requireRole(extractionWriteRoles), asy
     });
     res.json(mapped);
 }));
+/** SPA `lib/extractionApi.deleteExtractionBatchRecord` — same path family as GET/POST/PUT. */
+legacyCpuRouter.delete("/extraction/:runId", requireRole(extractionWriteRoles), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const runId = String(req.params.runId || "");
+    const out = await workflowService.deleteExtractionRun(companyId, req.auth.userId, runId);
+    logInfo("[WORKFLOW_FIX] legacy_extraction_deleted", { entityType: "ExtractionRun", entityId: runId });
+    res.json(out);
+}));
 legacyCpuRouter.get("/packaging", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const rows = await prisma.packagingLot.findMany({
