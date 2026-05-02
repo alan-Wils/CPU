@@ -1,11 +1,11 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { acceptInvite } from "@/lib/api";
 import { saveAuthSession } from "@/lib/auth";
 
-export default function AcceptInvitePage() {
+function AcceptInvitePageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -136,6 +136,30 @@ export default function AcceptInvitePage() {
         </button>
       </form>
     </main>
+  );
+}
+
+export default function AcceptInvitePage() {
+  return (
+    <Suspense
+      fallback={
+        <main
+          style={{
+            minHeight: "100vh",
+            background: "#020617",
+            color: "#94a3b8",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+          }}
+        >
+          Loading…
+        </main>
+      }
+    >
+      <AcceptInvitePageInner />
+    </Suspense>
   );
 }
 
