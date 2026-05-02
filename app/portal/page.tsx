@@ -24,18 +24,6 @@ function codeToSlug(code: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-function generateOwnerTempPassword(): string {
-  const bytes = new Uint8Array(20);
-  crypto.getRandomValues(bytes);
-  const alphabet =
-    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-  let s = "";
-  for (let i = 0; i < 20; i++) {
-    s += alphabet[bytes[i]! % alphabet.length];
-  }
-  return s;
-}
-
 async function selectCompanyAndGoHome(companyId: string) {
   const out = await apiRequest<{
     token: string;
@@ -66,14 +54,12 @@ function PortalBody() {
   const [newCompanyName, setNewCompanyName] = useState("");
   const [newCompanyCode, setNewCompanyCode] = useState("");
   const [newOwnerEmail, setNewOwnerEmail] = useState("");
-  const [ownerTempPassword, setOwnerTempPassword] = useState("");
   const [createBusy, setCreateBusy] = useState(false);
   const [createErr, setCreateErr] = useState("");
   const [createSuccess, setCreateSuccess] = useState<{
     companyName: string;
     slug: string;
     ownerEmail: string;
-    password: string;
   } | null>(null);
 
   const fetchAccessibleList = useCallback(async (): Promise<CpuCompany[]> => {
@@ -92,12 +78,6 @@ function PortalBody() {
   }, []);
 
   const canCreate = canCreatePlatformCompanies();
-
-  useEffect(() => {
-    if (canCreate && !ownerTempPassword) {
-      setOwnerTempPassword(generateOwnerTempPassword());
-    }
-  }, [canCreate, ownerTempPassword]);
 
   useEffect(() => {
     let cancelled = false;
@@ -184,10 +164,6 @@ function PortalBody() {
       setCreateErr("Enter a valid owner email.");
       return;
     }
-    if (ownerTempPassword.length < 12) {
-      setCreateErr("Owner password must be at least 12 characters.");
-      return;
-    }
 
     setCreateBusy(true);
     try {
@@ -198,7 +174,6 @@ function PortalBody() {
           name,
           slug,
           ownerEmail,
-          ownerPassword: ownerTempPassword,
         },
       });
 
@@ -209,12 +184,10 @@ function PortalBody() {
         companyName: name,
         slug,
         ownerEmail,
-        password: ownerTempPassword,
       });
       setNewCompanyName("");
       setNewCompanyCode("");
       setNewOwnerEmail("");
-      setOwnerTempPassword(generateOwnerTempPassword());
     } catch (err: unknown) {
       setCreateErr(
         err instanceof Error ? err.message : "Could not create company.",
@@ -369,14 +342,14 @@ function PortalBody() {
               Create company workspace
             </h2>
             <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.5 }}>
-              Creates the tenant and an application owner account with the email
-              and temporary password you set. Share the password securely; the owner
-              should sign in and change it.{" "}
+              Creates the tenant and emails the future application owner an{" "}
+              <strong style={{ color: "#cbd5e1" }}>invite link</strong> (same flow as
+              Admin → Invite). They accept on the web, set a password, and sign in
+              with their company code.{" "}
               <strong style={{ color: "#cbd5e1" }}>
-                The owner email cannot match an account that already exists
+                The owner email must not already belong to a user
               </strong>{" "}
-              (including your NexBatch login)—use a dedicated company-owner inbox or
-              alias.
+              (including your NexBatch login)—use a dedicated inbox or alias.
             </p>
 
             {createSuccess && (
@@ -394,21 +367,10 @@ function PortalBody() {
               >
                 <strong>Created {createSuccess.companyName}</strong> (slug{" "}
                 <code style={{ color: "#86efac" }}>{createSuccess.slug}</code>
-                ). Owner login:{" "}
-                <code style={{ color: "#86efac" }}>{createSuccess.ownerEmail}</code>
-                <br />
-                <span style={{ display: "block", marginTop: 10 }}>
-                  Temporary password:{" "}
-                  <code
-                    style={{
-                      color: "#fef08a",
-                      wordBreak: "break-all",
-                      userSelect: "all",
-                    }}
-                  >
-                    {createSuccess.password}
-                  </code>
-                </span>
+                ). An invitation was sent to{" "}
+                <code style={{ color: "#86efac" }}>{createSuccess.ownerEmail}</code>{" "}
+                with a link to accept and set their password (check spam if it does
+                not arrive within a few minutes).
               </div>
             )}
 
@@ -455,7 +417,7 @@ function PortalBody() {
                 />
               </label>
               <label style={labelStyle}>
-                Owner email
+                Owner email (receives invite)
                 <input
                   value={newOwnerEmail}
                   onChange={(e) => setNewOwnerEmail(e.target.value)}
@@ -465,47 +427,6 @@ function PortalBody() {
                   name="nb-new-owner-email"
                 />
               </label>
-              <div>
-                <div style={labelStyle}>Temporary owner password</div>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 10,
-                    flexWrap: "wrap",
-                    alignItems: "center",
-                  }}
-                >
-                  <code
-                    style={{
-                      flex: "1 1 200px",
-                      padding: "10px 12px",
-                      borderRadius: 10,
-                      background: "#020617",
-                      border: "1px solid rgba(148, 163, 184, 0.35)",
-                      color: "#fde68a",
-                      fontSize: 14,
-                      wordBreak: "break-all",
-                    }}
-                  >
-                    {ownerTempPassword}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => setOwnerTempPassword(generateOwnerTempPassword())}
-                    style={{
-                      padding: "10px 14px",
-                      borderRadius: 10,
-                      border: "1px solid rgba(148, 163, 184, 0.4)",
-                      background: "rgba(71, 85, 105, 0.5)",
-                      color: "#e2e8f0",
-                      fontWeight: 700,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Regenerate
-                  </button>
-                </div>
-              </div>
               <button
                 type="submit"
                 disabled={createBusy}
@@ -521,7 +442,7 @@ function PortalBody() {
                   cursor: createBusy ? "wait" : "pointer",
                 }}
               >
-                {createBusy ? "Creating…" : "Create workspace"}
+                {createBusy ? "Creating…" : "Create workspace & send invite"}
               </button>
             </form>
           </section>

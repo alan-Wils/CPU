@@ -76,8 +76,7 @@ export const acceptInviteSchema = z.object({
 export const createCompanySchema = z.object({
     name: z.string().min(2).max(100),
     slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/),
-    ownerEmail: z.string().email(),
-    ownerPassword: z.string().min(12).max(128)
+    ownerEmail: z.string().email()
 });
 export const updateCompanySchema = z.preprocess((raw) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw))

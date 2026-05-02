@@ -1,5 +1,8 @@
 import bcrypt from "bcryptjs";
+import { resolvePublicWebBaseUrl } from "../config/publicWebUrl.js";
 import { AppError } from "../errors/AppError.js";
+import { logInfo } from "../lib/logger.js";
+import { sendInviteEmail } from "../lib/mailer.js";
 import { CompanyRepository } from "../repositories/companyRepository.js";
 import { AuditService } from "./auditService.js";
 export class CompanyService {
@@ -9,22 +12,54 @@ export class CompanyService {
         return this.repo.getById(companyId);
     }
     async createCompany(input) {
-        const ownerPasswordHash = await bcrypt.hash(input.ownerPassword, 12);
-        const created = await this.repo.createCompanyWithOwner({
+        const slug = String(input.slug).trim().toLowerCase();
+        const email = String(input.ownerEmail).trim().toLowerCase();
+        if (await this.repo.findUserByEmail(email)) {
+            throw new AppError("That email is already registered. Use a different address for the owner invite.", 409);
+        }
+        if (await this.repo.findCompanyBySlug(slug)) {
+            throw new AppError("That company code (slug) is already taken.", 409);
+        }
+        const { company, invite, rawToken } = await this.repo.createCompanyAndOwnerInvite({
             name: input.name,
-            slug: input.slug,
-            ownerEmail: input.ownerEmail,
-            ownerPasswordHash
+            slug,
+            ownerEmail: email,
+            createdBy: input.actorUserId
         });
         await this.auditService.logAction({
-            companyId: input.actorCompanyId || created.id,
+            companyId: input.actorCompanyId || company.id,
             actorUserId: input.actorUserId,
             action: "company.create",
             entityType: "Company",
-            entityId: created.id,
-            after: { id: created.id, slug: created.slug }
+            entityId: company.id,
+            after: { id: company.id, slug: company.slug, ownerInviteId: invite.id }
         });
-        return created;
+        const baseUrl = resolvePublicWebBaseUrl();
+        const inviteUrl = `${baseUrl}/accept-invite?token=${encodeURIComponent(rawToken)}`;
+        logInfo("company_create_owner_invite", { companyId: company.id, inviteId: invite.id, webBaseUrl: baseUrl });
+        void sendInviteEmail({
+            to: email,
+            inviteUrl,
+            companyName: company.name,
+            role: "Application Owner"
+        }).then(() => logInfo("company_owner_invite_email_sent", { to: email }), (err) => {
+            console.error("[mail] Failed to send company owner invite email:", err);
+        });
+        return {
+            id: company.id,
+            name: company.name,
+            slug: company.slug,
+            code: company.slug.toUpperCase(),
+            createdAt: company.createdAt,
+            usersCount: 0,
+            ownerInvite: {
+                id: invite.id,
+                email: invite.email,
+                role: invite.role,
+                expiresAt: invite.expiresAt.toISOString()
+            },
+            inviteSent: true
+        };
     }
     async createUser(input) {
         if (input.role === "OWNER") {

@@ -1,10 +1,20 @@
+import crypto from "node:crypto";
 import { TenantRepository } from "./TenantRepository.js";
 import { legacyUserRoleToCompanyRole } from "../lib/nexbatchRoles.js";
 export class CompanyRepository extends TenantRepository {
     async getById(companyId) {
         return this.db.company.findUnique({ where: { id: companyId } });
     }
-    async createCompanyWithOwner(input) {
+    async findUserByEmail(email) {
+        return this.db.user.findUnique({ where: { email: String(email).trim().toLowerCase() } });
+    }
+    async findCompanyBySlug(slug) {
+        return this.db.company.findUnique({ where: { slug: String(slug).trim().toLowerCase() } });
+    }
+    /**
+     * New tenant with no users yet; owner accepts the same email invite flow as Admin → Invite.
+     */
+    async createCompanyAndOwnerInvite(input) {
         return this.db.$transaction(async (tx) => {
             const company = await tx.company.create({
                 data: {
@@ -13,22 +23,20 @@ export class CompanyRepository extends TenantRepository {
                     nextChainSequence: 0,
                 },
             });
-            const nex = legacyUserRoleToCompanyRole("OWNER");
-            const user = await tx.user.create({
+            const rawToken = crypto.randomBytes(24).toString("hex");
+            const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+            const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7);
+            const invite = await tx.inviteToken.create({
                 data: {
                     companyId: company.id,
-                    email: input.ownerEmail,
-                    passwordHash: input.ownerPasswordHash,
+                    email: String(input.ownerEmail).trim().toLowerCase(),
                     role: "OWNER",
-                    memberships: {
-                        create: {
-                            companyId: company.id,
-                            role: nex,
-                        },
-                    },
+                    createdBy: input.createdBy,
+                    expiresAt,
+                    tokenHash,
                 },
             });
-            return { ...company, users: [user] };
+            return { company, invite, rawToken };
         });
     }
     async createUser(companyId, input) {
