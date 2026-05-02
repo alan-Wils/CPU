@@ -4,6 +4,7 @@
  * so task completion persists `*UiState` JSON on parent rows.
  */
 import { Router } from "express";
+import type { Prisma, SourceMaterialRole } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
@@ -81,15 +82,19 @@ function taskRowToLegacyLog(row) {
         loggedAtIso: row.createdAt.toISOString()
     };
 }
-function mergeRecord(base, patch) {
-    const a = base && typeof base === "object" && !Array.isArray(base) ? base : {};
-    const b = patch && typeof patch === "object" && !Array.isArray(patch) ? patch : {};
-    return { ...a, ...b };
+/** Prisma JsonValue includes arrays; SPA ui state is always a plain object. */
+function asUiRecord(value: unknown): Record<string, unknown> {
+    if (value === null || value === undefined)
+        return {};
+    if (typeof value !== "object" || Array.isArray(value))
+        return {};
+    return value as Record<string, unknown>;
+}
+function mergeRecord(base: unknown, patch: unknown): Record<string, unknown> {
+    return { ...asUiRecord(base), ...asUiRecord(patch) };
 }
 function mapCultivationRowToLegacy(batch) {
-    const ui = batch.cultivationUiState && typeof batch.cultivationUiState === "object"
-        ? batch.cultivationUiState
-        : {};
+    const ui = asUiRecord(batch.cultivationUiState);
     const autoDone = batch.autoStatus === "AUTO_COMPLETED";
     return {
         ...ui,
@@ -174,6 +179,12 @@ async function createLegacyCultivationShell(companyId, actorUserId, batchId, bod
     const initialUi = mergeRecord({}, body);
     if (initialUi.id)
         delete initialUi.id;
+    const roles: readonly SourceMaterialRole[] = [
+        "A_GRADE_FLOWER",
+        "POPCORN",
+        "DRY_TRIM",
+        "FRESH_FROZEN"
+    ];
     await prisma.$transaction(async (tx) => {
         const batch = await tx.cultivationBatch.create({
             data: {
@@ -188,7 +199,7 @@ async function createLegacyCultivationShell(companyId, actorUserId, batchId, bod
                 popcornGrams: gFixed(gram),
                 trimGrams: gFixed(gram),
                 freshFrozenGrams: gFixed(gram),
-                cultivationUiState: initialUi
+                cultivationUiState: initialUi as Prisma.InputJsonValue
             }
         });
         const chain = await tx.sourceChain.create({
@@ -198,7 +209,6 @@ async function createLegacyCultivationShell(companyId, actorUserId, batchId, bod
                 chainKey
             }
         });
-        const roles = ["A_GRADE_FLOWER", "POPCORN", "DRY_TRIM", "FRESH_FROZEN"];
         const suffix = `${strainAcronym}-${batchChainCode}`;
         const names = [
             `${suffix}-AG`,
@@ -311,9 +321,7 @@ legacyCpuRouter.put("/cultivation/:batchId", requireRole(cultivationWriteRoles),
         }
         logInfo("[WORKFLOW_FIX] legacy_cultivation_materialized_on_put", { entityType: "CultivationBatch", entityId: batchId });
     }
-    const prevUi = existing.cultivationUiState && typeof existing.cultivationUiState === "object"
-        ? existing.cultivationUiState
-        : {};
+    const prevUi = asUiRecord(existing.cultivationUiState);
     const prevStage = String(prevUi.stage ?? "");
     const prevStatus = String(prevUi.status ?? existing.autoStatus ?? "");
     const mergedUi = mergeRecord(prevUi, body);
