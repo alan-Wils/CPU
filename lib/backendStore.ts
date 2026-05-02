@@ -35,8 +35,9 @@ export function applyStoreSnapshot(snapshot: any) {
   }
 }
 
+/** `@cpu/api` exposes `/api/store` (legacy Node backend used `/api/sync`). */
 export async function loadBackendStore() {
-  const snapshot = await apiRequest("/api/sync");
+  const snapshot = await apiRequest("/api/store");
   applyStoreSnapshot(snapshot);
   return snapshot;
 }
@@ -44,8 +45,8 @@ export async function loadBackendStore() {
 export async function saveBackendStore() {
   const snapshot = getStoreSnapshot();
 
-  return apiRequest("/api/sync", {
-    method: "POST",
+  return apiRequest("/api/store", {
+    method: "PUT",
     body: snapshot,
   });
 }

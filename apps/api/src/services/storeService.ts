@@ -7,8 +7,11 @@ const DEFAULT_STORE = {
     dryFlowerBatches: [],
     productionBatches: [],
     sourceBatches: [],
+    completedSourceBatches: [],
     extractionBatches: [],
     packagingBatches: [],
+    inProgressPackagingBatches: [],
+    completedPackagingBatches: [],
     logs: []
 };
 export class StoreService {
@@ -26,8 +29,11 @@ export class StoreService {
                 dryFlowerBatches: parsed.dryFlowerBatches ?? [],
                 productionBatches: parsed.productionBatches ?? [],
                 sourceBatches: parsed.sourceBatches ?? [],
+                completedSourceBatches: parsed.completedSourceBatches ?? [],
                 extractionBatches: parsed.extractionBatches ?? [],
                 packagingBatches: parsed.packagingBatches ?? [],
+                inProgressPackagingBatches: parsed.inProgressPackagingBatches ?? [],
+                completedPackagingBatches: parsed.completedPackagingBatches ?? [],
                 logs: parsed.logs ?? [],
                 _meta: { updatedAt: row.updatedAt.toISOString() }
             };
@@ -44,8 +50,11 @@ export class StoreService {
             dryFlowerBatches: Array.isArray(payload.dryFlowerBatches) ? payload.dryFlowerBatches : [],
             productionBatches: Array.isArray(payload.productionBatches) ? payload.productionBatches : [],
             sourceBatches: Array.isArray(payload.sourceBatches) ? payload.sourceBatches : [],
+            completedSourceBatches: Array.isArray(payload.completedSourceBatches) ? payload.completedSourceBatches : [],
             extractionBatches: Array.isArray(payload.extractionBatches) ? payload.extractionBatches : [],
             packagingBatches: Array.isArray(payload.packagingBatches) ? payload.packagingBatches : [],
+            inProgressPackagingBatches: Array.isArray(payload.inProgressPackagingBatches) ? payload.inProgressPackagingBatches : [],
+            completedPackagingBatches: Array.isArray(payload.completedPackagingBatches) ? payload.completedPackagingBatches : [],
             logs: Array.isArray(payload.logs) ? payload.logs : []
         };
         const row = await this.repo.upsertCompanyStore(companyId, JSON.stringify(normalized));

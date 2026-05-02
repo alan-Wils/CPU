@@ -1,12 +1,14 @@
 import { getAuthToken } from "./auth";
 
 function resolveApiBaseUrl(): string {
-  const fromEnv =
+  const raw =
     typeof process !== "undefined"
-      ? process.env.NEXT_PUBLIC_API_URL?.trim()
+      ? (process.env.NEXT_PUBLIC_API_URL || "").trim()
       : "";
-  if (fromEnv)
-    return fromEnv.replace(/\/+$/, "");
+  if (!raw) return "http://localhost:4000";
+  const base = raw.replace(/\/+$/, "");
+  /** Must be `https://...` host; a bare path or non-URL string becomes same-origin on the browser → Next 404 HTML. */
+  if (/^https?:\/\//i.test(base)) return base;
   return "http://localhost:4000";
 }
 

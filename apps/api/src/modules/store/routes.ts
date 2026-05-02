@@ -10,8 +10,11 @@ const storePayloadSchema = z.object({
     dryFlowerBatches: z.array(z.unknown()).default([]),
     productionBatches: z.array(z.unknown()).default([]),
     sourceBatches: z.array(z.unknown()).default([]),
+    completedSourceBatches: z.array(z.unknown()).default([]),
     extractionBatches: z.array(z.unknown()).default([]),
     packagingBatches: z.array(z.unknown()).default([]),
+    inProgressPackagingBatches: z.array(z.unknown()).default([]),
+    completedPackagingBatches: z.array(z.unknown()).default([]),
     logs: z.array(z.unknown()).default([])
 });
 export const storeRouter = Router();
@@ -24,7 +27,13 @@ storeRouter.get("/", asyncHandler(async (req, res) => {
     const data = await service.load(getScopedCompanyId(req));
     res.json(data);
 }));
-storeRouter.put("/", validate({ body: storePayloadSchema }), asyncHandler(async (req, res) => {
-    const data = await service.save(getScopedCompanyId(req), req.auth.userId, req.body);
-    res.json(data);
-}));
+const saveStack = [
+    validate({ body: storePayloadSchema }),
+    asyncHandler(async (req, res) => {
+        const data = await service.save(getScopedCompanyId(req), req.auth.userId, req.body);
+        res.json(data);
+    })
+];
+storeRouter.put("/", ...saveStack);
+/** Legacy Node backend used POST on `/api/sync`. */
+storeRouter.post("/", ...saveStack);

@@ -27,4 +27,6 @@ appRouter.use("/dashboard", dashboardRouter);
 appRouter.use("/data-hub", dataHubRouter);
 appRouter.use("/activity", activityRouter);
 appRouter.use("/store", storeRouter);
+/** Legacy CPU web app called `/api/sync` against the old Express server. */
+appRouter.use("/sync", storeRouter);
 appRouter.use("/checks", checksRouter);
