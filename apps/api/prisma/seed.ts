@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import type { UserRole } from "@prisma/client";
 import { PrismaClient } from "@prisma/client";
 import { legacyUserRoleToCompanyRole } from "../src/lib/nexbatchRoles.js";
+import { seedNexBatchPlatformOperators } from "./nexbatchOperatorSeed.js";
 
 const prisma = new PrismaClient();
 
@@ -17,41 +18,6 @@ async function backfillMembershipsFromPrimaryCompany() {
       create: { userId: u.id, companyId: cid, role: nex },
       update: { role: nex },
     });
-  }
-}
-
-async function ensureNexBatchSeedAccounts(budFoxId: string, demoId: string) {
-  const rows: Array<{ email: string; password: string; platformRole: "nexbatch_admin" | "owner" }> = [
-    { email: "admin@nexbatch.com", password: "NexBatchAdmin123!", platformRole: "nexbatch_admin" },
-    { email: "owner@nexbatch.com", password: "NexBatchOwner123!", platformRole: "owner" },
-  ];
-  for (const row of rows) {
-    const passwordHash = await bcrypt.hash(row.password, 12);
-    const u = await prisma.user.upsert({
-      where: { email: row.email },
-      update: {
-        platformRole: row.platformRole,
-        passwordHash,
-        isActive: true,
-        companyId: null,
-        role: "OWNER",
-      },
-      create: {
-        email: row.email,
-        passwordHash,
-        role: "OWNER",
-        companyId: null,
-        platformRole: row.platformRole,
-        isActive: true,
-      },
-    });
-    for (const cid of [budFoxId, demoId]) {
-      await prisma.companyMembership.upsert({
-        where: { userId_companyId: { userId: u.id, companyId: cid } },
-        create: { userId: u.id, companyId: cid, role: "owner" },
-        update: { role: "owner" },
-      });
-    }
   }
 }
 
@@ -305,7 +271,7 @@ async function main() {
   });
 
   await backfillMembershipsFromPrimaryCompany();
-  await ensureNexBatchSeedAccounts(budFox.id, demoCompany.id);
+  await seedNexBatchPlatformOperators(prisma, budFox.id, demoCompany.id);
 
   console.log("Seed complete: BudFox + Demo Company initialized with operational Data Hub + workflow baseline.");
 }

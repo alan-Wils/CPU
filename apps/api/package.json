@@ -17,6 +17,7 @@
     "prisma:validate:sqlite": "prisma validate --schema=prisma/schema.prisma",
     "prisma:validate": "prisma validate && prisma validate --schema=prisma/schema.postgresql.prisma",
     "prisma:seed": "tsx prisma/seed.ts",
+    "prisma:seed:nexbatch": "tsx prisma/seed-nexbatch-operators.ts",
     "prisma:push": "prisma db push"
   },
   "prisma": {
