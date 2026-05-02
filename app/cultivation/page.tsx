@@ -5,7 +5,11 @@ import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import { store } from "@/lib/store";
 import { displayNameFromLogActor, getAuthDisplayName, getAuthUser } from "@/lib/auth";
-import { loadBackendStore, saveBackendStore } from "@/lib/backendStore";
+import {
+  hydrateTaskLogsFromApi,
+  loadBackendStore,
+  saveBackendStore,
+} from "@/lib/backendStore";
 import {
   loadCultivationBatches,
   createCultivationBatch,
@@ -401,6 +405,7 @@ export default function Cultivation() {
       try {
         /** CompanyStore JSON often lags `/api/cultivation`; applying it to cultivation lists causes stage flicker (e.g. Veg → Flower). */
         await loadBackendStore({ omitCultivation: true });
+        await hydrateTaskLogsFromApi();
         await loadConfigStrains();
 
         const realCultivationBatches = await loadCultivationBatches();

@@ -5,6 +5,9 @@ export async function createLog(payload: {
   batch?: string;
   task: string;
   output?: string;
+  /** Source batch / cultivation id for filtering task history */
+  source?: string;
+  linkedBatch?: string;
   data?: any;
 }) {
   return apiRequest("/api/logs", {

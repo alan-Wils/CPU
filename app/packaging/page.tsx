@@ -9,7 +9,11 @@ import {
   getAuthDisplayName,
   getAuthUser,
 } from "@/lib/auth";
-import { loadBackendStore, saveBackendStore } from "@/lib/backendStore";
+import {
+  hydrateTaskLogsFromApi,
+  loadBackendStore,
+  saveBackendStore,
+} from "@/lib/backendStore";
 import {
   loadPackagingBatches,
   createPackagingBatch,
@@ -233,6 +237,7 @@ export default function Packaging() {
     async function loadPackagingData() {
       try {
         await loadBackendStore();
+        await hydrateTaskLogsFromApi();
 
         const realPackagingBatches = asArray(await loadPackagingBatches());
 
@@ -248,6 +253,7 @@ export default function Packaging() {
 
         try {
           await loadBackendStore();
+          await hydrateTaskLogsFromApi();
           if (active) setRefresh((n) => n + 1);
         } catch (backupError) {
           console.error("Could not load backend packaging store:", backupError);

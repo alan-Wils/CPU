@@ -1,4 +1,4 @@
-import { apiRequest } from "@/lib/api";
+import { apiRequest, getLogs } from "@/lib/api";
 import { store } from "@/lib/store";
 
 /**
@@ -73,6 +73,21 @@ export async function loadBackendStore(options?: ApplyStoreSnapshotOptions) {
   const snapshot = await apiRequest("/api/store");
   applyStoreSnapshot(snapshot, options);
   return snapshot;
+}
+
+/**
+ * Replace in-memory `store.logs` with `GET /api/logs` (PostgreSQL TaskLog rows).
+ * Call after `loadBackendStore()` on workflow pages: when company-store snapshots
+ * are not written (`NEXT_PUBLIC_SERVER_DATABASE_ONLY`), snapshot `logs` are stale
+ * and task history would otherwise stay empty.
+ */
+export async function hydrateTaskLogsFromApi() {
+  try {
+    const rows = await getLogs();
+    (store as any).logs = Array.isArray(rows) ? rows : [];
+  } catch (e) {
+    console.error("[TASK_LOGS] Could not hydrate logs from API:", e);
+  }
 }
 
 export async function saveBackendStore() {

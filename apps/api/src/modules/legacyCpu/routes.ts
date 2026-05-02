@@ -68,14 +68,17 @@ function safeMinutes(value) {
     return Math.min(n, 24 * 60);
 }
 function legacyLogNotePayload(body) {
+    const nested = body.data && typeof body.data === "object" ? { ...body.data } : {};
+    const source = body.source ?? nested.source ?? null;
+    const linkedBatch = body.linkedBatch ?? nested.linkedBatch ?? null;
     return JSON.stringify({
         area: body.area ?? "System",
         batch: body.batch ?? null,
         task: body.task ?? "Log",
         output: body.output ?? "",
-        data: body.data && typeof body.data === "object" ? body.data : {},
-        source: body.source ?? null,
-        linkedBatch: body.linkedBatch ?? null
+        data: nested,
+        source,
+        linkedBatch
     });
 }
 function taskRowToLegacyLog(row) {
@@ -85,6 +88,14 @@ function taskRowToLegacyLog(row) {
         if (parsed && typeof parsed === "object" && "task" in parsed) {
             const data = typeof parsed.data === "object" && parsed.data ? parsed.data : {};
             const loggedAtIso = row.createdAt.toISOString();
+            const src =
+                parsed.source ??
+                (typeof data.source === "string" && data.source ? data.source : undefined);
+            const linked =
+                parsed.linkedBatch ??
+                (typeof data.linkedBatch === "string" && data.linkedBatch
+                    ? data.linkedBatch
+                    : undefined);
             return {
                 id: row.id,
                 area: parsed.area ?? "System",
@@ -94,8 +105,8 @@ function taskRowToLegacyLog(row) {
                 people: data.people ?? "",
                 minutes: String(data.minutes ?? row.minutes ?? ""),
                 data: { ...data, loggedAt: data.loggedAt ?? row.createdAt.toLocaleString(), loggedAtIso },
-                source: parsed.source ?? undefined,
-                linkedBatch: parsed.linkedBatch ?? undefined,
+                source: src,
+                linkedBatch: linked,
                 time: row.createdAt.toLocaleString(),
                 loggedAt: row.createdAt.toLocaleString(),
                 loggedAtIso
@@ -801,20 +812,9 @@ legacyCpuRouter.put("/source-batches/:id", requireRole(sourceBatchWriteRoles), a
 legacyCpuRouter.delete("/source-batches/:id", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const id = String(req.params.id || "").trim();
-    if (!id) {
-        throw new AppError("Source batch id is required", 400);
-    }
-    try {
-        await workflowService.deleteSourcePackage(companyId, req.auth.userId, id);
-    }
-    catch (e) {
-        if (!(e instanceof AppError && e.statusCode === 404))
-            throw e;
-    }
     const snap = await storeService.load(companyId);
     const base = snapshotForStoreSave(snap);
     base.sourceBatches = (base.sourceBatches || []).filter((b) => String(b?.id || "") !== id);
-    base.completedSourceBatches = (base.completedSourceBatches || []).filter((b) => String(b?.id || "") !== id);
     await storeService.save(companyId, req.auth.userId, base);
     res.json({ ok: true });
 }));
