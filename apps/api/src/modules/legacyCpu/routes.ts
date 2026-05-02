@@ -355,6 +355,15 @@ legacyCpuRouter.put("/cultivation/:batchId", requireRole(cultivationWriteRoles),
     });
     res.json(mapped);
 }));
+/** Matches `workflowRouter.delete("/cultivation-batches/:batchId")` — OWNER/ADMIN only. */
+const cultivationDeleteRoles = ["OWNER", "ADMIN"];
+legacyCpuRouter.delete("/cultivation/:batchId", requireRole(cultivationDeleteRoles), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const batchId = String(req.params.batchId || "");
+    const out = await workflowService.deleteCultivation(companyId, req.auth.userId, batchId);
+    logInfo("[WORKFLOW_FIX] legacy_cultivation_deleted", { entityType: "CultivationBatch", entityId: batchId });
+    res.json(out);
+}));
 legacyCpuRouter.get("/extraction", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const rows = await prisma.extractionRun.findMany({
