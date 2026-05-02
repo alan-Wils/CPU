@@ -1240,7 +1240,7 @@ export default function Extraction() {
   function getSelectedAvailableSourceIdList() {
     return s.sourceBatches
       .map((b: any) => String(b.id))
-      .filter((id) => selectedAvailableSourceIds[id]);
+      .filter((id: string) => selectedAvailableSourceIds[id]);
   }
 
   function deleteSelectedAvailableSources() {
@@ -1296,7 +1296,7 @@ export default function Extraction() {
   function getSelectedCompletedSourceIdList() {
     return s.completedSourceBatches
       .map((b: any) => String(b.id))
-      .filter((id) => selectedCompletedSourceIds[id]);
+      .filter((id: string) => selectedCompletedSourceIds[id]);
   }
 
   function deleteSelectedCompletedSources() {
@@ -1352,7 +1352,7 @@ export default function Extraction() {
   function getSelectedExtractionBatchIdList() {
     return s.extractionBatches
       .map((b: any) => String(b.id))
-      .filter((id) => selectedExtractionBatchIds[id]);
+      .filter((id: string) => selectedExtractionBatchIds[id]);
   }
 
   function deleteSelectedExtractionBatches() {
