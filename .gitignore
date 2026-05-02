@@ -16,7 +16,7 @@ coverage
 /build
 /dist
 **/dist/
-/.next/
+.next/
 /out/
 
 # misc
