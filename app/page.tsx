@@ -99,7 +99,7 @@ export default function Home() {
                 minWidth: 0,
               }}
             >
-                <BrandLogo height={264} fitWithinParent />
+                <BrandLogo height={792} fitWithinParent />
             </h1>
           </div>
 

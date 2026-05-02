@@ -29,7 +29,7 @@ export default function BrandLogo({
       style={{
         width: "100%",
         height: "auto",
-        maxHeight: height,
+        maxHeight: `min(${height}px, 72vh)`,
         objectFit: "contain",
         display: "block",
       }}
