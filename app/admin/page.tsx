@@ -313,12 +313,18 @@ export default function AdminPage() {
   );
 
   async function loadPendingInvitesForCompany(companyId: string) {
-    if (!companyId) {
+    /** OWNER uses selected tenant in localStorage; ADMIN often has no `cpu_selected_company_id` — use session company from login. */
+    const effective =
+      String(companyId || "").trim() ||
+      getSelectedCompanyId().trim() ||
+      getAuthCompany()?.id ||
+      "";
+    if (!effective) {
       setPendingInvites([]);
       return;
     }
-    const raw = await apiRequest(withCompanyQuery("/api/admin/invites", companyId), {
-      companyId,
+    const raw = await apiRequest(withCompanyQuery("/api/admin/invites", effective), {
+      companyId: effective,
     });
     setPendingInvites(normalizePendingInvites(raw));
   }
@@ -383,7 +389,12 @@ export default function AdminPage() {
           companyId: cid || undefined,
         });
         setUsers(normalizeAdminUsersList(rawUsers));
-        await loadPendingInvitesForCompany(getSelectedCompanyId());
+        await loadPendingInvitesForCompany(
+          getSelectedCompanyId() ||
+            String((resolvedCompany as { id?: string })?.id || "").trim() ||
+            getAuthCompany()?.id ||
+            "",
+        );
       }
     } catch (err: any) {
       setError(err?.message || "Could not load admin data.");
@@ -620,7 +631,7 @@ export default function AdminPage() {
       await loadPendingInvitesForCompany(
         currentUser?.role === "OWNER"
           ? selectedCompanyId
-          : getSelectedCompanyId(),
+          : getSelectedCompanyId() || getAuthCompany()?.id || "",
       );
       setUsername("");
       setEmail("");
