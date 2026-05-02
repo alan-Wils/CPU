@@ -97,7 +97,7 @@ export default function Home() {
                 justifyContent: "center",
               }}
             >
-              <BrandLogo height={88} maxWidth={480} />
+                <BrandLogo height={132} maxWidth={640} />
             </h1>
           </div>
 
