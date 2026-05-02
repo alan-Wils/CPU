@@ -44,6 +44,45 @@ type PendingInvite = {
   createdAt: string;
 };
 
+/** `@cpu/api` returns `{ users }`; legacy servers may return a bare array. */
+function normalizeAdminUsersList(raw: unknown): AdminUser[] {
+  if (Array.isArray(raw)) return raw as AdminUser[];
+  if (
+    raw &&
+    typeof raw === "object" &&
+    Array.isArray((raw as { users?: unknown }).users)
+  ) {
+    return (raw as { users: AdminUser[] }).users;
+  }
+  return [];
+}
+
+/**
+ * `GET /api/auth/me` on `@cpu/api` returns `{ auth: { userId, companyId, role } }`.
+ * Admin must still treat OWNER correctly so company + pending-invite loads match the UI.
+ */
+function resolveAdminBootstrap(me: {
+  user?: Record<string, unknown> | null;
+  company?: Record<string, unknown> | null;
+  auth?: { userId: string; companyId: string; role: string };
+}) {
+  if (me.user && typeof me.user === "object")
+    return { user: me.user as any, company: (me.company as any) ?? getAuthCompany() };
+  if (me.auth?.userId) {
+    const stored = getAuthUser();
+    return {
+      user: {
+        ...(stored || {}),
+        id: me.auth.userId,
+        role: me.auth.role,
+        companyId: me.auth.companyId,
+      } as any,
+      company: getAuthCompany(),
+    };
+  }
+  return { user: getAuthUser() as any, company: getAuthCompany() };
+}
+
 const INVITE_ROLE_OPTIONS: {
   value: string;
   label: string;
@@ -230,10 +269,13 @@ export default function AdminPage() {
 
     try {
       const me = await getMe();
-      setCurrentUser(me.user);
-      setCompany(me.company);
+      const { user: resolvedUser, company: resolvedCompany } = resolveAdminBootstrap(
+        me as { user?: any; company?: any; auth?: { userId: string; companyId: string; role: string } },
+      );
+      setCurrentUser(resolvedUser);
+      setCompany(resolvedCompany);
 
-      if (me.user?.role === "OWNER") {
+      if (resolvedUser?.role === "OWNER") {
         const raw = await apiRequest<
           CompanyItem[] | { companies: CompanyItem[] }
         >("/api/companies/all");
@@ -256,25 +298,27 @@ export default function AdminPage() {
         const selectedCompany =
           loadedCompanies.find((c) => c.id === savedCompanyId) ||
           loadedCompanies[0] ||
-          me.company;
+          resolvedCompany;
 
         if (selectedCompany?.id) {
           setSelectedCompanyIdState(selectedCompany.id);
           setSelectedCompanyId(selectedCompany.id);
           setCompany(selectedCompany);
 
-          const loadedUsers = await apiRequest<AdminUser[]>("/api/users", {
+          const rawUsers = await apiRequest("/api/admin/users", {
             companyId: selectedCompany.id,
           });
-          setUsers(loadedUsers);
+          setUsers(normalizeAdminUsersList(rawUsers));
           await loadPendingInvitesForCompany(selectedCompany.id);
         } else {
           setUsers([]);
           setPendingInvites([]);
         }
       } else {
-        const loadedUsers = await apiRequest<AdminUser[]>("/api/users");
-        setUsers(loadedUsers);
+        const rawUsers = await apiRequest("/api/admin/users", {
+          companyId: getSelectedCompanyId() || undefined,
+        });
+        setUsers(normalizeAdminUsersList(rawUsers));
         await loadPendingInvitesForCompany(getSelectedCompanyId());
       }
     } catch (err: any) {
@@ -304,11 +348,11 @@ export default function AdminPage() {
         setCompany(selected);
       }
 
-      const loadedUsers = await apiRequest<AdminUser[]>("/api/users", {
+      const rawUsers = await apiRequest("/api/admin/users", {
         companyId,
       });
 
-      setUsers(loadedUsers);
+      setUsers(normalizeAdminUsersList(rawUsers));
       await loadPendingInvitesForCompany(companyId);
       setSuccess("Switched company view.");
     } catch (err: any) {
@@ -587,13 +631,12 @@ export default function AdminPage() {
     setSavingUserId(user.id);
 
     try {
-      const updatedUser = await apiRequest<AdminUser>(`/api/users/${user.id}`, {
+      const updatedUser = await apiRequest<AdminUser>(`/api/admin/users/${user.id}`, {
         method: "PATCH",
         body: {
-          username: editUsername.trim(),
-          email: editEmail.trim() || null,
+          email: editEmail.trim() || undefined,
           role: editRole,
-          active: editActive,
+          isActive: editActive,
         },
       });
 
@@ -614,19 +657,21 @@ export default function AdminPage() {
     setSavingUserId(user.id);
 
     try {
-      const updatedUser = await apiRequest<AdminUser>(`/api/users/${user.id}`, {
-        method: "PATCH",
-        body: { active: nextActive },
+      await apiRequest(`/api/admin/users/${user.id}/status`, {
+        method: "POST",
+        body: { isActive: nextActive },
       });
 
       setUsers((current) =>
-        current.map((u) => (u.id === updatedUser.id ? updatedUser : u))
+        current.map((u) =>
+          u.id === user.id ? { ...u, active: nextActive } : u,
+        ),
       );
 
       setSuccess(
         nextActive
-          ? `Reactivated user ${updatedUser.username}.`
-          : `Deactivated user ${updatedUser.username}.`
+          ? `Reactivated user ${user.username}.`
+          : `Deactivated user ${user.username}.`
       );
     } catch (err: any) {
       setError(err?.message || "Could not update user status.");
@@ -670,7 +715,7 @@ export default function AdminPage() {
     setSavingUserId(user.id);
 
     try {
-      await apiRequest(`/api/users/${user.id}`, {
+      await apiRequest(`/api/admin/users/${user.id}`, {
         method: "DELETE",
       });
 

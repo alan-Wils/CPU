@@ -221,7 +221,7 @@ export async function getMe() {
 }
 
 export async function getUsers(companyId?: string) {
-  return apiRequest("/api/users", {
+  return apiRequest("/api/admin/users", {
     companyId,
   });
 }
