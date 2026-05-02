@@ -4,7 +4,7 @@
  * so task completion persists `*UiState` JSON on parent rows.
  */
 import { Router } from "express";
-import type { Prisma, SourceMaterialRole } from "@prisma/client";
+import { Prisma, SourceMaterialRole } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
@@ -179,12 +179,6 @@ async function createLegacyCultivationShell(companyId, actorUserId, batchId, bod
     const initialUi = mergeRecord({}, body);
     if (initialUi.id)
         delete initialUi.id;
-    const roles: readonly SourceMaterialRole[] = [
-        "A_GRADE_FLOWER",
-        "POPCORN",
-        "DRY_TRIM",
-        "FRESH_FROZEN"
-    ];
     await prisma.$transaction(async (tx) => {
         const batch = await tx.cultivationBatch.create({
             data: {
@@ -210,18 +204,18 @@ async function createLegacyCultivationShell(companyId, actorUserId, batchId, bod
             }
         });
         const suffix = `${strainAcronym}-${batchChainCode}`;
-        const names = [
-            `${suffix}-AG`,
-            `${suffix}-PC`,
-            `${suffix}-DT`,
-            `${suffix}-FF`
+        const seedPackages = [
+            { role: SourceMaterialRole.A_GRADE_FLOWER, tag: "AG" },
+            { role: SourceMaterialRole.POPCORN, tag: "PC" },
+            { role: SourceMaterialRole.DRY_TRIM, tag: "DT" },
+            { role: SourceMaterialRole.FRESH_FROZEN, tag: "FF" }
         ];
-        for (let i = 0; i < roles.length; i++) {
+        for (const pkg of seedPackages) {
             await tx.sourcePackage.create({
                 data: {
                     sourceChainId: chain.id,
-                    role: roles[i],
-                    canonicalName: names[i].slice(0, 120)
+                    role: pkg.role,
+                    canonicalName: `${suffix}-${pkg.tag}`.slice(0, 120)
                 }
             });
         }
@@ -321,7 +315,7 @@ legacyCpuRouter.put("/cultivation/:batchId", requireRole(cultivationWriteRoles),
         }
         logInfo("[WORKFLOW_FIX] legacy_cultivation_materialized_on_put", { entityType: "CultivationBatch", entityId: batchId });
     }
-    const prevUi = asUiRecord(existing.cultivationUiState);
+    const prevUi: Record<string, unknown> = asUiRecord(existing.cultivationUiState);
     const prevStage = String(prevUi.stage ?? "");
     const prevStatus = String(prevUi.status ?? existing.autoStatus ?? "");
     const mergedUi = mergeRecord(prevUi, body);
@@ -345,7 +339,7 @@ legacyCpuRouter.put("/cultivation/:batchId", requireRole(cultivationWriteRoles),
         table: tableRaw !== undefined ? String(tableRaw) : undefined,
         plantedAt: body.plantedAt !== undefined ? new Date(body.plantedAt) : undefined,
         complete,
-        cultivationUiState: mergedUi
+        cultivationUiState: mergedUi as Prisma.InputJsonValue
     });
     const mapped = mapCultivationRowToLegacy(updated);
     logInfo("[WORKFLOW_FIX] cultivation_batch_parent_updated", {
