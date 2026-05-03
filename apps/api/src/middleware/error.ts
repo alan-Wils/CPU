@@ -2,13 +2,13 @@ import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
 import { AppError } from "../errors/AppError.js";
 import { logError } from "../lib/logger.js";
-/** `instanceof` can fail if multiple @prisma/client copies exist; fall back to constructor name + shape. */
+/**
+ * Prisma known-request errors carry `code` like P2022.
+ * Duck-type on `code` only: duplicate `@prisma/client` bundles break `instanceof` and
+ * would otherwise fall through to "Unexpected server error" (bad for missing migrations).
+ */
 function readPrismaKnownRequest(err) {
     if (typeof err !== "object" || err === null)
-        return null;
-    const ctor = err.constructor?.name;
-    const isKnownCtor = ctor === "PrismaClientKnownRequestError";
-    if (!isKnownCtor && !(err instanceof Prisma.PrismaClientKnownRequestError))
         return null;
     const code = err.code;
     if (typeof code !== "string" || !/^P[0-9]{4}$/.test(code))
@@ -23,10 +23,12 @@ function readPrismaValidation(err) {
     if (typeof err !== "object" || err === null)
         return null;
     const ctor = err.constructor?.name;
-    if (ctor !== "PrismaClientValidationError" && !(err instanceof Prisma.PrismaClientValidationError))
-        return null;
-    const msg = err.message;
-    return typeof msg === "string" ? msg : null;
+    const msg = typeof err.message === "string" ? err.message : "";
+    if (ctor === "PrismaClientValidationError" || err instanceof Prisma.PrismaClientValidationError)
+        return msg || null;
+    if (msg.includes("Invalid `prisma.") || msg.includes("PrismaClientValidationError"))
+        return msg || null;
+    return null;
 }
 function readPrismaInitialization(err) {
     if (typeof err !== "object" || err === null)
