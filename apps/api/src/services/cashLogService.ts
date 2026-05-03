@@ -44,7 +44,11 @@ export class CashLogService {
         amount: number;
         memo?: string | null;
         entryDate?: Date | null;
+        payeeCompany?: string | null;
+        invoiceNumber?: string | null;
+        department?: "CULTIVATION" | "EXTRACTION" | "PACKAGING" | "GENERAL" | null;
     }) {
+        const incoming = input.direction === "INCOMING";
         return prisma.cashLogEntry.create({
             data: {
                 companyId: input.companyId,
@@ -52,7 +56,12 @@ export class CashLogService {
                 direction: input.direction,
                 amount: input.amount,
                 memo: input.memo ?? undefined,
-                entryDate: input.entryDate ?? undefined
+                entryDate: input.entryDate ?? undefined,
+                payeeCompany: incoming ? String(input.payeeCompany || "").trim() || undefined : undefined,
+                invoiceNumber: incoming
+                    ? (String(input.invoiceNumber || "").trim() || undefined)
+                    : undefined,
+                department: !incoming ? input.department ?? undefined : undefined
             },
             select: {
                 id: true,
@@ -60,6 +69,9 @@ export class CashLogService {
                 createdByUserId: true,
                 direction: true,
                 amount: true,
+                payeeCompany: true,
+                invoiceNumber: true,
+                department: true,
                 memo: true,
                 entryDate: true,
                 createdAt: true,
@@ -80,6 +92,9 @@ export class CashLogService {
                 id: true,
                 direction: true,
                 amount: true,
+                payeeCompany: true,
+                invoiceNumber: true,
+                department: true,
                 memo: true,
                 entryDate: true,
                 createdAt: true,
@@ -99,6 +114,9 @@ export class CashLogService {
                 id: true,
                 direction: true,
                 amount: true,
+                payeeCompany: true,
+                invoiceNumber: true,
+                department: true,
                 memo: true,
                 entryDate: true,
                 createdAt: true
@@ -109,11 +127,24 @@ export class CashLogService {
         id: string;
         direction: string;
         amount: number;
+        payeeCompany: string | null;
+        invoiceNumber: string | null;
+        department: string | null;
         memo: string | null;
         entryDate: Date | null;
         createdAt: Date;
     }>) {
-        const header = ["id", "createdAt", "entryDate", "direction", "amount", "memo"];
+        const header = [
+            "id",
+            "createdAt",
+            "entryDate",
+            "direction",
+            "amount",
+            "payeeCompany",
+            "invoiceNumber",
+            "department",
+            "memo"
+        ];
         const lines = [header.join(",")];
         for (const r of rows) {
             lines.push([
@@ -122,6 +153,9 @@ export class CashLogService {
                 csvEscape(r.entryDate?.toISOString?.() ?? r.entryDate ?? ""),
                 csvEscape(r.direction),
                 csvEscape(r.amount),
+                csvEscape(r.payeeCompany),
+                csvEscape(r.invoiceNumber),
+                csvEscape(r.department),
                 csvEscape(r.memo)
             ].join(","));
         }

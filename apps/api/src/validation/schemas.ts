@@ -225,12 +225,43 @@ export const checkSaveSchema = z.object({
     stubImageUrl: z.string().url().optional(),
     rawOcrJson: z.unknown().optional()
 });
-export const cashLogCreateSchema = z.object({
-    direction: z.enum(["INCOMING", "OUTGOING"]),
-    amount: z.number().positive().max(10_000_000),
-    memo: z.string().max(500).optional(),
-    entryDate: z.coerce.date().optional()
-});
+const cashLogDepartmentSchema = z.enum(["CULTIVATION", "EXTRACTION", "PACKAGING", "GENERAL"]);
+export const cashLogCreateSchema = z
+    .object({
+        direction: z.enum(["INCOMING", "OUTGOING"]),
+        amount: z.number().positive().max(10_000_000),
+        memo: z.string().max(500).optional(),
+        entryDate: z.coerce.date().optional(),
+        payeeCompany: z.string().max(200).optional(),
+        invoiceNumber: z.string().max(120).optional(),
+        department: cashLogDepartmentSchema.optional()
+    })
+    .superRefine((data, ctx) => {
+        if (data.direction === "INCOMING") {
+            const pc = String(data.payeeCompany || "").trim();
+            if (!pc) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: "payeeCompany is required for incoming cash",
+                    path: ["payeeCompany"]
+                });
+            }
+            if (!data.entryDate) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: "entryDate is required for incoming cash",
+                    path: ["entryDate"]
+                });
+            }
+        }
+        if (data.direction === "OUTGOING" && !data.department) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "department is required for outgoing cash",
+                path: ["department"]
+            });
+        }
+    });
 export const sourcePackageCreateSchema = z.object({
     cultivationBatchId: z.string().cuid(),
     role: z.enum(["A_GRADE_FLOWER", "POPCORN", "DRY_TRIM", "FRESH_FROZEN"]),

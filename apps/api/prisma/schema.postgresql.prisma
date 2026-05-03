@@ -99,6 +99,13 @@ enum CashLogDirection {
   OUTGOING
 }
 
+enum CashLogDepartment {
+  CULTIVATION
+  EXTRACTION
+  PACKAGING
+  GENERAL
+}
+
 model Company {
   id                String @id @default(cuid())
   name              String
@@ -498,17 +505,20 @@ model CheckCapture {
 }
 
 model CashLogEntry {
-  id              String           @id @default(cuid())
+  id              String             @id @default(cuid())
   companyId       String
-  company         Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company         Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdByUserId String
-  createdByUser   User             @relation("CashLogCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUser   User               @relation("CashLogCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   direction       CashLogDirection
   amount          Float
+  payeeCompany    String?
+  invoiceNumber   String?
+  department      CashLogDepartment?
   memo            String?
   entryDate       DateTime?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 
   @@index([companyId, createdAt])
   @@index([createdByUserId, createdAt])

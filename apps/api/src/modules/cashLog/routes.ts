@@ -62,7 +62,10 @@ cashLogRouter.post("/", requireRole([...adminRoles]), validate({ body: cashLogCr
         direction: req.body.direction,
         amount: req.body.amount,
         memo: req.body.memo,
-        entryDate: req.body.entryDate
+        entryDate: req.body.entryDate,
+        payeeCompany: req.body.payeeCompany,
+        invoiceNumber: req.body.invoiceNumber,
+        department: req.body.department
     });
     res.status(201).json(saved);
 }));

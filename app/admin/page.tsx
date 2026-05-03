@@ -260,14 +260,30 @@ type CheckCaptureRow = {
   stubImageUrl?: string | null;
 };
 
+type CashLogDepartment = "CULTIVATION" | "EXTRACTION" | "PACKAGING" | "GENERAL";
+
 type CashLogRow = {
   id: string;
   direction: "INCOMING" | "OUTGOING";
   amount: number;
+  payeeCompany?: string | null;
+  invoiceNumber?: string | null;
+  department?: CashLogDepartment | null;
   memo?: string | null;
   entryDate?: string | null;
   createdAt: string;
 };
+
+function formatCashDepartment(d: CashLogDepartment | string | null | undefined): string {
+  if (!d) return "—";
+  const labels: Record<string, string> = {
+    CULTIVATION: "Cultivation",
+    EXTRACTION: "Extraction",
+    PACKAGING: "Packaging",
+    GENERAL: "General",
+  };
+  return labels[String(d)] || String(d);
+}
 
 function defaultCheckFilterTo(): string {
   return new Date().toISOString().slice(0, 10);
@@ -367,6 +383,9 @@ export default function AdminPage() {
   const [cashFilterTo, setCashFilterTo] = useState(defaultCheckFilterTo);
   const [cashDirection, setCashDirection] = useState<"INCOMING" | "OUTGOING">("INCOMING");
   const [cashAmount, setCashAmount] = useState("");
+  const [cashPayeeCompany, setCashPayeeCompany] = useState("");
+  const [cashInvoiceNumber, setCashInvoiceNumber] = useState("");
+  const [cashDepartment, setCashDepartment] = useState<CashLogDepartment>("GENERAL");
   const [cashMemo, setCashMemo] = useState("");
   const [cashEntryDate, setCashEntryDate] = useState("");
   const [cashSaving, setCashSaving] = useState(false);
@@ -622,25 +641,46 @@ export default function AdminPage() {
     const totalRaw = String(cashAmount || "").replace(/,/g, "").trim();
     const amount = Number(totalRaw);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setCashFormError("Amount must be a positive number.");
+      setCashFormError("Total must be a positive number.");
       return;
+    }
+    if (cashDirection === "INCOMING") {
+      if (!cashPayeeCompany.trim()) {
+        setCashFormError("Payee company is required for incoming cash.");
+        return;
+      }
+      if (!cashEntryDate.trim()) {
+        setCashFormError("Date is required for incoming cash.");
+        return;
+      }
     }
     setCashSaving(true);
     try {
+      const body: Record<string, unknown> = {
+        direction: cashDirection,
+        amount,
+      };
+      if (cashDirection === "INCOMING") {
+        body.payeeCompany = cashPayeeCompany.trim();
+        body.invoiceNumber = cashInvoiceNumber.trim() || undefined;
+        body.entryDate = new Date(`${cashEntryDate.trim()}T12:00:00.000Z`).toISOString();
+      } else {
+        body.department = cashDepartment;
+        body.memo = cashMemo.trim() || undefined;
+        body.entryDate = cashEntryDate.trim()
+          ? new Date(`${cashEntryDate.trim()}T12:00:00.000Z`).toISOString()
+          : undefined;
+      }
       await apiRequest(withCompanyQuery("/api/cash-log", cid), {
         method: "POST",
         companyId: cid,
-        body: {
-          direction: cashDirection,
-          amount,
-          memo: cashMemo.trim() || undefined,
-          entryDate: cashEntryDate.trim()
-            ? new Date(`${cashEntryDate.trim()}T12:00:00.000Z`).toISOString()
-            : undefined,
-        },
+        body,
       });
       setCashFormSuccess("Cash entry saved.");
       setCashAmount("");
+      setCashPayeeCompany("");
+      setCashInvoiceNumber("");
+      setCashDepartment("GENERAL");
       setCashMemo("");
       setCashEntryDate("");
       await loadCashEntries();
@@ -1947,10 +1987,6 @@ export default function AdminPage() {
                   </div>
                 </section>
               ) : null}
-            </>
-          )}
-        </div>
-
         {checkLogOpen ? (
           <div style={{ ...modalOverlayStyle, zIndex: 1100 }}>
             <div
@@ -2285,7 +2321,7 @@ export default function AdminPage() {
             <div
               style={{
                 ...modalStyle,
-                maxWidth: 720,
+                maxWidth: 900,
                 maxHeight: "92vh",
                 overflowY: "auto",
                 width: "100%",
@@ -2311,8 +2347,9 @@ export default function AdminPage() {
                 </button>
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.55, fontSize: 14 }}>
-                Record physical cash in (incoming) and cash out (outgoing). Filter and export use the log
-                timestamp (UTC calendar day).
+                Incoming: payee company, date, total, and optional invoice number. Outgoing: amount, department
+                (cultivation, extraction, packaging, or general), optional date and memo. History filter uses log
+                time (UTC day).
               </p>
               {cashFormError ? (
                 <div
@@ -2361,36 +2398,96 @@ export default function AdminPage() {
                     <option value="OUTGOING">Outgoing (cash out)</option>
                   </select>
                 </label>
-                <label style={{ ...labelStyle, marginBottom: 0 }}>
-                  Amount
-                  <input
-                    value={cashAmount}
-                    onChange={(e) => setCashAmount(e.target.value)}
-                    placeholder="0.00"
-                    inputMode="decimal"
-                    style={{ ...inputStyle }}
-                    autoComplete="off"
-                  />
-                </label>
-                <label style={{ ...labelStyle, marginBottom: 0 }}>
-                  Memo (optional)
-                  <input
-                    value={cashMemo}
-                    onChange={(e) => setCashMemo(e.target.value)}
-                    placeholder="e.g. Petty cash, drawer count"
-                    style={{ ...inputStyle }}
-                    autoComplete="off"
-                  />
-                </label>
-                <label style={{ ...labelStyle, marginBottom: 0 }}>
-                  Entry date (optional)
-                  <input
-                    type="date"
-                    value={cashEntryDate}
-                    onChange={(e) => setCashEntryDate(e.target.value)}
-                    style={{ ...inputStyle }}
-                  />
-                </label>
+                {cashDirection === "INCOMING" ? (
+                  <>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Payee company
+                      <input
+                        value={cashPayeeCompany}
+                        onChange={(e) => setCashPayeeCompany(e.target.value)}
+                        placeholder="Company name"
+                        style={{ ...inputStyle }}
+                        autoComplete="organization"
+                      />
+                    </label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Date
+                      <input
+                        type="date"
+                        value={cashEntryDate}
+                        onChange={(e) => setCashEntryDate(e.target.value)}
+                        style={{ ...inputStyle }}
+                      />
+                    </label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Total
+                      <input
+                        value={cashAmount}
+                        onChange={(e) => setCashAmount(e.target.value)}
+                        placeholder="0.00"
+                        inputMode="decimal"
+                        style={{ ...inputStyle }}
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Invoice # (optional)
+                      <input
+                        value={cashInvoiceNumber}
+                        onChange={(e) => setCashInvoiceNumber(e.target.value)}
+                        style={{ ...inputStyle }}
+                        autoComplete="off"
+                      />
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Department
+                      <select
+                        value={cashDepartment}
+                        onChange={(e) =>
+                          setCashDepartment(e.target.value as CashLogDepartment)
+                        }
+                        style={{ ...inputStyle }}
+                      >
+                        <option value="CULTIVATION">Cultivation</option>
+                        <option value="EXTRACTION">Extraction</option>
+                        <option value="PACKAGING">Packaging</option>
+                        <option value="GENERAL">General</option>
+                      </select>
+                    </label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Amount
+                      <input
+                        value={cashAmount}
+                        onChange={(e) => setCashAmount(e.target.value)}
+                        placeholder="0.00"
+                        inputMode="decimal"
+                        style={{ ...inputStyle }}
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Date (optional)
+                      <input
+                        type="date"
+                        value={cashEntryDate}
+                        onChange={(e) => setCashEntryDate(e.target.value)}
+                        style={{ ...inputStyle }}
+                      />
+                    </label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Memo (optional)
+                      <input
+                        value={cashMemo}
+                        onChange={(e) => setCashMemo(e.target.value)}
+                        style={{ ...inputStyle }}
+                        autoComplete="off"
+                      />
+                    </label>
+                  </>
+                )}
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 22 }}>
                 <button
@@ -2495,22 +2592,25 @@ export default function AdminPage() {
                       width: "100%",
                       borderCollapse: "collapse",
                       fontSize: 13,
-                      minWidth: 520,
+                      minWidth: 720,
                     }}
                   >
                     <thead>
                       <tr style={{ background: "rgba(2, 6, 23, 0.65)" }}>
                         <th style={checkThStyle}>Logged</th>
-                        <th style={checkThStyle}>Direction</th>
-                        <th style={checkThStyle}>Amount</th>
-                        <th style={checkThStyle}>Memo</th>
+                        <th style={checkThStyle}>Dir</th>
+                        <th style={checkThStyle}>Total</th>
+                        <th style={checkThStyle}>Payee co.</th>
+                        <th style={checkThStyle}>Invoice #</th>
+                        <th style={checkThStyle}>Dept</th>
                         <th style={checkThStyle}>Entry date</th>
+                        <th style={checkThStyle}>Memo</th>
                       </tr>
                     </thead>
                     <tbody>
                       {cashRows.length === 0 ? (
                         <tr>
-                          <td colSpan={5} style={checkTdStyle}>
+                          <td colSpan={8} style={checkTdStyle}>
                             No rows for this filter.
                           </td>
                         </tr>
@@ -2521,15 +2621,18 @@ export default function AdminPage() {
                               {row.createdAt ? new Date(row.createdAt).toLocaleString() : "—"}
                             </td>
                             <td style={checkTdStyle}>
-                              {row.direction === "INCOMING" ? "Incoming" : "Outgoing"}
+                              {row.direction === "INCOMING" ? "In" : "Out"}
                             </td>
                             <td style={checkTdStyle}>{String(row.amount)}</td>
-                            <td style={checkTdStyle}>{row.memo || "—"}</td>
+                            <td style={checkTdStyle}>{row.payeeCompany || "—"}</td>
+                            <td style={checkTdStyle}>{row.invoiceNumber || "—"}</td>
+                            <td style={checkTdStyle}>{formatCashDepartment(row.department)}</td>
                             <td style={checkTdStyle}>
                               {row.entryDate
                                 ? new Date(row.entryDate).toLocaleDateString()
                                 : "—"}
                             </td>
+                            <td style={checkTdStyle}>{row.memo || "—"}</td>
                           </tr>
                         ))
                       )}
@@ -2540,6 +2643,10 @@ export default function AdminPage() {
             </div>
           </div>
         ) : null}
+
+            </>
+          )}
+        </div>
 
         {notificationModal.open && (
           <div style={modalOverlayStyle}>
