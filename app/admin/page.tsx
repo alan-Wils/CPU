@@ -272,6 +272,7 @@ type CashLogRow = {
   department?: CashLogDepartment | null;
   memo?: string | null;
   entryDate?: string | null;
+  receiptImageUrl?: string | null;
   createdAt: string;
 };
 
@@ -388,6 +389,10 @@ export default function AdminPage() {
   const [cashInvoiceNumber, setCashInvoiceNumber] = useState("");
   const [cashDepartment, setCashDepartment] = useState<CashLogDepartment>("GENERAL");
   const [cashMemo, setCashMemo] = useState("");
+  const cashReceiptInputRef = useRef<HTMLInputElement | null>(null);
+  const [cashReceiptImageUrl, setCashReceiptImageUrl] = useState("");
+  const [cashReceiptFileKey, setCashReceiptFileKey] = useState(0);
+  const [cashReceiptUploading, setCashReceiptUploading] = useState(false);
   const [cashEntryDate, setCashEntryDate] = useState("");
   const [cashSaving, setCashSaving] = useState(false);
   const [cashFormError, setCashFormError] = useState("");
@@ -632,6 +637,39 @@ export default function AdminPage() {
     }
   }
 
+  async function handleCashReceiptFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!canManageUsers(currentUser?.role || "")) return;
+    const cid = checksCompanyId();
+    if (!cid) {
+      setCashFormError("Select a company context before attaching a receipt.");
+      return;
+    }
+    setCashFormError("");
+    setCashReceiptUploading(true);
+    try {
+      const payload = await readImageFileForCheckUpload(file);
+      const uploaded = await apiRequest<{ imageUrl: string }>(
+        withCompanyQuery("/api/cash-log/upload-receipt", cid),
+        {
+          method: "POST",
+          companyId: cid,
+          body: {
+            mimeType: payload.mimeType,
+            dataBase64: payload.dataBase64,
+            fileName: file.name,
+          },
+        },
+      );
+      setCashReceiptImageUrl(uploaded.imageUrl);
+    } catch (err: any) {
+      setCashFormError(err?.message || "Could not upload receipt.");
+    } finally {
+      setCashReceiptUploading(false);
+    }
+  }
+
   async function saveCashEntry() {
     setCashFormError("");
     setCashFormSuccess("");
@@ -676,6 +714,9 @@ export default function AdminPage() {
         body.entryDate = cashEntryDate.trim()
           ? new Date(`${cashEntryDate.trim()}T12:00:00.000Z`).toISOString()
           : undefined;
+        if (cashReceiptImageUrl.trim()) {
+          body.receiptImageUrl = cashReceiptImageUrl.trim();
+        }
       }
       await apiRequest(withCompanyQuery("/api/cash-log", cid), {
         method: "POST",
@@ -688,6 +729,9 @@ export default function AdminPage() {
       setCashInvoiceNumber("");
       setCashDepartment("GENERAL");
       setCashMemo("");
+      setCashReceiptImageUrl("");
+      if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
+      setCashReceiptFileKey((k) => k + 1);
       setCashEntryDate("");
       await loadCashEntries();
     } catch (e: any) {
@@ -2047,6 +2091,9 @@ export default function AdminPage() {
                       onClick={() => {
                         setCashFormError("");
                         setCashFormSuccess("");
+                        setCashReceiptImageUrl("");
+                        if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
+                        setCashReceiptFileKey((k) => k + 1);
                         setCashLogOpen(true);
                       }}
                       style={{
@@ -2443,7 +2490,8 @@ export default function AdminPage() {
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.55, fontSize: 14 }}>
                 Incoming: payee company, date, total, and optional invoice number. Outgoing: amount, department
-                (cultivation, extraction, packaging, or general), optional date and memo.                 History filter matches entry date (UTC calendar day); rows with no entry date use logged time for the
+                (cultivation, extraction, packaging, or general), optional date and memo, and optional receipt photo.
+                History filter matches entry date (UTC calendar day); rows with no entry date use logged time for the
                 same range. Use Direction to show only incoming or outgoing rows.
               </p>
               {cashFormError ? (
@@ -2484,9 +2532,15 @@ export default function AdminPage() {
                   Direction
                   <select
                     value={cashDirection}
-                    onChange={(e) =>
-                      setCashDirection(e.target.value as "INCOMING" | "OUTGOING")
-                    }
+                    onChange={(e) => {
+                      const v = e.target.value as "INCOMING" | "OUTGOING";
+                      setCashDirection(v);
+                      if (v === "INCOMING") {
+                        setCashReceiptImageUrl("");
+                        if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
+                        setCashReceiptFileKey((k) => k + 1);
+                      }
+                    }}
                     style={{ ...inputStyle }}
                   >
                     <option value="INCOMING">Incoming (cash in)</option>
@@ -2581,17 +2635,67 @@ export default function AdminPage() {
                         autoComplete="off"
                       />
                     </label>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <div style={{ ...labelStyle, marginBottom: 0 }}>
+                        Receipt photo (optional)
+                        <input
+                          key={cashReceiptFileKey}
+                          ref={cashReceiptInputRef}
+                          type="file"
+                          accept="image/jpeg,image/jpg,image/png,image/webp"
+                          capture="environment"
+                          disabled={cashReceiptUploading || cashSaving}
+                          onChange={(e) => void handleCashReceiptFileChange(e)}
+                          style={{ ...inputStyle, padding: "8px 10px" }}
+                        />
+                        <div style={{ color: "#64748b", fontSize: 12, marginTop: 6, fontWeight: 600 }}>
+                          Use your camera or photo library. JPEG, PNG, or WebP.
+                          {cashReceiptUploading ? " Uploading…" : null}
+                        </div>
+                        {cashReceiptImageUrl ? (
+                          <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                            <a
+                              href={cashReceiptImageUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: "#38bdf8", fontWeight: 800, fontSize: 14 }}
+                            >
+                              Preview receipt
+                            </a>
+                            <button
+                              type="button"
+                              disabled={cashSaving}
+                              onClick={() => {
+                                setCashReceiptImageUrl("");
+                                if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
+                                setCashReceiptFileKey((k) => k + 1);
+                              }}
+                              style={{
+                                ...smallButtonStyle,
+                                background: "rgba(51, 65, 85, 0.6)",
+                                border: "1px solid rgba(148, 163, 184, 0.35)",
+                                color: "#e2e8f0",
+                                cursor: cashSaving ? "not-allowed" : "pointer",
+                              }}
+                            >
+                              Remove receipt
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
                   </>
                 )}
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 22 }}>
                 <button
                   type="button"
-                  disabled={cashSaving}
+                  disabled={cashSaving || cashReceiptUploading}
                   onClick={() => void saveCashEntry()}
                   style={{
                     ...smallButtonStyle,
-                    background: cashSaving ? "rgba(71, 85, 105, 0.5)" : "#22c55e",
+                    background:
+                      cashSaving || cashReceiptUploading ? "rgba(71, 85, 105, 0.5)" : "#22c55e",
                     border: "1px solid rgba(34, 197, 94, 0.7)",
                     color: "white",
                     cursor: cashSaving ? "wait" : "pointer",
@@ -2701,7 +2805,7 @@ export default function AdminPage() {
                       width: "100%",
                       borderCollapse: "collapse",
                       fontSize: 13,
-                      minWidth: 720,
+                      minWidth: 820,
                     }}
                   >
                     <thead>
@@ -2714,13 +2818,14 @@ export default function AdminPage() {
                         <th style={checkThStyle}>Dept</th>
                         <th style={checkThStyle}>Entry date</th>
                         <th style={checkThStyle}>Memo</th>
+                        <th style={checkThStyle}>Receipt</th>
                         <th style={checkThStyle}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {cashRows.length === 0 ? (
                         <tr>
-                          <td colSpan={9} style={checkTdStyle}>
+                          <td colSpan={10} style={checkTdStyle}>
                             No rows for this filter.
                           </td>
                         </tr>
@@ -2743,6 +2848,20 @@ export default function AdminPage() {
                                 : "—"}
                             </td>
                             <td style={checkTdStyle}>{row.memo || "—"}</td>
+                            <td style={checkTdStyle}>
+                              {row.receiptImageUrl ? (
+                                <a
+                                  href={row.receiptImageUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: "#38bdf8", fontWeight: 800 }}
+                                >
+                                  View
+                                </a>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
                             <td style={checkTdStyle}>
                               <button
                                 type="button"

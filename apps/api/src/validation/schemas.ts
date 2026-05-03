@@ -234,7 +234,9 @@ export const cashLogCreateSchema = z
         entryDate: z.coerce.date().optional(),
         payeeCompany: z.string().max(200).optional(),
         invoiceNumber: z.string().max(120).optional(),
-        department: cashLogDepartmentSchema.optional()
+        department: cashLogDepartmentSchema.optional(),
+        /** Outgoing only: URL from POST /cash-log/upload-receipt. */
+        receiptImageUrl: z.string().url().max(2000).optional()
     })
     .superRefine((data, ctx) => {
         if (data.direction === "INCOMING") {
@@ -251,6 +253,13 @@ export const cashLogCreateSchema = z
                     code: z.ZodIssueCode.custom,
                     message: "entryDate is required for incoming cash",
                     path: ["entryDate"]
+                });
+            }
+            if (data.receiptImageUrl) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: "receiptImageUrl is only allowed for outgoing cash",
+                    path: ["receiptImageUrl"]
                 });
             }
         }

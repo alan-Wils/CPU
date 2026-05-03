@@ -4,7 +4,7 @@ import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { requireRole } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
-import { cashLogCreateSchema } from "../../validation/schemas.js";
+import { cashLogCreateSchema, checkUploadSchema } from "../../validation/schemas.js";
 import { CashLogService } from "../../services/cashLogService.js";
 import { AppError } from "../../errors/AppError.js";
 import { logInfo } from "../../lib/logger.js";
@@ -61,6 +61,22 @@ cashLogRouter.get("/", requireRole([...adminRoles]), validate({ query: listQuery
     res.json({ rows });
 }));
 
+cashLogRouter.post("/upload-receipt", requireRole([...adminRoles]), validate({ body: checkUploadSchema }), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    if (!companyId) {
+        throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
+    }
+    const origin = `${req.protocol}://${req.get("host") || ""}`;
+    const uploaded = await service.uploadReceiptImage({
+        companyId,
+        fileName: req.body.fileName,
+        mimeType: req.body.mimeType,
+        dataBase64: req.body.dataBase64,
+        origin
+    });
+    res.status(201).json(uploaded);
+}));
+
 cashLogRouter.post("/", requireRole([...adminRoles]), validate({ body: cashLogCreateSchema }), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     if (!companyId) {
@@ -75,7 +91,8 @@ cashLogRouter.post("/", requireRole([...adminRoles]), validate({ body: cashLogCr
         entryDate: req.body.entryDate,
         payeeCompany: req.body.payeeCompany,
         invoiceNumber: req.body.invoiceNumber,
-        department: req.body.department
+        department: req.body.department,
+        receiptImageUrl: req.body.receiptImageUrl
     });
     res.status(201).json(saved);
 }));

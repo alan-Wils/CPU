@@ -1,6 +1,38 @@
+import { randomUUID } from "crypto";
+import { mkdir, unlink, writeFile } from "fs/promises";
+import path from "path";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
+import { env } from "../config/env.js";
 import { AppError } from "../errors/AppError.js";
+
+function extForReceiptMime(mimeType: string) {
+    if (mimeType === "image/png")
+        return "png";
+    if (mimeType === "image/webp")
+        return "webp";
+    return "jpg";
+}
+
+async function unlinkCashReceiptFile(imageUrl: string | null | undefined) {
+    if (!imageUrl || typeof imageUrl !== "string")
+        return;
+    try {
+        const u = new URL(imageUrl);
+        const m = String(u.pathname || "").match(/^\/uploads\/cash-receipts\/([^/]+)\/(.+)$/);
+        if (!m)
+            return;
+        const [, cid, rawName] = m;
+        const safeBase = path.basename(rawName);
+        if (!safeBase || safeBase !== rawName || rawName.includes(".."))
+            return;
+        const fullPath = path.join(process.cwd(), "uploads", "cash-receipts", cid, safeBase);
+        await unlink(fullPath).catch(() => {});
+    }
+    catch {
+        /* invalid URL */
+    }
+}
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function parseUtcDayStart(isoDate: string | undefined) {
     if (!isoDate || !ISO_DATE.test(String(isoDate).trim()))
@@ -52,6 +84,32 @@ function csvEscape(value: unknown) {
     return s;
 }
 export class CashLogService {
+    async uploadReceiptImage(input: {
+        companyId: string;
+        fileName?: string | null;
+        mimeType: string;
+        dataBase64: string;
+        origin: string;
+    }) {
+        const base64 = String(input.dataBase64 || "").replace(/^data:[^;]+;base64,/, "");
+        const buffer = Buffer.from(base64, "base64");
+        if (!buffer.length) {
+            throw new AppError("Invalid receipt image data", 400, "CASH_RECEIPT_IMAGE_INVALID");
+        }
+        if (buffer.length > env.CHECK_UPLOAD_MAX_BYTES) {
+            throw new AppError(`Image exceeds ${env.CHECK_UPLOAD_MAX_BYTES} byte limit`, 413, "CASH_RECEIPT_IMAGE_TOO_LARGE");
+        }
+        const ext = extForReceiptMime(String(input.mimeType || ""));
+        const safeName = `${Date.now()}-${randomUUID().slice(0, 12)}.${ext}`;
+        const directory = path.join(process.cwd(), "uploads", "cash-receipts", input.companyId);
+        await mkdir(directory, { recursive: true });
+        await writeFile(path.join(directory, safeName), buffer);
+        return {
+            imageUrl: `${input.origin}/uploads/cash-receipts/${input.companyId}/${safeName}`,
+            bytes: buffer.length
+        };
+    }
+
     async create(input: {
         companyId: string;
         createdByUserId: string;
@@ -62,6 +120,7 @@ export class CashLogService {
         payeeCompany?: string | null;
         invoiceNumber?: string | null;
         department?: "CULTIVATION" | "EXTRACTION" | "PACKAGING" | "GENERAL" | null;
+        receiptImageUrl?: string | null;
     }) {
         const incoming = input.direction === "INCOMING";
         return prisma.cashLogEntry.create({
@@ -76,7 +135,10 @@ export class CashLogService {
                 invoiceNumber: incoming
                     ? (String(input.invoiceNumber || "").trim() || undefined)
                     : undefined,
-                department: !incoming ? input.department ?? undefined : undefined
+                department: !incoming ? input.department ?? undefined : undefined,
+                receiptImageUrl: !incoming && input.receiptImageUrl
+                    ? String(input.receiptImageUrl).trim() || undefined
+                    : undefined
             },
             select: {
                 id: true,
@@ -89,6 +151,7 @@ export class CashLogService {
                 department: true,
                 memo: true,
                 entryDate: true,
+                receiptImageUrl: true,
                 createdAt: true,
                 updatedAt: true
             }
@@ -117,6 +180,7 @@ export class CashLogService {
                 department: true,
                 memo: true,
                 entryDate: true,
+                receiptImageUrl: true,
                 createdAt: true,
                 updatedAt: true
             }
@@ -143,6 +207,7 @@ export class CashLogService {
                 department: true,
                 memo: true,
                 entryDate: true,
+                receiptImageUrl: true,
                 createdAt: true
             }
         });
@@ -157,6 +222,7 @@ export class CashLogService {
         memo: string | null;
         entryDate: Date | null;
         createdAt: Date;
+        receiptImageUrl: string | null;
     }>) {
         const header = [
             "id",
@@ -167,7 +233,8 @@ export class CashLogService {
             "payeeCompany",
             "invoiceNumber",
             "department",
-            "memo"
+            "memo",
+            "receiptImageUrl"
         ];
         const lines = [header.join(",")];
         for (const r of rows) {
@@ -180,16 +247,22 @@ export class CashLogService {
                 csvEscape(r.payeeCompany),
                 csvEscape(r.invoiceNumber),
                 csvEscape(r.department),
-                csvEscape(r.memo)
+                csvEscape(r.memo),
+                csvEscape(r.receiptImageUrl)
             ].join(","));
         }
         return lines.join("\r\n");
     }
 
     async deleteById(companyId: string, id: string) {
-        const result = await prisma.cashLogEntry.deleteMany({ where: { id, companyId } });
-        if (result.count === 0) {
+        const row = await prisma.cashLogEntry.findFirst({
+            where: { id, companyId },
+            select: { id: true, receiptImageUrl: true }
+        });
+        if (!row) {
             throw new AppError("Cash log entry not found.", 404, "CASH_LOG_NOT_FOUND");
         }
+        await unlinkCashReceiptFile(row.receiptImageUrl);
+        await prisma.cashLogEntry.delete({ where: { id: row.id } });
     }
 }
