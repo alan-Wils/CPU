@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../errors/AppError.js";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -17,7 +18,8 @@ function parseUtcDayEnd(isoDate: string | undefined) {
         return undefined;
     return new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
 }
-function buildCreatedAtFilter(opts: { from?: string; to?: string } | undefined) {
+/** UTC calendar-day bounds for optional `from` / `to` (YYYY-MM-DD). */
+function buildUtcDayRange(opts: { from?: string; to?: string } | undefined) {
     const from = opts?.from ? parseUtcDayStart(opts.from) : undefined;
     const to = opts?.to ? parseUtcDayEnd(opts.to) : undefined;
     if (!from && !to)
@@ -28,6 +30,19 @@ function buildCreatedAtFilter(opts: { from?: string; to?: string } | undefined) 
     return {
         ...(from ? { gte: from } : {}),
         ...(to ? { lte: to } : {})
+    };
+}
+
+/**
+ * History / export: match **entry date** when set; rows with no entry date still appear if **logged**
+ * (`createdAt`) falls in the range (legacy / outgoing-without-date).
+ */
+function whereEntryDateOrLegacyCreated(range: { gte?: Date; lte?: Date }): Prisma.CashLogEntryWhereInput {
+    return {
+        OR: [
+            { entryDate: range },
+            { AND: [{ entryDate: null }, { createdAt: range }] }
+        ]
     };
 }
 function csvEscape(value: unknown) {
@@ -80,11 +95,11 @@ export class CashLogService {
         });
     }
     async list(companyId: string, take = 100, opts?: { from?: string; to?: string }) {
-        const createdAt = buildCreatedAtFilter(opts);
+        const range = buildUtcDayRange(opts);
         return prisma.cashLogEntry.findMany({
             where: {
                 companyId,
-                ...(createdAt ? { createdAt } : {})
+                ...(range ? whereEntryDateOrLegacyCreated(range) : {})
             },
             orderBy: { createdAt: "desc" },
             take: Math.min(Math.max(take, 1), 500),
@@ -103,12 +118,12 @@ export class CashLogService {
         });
     }
     async listForExport(companyId: string, opts: { from: string; to: string }) {
-        const createdAt = buildCreatedAtFilter(opts);
-        if (!createdAt) {
+        const range = buildUtcDayRange(opts);
+        if (!range) {
             throw new AppError("Export requires `from` and `to` query parameters (YYYY-MM-DD)", 400, "CASH_LOG_EXPORT_RANGE_REQUIRED");
         }
         return prisma.cashLogEntry.findMany({
-            where: { companyId, createdAt },
+            where: { companyId, ...whereEntryDateOrLegacyCreated(range) },
             orderBy: { createdAt: "desc" },
             select: {
                 id: true,

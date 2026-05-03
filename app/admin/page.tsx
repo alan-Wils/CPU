@@ -2348,8 +2348,8 @@ export default function AdminPage() {
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.55, fontSize: 14 }}>
                 Incoming: payee company, date, total, and optional invoice number. Outgoing: amount, department
-                (cultivation, extraction, packaging, or general), optional date and memo. History filter uses log
-                time (UTC day).
+                (cultivation, extraction, packaging, or general), optional date and memo. History filter matches
+                entry date (UTC calendar day); rows with no entry date use logged time for the same range.
               </p>
               {cashFormError ? (
                 <div
