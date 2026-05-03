@@ -260,6 +260,15 @@ type CheckCaptureRow = {
   stubImageUrl?: string | null;
 };
 
+type CashLogRow = {
+  id: string;
+  direction: "INCOMING" | "OUTGOING";
+  amount: number;
+  memo?: string | null;
+  entryDate?: string | null;
+  createdAt: string;
+};
+
 function defaultCheckFilterTo(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -348,6 +357,22 @@ export default function AdminPage() {
   const [checkFormError, setCheckFormError] = useState("");
   const [checkFormSuccess, setCheckFormSuccess] = useState("");
   const [checkExporting, setCheckExporting] = useState(false);
+  const [checkLogOpen, setCheckLogOpen] = useState(false);
+  const [cashLogOpen, setCashLogOpen] = useState(false);
+
+  const [cashRows, setCashRows] = useState<CashLogRow[]>([]);
+  const [cashListLoading, setCashListLoading] = useState(false);
+  const [cashListError, setCashListError] = useState("");
+  const [cashFilterFrom, setCashFilterFrom] = useState(defaultCheckFilterFrom);
+  const [cashFilterTo, setCashFilterTo] = useState(defaultCheckFilterTo);
+  const [cashDirection, setCashDirection] = useState<"INCOMING" | "OUTGOING">("INCOMING");
+  const [cashAmount, setCashAmount] = useState("");
+  const [cashMemo, setCashMemo] = useState("");
+  const [cashEntryDate, setCashEntryDate] = useState("");
+  const [cashSaving, setCashSaving] = useState(false);
+  const [cashFormError, setCashFormError] = useState("");
+  const [cashFormSuccess, setCashFormSuccess] = useState("");
+  const [cashExporting, setCashExporting] = useState(false);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -561,6 +586,128 @@ export default function AdminPage() {
     }
   }
 
+  async function loadCashEntries() {
+    if (!canManageUsers(currentUser?.role || "")) return;
+    const cid = checksCompanyId();
+    if (!cid) return;
+    setCashListLoading(true);
+    setCashListError("");
+    try {
+      const q = new URLSearchParams();
+      if (cashFilterFrom.trim()) q.set("from", cashFilterFrom.trim());
+      if (cashFilterTo.trim()) q.set("to", cashFilterTo.trim());
+      q.set("take", "200");
+      const path = withCompanyQuery(`/api/cash-log?${q.toString()}`, cid);
+      const data = await apiRequest<{ rows?: CashLogRow[] }>(path, { companyId: cid });
+      setCashRows(Array.isArray(data?.rows) ? data.rows : []);
+    } catch (e: any) {
+      setCashListError(e?.message || "Could not load cash log.");
+    } finally {
+      setCashListLoading(false);
+    }
+  }
+
+  async function saveCashEntry() {
+    setCashFormError("");
+    setCashFormSuccess("");
+    if (!canManageUsers(currentUser?.role || "")) {
+      setCashFormError("Only OWNER or ADMIN can save cash entries.");
+      return;
+    }
+    const cid = checksCompanyId();
+    if (!cid) {
+      setCashFormError("Select a company context before saving.");
+      return;
+    }
+    const totalRaw = String(cashAmount || "").replace(/,/g, "").trim();
+    const amount = Number(totalRaw);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setCashFormError("Amount must be a positive number.");
+      return;
+    }
+    setCashSaving(true);
+    try {
+      await apiRequest(withCompanyQuery("/api/cash-log", cid), {
+        method: "POST",
+        companyId: cid,
+        body: {
+          direction: cashDirection,
+          amount,
+          memo: cashMemo.trim() || undefined,
+          entryDate: cashEntryDate.trim()
+            ? new Date(`${cashEntryDate.trim()}T12:00:00.000Z`).toISOString()
+            : undefined,
+        },
+      });
+      setCashFormSuccess("Cash entry saved.");
+      setCashAmount("");
+      setCashMemo("");
+      setCashEntryDate("");
+      await loadCashEntries();
+    } catch (e: any) {
+      setCashFormError(e?.message || "Could not save cash entry.");
+    } finally {
+      setCashSaving(false);
+    }
+  }
+
+  async function exportCashLogCsv() {
+    setCashFormError("");
+    setCashFormSuccess("");
+    if (!canManageUsers(currentUser?.role || "")) {
+      setCashFormError("Only OWNER or ADMIN can export cash data.");
+      return;
+    }
+    const cid = checksCompanyId();
+    if (!cid) {
+      setCashFormError("Select a company context before exporting.");
+      return;
+    }
+    const from = cashFilterFrom.trim();
+    const to = cashFilterTo.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      setCashFormError("Use YYYY-MM-DD for both filter dates before exporting.");
+      return;
+    }
+    setCashExporting(true);
+    try {
+      const token = getAuthToken();
+      const path = withCompanyQuery(
+        `/api/cash-log/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+        cid,
+      );
+      const headers: Record<string, string> = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
+      if (cid) headers["X-Company-Id"] = cid;
+      const res = await fetch(`${API_BASE_URL}${path}`, { headers });
+      const blob = await res.blob();
+      if (!res.ok) {
+        let msg = await blob.text();
+        try {
+          const j = JSON.parse(msg) as { message?: string };
+          if (j?.message) msg = j.message;
+        } catch {
+          /* keep text */
+        }
+        throw new Error(msg || "Export failed.");
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `cash-log-${from}_${to}.csv`;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setCashFormSuccess("Download started.");
+    } catch (e: any) {
+      setCashFormError(e?.message || "Could not export cash log.");
+    } finally {
+      setCashExporting(false);
+    }
+  }
+
   function inviteAdminCompanyId(): string {
     return (
       (currentUser?.role === "OWNER"
@@ -716,10 +863,16 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    if (loading) return;
+    if (!checkLogOpen || loading) return;
     if (!canManageUsers(currentUser?.role || "")) return;
     void loadCheckCaptures();
-  }, [loading, currentUser?.role, selectedCompanyId, company?.id]);
+  }, [checkLogOpen, loading, currentUser?.role, selectedCompanyId, company?.id]);
+
+  useEffect(() => {
+    if (!cashLogOpen || loading) return;
+    if (!canManageUsers(currentUser?.role || "")) return;
+    void loadCashEntries();
+  }, [cashLogOpen, loading, currentUser?.role, selectedCompanyId, company?.id]);
 
   async function handleCompanySwitch(companyId: string) {
     setError("");
@@ -742,7 +895,6 @@ export default function AdminPage() {
       setUsers(normalizeAdminUsersList(rawUsers));
       await loadPendingInvitesForCompany(companyId);
       setSuccess("Switched company view.");
-      void loadCheckCaptures();
     } catch (err: any) {
       setError(err?.message || "Could not switch company.");
     }
@@ -1745,7 +1897,90 @@ export default function AdminPage() {
 
               {canManageUsers(currentUser?.role || "") ? (
                 <section style={{ ...panelStyle, marginTop: 22 }}>
-                  <h2 style={sectionTitleStyle}>Check photos &amp; stubs</h2>
+                  <h2 style={sectionTitleStyle}>Financial logs</h2>
+                  <p
+                    style={{
+                      color: "#94a3b8",
+                      marginTop: 0,
+                      marginBottom: 16,
+                      lineHeight: 1.55,
+                      fontSize: 15,
+                    }}
+                  >
+                    Log check photos and stub images, or record cash in and out. Each tool opens in its own window.
+                  </p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCheckFormError("");
+                        setCheckFormSuccess("");
+                        setCheckLogOpen(true);
+                      }}
+                      style={{
+                        ...smallButtonStyle,
+                        background: "rgba(56, 189, 248, 0.2)",
+                        border: "1px solid rgba(56, 189, 248, 0.45)",
+                        color: "#bae6fd",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Open check log…
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCashFormError("");
+                        setCashFormSuccess("");
+                        setCashLogOpen(true);
+                      }}
+                      style={{
+                        ...smallButtonStyle,
+                        background: "rgba(34, 197, 94, 0.18)",
+                        border: "1px solid rgba(34, 197, 94, 0.45)",
+                        color: "#bbf7d0",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Open cash log…
+                    </button>
+                  </div>
+                </section>
+              ) : null}
+            </>
+          )}
+        </div>
+
+        {checkLogOpen ? (
+          <div style={{ ...modalOverlayStyle, zIndex: 1100 }}>
+            <div
+              style={{
+                ...modalStyle,
+                maxWidth: 940,
+                maxHeight: "92vh",
+                overflowY: "auto",
+                width: "100%",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                  marginBottom: 14,
+                  flexWrap: "wrap",
+                }}
+              >
+                <h2 style={{ ...sectionTitleStyle, marginBottom: 0 }}>Check log</h2>
+                <button
+                  type="button"
+                  onClick={() => setCheckLogOpen(false)}
+                  style={{ ...modalButtonStyle }}
+                >
+                  Close
+                </button>
+              </div>
                   <p
                     style={{
                       color: "#94a3b8",
@@ -2041,11 +2276,270 @@ export default function AdminPage() {
                       </table>
                     </div>
                   </div>
-                </section>
+            </div>
+          </div>
+        ) : null}
+
+        {cashLogOpen ? (
+          <div style={{ ...modalOverlayStyle, zIndex: 1100 }}>
+            <div
+              style={{
+                ...modalStyle,
+                maxWidth: 720,
+                maxHeight: "92vh",
+                overflowY: "auto",
+                width: "100%",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                  marginBottom: 14,
+                  flexWrap: "wrap",
+                }}
+              >
+                <h2 style={{ ...sectionTitleStyle, marginBottom: 0 }}>Cash log</h2>
+                <button
+                  type="button"
+                  onClick={() => setCashLogOpen(false)}
+                  style={{ ...modalButtonStyle }}
+                >
+                  Close
+                </button>
+              </div>
+              <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.55, fontSize: 14 }}>
+                Record physical cash in (incoming) and cash out (outgoing). Filter and export use the log
+                timestamp (UTC calendar day).
+              </p>
+              {cashFormError ? (
+                <div
+                  style={{
+                    ...messageStyle,
+                    marginBottom: 12,
+                    background: "rgba(127, 29, 29, 0.58)",
+                    border: "1px solid rgba(248, 113, 113, 0.5)",
+                    color: "#fecaca",
+                  }}
+                >
+                  {cashFormError}
+                </div>
               ) : null}
-            </>
-          )}
-        </div>
+              {cashFormSuccess ? (
+                <div
+                  style={{
+                    ...messageStyle,
+                    marginBottom: 12,
+                    background: "rgba(20, 83, 45, 0.58)",
+                    border: "1px solid rgba(34, 197, 94, 0.5)",
+                    color: "#bbf7d0",
+                  }}
+                >
+                  {cashFormSuccess}
+                </div>
+              ) : null}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                  gap: 14,
+                  marginBottom: 16,
+                }}
+              >
+                <label style={{ ...labelStyle, marginBottom: 0 }}>
+                  Direction
+                  <select
+                    value={cashDirection}
+                    onChange={(e) =>
+                      setCashDirection(e.target.value as "INCOMING" | "OUTGOING")
+                    }
+                    style={{ ...inputStyle }}
+                  >
+                    <option value="INCOMING">Incoming (cash in)</option>
+                    <option value="OUTGOING">Outgoing (cash out)</option>
+                  </select>
+                </label>
+                <label style={{ ...labelStyle, marginBottom: 0 }}>
+                  Amount
+                  <input
+                    value={cashAmount}
+                    onChange={(e) => setCashAmount(e.target.value)}
+                    placeholder="0.00"
+                    inputMode="decimal"
+                    style={{ ...inputStyle }}
+                    autoComplete="off"
+                  />
+                </label>
+                <label style={{ ...labelStyle, marginBottom: 0 }}>
+                  Memo (optional)
+                  <input
+                    value={cashMemo}
+                    onChange={(e) => setCashMemo(e.target.value)}
+                    placeholder="e.g. Petty cash, drawer count"
+                    style={{ ...inputStyle }}
+                    autoComplete="off"
+                  />
+                </label>
+                <label style={{ ...labelStyle, marginBottom: 0 }}>
+                  Entry date (optional)
+                  <input
+                    type="date"
+                    value={cashEntryDate}
+                    onChange={(e) => setCashEntryDate(e.target.value)}
+                    style={{ ...inputStyle }}
+                  />
+                </label>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 22 }}>
+                <button
+                  type="button"
+                  disabled={cashSaving}
+                  onClick={() => void saveCashEntry()}
+                  style={{
+                    ...smallButtonStyle,
+                    background: cashSaving ? "rgba(71, 85, 105, 0.5)" : "#22c55e",
+                    border: "1px solid rgba(34, 197, 94, 0.7)",
+                    color: "white",
+                    cursor: cashSaving ? "wait" : "pointer",
+                  }}
+                >
+                  {cashSaving ? "Saving…" : "Save cash entry"}
+                </button>
+              </div>
+              <div
+                style={{
+                  borderTop: "1px solid rgba(148, 163, 184, 0.2)",
+                  paddingTop: 18,
+                }}
+              >
+                <h3
+                  style={{
+                    margin: "0 0 12px",
+                    fontSize: 17,
+                    fontWeight: 900,
+                    color: "#e2e8f0",
+                  }}
+                >
+                  History &amp; export
+                </h3>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 12,
+                    alignItems: "flex-end",
+                    marginBottom: 14,
+                  }}
+                >
+                  <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
+                    From (YYYY-MM-DD)
+                    <input
+                      value={cashFilterFrom}
+                      onChange={(e) => setCashFilterFrom(e.target.value)}
+                      style={{ ...inputStyle }}
+                    />
+                  </label>
+                  <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
+                    To (YYYY-MM-DD)
+                    <input
+                      value={cashFilterTo}
+                      onChange={(e) => setCashFilterTo(e.target.value)}
+                      style={{ ...inputStyle }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={cashListLoading}
+                    onClick={() => void loadCashEntries()}
+                    style={{
+                      ...smallButtonStyle,
+                      background: "rgba(56, 189, 248, 0.16)",
+                      border: "1px solid rgba(56, 189, 248, 0.4)",
+                      color: "#bae6fd",
+                      cursor: cashListLoading ? "wait" : "pointer",
+                    }}
+                  >
+                    {cashListLoading ? "Loading…" : "Apply filter"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={cashExporting}
+                    onClick={() => void exportCashLogCsv()}
+                    style={{
+                      ...smallButtonStyle,
+                      background: "rgba(168, 85, 247, 0.2)",
+                      border: "1px solid rgba(168, 85, 247, 0.45)",
+                      color: "#e9d5ff",
+                      cursor: cashExporting ? "wait" : "pointer",
+                    }}
+                  >
+                    {cashExporting ? "Exporting…" : "Export CSV (range)"}
+                  </button>
+                </div>
+                {cashListError ? (
+                  <div style={{ color: "#fecaca", marginBottom: 10, fontWeight: 700 }}>
+                    {cashListError}
+                  </div>
+                ) : null}
+                <div
+                  style={{
+                    overflowX: "auto",
+                    borderRadius: 12,
+                    border: "1px solid rgba(148, 163, 184, 0.2)",
+                  }}
+                >
+                  <table
+                    style={{
+                      width: "100%",
+                      borderCollapse: "collapse",
+                      fontSize: 13,
+                      minWidth: 520,
+                    }}
+                  >
+                    <thead>
+                      <tr style={{ background: "rgba(2, 6, 23, 0.65)" }}>
+                        <th style={checkThStyle}>Logged</th>
+                        <th style={checkThStyle}>Direction</th>
+                        <th style={checkThStyle}>Amount</th>
+                        <th style={checkThStyle}>Memo</th>
+                        <th style={checkThStyle}>Entry date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cashRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} style={checkTdStyle}>
+                            No rows for this filter.
+                          </td>
+                        </tr>
+                      ) : (
+                        cashRows.map((row) => (
+                          <tr key={row.id} style={{ borderTop: "1px solid rgba(51,65,85,0.6)" }}>
+                            <td style={checkTdStyle}>
+                              {row.createdAt ? new Date(row.createdAt).toLocaleString() : "—"}
+                            </td>
+                            <td style={checkTdStyle}>
+                              {row.direction === "INCOMING" ? "Incoming" : "Outgoing"}
+                            </td>
+                            <td style={checkTdStyle}>{String(row.amount)}</td>
+                            <td style={checkTdStyle}>{row.memo || "—"}</td>
+                            <td style={checkTdStyle}>
+                              {row.entryDate
+                                ? new Date(row.entryDate).toLocaleDateString()
+                                : "—"}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {notificationModal.open && (
           <div style={modalOverlayStyle}>

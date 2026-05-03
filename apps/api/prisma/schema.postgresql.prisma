@@ -94,6 +94,11 @@ enum CultivationPackagingLine {
   POPCORN
 }
 
+enum CashLogDirection {
+  INCOMING
+  OUTGOING
+}
+
 model Company {
   id                String @id @default(cuid())
   name              String
@@ -121,6 +126,7 @@ model Company {
   extractionBiomass   ExtractionBiomassInput[]
   storeSnapshots      CompanyStore[]
   checkCaptures       CheckCapture[]
+  cashLogEntries      CashLogEntry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -145,6 +151,7 @@ model User {
   updatedAt           DateTime             @updatedAt
   passwordResetTokens PasswordResetToken[]
   checkCaptures       CheckCapture[]       @relation("CheckCaptureCreatedBy")
+  cashLogEntries      CashLogEntry[]       @relation("CashLogCreatedBy")
 
   @@index([companyId])
 }
@@ -485,6 +492,23 @@ model CheckCapture {
   rawOcrJson      String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  @@index([companyId, createdAt])
+  @@index([createdByUserId, createdAt])
+}
+
+model CashLogEntry {
+  id              String           @id @default(cuid())
+  companyId       String
+  company         Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdByUserId String
+  createdByUser   User             @relation("CashLogCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  direction       CashLogDirection
+  amount          Float
+  memo            String?
+  entryDate       DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   @@index([companyId, createdAt])
   @@index([createdByUserId, createdAt])

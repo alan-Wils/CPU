@@ -225,6 +225,12 @@ export const checkSaveSchema = z.object({
     stubImageUrl: z.string().url().optional(),
     rawOcrJson: z.unknown().optional()
 });
+export const cashLogCreateSchema = z.object({
+    direction: z.enum(["INCOMING", "OUTGOING"]),
+    amount: z.number().positive().max(10_000_000),
+    memo: z.string().max(500).optional(),
+    entryDate: z.coerce.date().optional()
+});
 export const sourcePackageCreateSchema = z.object({
     cultivationBatchId: z.string().cuid(),
     role: z.enum(["A_GRADE_FLOWER", "POPCORN", "DRY_TRIM", "FRESH_FROZEN"]),
