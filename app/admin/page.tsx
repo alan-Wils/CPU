@@ -2777,7 +2777,7 @@ export default function AdminPage() {
         </div>
 
         {notificationModal.open && (
-          <div style={modalOverlayStyle}>
+          <div style={{ ...modalOverlayStyle, zIndex: 2100 }}>
             <div style={{ ...modalStyle, maxWidth: 560 }}>
               <h2 style={{ marginTop: 0, marginBottom: 10 }}>
                 {notificationModal.title}
