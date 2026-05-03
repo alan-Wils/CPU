@@ -19,8 +19,16 @@ export function validate(schema) {
                 configurable: true
             });
         }
-        if (schema.params)
-            req.params = schema.params.parse(req.params);
+        if (schema.params) {
+            const parsedParams = schema.params.parse(req.params);
+            /** Express 5 may treat `req.params` like `req.query` (non-assignable) in some setups. */
+            Object.defineProperty(req, "params", {
+                value: parsedParams,
+                writable: true,
+                enumerable: true,
+                configurable: true
+            });
+        }
         next();
     };
 }

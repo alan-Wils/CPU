@@ -7,6 +7,7 @@ import { validate } from "../../middleware/validate.js";
 import { checkExtractSchema, checkSaveSchema, checkUploadSchema } from "../../validation/schemas.js";
 import { CheckCaptureService } from "../../services/checkCaptureService.js";
 import { AppError } from "../../errors/AppError.js";
+import { logInfo } from "../../lib/logger.js";
 const writeRoles = [
     "OWNER",
     "ADMIN",
@@ -26,6 +27,7 @@ const exportQuerySchema = z.object({
     from: isoDate,
     to: isoDate
 });
+const checkCaptureIdParam = z.object({ id: z.string().cuid() });
 export const checksRouter = Router();
 const service = new CheckCaptureService();
 checksRouter.get("/export", requireRole([...adminExportRoles]), validate({ query: exportQuerySchema }), asyncHandler(async (req, res) => {
@@ -91,4 +93,17 @@ checksRouter.post("/", requireRole([...writeRoles]), validate({ body: checkSaveS
         rawOcrJson: req.body.rawOcrJson
     });
     res.status(201).json(saved);
+}));
+checksRouter.delete("/:id", requireRole([...adminExportRoles]), validate({ params: checkCaptureIdParam }), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    if (!companyId) {
+        throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
+    }
+    await service.deleteById(companyId, req.params.id);
+    logInfo("[ADMIN] check_capture_delete", {
+        companyId,
+        captureId: req.params.id,
+        actorUserId: req.auth?.userId
+    });
+    res.status(204).send();
 }));

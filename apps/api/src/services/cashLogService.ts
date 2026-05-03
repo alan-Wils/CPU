@@ -94,11 +94,16 @@ export class CashLogService {
             }
         });
     }
-    async list(companyId: string, take = 100, opts?: { from?: string; to?: string }) {
+    async list(companyId: string, take = 100, opts?: {
+        from?: string;
+        to?: string;
+        direction?: "INCOMING" | "OUTGOING";
+    }) {
         const range = buildUtcDayRange(opts);
         return prisma.cashLogEntry.findMany({
             where: {
                 companyId,
+                ...(opts?.direction ? { direction: opts.direction } : {}),
                 ...(range ? whereEntryDateOrLegacyCreated(range) : {})
             },
             orderBy: { createdAt: "desc" },
@@ -117,13 +122,17 @@ export class CashLogService {
             }
         });
     }
-    async listForExport(companyId: string, opts: { from: string; to: string }) {
+    async listForExport(companyId: string, opts: { from: string; to: string; direction?: "INCOMING" | "OUTGOING" }) {
         const range = buildUtcDayRange(opts);
         if (!range) {
             throw new AppError("Export requires `from` and `to` query parameters (YYYY-MM-DD)", 400, "CASH_LOG_EXPORT_RANGE_REQUIRED");
         }
         return prisma.cashLogEntry.findMany({
-            where: { companyId, ...whereEntryDateOrLegacyCreated(range) },
+            where: {
+                companyId,
+                ...(opts.direction ? { direction: opts.direction } : {}),
+                ...whereEntryDateOrLegacyCreated(range)
+            },
             orderBy: { createdAt: "desc" },
             select: {
                 id: true,
@@ -175,5 +184,12 @@ export class CashLogService {
             ].join(","));
         }
         return lines.join("\r\n");
+    }
+
+    async deleteById(companyId: string, id: string) {
+        const result = await prisma.cashLogEntry.deleteMany({ where: { id, companyId } });
+        if (result.count === 0) {
+            throw new AppError("Cash log entry not found.", 404, "CASH_LOG_NOT_FOUND");
+        }
     }
 }

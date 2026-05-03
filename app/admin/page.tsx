@@ -392,6 +392,10 @@ export default function AdminPage() {
   const [cashFormError, setCashFormError] = useState("");
   const [cashFormSuccess, setCashFormSuccess] = useState("");
   const [cashExporting, setCashExporting] = useState(false);
+  /** History table only — not the new-entry form direction. */
+  const [cashHistoryDirection, setCashHistoryDirection] = useState<"ALL" | "INCOMING" | "OUTGOING">("ALL");
+  const [deletingCashId, setDeletingCashId] = useState<string | null>(null);
+  const [deletingCheckId, setDeletingCheckId] = useState<string | null>(null);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -615,6 +619,7 @@ export default function AdminPage() {
       const q = new URLSearchParams();
       if (cashFilterFrom.trim()) q.set("from", cashFilterFrom.trim());
       if (cashFilterTo.trim()) q.set("to", cashFilterTo.trim());
+      if (cashHistoryDirection !== "ALL") q.set("direction", cashHistoryDirection);
       q.set("take", "200");
       const path = withCompanyQuery(`/api/cash-log?${q.toString()}`, cid);
       const data = await apiRequest<{ rows?: CashLogRow[] }>(path, { companyId: cid });
@@ -712,10 +717,12 @@ export default function AdminPage() {
     setCashExporting(true);
     try {
       const token = getAuthToken();
-      const path = withCompanyQuery(
-        `/api/cash-log/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
-        cid,
-      );
+      const exportQs = new URLSearchParams({
+        from,
+        to,
+      });
+      if (cashHistoryDirection !== "ALL") exportQs.set("direction", cashHistoryDirection);
+      const path = withCompanyQuery(`/api/cash-log/export?${exportQs.toString()}`, cid);
       const headers: Record<string, string> = {};
       if (token) headers.Authorization = `Bearer ${token}`;
       if (cid) headers["X-Company-Id"] = cid;
@@ -745,6 +752,73 @@ export default function AdminPage() {
       setCashFormError(e?.message || "Could not export cash log.");
     } finally {
       setCashExporting(false);
+    }
+  }
+
+  function requestDeleteCashEntry(row: CashLogRow) {
+    if (!canManageUsers(currentUser?.role || "")) return;
+    const label = row.direction === "INCOMING" ? "incoming" : "outgoing";
+    showConfirm(
+      "Delete cash entry",
+      `Remove this ${label} row (${String(row.amount)})? This cannot be undone.`,
+      () => void executeDeleteCashEntry(row.id),
+    );
+  }
+
+  async function executeDeleteCashEntry(id: string) {
+    if (!canManageUsers(currentUser?.role || "")) return;
+    const cid = checksCompanyId();
+    if (!cid) {
+      setCashListError("Select a company context before deleting.");
+      return;
+    }
+    setCashListError("");
+    setCashFormError("");
+    setDeletingCashId(id);
+    try {
+      await apiRequest(withCompanyQuery(`/api/cash-log/${encodeURIComponent(id)}`, cid), {
+        method: "DELETE",
+        companyId: cid,
+      });
+      setCashFormSuccess("Cash entry deleted.");
+      await loadCashEntries();
+    } catch (e: any) {
+      setCashListError(e?.message || "Could not delete cash entry.");
+    } finally {
+      setDeletingCashId(null);
+    }
+  }
+
+  function requestDeleteCheckCapture(row: CheckCaptureRow) {
+    if (!canManageUsers(currentUser?.role || "")) return;
+    showConfirm(
+      "Delete check capture",
+      `Remove this check record (${row.payerName || "payee unknown"})? Images will be removed from storage where possible. This cannot be undone.`,
+      () => void executeDeleteCheckCapture(row.id),
+    );
+  }
+
+  async function executeDeleteCheckCapture(id: string) {
+    if (!canManageUsers(currentUser?.role || "")) return;
+    const cid = checksCompanyId();
+    if (!cid) {
+      setCheckListError("Select a company context before deleting.");
+      return;
+    }
+    setCheckListError("");
+    setCheckFormError("");
+    setDeletingCheckId(id);
+    try {
+      await apiRequest(withCompanyQuery(`/api/checks/${encodeURIComponent(id)}`, cid), {
+        method: "DELETE",
+        companyId: cid,
+      });
+      setCheckFormSuccess("Check capture deleted.");
+      await loadCheckCaptures();
+    } catch (e: any) {
+      setCheckListError(e?.message || "Could not delete check capture.");
+    } finally {
+      setDeletingCheckId(null);
     }
   }
 
@@ -2261,12 +2335,13 @@ export default function AdminPage() {
                             <th style={checkThStyle}>Total</th>
                             <th style={checkThStyle}>Invoice #</th>
                             <th style={checkThStyle}>Images</th>
+                            <th style={checkThStyle}>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
                           {checkRows.length === 0 ? (
                             <tr>
-                              <td colSpan={5} style={checkTdStyle}>
+                              <td colSpan={6} style={checkTdStyle}>
                                 No rows for this filter.
                               </td>
                             </tr>
@@ -2304,6 +2379,25 @@ export default function AdminPage() {
                                   ) : (
                                     <span style={{ color: "#64748b" }}>—</span>
                                   )}
+                                </td>
+                                <td style={checkTdStyle}>
+                                  <button
+                                    type="button"
+                                    disabled={deletingCheckId === row.id}
+                                    onClick={() => requestDeleteCheckCapture(row)}
+                                    style={{
+                                      ...smallButtonStyle,
+                                      background:
+                                        deletingCheckId === row.id
+                                          ? "rgba(71, 85, 105, 0.5)"
+                                          : "rgba(127, 29, 29, 0.55)",
+                                      border: "1px solid rgba(248, 113, 113, 0.45)",
+                                      color: "#fecaca",
+                                      cursor: deletingCheckId === row.id ? "wait" : "pointer",
+                                    }}
+                                  >
+                                    {deletingCheckId === row.id ? "…" : "Delete"}
+                                  </button>
                                 </td>
                               </tr>
                             ))
@@ -2348,8 +2442,8 @@ export default function AdminPage() {
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.55, fontSize: 14 }}>
                 Incoming: payee company, date, total, and optional invoice number. Outgoing: amount, department
-                (cultivation, extraction, packaging, or general), optional date and memo. History filter matches
-                entry date (UTC calendar day); rows with no entry date use logged time for the same range.
+                (cultivation, extraction, packaging, or general), optional date and memo.                 History filter matches entry date (UTC calendar day); rows with no entry date use logged time for the
+                same range. Use Direction to show only incoming or outgoing rows.
               </p>
               {cashFormError ? (
                 <div
@@ -2546,6 +2640,20 @@ export default function AdminPage() {
                       style={{ ...inputStyle }}
                     />
                   </label>
+                  <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
+                    Direction
+                    <select
+                      value={cashHistoryDirection}
+                      onChange={(e) =>
+                        setCashHistoryDirection(e.target.value as "ALL" | "INCOMING" | "OUTGOING")
+                      }
+                      style={{ ...inputStyle }}
+                    >
+                      <option value="ALL">All</option>
+                      <option value="INCOMING">Incoming only</option>
+                      <option value="OUTGOING">Outgoing only</option>
+                    </select>
+                  </label>
                   <button
                     type="button"
                     disabled={cashListLoading}
@@ -2605,12 +2713,13 @@ export default function AdminPage() {
                         <th style={checkThStyle}>Dept</th>
                         <th style={checkThStyle}>Entry date</th>
                         <th style={checkThStyle}>Memo</th>
+                        <th style={checkThStyle}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {cashRows.length === 0 ? (
                         <tr>
-                          <td colSpan={8} style={checkTdStyle}>
+                          <td colSpan={9} style={checkTdStyle}>
                             No rows for this filter.
                           </td>
                         </tr>
@@ -2633,6 +2742,25 @@ export default function AdminPage() {
                                 : "—"}
                             </td>
                             <td style={checkTdStyle}>{row.memo || "—"}</td>
+                            <td style={checkTdStyle}>
+                              <button
+                                type="button"
+                                disabled={deletingCashId === row.id}
+                                onClick={() => requestDeleteCashEntry(row)}
+                                style={{
+                                  ...smallButtonStyle,
+                                  background:
+                                    deletingCashId === row.id
+                                      ? "rgba(71, 85, 105, 0.5)"
+                                      : "rgba(127, 29, 29, 0.55)",
+                                  border: "1px solid rgba(248, 113, 113, 0.45)",
+                                  color: "#fecaca",
+                                  cursor: deletingCashId === row.id ? "wait" : "pointer",
+                                }}
+                              >
+                                {deletingCashId === row.id ? "…" : "Delete"}
+                              </button>
+                            </td>
                           </tr>
                         ))
                       )}

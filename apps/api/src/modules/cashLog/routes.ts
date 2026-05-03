@@ -7,18 +7,22 @@ import { validate } from "../../middleware/validate.js";
 import { cashLogCreateSchema } from "../../validation/schemas.js";
 import { CashLogService } from "../../services/cashLogService.js";
 import { AppError } from "../../errors/AppError.js";
+import { logInfo } from "../../lib/logger.js";
 
 const adminRoles = ["OWNER", "ADMIN"];
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const listQuerySchema = z.object({
     take: z.coerce.number().int().positive().max(500).optional(),
     from: isoDate.optional(),
-    to: isoDate.optional()
+    to: isoDate.optional(),
+    direction: z.enum(["INCOMING", "OUTGOING"]).optional()
 });
 const exportQuerySchema = z.object({
     from: isoDate,
-    to: isoDate
+    to: isoDate,
+    direction: z.enum(["INCOMING", "OUTGOING"]).optional()
 });
+const cashLogIdParam = z.object({ id: z.string().cuid() });
 
 export const cashLogRouter = Router();
 const service = new CashLogService();
@@ -30,7 +34,10 @@ cashLogRouter.get("/export", requireRole([...adminRoles]), validate({ query: exp
     }
     const from = String(req.query.from);
     const to = String(req.query.to);
-    const rows = await service.listForExport(companyId, { from, to });
+    const direction = req.query.direction === "INCOMING" || req.query.direction === "OUTGOING"
+        ? req.query.direction
+        : undefined;
+    const rows = await service.listForExport(companyId, { from, to, direction });
     const csv = service.rowsToCsv(rows);
     const safeFrom = from.replace(/[^\d-]/g, "");
     const safeTo = to.replace(/[^\d-]/g, "");
@@ -47,7 +54,10 @@ cashLogRouter.get("/", requireRole([...adminRoles]), validate({ query: listQuery
     const take = Number(req.query?.take || 100);
     const from = typeof req.query?.from === "string" ? req.query.from : undefined;
     const to = typeof req.query?.to === "string" ? req.query.to : undefined;
-    const rows = await service.list(companyId, take, { from, to });
+    const direction = req.query.direction === "INCOMING" || req.query.direction === "OUTGOING"
+        ? req.query.direction
+        : undefined;
+    const rows = await service.list(companyId, take, { from, to, direction });
     res.json({ rows });
 }));
 
@@ -68,4 +78,18 @@ cashLogRouter.post("/", requireRole([...adminRoles]), validate({ body: cashLogCr
         department: req.body.department
     });
     res.status(201).json(saved);
+}));
+
+cashLogRouter.delete("/:id", requireRole([...adminRoles]), validate({ params: cashLogIdParam }), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    if (!companyId) {
+        throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
+    }
+    await service.deleteById(companyId, req.params.id);
+    logInfo("[ADMIN] cash_log_delete", {
+        companyId,
+        entryId: req.params.id,
+        actorUserId: req.auth?.userId
+    });
+    res.status(204).send();
 }));

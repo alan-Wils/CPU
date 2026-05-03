@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, unlink, writeFile } from "fs/promises";
 import path from "path";
 import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
@@ -172,6 +172,26 @@ function csvEscape(value) {
     if (/[",\r\n]/.test(s))
         return `"${s.replace(/"/g, '""')}"`;
     return s;
+}
+/** Best-effort removal of locally stored check/stub images (URLs from `uploadImage`). */
+async function unlinkCheckUploadFile(imageUrl) {
+    if (!imageUrl || typeof imageUrl !== "string")
+        return;
+    try {
+        const u = new URL(imageUrl);
+        const m = String(u.pathname || "").match(/^\/uploads\/checks\/([^/]+)\/(.+)$/);
+        if (!m)
+            return;
+        const [, cid, rawName] = m;
+        const safeBase = path.basename(rawName);
+        if (!safeBase || safeBase !== rawName || rawName.includes(".."))
+            return;
+        const fullPath = path.join(process.cwd(), "uploads", "checks", cid, safeBase);
+        await unlink(fullPath).catch(() => {});
+    }
+    catch {
+        /* invalid URL */
+    }
 }
 export class CheckCaptureService {
     async uploadImage(input) {
@@ -371,5 +391,18 @@ export class CheckCaptureService {
             ].join(","));
         }
         return lines.join("\r\n");
+    }
+
+    async deleteById(companyId, id) {
+        const row = await prisma.checkCapture.findFirst({
+            where: { id, companyId },
+            select: { id: true, imageUrl: true, stubImageUrl: true }
+        });
+        if (!row) {
+            throw new AppError("Check capture not found.", 404, "CHECK_CAPTURE_NOT_FOUND");
+        }
+        await unlinkCheckUploadFile(row.imageUrl);
+        await unlinkCheckUploadFile(row.stubImageUrl);
+        await prisma.checkCapture.delete({ where: { id: row.id } });
     }
 }
