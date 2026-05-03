@@ -150,6 +150,29 @@ function parseCheckText(text) {
         memo
     };
 }
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+function parseUtcDayStart(isoDate) {
+    if (!ISO_DATE.test(String(isoDate || "").trim()))
+        return undefined;
+    const [y, m, d] = String(isoDate).split("-").map((n) => Number(n));
+    if (!y || !m || !d)
+        return undefined;
+    return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+}
+function parseUtcDayEnd(isoDate) {
+    if (!ISO_DATE.test(String(isoDate || "").trim()))
+        return undefined;
+    const [y, m, d] = String(isoDate).split("-").map((n) => Number(n));
+    if (!y || !m || !d)
+        return undefined;
+    return new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+}
+function csvEscape(value) {
+    const s = value == null ? "" : String(value);
+    if (/[",\r\n]/.test(s))
+        return `"${s.replace(/"/g, '""')}"`;
+    return s;
+}
 export class CheckCaptureService {
     async uploadImage(input) {
         const base64 = String(input.dataBase64 || "").replace(/^data:[^;]+;base64,/, "");
@@ -246,15 +269,34 @@ export class CheckCaptureService {
                 accountNumber: input.accountNumber,
                 bankName: input.bankName,
                 memo: input.memo,
+                invoiceNumber: input.invoiceNumber,
                 imageUrl: input.imageUrl,
+                stubImageUrl: input.stubImageUrl,
                 rawOcrJson: input.rawOcrJson ? JSON.stringify(input.rawOcrJson) : undefined
             }
         });
         return row;
     }
-    async listChecks(companyId, take = 50) {
+    buildDateFilter(opts) {
+        const from = opts?.from ? parseUtcDayStart(opts.from) : undefined;
+        const to = opts?.to ? parseUtcDayEnd(opts.to) : undefined;
+        if (!from && !to)
+            return undefined;
+        if (from && to && from > to) {
+            throw new AppError("`from` date must be on or before `to` date", 400, "CHECK_DATE_RANGE_INVALID");
+        }
+        return {
+            ...(from ? { gte: from } : {}),
+            ...(to ? { lte: to } : {})
+        };
+    }
+    async listChecks(companyId, take = 50, opts) {
+        const createdAt = this.buildDateFilter(opts);
         return prisma.checkCapture.findMany({
-            where: { companyId },
+            where: {
+                companyId,
+                ...(createdAt ? { createdAt } : {})
+            },
             orderBy: { createdAt: "desc" },
             take: Math.min(Math.max(take, 1), 200),
             // Omit rawOcrJson: can be huge and is not needed for the recent-records list.
@@ -270,10 +312,64 @@ export class CheckCaptureService {
                 accountNumber: true,
                 bankName: true,
                 memo: true,
+                invoiceNumber: true,
                 imageUrl: true,
+                stubImageUrl: true,
                 createdAt: true,
                 updatedAt: true
             }
         });
+    }
+    async listChecksForExport(companyId, opts) {
+        const createdAt = this.buildDateFilter(opts);
+        if (!createdAt) {
+            throw new AppError("Export requires `from` and `to` query parameters (YYYY-MM-DD)", 400, "CHECK_EXPORT_RANGE_REQUIRED");
+        }
+        return prisma.checkCapture.findMany({
+            where: { companyId, createdAt },
+            orderBy: { createdAt: "desc" },
+            select: {
+                id: true,
+                createdAt: true,
+                checkDate: true,
+                amount: true,
+                checkNumber: true,
+                payerName: true,
+                memo: true,
+                invoiceNumber: true,
+                imageUrl: true,
+                stubImageUrl: true
+            }
+        });
+    }
+    rowsToCsv(rows) {
+        const header = [
+            "id",
+            "createdAt",
+            "checkDate",
+            "payee",
+            "total",
+            "checkNumber",
+            "invoiceNumber",
+            "memo",
+            "imageUrl",
+            "stubImageUrl"
+        ];
+        const lines = [header.join(",")];
+        for (const r of rows) {
+            lines.push([
+                csvEscape(r.id),
+                csvEscape(r.createdAt?.toISOString?.() ?? r.createdAt),
+                csvEscape(r.checkDate?.toISOString?.() ?? r.checkDate ?? ""),
+                csvEscape(r.payerName),
+                csvEscape(r.amount == null ? "" : r.amount),
+                csvEscape(r.checkNumber),
+                csvEscape(r.invoiceNumber),
+                csvEscape(r.memo),
+                csvEscape(r.imageUrl),
+                csvEscape(r.stubImageUrl)
+            ].join(","));
+        }
+        return lines.join("\r\n");
     }
 }

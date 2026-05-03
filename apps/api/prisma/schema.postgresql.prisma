@@ -479,7 +479,9 @@ model CheckCapture {
   accountNumber   String?
   bankName        String?
   memo            String?
+  invoiceNumber   String?
   imageUrl        String
+  stubImageUrl    String?
   rawOcrJson      String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

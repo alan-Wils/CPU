@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import {
+  API_BASE_URL,
   apiRequest,
   deletePendingInvite,
   getMe,
@@ -12,7 +13,7 @@ import {
   inviteUser,
   setSelectedCompanyId,
 } from "@/lib/api";
-import { getAuthCompany, getAuthUser } from "@/lib/auth";
+import { getAuthCompany, getAuthToken, getAuthUser } from "@/lib/auth";
 
 type AdminUser = {
   id: string;
@@ -244,6 +245,60 @@ function canManageUsers(role: string) {
   return role === "OWNER" || role === "ADMIN";
 }
 
+type CheckMime = "image/jpeg" | "image/jpg" | "image/png" | "image/webp";
+
+type CheckCaptureRow = {
+  id: string;
+  createdAt: string;
+  checkDate?: string | null;
+  amount?: number | null;
+  checkNumber?: string | null;
+  payerName?: string | null;
+  memo?: string | null;
+  invoiceNumber?: string | null;
+  imageUrl: string;
+  stubImageUrl?: string | null;
+};
+
+function defaultCheckFilterTo(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function defaultCheckFilterFrom(): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 30);
+  return d.toISOString().slice(0, 10);
+}
+
+function normalizeCheckMime(raw: string): CheckMime | null {
+  const m = String(raw || "").toLowerCase();
+  if (m === "image/jpg" || m === "image/jpeg") return "image/jpeg";
+  if (m === "image/png") return "image/png";
+  if (m === "image/webp") return "image/webp";
+  return null;
+}
+
+async function readImageFileForCheckUpload(file: File): Promise<{
+  mimeType: CheckMime;
+  dataBase64: string;
+}> {
+  const mimeType = normalizeCheckMime(file.type);
+  if (!mimeType) {
+    throw new Error("Use a JPEG, PNG, or WebP image.");
+  }
+  const dataUrl: string = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Could not read the image file."));
+    reader.readAsDataURL(file);
+  });
+  const stripped = dataUrl.replace(/^data:[^;]+;base64,/, "");
+  if (!stripped || stripped.length < 20) {
+    throw new Error("Invalid image data.");
+  }
+  return { mimeType, dataBase64: stripped };
+}
+
 function canEditTargetUser(currentRole: string, targetRole: string) {
   if (currentRole === "OWNER") return true;
   if (currentRole === "ADMIN" && targetRole !== "OWNER") return true;
@@ -277,6 +332,23 @@ export default function AdminPage() {
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [savingInviteId, setSavingInviteId] = useState<string | null>(null);
 
+  const checkImageInputRef = useRef<HTMLInputElement | null>(null);
+  const stubImageInputRef = useRef<HTMLInputElement | null>(null);
+  const [checkFileKey, setCheckFileKey] = useState(0);
+  const [checkRows, setCheckRows] = useState<CheckCaptureRow[]>([]);
+  const [checkListLoading, setCheckListLoading] = useState(false);
+  const [checkListError, setCheckListError] = useState("");
+  const [checkFilterFrom, setCheckFilterFrom] = useState(defaultCheckFilterFrom);
+  const [checkFilterTo, setCheckFilterTo] = useState(defaultCheckFilterTo);
+  const [checkPayee, setCheckPayee] = useState("");
+  const [checkTotal, setCheckTotal] = useState("");
+  const [checkInvoice, setCheckInvoice] = useState("");
+  const [checkWrittenDate, setCheckWrittenDate] = useState("");
+  const [checkSaving, setCheckSaving] = useState(false);
+  const [checkFormError, setCheckFormError] = useState("");
+  const [checkFormSuccess, setCheckFormSuccess] = useState("");
+  const [checkExporting, setCheckExporting] = useState(false);
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -302,6 +374,192 @@ export default function AdminPage() {
     () => mergeUsersWithPendingInvites(users, pendingInvites),
     [users, pendingInvites],
   );
+
+  function checksCompanyId(): string {
+    if (String(currentUser?.role || "") === "OWNER") {
+      const sid = String(selectedCompanyId || "").trim();
+      if (sid) return sid;
+    }
+    return (
+      getSelectedCompanyId().trim() ||
+      String((company as { id?: string } | null)?.id || "").trim() ||
+      String(getAuthCompany()?.id || "").trim()
+    );
+  }
+
+  async function loadCheckCaptures() {
+    if (!canManageUsers(currentUser?.role || "")) return;
+    const cid = checksCompanyId();
+    if (!cid) return;
+    setCheckListLoading(true);
+    setCheckListError("");
+    try {
+      const q = new URLSearchParams();
+      if (checkFilterFrom.trim()) q.set("from", checkFilterFrom.trim());
+      if (checkFilterTo.trim()) q.set("to", checkFilterTo.trim());
+      q.set("take", "200");
+      const path = withCompanyQuery(`/api/checks?${q.toString()}`, cid);
+      const data = await apiRequest<{ rows?: CheckCaptureRow[] }>(path, { companyId: cid });
+      setCheckRows(Array.isArray(data?.rows) ? data.rows : []);
+    } catch (e: any) {
+      setCheckListError(e?.message || "Could not load check captures.");
+    } finally {
+      setCheckListLoading(false);
+    }
+  }
+
+  async function saveCheckCapture() {
+    setCheckFormError("");
+    setCheckFormSuccess("");
+    if (!canManageUsers(currentUser?.role || "")) {
+      setCheckFormError("Only OWNER or ADMIN can save check captures.");
+      return;
+    }
+    const cid = checksCompanyId();
+    if (!cid) {
+      setCheckFormError("Select a company context before saving.");
+      return;
+    }
+    const checkFile = checkImageInputRef.current?.files?.[0];
+    if (!checkFile) {
+      setCheckFormError("Choose a photo of the check (front).");
+      return;
+    }
+    const payee = checkPayee.trim();
+    if (!payee) {
+      setCheckFormError("Payee is required.");
+      return;
+    }
+    const totalRaw = String(checkTotal || "").replace(/,/g, "").trim();
+    const amount = Number(totalRaw);
+    if (!Number.isFinite(amount) || amount < 0) {
+      setCheckFormError("Total must be a valid non-negative number.");
+      return;
+    }
+    const stubFile = stubImageInputRef.current?.files?.[0] || null;
+
+    setCheckSaving(true);
+    try {
+      const checkPayload = await readImageFileForCheckUpload(checkFile);
+      const uploadedCheck = await apiRequest<{ imageUrl: string }>(
+        withCompanyQuery("/api/checks/upload", cid),
+        {
+          method: "POST",
+          companyId: cid,
+          body: {
+            mimeType: checkPayload.mimeType,
+            dataBase64: checkPayload.dataBase64,
+            fileName: checkFile.name,
+          },
+        },
+      );
+
+      let stubImageUrl: string | undefined;
+      if (stubFile) {
+        const stubPayload = await readImageFileForCheckUpload(stubFile);
+        const uploadedStub = await apiRequest<{ imageUrl: string }>(
+          withCompanyQuery("/api/checks/upload", cid),
+          {
+            method: "POST",
+            companyId: cid,
+            body: {
+              mimeType: stubPayload.mimeType,
+              dataBase64: stubPayload.dataBase64,
+              fileName: stubFile.name,
+            },
+          },
+        );
+        stubImageUrl = uploadedStub.imageUrl;
+      }
+
+      const invoiceTrim = checkInvoice.trim();
+      await apiRequest(withCompanyQuery("/api/checks", cid), {
+        method: "POST",
+        companyId: cid,
+        body: {
+          imageUrl: uploadedCheck.imageUrl,
+          stubImageUrl: stubImageUrl || undefined,
+          payerName: payee,
+          amount,
+          invoiceNumber: invoiceTrim || undefined,
+          checkDate: checkWrittenDate.trim()
+            ? new Date(`${checkWrittenDate.trim()}T12:00:00.000Z`).toISOString()
+            : undefined,
+        },
+      });
+
+      setCheckFormSuccess("Check capture saved.");
+      setCheckPayee("");
+      setCheckTotal("");
+      setCheckInvoice("");
+      setCheckWrittenDate("");
+      if (checkImageInputRef.current) checkImageInputRef.current.value = "";
+      if (stubImageInputRef.current) stubImageInputRef.current.value = "";
+      setCheckFileKey((k) => k + 1);
+      await loadCheckCaptures();
+    } catch (e: any) {
+      setCheckFormError(e?.message || "Could not save check capture.");
+    } finally {
+      setCheckSaving(false);
+    }
+  }
+
+  async function exportCheckCapturesCsv() {
+    setCheckFormError("");
+    setCheckFormSuccess("");
+    if (!canManageUsers(currentUser?.role || "")) {
+      setCheckFormError("Only OWNER or ADMIN can export check data.");
+      return;
+    }
+    const cid = checksCompanyId();
+    if (!cid) {
+      setCheckFormError("Select a company context before exporting.");
+      return;
+    }
+    const from = checkFilterFrom.trim();
+    const to = checkFilterTo.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      setCheckFormError("Use YYYY-MM-DD for both filter dates before exporting.");
+      return;
+    }
+    setCheckExporting(true);
+    try {
+      const token = getAuthToken();
+      const path = withCompanyQuery(
+        `/api/checks/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+        cid,
+      );
+      const headers: Record<string, string> = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
+      if (cid) headers["X-Company-Id"] = cid;
+      const res = await fetch(`${API_BASE_URL}${path}`, { headers });
+      const blob = await res.blob();
+      if (!res.ok) {
+        let msg = await blob.text();
+        try {
+          const j = JSON.parse(msg) as { message?: string };
+          if (j?.message) msg = j.message;
+        } catch {
+          /* keep text */
+        }
+        throw new Error(msg || "Export failed.");
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `check-captures-${from}_${to}.csv`;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setCheckFormSuccess("Download started.");
+    } catch (e: any) {
+      setCheckFormError(e?.message || "Could not export check captures.");
+    } finally {
+      setCheckExporting(false);
+    }
+  }
 
   function inviteAdminCompanyId(): string {
     return (
@@ -457,6 +715,12 @@ export default function AdminPage() {
     loadAdminData();
   }, []);
 
+  useEffect(() => {
+    if (loading) return;
+    if (!canManageUsers(currentUser?.role || "")) return;
+    void loadCheckCaptures();
+  }, [loading, currentUser?.role, selectedCompanyId, company?.id]);
+
   async function handleCompanySwitch(companyId: string) {
     setError("");
     setSuccess("");
@@ -478,6 +742,7 @@ export default function AdminPage() {
       setUsers(normalizeAdminUsersList(rawUsers));
       await loadPendingInvitesForCompany(companyId);
       setSuccess("Switched company view.");
+      void loadCheckCaptures();
     } catch (err: any) {
       setError(err?.message || "Could not switch company.");
     }
@@ -1477,6 +1742,307 @@ export default function AdminPage() {
                   </div>
                 </section>
               </section>
+
+              {canManageUsers(currentUser?.role || "") ? (
+                <section style={{ ...panelStyle, marginTop: 22 }}>
+                  <h2 style={sectionTitleStyle}>Check photos &amp; stubs</h2>
+                  <p
+                    style={{
+                      color: "#94a3b8",
+                      marginTop: 0,
+                      marginBottom: 18,
+                      lineHeight: 1.55,
+                      fontSize: 15,
+                    }}
+                  >
+                    Photograph the check and optional stub, enter payee and totals, then save.
+                    Filter by capture date (UTC calendar day) and export CSV for the selected range.
+                  </p>
+
+                  {checkFormError ? (
+                    <div
+                      style={{
+                        ...messageStyle,
+                        marginBottom: 12,
+                        background: "rgba(127, 29, 29, 0.58)",
+                        border: "1px solid rgba(248, 113, 113, 0.5)",
+                        color: "#fecaca",
+                      }}
+                    >
+                      {checkFormError}
+                    </div>
+                  ) : null}
+                  {checkFormSuccess ? (
+                    <div
+                      style={{
+                        ...messageStyle,
+                        marginBottom: 12,
+                        background: "rgba(20, 83, 45, 0.58)",
+                        border: "1px solid rgba(34, 197, 94, 0.5)",
+                        color: "#bbf7d0",
+                      }}
+                    >
+                      {checkFormSuccess}
+                    </div>
+                  ) : null}
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                      gap: 16,
+                      marginBottom: 18,
+                    }}
+                  >
+                    <div>
+                      <div style={smallLabelStyle}>Check photo (required)</div>
+                      <input
+                        key={`check-front-${checkFileKey}`}
+                        ref={checkImageInputRef}
+                        type="file"
+                        accept="image/jpeg,image/jpg,image/png,image/webp"
+                        capture="environment"
+                        style={{ width: "100%", color: "#cbd5e1" }}
+                      />
+                    </div>
+                    <div>
+                      <div style={smallLabelStyle}>Stub photo (optional)</div>
+                      <input
+                        ref={stubImageInputRef}
+                        type="file"
+                        accept="image/jpeg,image/jpg,image/png,image/webp"
+                        capture="environment"
+                        style={{ width: "100%", color: "#cbd5e1" }}
+                      />
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                      gap: 14,
+                      marginBottom: 16,
+                    }}
+                  >
+                    <label style={labelStyle}>
+                      Payee
+                      <input
+                        value={checkPayee}
+                        onChange={(e) => setCheckPayee(e.target.value)}
+                        placeholder="Name on check"
+                        style={inputStyle}
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label style={labelStyle}>
+                      Total
+                      <input
+                        value={checkTotal}
+                        onChange={(e) => setCheckTotal(e.target.value)}
+                        placeholder="0.00"
+                        inputMode="decimal"
+                        style={inputStyle}
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label style={labelStyle}>
+                      Invoice #
+                      <input
+                        value={checkInvoice}
+                        onChange={(e) => setCheckInvoice(e.target.value)}
+                        placeholder="Optional"
+                        style={inputStyle}
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label style={labelStyle}>
+                      Check date (optional)
+                      <input
+                        type="date"
+                        value={checkWrittenDate}
+                        onChange={(e) => setCheckWrittenDate(e.target.value)}
+                        style={inputStyle}
+                      />
+                    </label>
+                  </div>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 22 }}>
+                    <button
+                      type="button"
+                      disabled={checkSaving}
+                      onClick={() => void saveCheckCapture()}
+                      style={{
+                        ...smallButtonStyle,
+                        background: checkSaving ? "rgba(71, 85, 105, 0.5)" : "#22c55e",
+                        border: "1px solid rgba(34, 197, 94, 0.7)",
+                        color: "white",
+                        cursor: checkSaving ? "wait" : "pointer",
+                      }}
+                    >
+                      {checkSaving ? "Saving…" : "Save check capture"}
+                    </button>
+                  </div>
+
+                  <div
+                    style={{
+                      borderTop: "1px solid rgba(148, 163, 184, 0.2)",
+                      paddingTop: 18,
+                    }}
+                  >
+                    <h3
+                      style={{
+                        margin: "0 0 12px",
+                        fontSize: 17,
+                        fontWeight: 900,
+                        color: "#e2e8f0",
+                      }}
+                    >
+                      History &amp; export
+                    </h3>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 12,
+                        alignItems: "flex-end",
+                        marginBottom: 14,
+                      }}
+                    >
+                      <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
+                        From (YYYY-MM-DD)
+                        <input
+                          value={checkFilterFrom}
+                          onChange={(e) => setCheckFilterFrom(e.target.value)}
+                          placeholder="2026-01-01"
+                          style={inputStyle}
+                        />
+                      </label>
+                      <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
+                        To (YYYY-MM-DD)
+                        <input
+                          value={checkFilterTo}
+                          onChange={(e) => setCheckFilterTo(e.target.value)}
+                          placeholder="2026-12-31"
+                          style={inputStyle}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={checkListLoading}
+                        onClick={() => void loadCheckCaptures()}
+                        style={{
+                          ...smallButtonStyle,
+                          background: "rgba(56, 189, 248, 0.16)",
+                          border: "1px solid rgba(56, 189, 248, 0.4)",
+                          color: "#bae6fd",
+                          cursor: checkListLoading ? "wait" : "pointer",
+                        }}
+                      >
+                        {checkListLoading ? "Loading…" : "Apply filter"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={checkExporting}
+                        onClick={() => void exportCheckCapturesCsv()}
+                        style={{
+                          ...smallButtonStyle,
+                          background: "rgba(168, 85, 247, 0.2)",
+                          border: "1px solid rgba(168, 85, 247, 0.45)",
+                          color: "#e9d5ff",
+                          cursor: checkExporting ? "wait" : "pointer",
+                        }}
+                      >
+                        {checkExporting ? "Exporting…" : "Export CSV (range)"}
+                      </button>
+                    </div>
+                    {checkListError ? (
+                      <div
+                        style={{
+                          color: "#fecaca",
+                          marginBottom: 10,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {checkListError}
+                      </div>
+                    ) : null}
+
+                    <div
+                      style={{
+                        overflowX: "auto",
+                        borderRadius: 12,
+                        border: "1px solid rgba(148, 163, 184, 0.2)",
+                      }}
+                    >
+                      <table
+                        style={{
+                          width: "100%",
+                          borderCollapse: "collapse",
+                          fontSize: 13,
+                          minWidth: 720,
+                        }}
+                      >
+                        <thead>
+                          <tr style={{ background: "rgba(2, 6, 23, 0.65)" }}>
+                            <th style={checkThStyle}>Captured</th>
+                            <th style={checkThStyle}>Payee</th>
+                            <th style={checkThStyle}>Total</th>
+                            <th style={checkThStyle}>Invoice #</th>
+                            <th style={checkThStyle}>Images</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {checkRows.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} style={checkTdStyle}>
+                                No rows for this filter.
+                              </td>
+                            </tr>
+                          ) : (
+                            checkRows.map((row) => (
+                              <tr key={row.id} style={{ borderTop: "1px solid rgba(51,65,85,0.6)" }}>
+                                <td style={checkTdStyle}>
+                                  {row.createdAt
+                                    ? new Date(row.createdAt).toLocaleString()
+                                    : "—"}
+                                </td>
+                                <td style={checkTdStyle}>{row.payerName || "—"}</td>
+                                <td style={checkTdStyle}>
+                                  {row.amount != null ? String(row.amount) : "—"}
+                                </td>
+                                <td style={checkTdStyle}>{row.invoiceNumber || row.memo || "—"}</td>
+                                <td style={checkTdStyle}>
+                                  <a
+                                    href={row.imageUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{ color: "#38bdf8", fontWeight: 800, marginRight: 10 }}
+                                  >
+                                    Check
+                                  </a>
+                                  {row.stubImageUrl ? (
+                                    <a
+                                      href={row.stubImageUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{ color: "#a78bfa", fontWeight: 800 }}
+                                    >
+                                      Stub
+                                    </a>
+                                  ) : (
+                                    <span style={{ color: "#64748b" }}>—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </section>
+              ) : null}
             </>
           )}
         </div>
@@ -1597,6 +2163,22 @@ const smallButtonStyle: React.CSSProperties = {
   padding: "9px 12px",
   fontWeight: 900,
   fontSize: 13,
+};
+
+const checkThStyle: React.CSSProperties = {
+  textAlign: "left",
+  padding: "10px 12px",
+  color: "#94a3b8",
+  fontWeight: 900,
+  textTransform: "uppercase",
+  fontSize: 11,
+  letterSpacing: "0.06em",
+};
+
+const checkTdStyle: React.CSSProperties = {
+  padding: "10px 12px",
+  color: "#e2e8f0",
+  verticalAlign: "top",
 };
 
 const modalOverlayStyle: React.CSSProperties = {

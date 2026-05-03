@@ -220,7 +220,9 @@ export const checkSaveSchema = z.object({
     accountNumber: z.string().max(32).optional(),
     bankName: z.string().max(200).optional(),
     memo: z.string().max(500).optional(),
+    invoiceNumber: z.string().max(120).optional(),
     imageUrl: z.string().url(),
+    stubImageUrl: z.string().url().optional(),
     rawOcrJson: z.unknown().optional()
 });
 export const sourcePackageCreateSchema = z.object({
