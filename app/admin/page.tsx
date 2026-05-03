@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import {
@@ -2776,58 +2777,70 @@ export default function AdminPage() {
           )}
         </div>
 
-        {notificationModal.open && (
-          <div style={{ ...modalOverlayStyle, zIndex: 2100 }}>
-            <div style={{ ...modalStyle, maxWidth: 560 }}>
-              <h2 style={{ marginTop: 0, marginBottom: 10 }}>
-                {notificationModal.title}
-              </h2>
+        {notificationModal.open &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="admin-confirm-dialog-title"
+              style={{
+                ...modalOverlayStyle,
+                zIndex: 2147483000,
+              }}
+            >
+              <div style={{ ...modalStyle, maxWidth: 560 }}>
+                <h2 id="admin-confirm-dialog-title" style={{ marginTop: 0, marginBottom: 10 }}>
+                  {notificationModal.title}
+                </h2>
 
-              <p style={{ color: "#cbd5e1", marginTop: 0, lineHeight: 1.6 }}>
-                {notificationModal.message}
-              </p>
+                <p style={{ color: "#cbd5e1", marginTop: 0, lineHeight: 1.6 }}>
+                  {notificationModal.message}
+                </p>
 
-              {notificationModal.details ? (
-                <div
-                  style={{
-                    background: "#020617",
-                    border: "1px solid #334155",
-                    borderRadius: 12,
-                    padding: 12,
-                    marginTop: 12,
-                    marginBottom: 18,
-                    color: "#cbd5e1",
-                  }}
-                >
-                  {notificationModal.details}
-                </div>
-              ) : null}
-
-              <div
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  justifyContent: "center",
-                  flexWrap: "wrap",
-                  marginTop: 18,
-                }}
-              >
-                {notificationModal.cancelText ? (
-                  <button style={modalButtonStyle} onClick={closeNotificationModal}>
-                    {notificationModal.cancelText}
-                  </button>
+                {notificationModal.details ? (
+                  <div
+                    style={{
+                      background: "#020617",
+                      border: "1px solid #334155",
+                      borderRadius: 12,
+                      padding: 12,
+                      marginTop: 12,
+                      marginBottom: 18,
+                      color: "#cbd5e1",
+                    }}
+                  >
+                    {notificationModal.details}
+                  </div>
                 ) : null}
 
-                <button
-                  style={dangerModalButtonStyle}
-                  onClick={confirmNotificationModal}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    justifyContent: "center",
+                    flexWrap: "wrap",
+                    marginTop: 18,
+                  }}
                 >
-                  {notificationModal.confirmText || "Confirm"}
-                </button>
+                  {notificationModal.cancelText ? (
+                    <button type="button" style={modalButtonStyle} onClick={closeNotificationModal}>
+                      {notificationModal.cancelText}
+                    </button>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    style={dangerModalButtonStyle}
+                    onClick={confirmNotificationModal}
+                  >
+                    {notificationModal.confirmText || "Confirm"}
+                  </button>
+                </div>
               </div>
-            </div>
-          </div>
-        )}
+            </div>,
+            document.body,
+          )}
       </main>
     </PageAccessGate>
   );
