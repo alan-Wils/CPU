@@ -51,14 +51,37 @@ const envSchema = z
      * S3-compatible object storage (Railway, R2, AWS). When all bucket + credentials are set,
      * check/cash receipt uploads use the bucket instead of ephemeral local disk.
      */
-    S3_BUCKET: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().min(1).optional()),
-    AWS_ACCESS_KEY_ID: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().optional()),
-    AWS_SECRET_ACCESS_KEY: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().optional()),
-    S3_REGION: z.preprocess(
-        (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
-        z.string().min(1).optional()
-    ),
-    S3_ENDPOINT: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().url().optional()),
+    /** Trim — pasted Railway values often include trailing newlines, which break S3/R2 request signatures. */
+    S3_BUCKET: z.preprocess((v) => {
+        if (typeof v !== "string")
+            return undefined;
+        const t = v.trim();
+        return t === "" ? undefined : t;
+    }, z.string().min(1).optional()),
+    AWS_ACCESS_KEY_ID: z.preprocess((v) => {
+        if (typeof v !== "string")
+            return undefined;
+        const t = v.trim();
+        return t === "" ? undefined : t;
+    }, z.string().optional()),
+    AWS_SECRET_ACCESS_KEY: z.preprocess((v) => {
+        if (typeof v !== "string")
+            return undefined;
+        const t = v.trim();
+        return t === "" ? undefined : t;
+    }, z.string().optional()),
+    S3_REGION: z.preprocess((v) => {
+        if (typeof v !== "string")
+            return undefined;
+        const t = v.trim();
+        return t === "" ? undefined : t;
+    }, z.string().min(1).optional()),
+    S3_ENDPOINT: z.preprocess((v) => {
+        if (typeof v !== "string")
+            return undefined;
+        const t = v.trim();
+        return t === "" ? undefined : t;
+    }, z.string().url().optional()),
     /** Some providers (e.g. MinIO, R2) need path-style addressing. Default: true when `S3_ENDPOINT` is set. */
     S3_FORCE_PATH_STYLE: z.preprocess((v) => {
         if (v === undefined || v === null || v === "")
