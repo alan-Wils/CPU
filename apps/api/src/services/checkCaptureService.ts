@@ -1,9 +1,10 @@
 import { randomUUID } from "crypto";
-import { mkdir, unlink, writeFile } from "fs/promises";
+import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
 import { AppError } from "../errors/AppError.js";
+import { objectKeyFromParts, putUploadObject, removeStoredUpload, uploadsUseS3 } from "../lib/uploadStorage.js";
 function extForMime(mimeType) {
     if (mimeType === "image/png")
         return "png";
@@ -173,26 +174,6 @@ function csvEscape(value) {
         return `"${s.replace(/"/g, '""')}"`;
     return s;
 }
-/** Best-effort removal of locally stored check/stub images (URLs from `uploadImage`). */
-async function unlinkCheckUploadFile(imageUrl) {
-    if (!imageUrl || typeof imageUrl !== "string")
-        return;
-    try {
-        const u = new URL(imageUrl);
-        const m = String(u.pathname || "").match(/^\/uploads\/checks\/([^/]+)\/(.+)$/);
-        if (!m)
-            return;
-        const [, cid, rawName] = m;
-        const safeBase = path.basename(rawName);
-        if (!safeBase || safeBase !== rawName || rawName.includes(".."))
-            return;
-        const fullPath = path.join(process.cwd(), "uploads", "checks", cid, safeBase);
-        await unlink(fullPath).catch(() => {});
-    }
-    catch {
-        /* invalid URL */
-    }
-}
 export class CheckCaptureService {
     async uploadImage(input) {
         const base64 = String(input.dataBase64 || "").replace(/^data:[^;]+;base64,/, "");
@@ -205,6 +186,15 @@ export class CheckCaptureService {
         }
         const ext = extForMime(input.mimeType);
         const safeName = `${Date.now()}-${randomUUID().slice(0, 12)}.${ext}`;
+        if (uploadsUseS3()) {
+            const key = objectKeyFromParts("checks", input.companyId, safeName);
+            const mime = input.mimeType === "image/png" ? "image/png" : input.mimeType === "image/webp" ? "image/webp" : "image/jpeg";
+            await putUploadObject(key, buffer, mime);
+            return {
+                imageUrl: `${input.origin}/uploads/checks/${input.companyId}/${safeName}`,
+                bytes: buffer.length
+            };
+        }
         const directory = path.join(process.cwd(), "uploads", "checks", input.companyId);
         await mkdir(directory, { recursive: true });
         await writeFile(path.join(directory, safeName), buffer);
@@ -401,8 +391,8 @@ export class CheckCaptureService {
         if (!row) {
             throw new AppError("Check capture not found.", 404, "CHECK_CAPTURE_NOT_FOUND");
         }
-        await unlinkCheckUploadFile(row.imageUrl);
-        await unlinkCheckUploadFile(row.stubImageUrl);
+        await removeStoredUpload(row.imageUrl);
+        await removeStoredUpload(row.stubImageUrl);
         await prisma.checkCapture.delete({ where: { id: row.id } });
     }
 }

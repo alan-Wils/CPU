@@ -12,7 +12,8 @@ import { resolvePublicWebBaseUrl } from "./config/publicWebUrl.js";
 import { appRouter } from "./router.js";
 import { errorMiddleware } from "./middleware/error.js";
 import { prisma } from "./config/prisma.js";
-import { logInfo, logError } from "./lib/logger.js";
+import { logInfo, logError, logWarn } from "./lib/logger.js";
+import { registerUploadStreamRoutes, uploadsUseS3 } from "./lib/uploadStorage.js";
 const app = express();
 app.use(helmet());
 app.use(cors({
@@ -20,6 +21,7 @@ app.use(cors({
     allowedHeaders: ["Content-Type", "Authorization", "X-Company-Id"],
 }));
 app.use(express.json({ limit: "15mb" }));
+registerUploadStreamRoutes(app);
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 /** Liveness: process is up; does not hit the database. */
 app.get("/health/live", (_req, res) => {
@@ -123,9 +125,15 @@ async function start() {
     try {
         await prisma.$connect();
         app.listen(env.PORT, () => {
+            if (env.NODE_ENV === "production" && !uploadsUseS3()) {
+                logWarn("upload_storage_ephemeral", {
+                    hint: "Uploads use local disk; files are lost on Railway redeploy. Set S3_BUCKET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (and optional S3_ENDPOINT for R2)."
+                });
+            }
             logInfo("server_start", {
                 port: env.PORT,
                 env: env.NODE_ENV,
+                upload_storage: uploadsUseS3() ? "s3" : "local_disk",
                 mail_resend: Boolean(env.RESEND_API_KEY?.trim()),
                 mail_smtp: Boolean(env.SMTP_HOST && env.SMTP_PORT && env.SMTP_USER && env.SMTP_PASS),
                 cors_allowlist: describeCorsAllowlist(env.CORS_ORIGIN),

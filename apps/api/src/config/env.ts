@@ -46,7 +46,32 @@ const envSchema = z
             ]),
     ),
     OCR_SPACE_API_KEY: z.string().optional(),
-    CHECK_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(8 * 1024 * 1024)
+    CHECK_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(8 * 1024 * 1024),
+    /**
+     * S3-compatible object storage (Railway, R2, AWS). When all bucket + credentials are set,
+     * check/cash receipt uploads use the bucket instead of ephemeral local disk.
+     */
+    S3_BUCKET: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().min(1).optional()),
+    AWS_ACCESS_KEY_ID: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().optional()),
+    AWS_SECRET_ACCESS_KEY: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().optional()),
+    S3_REGION: z.preprocess(
+        (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+        z.string().min(1).optional()
+    ),
+    S3_ENDPOINT: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().url().optional()),
+    /** Some providers (e.g. MinIO, R2) need path-style addressing. Default: true when `S3_ENDPOINT` is set. */
+    S3_FORCE_PATH_STYLE: z.preprocess((v) => {
+        if (v === undefined || v === null || v === "")
+            return undefined;
+        if (typeof v === "boolean")
+            return v;
+        const s = String(v).trim().toLowerCase();
+        if (s === "true" || s === "1" || s === "yes")
+            return true;
+        if (s === "false" || s === "0" || s === "no")
+            return false;
+        return undefined;
+    }, z.boolean().optional())
 })
     .superRefine((data, ctx) => {
     if (data.NODE_ENV !== "production")
@@ -95,6 +120,14 @@ const envSchema = z
                 message: "If SMTP is enabled, set SMTP_HOST, SMTP_PORT, SMTP_FROM or EMAIL_FROM, and SMTP_USER/SMTP_PASS for authenticated SMTP."
             });
         }
+    }
+    const s3Fields = [data.S3_BUCKET, data.AWS_ACCESS_KEY_ID, data.AWS_SECRET_ACCESS_KEY].filter(Boolean).length;
+    if (s3Fields > 0 && s3Fields < 3) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["S3_BUCKET"],
+            message: "For persistent uploads, set all of S3_BUCKET, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY (optional: S3_ENDPOINT, S3_REGION, S3_FORCE_PATH_STYLE). Omit all to use local disk only."
+        });
     }
 });
 export const env = envSchema.parse(process.env);

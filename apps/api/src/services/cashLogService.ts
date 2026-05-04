@@ -1,10 +1,11 @@
 import { randomUUID } from "crypto";
-import { mkdir, unlink, writeFile } from "fs/promises";
+import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
 import { AppError } from "../errors/AppError.js";
+import { objectKeyFromParts, putUploadObject, removeStoredUpload, uploadsUseS3 } from "../lib/uploadStorage.js";
 
 function extForReceiptMime(mimeType: string) {
     if (mimeType === "image/png")
@@ -14,25 +15,6 @@ function extForReceiptMime(mimeType: string) {
     return "jpg";
 }
 
-async function unlinkCashReceiptFile(imageUrl: string | null | undefined) {
-    if (!imageUrl || typeof imageUrl !== "string")
-        return;
-    try {
-        const u = new URL(imageUrl);
-        const m = String(u.pathname || "").match(/^\/uploads\/cash-receipts\/([^/]+)\/(.+)$/);
-        if (!m)
-            return;
-        const [, cid, rawName] = m;
-        const safeBase = path.basename(rawName);
-        if (!safeBase || safeBase !== rawName || rawName.includes(".."))
-            return;
-        const fullPath = path.join(process.cwd(), "uploads", "cash-receipts", cid, safeBase);
-        await unlink(fullPath).catch(() => {});
-    }
-    catch {
-        /* invalid URL */
-    }
-}
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function parseUtcDayStart(isoDate: string | undefined) {
     if (!isoDate || !ISO_DATE.test(String(isoDate).trim()))
@@ -101,6 +83,19 @@ export class CashLogService {
         }
         const ext = extForReceiptMime(String(input.mimeType || ""));
         const safeName = `${Date.now()}-${randomUUID().slice(0, 12)}.${ext}`;
+        const mime = String(input.mimeType || "").includes("png")
+            ? "image/png"
+            : String(input.mimeType || "").includes("webp")
+              ? "image/webp"
+              : "image/jpeg";
+        if (uploadsUseS3()) {
+            const key = objectKeyFromParts("cash-receipts", input.companyId, safeName);
+            await putUploadObject(key, buffer, mime);
+            return {
+                imageUrl: `${input.origin}/uploads/cash-receipts/${input.companyId}/${safeName}`,
+                bytes: buffer.length
+            };
+        }
         const directory = path.join(process.cwd(), "uploads", "cash-receipts", input.companyId);
         await mkdir(directory, { recursive: true });
         await writeFile(path.join(directory, safeName), buffer);
@@ -262,7 +257,7 @@ export class CashLogService {
         if (!row) {
             throw new AppError("Cash log entry not found.", 404, "CASH_LOG_NOT_FOUND");
         }
-        await unlinkCashReceiptFile(row.receiptImageUrl);
+        await removeStoredUpload(row.receiptImageUrl);
         await prisma.cashLogEntry.delete({ where: { id: row.id } });
     }
 }
