@@ -1,5 +1,9 @@
 # Railway — API staging (Neon + apps/api)
 
+## Frontend vs this service
+
+Railway **only runs the Node API** from `apps/api` (see `railway.toml`). It does **not** build or serve the Next.js app under the repository root (`app/admin`, etc.). Admin UI changes (permissions dialog, company users) ship with the **Next.js** deployment (commonly Vercel using the **repo root** `vercel.json` / `npm run build:platform`). Seeing your latest commit on a Railway deployment does **not** mean the browser received a new admin bundle — redeploy the frontend host after UI changes.
+
 ## 1. Create the service
 
 1. [Railway](https://railway.app) → **New project** → **Deploy from GitHub** (or Empty project → connect repo).

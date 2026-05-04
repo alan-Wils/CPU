@@ -1,5 +1,7 @@
 # Vercel — `apps/web`
 
+This workspace is a **subset** of pages (home, check capture). The full **Company Admin** UI (`/admin`, user permissions dialog) lives in the **repository root** Next app (`vercel.json` at repo root + `npm run build:platform`). If `nexbatch.com` should show that admin, point a Vercel project at the **monorepo root** (not only `apps/web`) or mirror those routes here.
+
 ## Project settings
 
 1. **Root Directory:** `apps/web` (Framework Presets: Next.js).

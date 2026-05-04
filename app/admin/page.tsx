@@ -58,13 +58,18 @@ type PendingInvite = {
 
 /** `@cpu/api` returns `{ users }`; legacy servers may return a bare array. */
 function normalizeAdminUsersList(raw: unknown): AdminUser[] {
-  if (Array.isArray(raw)) return raw as AdminUser[];
+  const mapRow = (u: AdminUser): AdminUser => ({
+    ...u,
+    id: String(u.id),
+    role: String(u.role || "").trim(),
+  });
+  if (Array.isArray(raw)) return (raw as AdminUser[]).map(mapRow);
   if (
     raw &&
     typeof raw === "object" &&
     Array.isArray((raw as { users?: unknown }).users)
   ) {
-    return (raw as { users: AdminUser[] }).users;
+    return (raw as { users: AdminUser[] }).users.map(mapRow);
   }
   return [];
 }
@@ -476,8 +481,9 @@ export default function AdminPage() {
   );
 
   const editingTargetUser = useMemo(() => {
-    if (!editingUserId) return null;
-    const u = companyUsersDisplay.find((x) => x.id === editingUserId);
+    if (editingUserId == null || editingUserId === "") return null;
+    const key = String(editingUserId);
+    const u = companyUsersDisplay.find((x) => String(x.id) === key);
     if (!u || isPendingInviteGridRow(u)) return null;
     return u;
   }, [editingUserId, companyUsersDisplay]);
@@ -1433,7 +1439,7 @@ export default function AdminPage() {
   function startEditUser(user: AdminUser) {
     setError("");
     setSuccess("");
-    setEditingUserId(user.id);
+    setEditingUserId(String(user.id));
     setEditUsername(user.username || "");
     setEditEmail(user.email || "");
     setEditRole(normalizePlatformRole(user.role) || "VIEW_ONLY");
@@ -1713,6 +1719,32 @@ export default function AdminPage() {
                 >
                   Invite people to your company workspace, assign permissions,
                   edit users, deactivate access, or delete accounts.
+                </p>
+
+                <p
+                  style={{
+                    maxWidth: 760,
+                    color: "#64748b",
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    marginTop: 14,
+                    marginBottom: 0,
+                  }}
+                >
+                  {process.env.NEXT_PUBLIC_APP_GIT_SHA ? (
+                    <>
+                      Web UI build{" "}
+                      <span style={{ color: "#94a3b8", fontFamily: "ui-monospace, monospace" }}>
+                        {String(process.env.NEXT_PUBLIC_APP_GIT_SHA).slice(0, 7)}
+                      </span>
+                      .{" "}
+                    </>
+                  ) : null}
+                  Click <b>Edit</b> to open a dialog — <b>Access &amp; permissions</b> is at the top of that
+                  window. Railway deploys the API only; this page comes from your Next.js host (e.g. Vercel). If
+                  the dialog never appears, trigger a new frontend deploy from the repo root (see root{" "}
+                  <span style={{ color: "#94a3b8" }}>vercel.json</span>
+                  ), not only a Railway API redeploy.
                 </p>
               </div>
 
@@ -2074,7 +2106,8 @@ export default function AdminPage() {
                       <div style={{ color: "#94a3b8" }}>No users found.</div>
                     ) : (
                       companyUsersDisplay.map((user) => {
-                        const isEditing = editingUserId === user.id;
+                        const isEditing =
+                          editingUserId != null && String(editingUserId) === String(user.id);
                         const inviteGridRow = isPendingInviteGridRow(user);
                         const canManageThisUser =
                           !inviteGridRow &&
@@ -3581,7 +3614,7 @@ export default function AdminPage() {
               onClick={(e) => {
                 if (e.target === e.currentTarget) cancelEditUser();
               }}
-              style={{ ...modalOverlayStyle, zIndex: 12000 }}
+              style={{ ...modalOverlayStyle, zIndex: 2147482600 }}
             >
               <div
                 style={{ ...modalStyle, maxWidth: 640, width: "100%" }}
