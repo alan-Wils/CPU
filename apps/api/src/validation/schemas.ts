@@ -1,4 +1,4 @@
-import { ALL_APP_PERMISSION_IDS } from "@cpu/shared";
+import { ALL_APP_PERMISSION_IDS } from "../lib/appPermissions.js";
 import { z } from "zod";
 
 /** Map short / display labels from older clients to Prisma `UserRole` strings. */

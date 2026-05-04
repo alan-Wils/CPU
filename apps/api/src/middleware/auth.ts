@@ -1,4 +1,4 @@
-import { computeEffectiveAppPermissions } from "@cpu/shared";
+import { computeEffectiveAppPermissions } from "../lib/appPermissions.js";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { attachScopedCompanyId } from "./companyScope.js";

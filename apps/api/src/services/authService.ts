@@ -1,4 +1,4 @@
-import { appPermissionSetsEqual, computeEffectiveAppPermissions } from "@cpu/shared";
+import { appPermissionSetsEqual, computeEffectiveAppPermissions } from "../lib/appPermissions.js";
 import bcrypt from "bcryptjs";
 import jwt, { type SignOptions } from "jsonwebtoken";
 import crypto from "node:crypto";

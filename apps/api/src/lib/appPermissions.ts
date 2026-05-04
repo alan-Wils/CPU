@@ -1,9 +1,7 @@
 /**
- * NexBatch page + action permissions (stored on `CompanyMembership.appPermissions`, JWT `permissions`, admin UI).
- * `null` in DB means “use {@link defaultPagePermissionsForRole} for this user role”.
- *
- * **API duplicate:** `apps/api/src/lib/appPermissions.ts` — Railway builds `apps/api` without this package;
- * keep both files aligned when changing permission ids or defaults.
+ * NexBatch page + action permissions (JWT + `CompanyMembership.appPermissions`).
+ * **Keep in sync with** `packages/shared/src/appPermissions.ts` (Next.js imports `@cpu/shared`;
+ * Railway builds `apps/api` in isolation without `packages/shared`).
  */
 export const APP_PAGE_PERMISSION_IDS = [
   "page.cultivation",
@@ -39,10 +37,8 @@ const PAGE_SET_ALL: AppPagePermissionId[] = [
   "page.data-hub",
 ];
 
-/** OWNER / ADMIN: all workflow pages + admin UI stays role-gated separately. */
 const PAGE_SET_OWNER_ADMIN: AppPagePermissionId[] = [...PAGE_SET_ALL];
 
-/** Operations manager: same production floor as legacy `PageAccessGate` manager bypass. */
 const PAGE_SET_OPERATIONS_MANAGER: AppPagePermissionId[] = [...PAGE_SET_ALL];
 
 export function isElevatedManagerRole(role: string): boolean {
@@ -83,7 +79,7 @@ export function defaultPagePermissionsForRole(role: string): AppPermissionId[] {
 export function normalizeAppPermissionList(raw: unknown): AppPermissionId[] {
   if (!Array.isArray(raw))
     return [];
-  const allowed = new Set<string>(ALL_APP_PERMISSION_IDS);
+  const allowed = new Set<string>([...ALL_APP_PERMISSION_IDS]);
   const out: AppPermissionId[] = [];
   for (const x of raw) {
     if (typeof x !== "string")
@@ -95,11 +91,6 @@ export function normalizeAppPermissionList(raw: unknown): AppPermissionId[] {
   return out;
 }
 
-/**
- * Effective permission set for JWT + UI.
- * - Elevated roles ignore DB overrides (full floor access for OM; owner/admin implied).
- * - Otherwise: DB JSON array replaces defaults when present; `null`/`undefined` uses role defaults.
- */
 export function computeEffectiveAppPermissions(role: string, storedMembershipJson: unknown): AppPermissionId[] {
   const r = String(role || "").toUpperCase();
   if (r === "OWNER" || r === "ADMIN")
@@ -125,7 +116,5 @@ export function hasAppPermission(
 ): boolean {
   const req = String(required);
   const g = granted || [];
-  if (g.includes(req))
-    return true;
-  return false;
+  return g.includes(req);
 }
