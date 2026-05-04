@@ -4,7 +4,9 @@ import {
   ALL_APP_PERMISSION_IDS,
   APP_PERMISSION_LABELS,
   defaultPagePermissionsForRole,
-} from "@cpu/shared";
+  fullAccessPermissionIds,
+  isOwnerOrAdminRoleKey,
+} from "@/lib/appPermissionAdminUi";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -1405,13 +1407,18 @@ export default function AdminPage() {
     setEditEmail(user.email || "");
     setEditRole(user.role || "VIEW_ONLY");
     setEditActive(user.active);
-    const roleU = String(user.role || "VIEW_ONLY");
-    const raw = user.appPermissions;
-    const initial =
-      Array.isArray(raw) && raw.length
-        ? raw.map((x) => String(x))
-        : defaultPagePermissionsForRole(roleU);
-    setEditAppPermissions([...new Set(initial)]);
+    const roleU = String(user.role || "VIEW_ONLY").trim().toUpperCase();
+    if (isOwnerOrAdminRoleKey(roleU)) {
+      setEditAppPermissions(fullAccessPermissionIds());
+    }
+    else {
+      const raw = user.appPermissions;
+      const initial =
+        Array.isArray(raw) && raw.length
+          ? raw.map((x) => String(x))
+          : defaultPagePermissionsForRole(roleU);
+      setEditAppPermissions([...new Set(initial)]);
+    }
   }
 
   function cancelEditUser() {
@@ -1424,6 +1431,8 @@ export default function AdminPage() {
   }
 
   function toggleEditPermission(id: string) {
+    if (isOwnerOrAdminRoleKey(editRole))
+      return;
     setEditAppPermissions((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
@@ -1466,7 +1475,7 @@ export default function AdminPage() {
     setSavingUserId(user.id);
 
     try {
-      const ownerOrAdminRole = ["OWNER", "ADMIN"].includes(editRole);
+      const ownerOrAdminRole = isOwnerOrAdminRoleKey(editRole);
       const body: Record<string, unknown> = {
         email: editEmail.trim() || undefined,
         role: editRole,
@@ -2239,7 +2248,15 @@ export default function AdminPage() {
                                     Role
                                     <select
                                       value={editRole}
-                                      onChange={(e) => setEditRole(e.target.value)}
+                                      onChange={(e) => {
+                                        const next = e.target.value;
+                                        setEditRole(next);
+                                        const nk = String(next || "").trim().toUpperCase();
+                                        if (isOwnerOrAdminRoleKey(nk))
+                                          setEditAppPermissions(fullAccessPermissionIds());
+                                        else
+                                          setEditAppPermissions(defaultPagePermissionsForRole(nk));
+                                      }}
                                       style={inputStyle}
                                     >
                                       {allowedRoleOptions.map((option) => (
@@ -2278,93 +2295,83 @@ export default function AdminPage() {
                                   )?.description}
                                 </div>
 
-                                {["OWNER", "ADMIN"].includes(editRole) ? (
+                                <div
+                                  style={{
+                                    marginTop: 12,
+                                    padding: 14,
+                                    borderRadius: 14,
+                                    border: isOwnerOrAdminRoleKey(editRole)
+                                      ? "1px solid rgba(245, 158, 11, 0.45)"
+                                      : "1px solid rgba(56, 189, 248, 0.28)",
+                                    background: isOwnerOrAdminRoleKey(editRole)
+                                      ? "rgba(69, 26, 3, 0.42)"
+                                      : "rgba(8, 47, 73, 0.45)",
+                                    textAlign: "left",
+                                  }}
+                                >
                                   <div
                                     style={{
-                                      marginTop: 12,
-                                      padding: 14,
-                                      borderRadius: 14,
-                                      border: "1px solid rgba(245, 158, 11, 0.35)",
-                                      background: "rgba(69, 26, 3, 0.35)",
-                                      textAlign: "left",
+                                      color: isOwnerOrAdminRoleKey(editRole) ? "#fde68a" : "#bae6fd",
+                                      fontWeight: 900,
+                                      marginBottom: 10,
+                                      fontSize: 15,
                                     }}
                                   >
-                                    <div
-                                      style={{
-                                        color: "#fde68a",
-                                        fontWeight: 900,
-                                        marginBottom: 8,
-                                        fontSize: 14,
-                                      }}
-                                    >
-                                      Page & action access
-                                    </div>
-                                    <p style={{ color: "#fcd34d", fontSize: 13, margin: 0, lineHeight: 1.5 }}>
-                                      <b>Owner</b> and <b>Company Admin</b> always have every production page (Cultivation,
-                                      Extraction, Packaging, Data Hub). That cannot be limited here — it is how the
-                                      product keeps tenant administration working.
-                                    </p>
-                                    <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 12, marginBottom: 0, lineHeight: 1.5 }}>
-                                      To assign <b>specific pages or delete rights</b>, set the role to{" "}
-                                      <b>Operations Manager</b>, a <b>specialist</b> role, or <b>View Only</b>, then use
-                                      the checkboxes that appear below the role.
-                                    </p>
+                                    Access & permissions
                                   </div>
-                                ) : (
-                                  <div
-                                    style={{
-                                      marginTop: 12,
-                                      padding: 14,
-                                      borderRadius: 14,
-                                      border: "1px solid rgba(56, 189, 248, 0.28)",
-                                      background: "rgba(8, 47, 73, 0.45)",
-                                      textAlign: "left",
-                                    }}
-                                  >
-                                    <div
-                                      style={{
-                                        color: "#bae6fd",
-                                        fontWeight: 900,
-                                        marginBottom: 10,
-                                        fontSize: 14,
-                                      }}
-                                    >
-                                      Page & action access
-                                    </div>
-                                    <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 12 }}>
-                                      {editRole === "OPERATIONS_MANAGER"
+                                  {isOwnerOrAdminRoleKey(editRole) ? (
+                                    <p style={{ color: "#fcd34d", fontSize: 13, marginTop: 0, marginBottom: 12, lineHeight: 1.55 }}>
+                                      <b>Owner</b> and <b>Company Admin</b> always have full production access. Checkboxes
+                                      below are read-only. To limit pages or delete rights, change the role to{" "}
+                                      <b>Operations Manager</b>, a <b>specialist</b>, or <b>View Only</b>, then edit again.
+                                    </p>
+                                  ) : (
+                                    <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 12, lineHeight: 1.55 }}>
+                                      {String(editRole || "").trim().toUpperCase() === "OPERATIONS_MANAGER"
                                         ? "Operations managers get all floor pages by default. Uncheck any area they should not open, or grant “Delete workflow records” only when needed."
                                         : "Choose which areas this employee can open and whether they may delete workflow records."}
                                     </p>
-                                    <div
-                                      style={{
-                                        display: "grid",
-                                        gap: 10,
-                                        marginBottom: 12,
-                                      }}
-                                    >
-                                      {(ALL_APP_PERMISSION_IDS as readonly string[]).map((pid) => (
+                                  )}
+                                  <div
+                                    style={{
+                                      display: "grid",
+                                      gap: 10,
+                                      marginBottom: 12,
+                                    }}
+                                  >
+                                    {(ALL_APP_PERMISSION_IDS as readonly string[]).map((pid) => {
+                                      const locked = isOwnerOrAdminRoleKey(editRole);
+                                      const checked =
+                                        locked || editAppPermissions.includes(pid);
+                                      return (
                                         <label
                                           key={pid}
                                           style={{
                                             display: "flex",
                                             alignItems: "flex-start",
                                             gap: 10,
-                                            cursor: "pointer",
+                                            cursor: locked ? "not-allowed" : "pointer",
                                             color: "#e2e8f0",
                                             fontSize: 14,
+                                            opacity: locked ? 0.92 : 1,
                                           }}
                                         >
                                           <input
                                             type="checkbox"
-                                            checked={editAppPermissions.includes(pid)}
+                                            checked={checked}
+                                            disabled={locked}
                                             onChange={() => toggleEditPermission(pid)}
                                             style={{ marginTop: 3 }}
                                           />
-                                          <span>{APP_PERMISSION_LABELS[pid as keyof typeof APP_PERMISSION_LABELS]}</span>
+                                          <span>
+                                            {APP_PERMISSION_LABELS[pid as keyof typeof APP_PERMISSION_LABELS]}
+                                            {locked ? " (always on)" : ""}
+                                          </span>
                                         </label>
-                                      ))}
-                                    </div>
+                                      );
+                                    })}
+                                  </div>
+                                  {!isOwnerOrAdminRoleKey(editRole) && (
                                     <button
                                       type="button"
                                       onClick={() =>
@@ -2379,8 +2386,8 @@ export default function AdminPage() {
                                     >
                                       Reset to role defaults
                                     </button>
-                                  </div>
-                                )}
+                                  )}
+                                </div>
 
                                 <div
                                   style={{
