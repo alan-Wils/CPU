@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CheckCameraGroundHints, CheckCameraOverlay } from "@/components/CheckCameraOverlay";
 import {
   extractCheckFields,
@@ -192,6 +192,35 @@ export default function CheckCapturePage() {
     };
   }, []);
 
+  /** `<video>` only mounts after `cameraOn` — attach stream here so iOS/Android both receive frames (fixes black preview on Safari). */
+  useLayoutEffect(() => {
+    if (!cameraOn) return;
+
+    const stream = streamRef.current;
+    const video = videoRef.current;
+    if (!stream || !video) return;
+
+    video.srcObject = stream;
+    video.muted = true;
+    video.setAttribute("playsinline", "");
+
+    const tryPlay = () => {
+      void video.play().catch(() => {});
+    };
+
+    if (video.readyState >= 1) {
+      tryPlay();
+    } else {
+      video.addEventListener("loadedmetadata", tryPlay, { once: true });
+      tryPlay();
+    }
+
+    return () => {
+      video.removeEventListener("loadedmetadata", tryPlay);
+      video.srcObject = null;
+    };
+  }, [cameraOn]);
+
   const maskedAccount = useMemo(() => {
     if (!form.accountNumber) return "";
     return `••••${form.accountNumber.slice(-4)}`;
@@ -211,10 +240,6 @@ export default function CheckCapturePage() {
         audio: false
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
       setCameraOn(true);
     } catch {
       setError("Could not access the camera. Use “Choose File” instead.");
