@@ -12,7 +12,7 @@
     "dev:web": "npm --workspace @cpu/web run dev",
     "dev:api": "npm --workspace @cpu/api run dev",
     "test": "npm --workspace @cpu/shared run test",
-    "build:platform": "next build",
+    "build:platform": "npx tsc -p packages/shared/tsconfig.json && next build",
     "build": "npm --workspace @cpu/shared run build && npm --workspace @cpu/api run build && npm --workspace @cpu/web run build"
   },
   "dependencies": {
