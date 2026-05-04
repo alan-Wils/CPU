@@ -5,7 +5,13 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
 import { AppError } from "../errors/AppError.js";
-import { objectKeyFromParts, putUploadObject, removeStoredUpload, uploadsUseS3 } from "../lib/uploadStorage.js";
+import {
+    objectKeyFromParts,
+    putUploadObject,
+    removeStoredUpload,
+    requirePersistentUploadsInProduction,
+    uploadsUseS3
+} from "../lib/uploadStorage.js";
 
 function extForReceiptMime(mimeType: string) {
     if (mimeType === "image/png")
@@ -81,6 +87,7 @@ export class CashLogService {
         if (buffer.length > env.CHECK_UPLOAD_MAX_BYTES) {
             throw new AppError(`Image exceeds ${env.CHECK_UPLOAD_MAX_BYTES} byte limit`, 413, "CASH_RECEIPT_IMAGE_TOO_LARGE");
         }
+        requirePersistentUploadsInProduction();
         const ext = extForReceiptMime(String(input.mimeType || ""));
         const safeName = `${Date.now()}-${randomUUID().slice(0, 12)}.${ext}`;
         const mime = String(input.mimeType || "").includes("png")

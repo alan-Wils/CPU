@@ -5,7 +5,13 @@ import path from "path";
 import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
 import { AppError } from "../errors/AppError.js";
-import { objectKeyFromParts, putUploadObject, removeStoredUpload, uploadsUseS3 } from "../lib/uploadStorage.js";
+import {
+    objectKeyFromParts,
+    putUploadObject,
+    removeStoredUpload,
+    requirePersistentUploadsInProduction,
+    uploadsUseS3
+} from "../lib/uploadStorage.js";
 function extForMime(mimeType) {
     if (mimeType === "image/png")
         return "png";
@@ -185,6 +191,7 @@ export class CheckCaptureService {
         if (buffer.length > env.CHECK_UPLOAD_MAX_BYTES) {
             throw new AppError(`Image exceeds ${env.CHECK_UPLOAD_MAX_BYTES} byte limit`, 413, "CHECK_IMAGE_TOO_LARGE");
         }
+        requirePersistentUploadsInProduction();
         const ext = extForMime(input.mimeType);
         const safeName = `${Date.now()}-${randomUUID().slice(0, 12)}.${ext}`;
         if (uploadsUseS3()) {

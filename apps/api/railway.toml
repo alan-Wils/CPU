@@ -1,5 +1,8 @@
 # Railway: set the service **Root directory** to `apps/api` so this file is picked up.
 # Ensures Postgres migrations run before the server binds (avoids P2021/P2022 after deploy).
+#
+# Check/cash images: set S3_BUCKET + AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (R2: add S3_ENDPOINT, S3_REGION=auto)
+# or uploads fail in production — container disk does not survive redeploys.
 
 [build]
 builder = "nixpacks"

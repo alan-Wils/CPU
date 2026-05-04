@@ -3,6 +3,7 @@ import { unlink } from "fs/promises";
 import path from "path";
 import type { Express, Request, Response } from "express";
 import { env } from "../config/env.js";
+import { AppError } from "../errors/AppError.js";
 import { logError } from "./logger.js";
 
 let s3Client: S3Client | null = null;
@@ -13,6 +14,22 @@ export function uploadsUseS3(): boolean {
         env.S3_BUCKET?.trim() &&
             env.AWS_ACCESS_KEY_ID?.trim() &&
             env.AWS_SECRET_ACCESS_KEY?.trim()
+    );
+}
+
+/**
+ * Container filesystem (e.g. Railway) is wiped on redeploy. In production, refuse to write uploads to disk
+ * unless S3-compatible storage is configured — otherwise every save “works” until the next deploy.
+ */
+export function requirePersistentUploadsInProduction(): void {
+    if (env.NODE_ENV !== "production")
+        return;
+    if (uploadsUseS3())
+        return;
+    throw new AppError(
+        "Upload storage is not configured on this server. Set S3_BUCKET, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY on the API service (Railway → Variables). For Cloudflare R2 add S3_ENDPOINT (and usually S3_REGION=auto). Without these, files cannot persist across deploys.",
+        503,
+        "UPLOAD_STORAGE_NOT_CONFIGURED"
     );
 }
 
