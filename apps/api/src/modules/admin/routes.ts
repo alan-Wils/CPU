@@ -30,7 +30,8 @@ adminRouter.patch("/users/:userId", requireRole(["OWNER", "ADMIN"]), validate({ 
         targetUserId: String(req.params.userId),
         email: payload.email,
         role: payload.role,
-        isActive: payload.isActive
+        isActive: payload.isActive,
+        appPermissions: payload.appPermissions,
     });
     res.json(updated);
 }));

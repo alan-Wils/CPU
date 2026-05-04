@@ -114,14 +114,15 @@ export class AdminService {
     }
     async listUsers(input) {
         const rows = await this.repo.listUsers(input.companyId);
-        return rows.map((u) => ({
+        return rows.map(({ user: u, appPermissions }) => ({
             id: u.id,
             username: u.email.split("@")[0],
             email: u.email,
             role: u.role,
             active: u.isActive,
             status: u.isActive ? "ACTIVE" : "INACTIVE",
-            createdAt: u.createdAt
+            createdAt: u.createdAt,
+            appPermissions: appPermissions ?? null,
         }));
     }
     async updateUser(input) {
@@ -140,20 +141,30 @@ export class AdminService {
         const changed = await this.repo.updateUser(input.companyId, input.targetUserId, {
             email: input.email,
             role: input.role,
-            isActive: input.isActive
+            isActive: input.isActive,
+            appPermissions: input.appPermissions,
         });
         if (changed.count === 0)
             throw new AppError("No user changes persisted", 400);
         const next = await this.repo.findUserById(input.companyId, input.targetUserId);
         if (!next)
             throw new AppError("User not found after update", 404);
+        const membership = await this.repo.db.companyMembership.findFirst({
+            where: { companyId: input.companyId, userId: input.targetUserId },
+            select: { appPermissions: true },
+        });
         await this.auditService.logAction({
             companyId: input.companyId,
             actorUserId: input.actorUserId,
             action: "admin.user.update",
             entityType: "User",
             entityId: input.targetUserId,
-            after: { email: next.email, role: next.role, isActive: next.isActive }
+            after: {
+                email: next.email,
+                role: next.role,
+                isActive: next.isActive,
+                appPermissions: membership?.appPermissions ?? null,
+            },
         });
         return {
             id: next.id,
@@ -161,7 +172,8 @@ export class AdminService {
             email: next.email,
             role: next.role,
             active: next.isActive,
-            status: next.isActive ? "ACTIVE" : "INACTIVE"
+            status: next.isActive ? "ACTIVE" : "INACTIVE",
+            appPermissions: membership?.appPermissions ?? null,
         };
     }
     async deleteUser(input) {

@@ -5,7 +5,7 @@ import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { batchIdParam, cultPackStartSchema, cultWeighSchema, cultivationCreateSchema, exBiomassSchema, exCompleteSchema, exRunIdParam, extractionCreateShellSchema, extractionPackagingStartSchema, extPackWeighSchema, freshSetSchema, cultivationUpdateSchema, lotIdParam, packagingLotUpdateSchema, runIdParam, sealExtractionSchema, trimSetSchema, sourcePackageConsumeSchema, sourcePackageCreateSchema, sourcePackageIdParam, sourcePackageUpdateSchema, extractionRunUpdateSchema } from "../../validation/schemas.js";
 import { WorkflowService } from "../../services/workflowService.js";
-import { requireRole } from "../../middleware/rbac.js";
+import { requireRole, requireRoleOrAppPermission } from "../../middleware/rbac.js";
 export const workflowRouter = Router();
 const workflowService = new WorkflowService();
 workflowRouter.post("/cultivation-batches", requireRole(["OWNER", "ADMIN", "OPERATIONS_MANAGER", "CULTIVATION_SPECIALIST"]), validate({ body: cultivationCreateSchema }), asyncHandler(async (req, res) => {
@@ -34,7 +34,7 @@ workflowRouter.patch("/cultivation-batches/:batchId", requireRole(["OWNER", "ADM
     });
     res.json(updated);
 }));
-workflowRouter.delete("/cultivation-batches/:batchId", requireRole(["OWNER", "ADMIN"]), validate({ params: batchIdParam }), asyncHandler(async (req, res) => {
+workflowRouter.delete("/cultivation-batches/:batchId", requireRoleOrAppPermission(["OWNER", "ADMIN"], "workflow.delete"), validate({ params: batchIdParam }), asyncHandler(async (req, res) => {
     const { batchId } = req.params;
     const out = await workflowService.deleteCultivation(getScopedCompanyId(req), req.auth.userId, batchId);
     res.json(out);
@@ -73,7 +73,7 @@ workflowRouter.post("/source-packages/:sourcePackageId/consume", requireRole(["O
     });
     res.json(row);
 }));
-workflowRouter.delete("/source-packages/:sourcePackageId", requireRole(["OWNER", "ADMIN"]), validate({ params: sourcePackageIdParam }), asyncHandler(async (req, res) => {
+workflowRouter.delete("/source-packages/:sourcePackageId", requireRoleOrAppPermission(["OWNER", "ADMIN"], "workflow.delete"), validate({ params: sourcePackageIdParam }), asyncHandler(async (req, res) => {
     const { sourcePackageId } = req.params;
     const out = await workflowService.deleteSourcePackage(getScopedCompanyId(req), req.auth.userId, sourcePackageId);
     res.json(out);
@@ -123,7 +123,7 @@ workflowRouter.patch("/packaging-lots/:lotId", requireRole(["OWNER", "ADMIN", "O
     });
     res.json(lot);
 }));
-workflowRouter.delete("/packaging-lots/:lotId", requireRole(["OWNER", "ADMIN"]), validate({ params: lotIdParam }), asyncHandler(async (req, res) => {
+workflowRouter.delete("/packaging-lots/:lotId", requireRoleOrAppPermission(["OWNER", "ADMIN"], "workflow.delete"), validate({ params: lotIdParam }), asyncHandler(async (req, res) => {
     const { lotId } = req.params;
     const out = await workflowService.deletePackagingLot(getScopedCompanyId(req), req.auth.userId, lotId);
     res.json(out);

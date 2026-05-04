@@ -1,11 +1,16 @@
+import { hasAppPermission } from "@cpu/shared";
 import { getAuthUser } from "@/lib/auth";
 
 export const ROLE_LEVELS: Record<string, number> = {
   VIEW_ONLY: 1,
   CULTIVATION: 2,
+  CULTIVATION_SPECIALIST: 2,
   EXTRACTION: 2,
+  EXTRACTION_SPECIALIST: 2,
   PACKAGING: 2,
+  PACKAGING_SPECIALIST: 2,
   MANAGER: 3,
+  OPERATIONS_MANAGER: 3,
   ADMIN: 4,
   OWNER: 5,
 };
@@ -24,7 +29,11 @@ export function hasMinimumRole(minimumRole: string) {
 }
 
 export function canDeleteRecords() {
-  return hasMinimumRole("MANAGER");
+  if (typeof window === "undefined") return false;
+  if (hasMinimumRole("MANAGER"))
+    return true;
+  const u = getAuthUser();
+  return hasAppPermission(u?.permissions, "workflow.delete");
 }
 
 export function canAdmin() {

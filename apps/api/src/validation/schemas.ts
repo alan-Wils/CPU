@@ -1,3 +1,4 @@
+import { ALL_APP_PERMISSION_IDS } from "@cpu/shared";
 import { z } from "zod";
 
 /** Map short / display labels from older clients to Prisma `UserRole` strings. */
@@ -358,10 +359,22 @@ const adminUserUpdateRoleEnum = z.enum([
     "QA_TESTER",
     "VIEW_ONLY"
 ]);
+const appPermissionIdSchema = z.enum([...ALL_APP_PERMISSION_IDS] as [string, ...string[]]);
 export const adminUserUpdateSchema = z.preprocess(preprocessBodyNormalizeUserRole, z.object({
     email: z.string().email().optional(),
     role: adminUserUpdateRoleEnum.optional(),
-    isActive: z.boolean().optional()
+    isActive: z.boolean().optional(),
+    /** `null` clears overrides (role defaults). Omitted = do not change membership permissions. */
+    appPermissions: z.array(appPermissionIdSchema).max(32).nullable().optional()
+}).superRefine((val, ctx) => {
+    const n = [val.email, val.role, val.isActive, val.appPermissions].filter((x) => x !== undefined).length;
+    if (n === 0) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Provide at least one field to update.",
+            path: ["role"],
+        });
+    }
 }));
 const inviteCreateRoleEnum = z.enum([
     "ADMIN",

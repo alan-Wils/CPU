@@ -1,3 +1,4 @@
+import { appPermissionSetsEqual, computeEffectiveAppPermissions } from "@cpu/shared";
 import bcrypt from "bcryptjs";
 import jwt, { type SignOptions } from "jsonwebtoken";
 import crypto from "node:crypto";
@@ -18,7 +19,7 @@ import { CompanyService } from "./companyService.js";
 
 type UserWithRelations = User & {
     company: Company | null;
-    memberships: Array<{ companyId: string; role: string; company: Company }>;
+    memberships: Array<{ companyId: string; role: string; company: Company; appPermissions?: unknown }>;
 };
 
 export type JwtSession = {
@@ -27,6 +28,7 @@ export type JwtSession = {
     role: string;
     sessionKind: "company" | "portal";
     platformRole: string | null;
+    permissions: string[];
 };
 
 export class AuthService {
@@ -46,8 +48,51 @@ export class AuthService {
         const signOpts = { expiresIn: remember ? "7d" : env.JWT_EXPIRES_IN } as SignOptions;
         return jwt.sign(payload, env.JWT_SECRET, signOpts);
     }
+
+    jwtPermissionsForCompany(user: UserWithRelations, effectiveRole: string, companyIdForMembership: string): string[] {
+        const cid = String(companyIdForMembership || "").trim();
+        if (!cid)
+            return computeEffectiveAppPermissions(effectiveRole, null);
+        const m = user.memberships?.find((x) => x.companyId === cid);
+        return computeEffectiveAppPermissions(effectiveRole, m?.appPermissions ?? null);
+    }
+
+    /** Re-sign JWT when DB-backed `permissions` drift from the bearer token (e.g. admin updated grants). */
+    issueRefreshedTokenIfNeeded(
+        authHeader: string | undefined,
+        sessionUser: { permissions?: string[] },
+        stable: Pick<JwtSession, "userId" | "companyId" | "role" | "sessionKind" | "platformRole">,
+    ): string | undefined {
+        if (!authHeader?.startsWith("Bearer "))
+            return undefined;
+        const raw = authHeader.slice("Bearer ".length);
+        let decoded: jwt.JwtPayload & Partial<JwtSession>;
+        try {
+            decoded = jwt.verify(raw, env.JWT_SECRET) as jwt.JwtPayload & Partial<JwtSession>;
+        }
+        catch {
+            return undefined;
+        }
+        const nextPerms = sessionUser.permissions ?? [];
+        const oldPerms = Array.isArray(decoded.permissions) ? decoded.permissions : [];
+        if (appPermissionSetsEqual(oldPerms, nextPerms))
+            return undefined;
+        const now = Math.floor(Date.now() / 1000);
+        const expSec = typeof decoded.exp === "number" ? decoded.exp : 0;
+        const ttl = Math.max(120, expSec - now);
+        const payload: JwtSession = {
+            userId: stable.userId,
+            companyId: stable.companyId,
+            role: stable.role,
+            sessionKind: stable.sessionKind,
+            platformRole: stable.platformRole,
+            permissions: nextPerms,
+        };
+        return jwt.sign(payload, env.JWT_SECRET, { expiresIn: ttl } as SignOptions);
+    }
+
     /** SPA `CpuUser` expects `username` + `email`; DB only stores `email`. */
-    sessionUserFields(user: UserWithRelations, effectiveRole: string, activeCompany: Company | null) {
+    sessionUserFields(user: UserWithRelations, effectiveRole: string, activeCompany: Company | null, permissions: string[]) {
         const email = String(user.email ?? "").trim().toLowerCase();
         const username = email.includes("@")
             ? email.slice(0, email.indexOf("@"))
@@ -62,6 +107,7 @@ export class AuthService {
             username,
             sessionKind: isPlatformOperator(platformRole) ? "portal" : "company",
             platformRole,
+            permissions,
         };
     }
     private resolveActiveCompany(user: UserWithRelations, activeCompanyId: string | null | undefined): Company | null {
@@ -95,8 +141,10 @@ export class AuthService {
         else if (isPlatformOperator(user.platformRole)) {
             effectiveRole = platformRoleToLegacyRbac(user.platformRole);
         }
+        const companyKey = scopedId || activeCo?.id || "";
+        const permissions = this.jwtPermissionsForCompany(user, effectiveRole, companyKey);
         return {
-            user: this.sessionUserFields(user, effectiveRole, activeCo),
+            user: this.sessionUserFields(user, effectiveRole, activeCo, permissions),
             company: activeCo ? this.companyPayload(activeCo) : null,
             companies: (user.memberships ?? []).map((m) => this.companyPayload(m.company)),
             sessionKind: (jwtSessionKind === "portal" || isPlatformOperator(user.platformRole)) ? "portal" : "company",
@@ -147,17 +195,19 @@ export class AuthService {
                 throw new AppError("No access to this company for this account", 403);
             }
             const legacyRole = companyRoleToLegacyRbac(membership.role as never);
+            const permissions = this.jwtPermissionsForCompany(user, legacyRole, company.id);
             const jwtPayload: JwtSession = {
                 userId: user.id,
                 companyId: company.id,
                 role: legacyRole,
                 sessionKind: "company",
                 platformRole: user.platformRole ?? null,
+                permissions,
             };
             const token = this.issueToken(jwtPayload, remember);
             return {
                 token,
-                user: this.sessionUserFields(user, legacyRole, company),
+                user: this.sessionUserFields(user, legacyRole, company, permissions),
                 company: this.companyPayload(company),
             };
         }
@@ -174,17 +224,20 @@ export class AuthService {
         }
 
         if (accessible.length > 1) {
+            const portalRole = platformRoleToLegacyRbac(user.platformRole);
+            const permissions = this.jwtPermissionsForCompany(user, portalRole, "");
             const jwtPayloadNoCompany: JwtSession = {
                 userId: user.id,
                 companyId: "",
-                role: platformRoleToLegacyRbac(user.platformRole),
+                role: portalRole,
                 sessionKind: "portal",
                 platformRole: user.platformRole,
+                permissions,
             };
             const token = this.issueToken(jwtPayloadNoCompany, remember);
             return {
                 token,
-                user: this.sessionUserFields(user, platformRoleToLegacyRbac(user.platformRole), null),
+                user: this.sessionUserFields(user, portalRole, null, permissions),
                 company: null,
                 needsCompanySelection: true,
                 companies: accessible.map((c) =>
@@ -205,17 +258,19 @@ export class AuthService {
             slug: row0.slug,
         } as Company;
         const mergedRole = platformRoleToLegacyRbac(user.platformRole);
+        const permissions = this.jwtPermissionsForCompany(user, mergedRole, co.id);
         const jwtPayload: JwtSession = {
             userId: user.id,
             companyId: co.id,
             role: mergedRole,
             sessionKind: "portal",
             platformRole: user.platformRole,
+            permissions,
         };
         const token = this.issueToken(jwtPayload, remember);
         return {
             token,
-            user: this.sessionUserFields(user, mergedRole, co),
+            user: this.sessionUserFields(user, mergedRole, co, permissions),
             company: this.companyPayload(co),
             needsCompanySelection: false,
         };
@@ -239,16 +294,19 @@ export class AuthService {
         if (!user?.isActive) {
             throw new AppError("Unauthorized", 401);
         }
+        const portalRole = platformRoleToLegacyRbac(user.platformRole);
+        const permissions = this.jwtPermissionsForCompany(user, portalRole, membership.companyId);
         const jwtPayload: JwtSession = {
             userId: user.id,
             companyId: membership.companyId,
-            role: platformRoleToLegacyRbac(user.platformRole),
+            role: portalRole,
             sessionKind: "portal",
             platformRole: user.platformRole ?? null,
+            permissions,
         };
         return {
             token: this.issueToken(jwtPayload, true),
-            user: this.sessionUserFields(user, jwtPayload.role, membership.company),
+            user: this.sessionUserFields(user, jwtPayload.role, membership.company, permissions),
             company: this.companyPayload(membership.company),
         };
     }
@@ -286,17 +344,19 @@ export class AuthService {
             throw new AppError("Invite setup incomplete", 500);
         }
         const legacyRole = companyRoleToLegacyRbac(nexRole);
+        const permissions = this.jwtPermissionsForCompany(u, legacyRole, co.id);
         const jwtPayload: JwtSession = {
             userId: user.id,
             companyId: co.id,
             role: legacyRole,
             sessionKind: "company",
             platformRole: u.platformRole ?? null,
+            permissions,
         };
         const authToken = jwt.sign({ ...jwtPayload }, env.JWT_SECRET, inviteSignOpts);
         return {
             token: authToken,
-            user: this.sessionUserFields(u, legacyRole, co),
+            user: this.sessionUserFields(u, legacyRole, co, permissions),
             company: this.companyPayload(co)
         };
     }
@@ -344,17 +404,20 @@ export class AuthService {
         }
         const remember = false;
         if (accessible.length > 1) {
+            const portalRole = platformRoleToLegacyRbac(u.platformRole);
+            const permissions = this.jwtPermissionsForCompany(u, portalRole, "");
             const jwtPayloadNoCompany: JwtSession = {
                 userId: u.id,
                 companyId: "",
-                role: platformRoleToLegacyRbac(u.platformRole),
+                role: portalRole,
                 sessionKind: "portal",
                 platformRole: u.platformRole,
+                permissions,
             };
             const token = this.issueToken(jwtPayloadNoCompany, remember);
             return {
                 token,
-                user: this.sessionUserFields(u, platformRoleToLegacyRbac(u.platformRole), null),
+                user: this.sessionUserFields(u, portalRole, null, permissions),
                 company: null,
                 needsCompanySelection: true,
                 companies: accessible.map((c) =>
@@ -374,17 +437,19 @@ export class AuthService {
             slug: row0.slug,
         } as Company;
         const mergedRole = platformRoleToLegacyRbac(u.platformRole);
+        const permissions = this.jwtPermissionsForCompany(u, mergedRole, co.id);
         const jwtPayload: JwtSession = {
             userId: u.id,
             companyId: co.id,
             role: mergedRole,
             sessionKind: "portal",
             platformRole: u.platformRole,
+            permissions,
         };
         const token = this.issueToken(jwtPayload, remember);
         return {
             token,
-            user: this.sessionUserFields(u, mergedRole, co),
+            user: this.sessionUserFields(u, mergedRole, co, permissions),
             company: this.companyPayload(co),
             needsCompanySelection: false,
         };

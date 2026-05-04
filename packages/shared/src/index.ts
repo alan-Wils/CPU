@@ -15,6 +15,23 @@ export const APP_ROLES = [
 export type AppRole = (typeof APP_ROLES)[number];
 
 export {
+  ALL_APP_PERMISSION_IDS,
+  APP_EXTRA_PERMISSION_IDS,
+  APP_PAGE_PERMISSION_IDS,
+  APP_PERMISSION_LABELS,
+  appPermissionSetsEqual,
+  computeEffectiveAppPermissions,
+  defaultPagePermissionsForRole,
+  hasAppPermission,
+  isAdminOnlyRole,
+  isElevatedManagerRole,
+  normalizeAppPermissionList,
+  type AppExtraPermissionId,
+  type AppPagePermissionId,
+  type AppPermissionId,
+} from "./appPermissions.js";
+
+export {
   extractPrimaryCheckAmount,
   mergeCheckParsedPreferBetter,
   parseCheckOcrTextWithConfidence,

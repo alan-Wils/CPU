@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
+import { canDeleteRecords as userCanDeleteWorkflow } from "@/lib/permissions";
 import { store } from "@/lib/store";
 import { displayNameFromLogActor, getAuthDisplayName, getAuthUser } from "@/lib/auth";
 import {
@@ -75,17 +76,18 @@ const ROLE_LEVELS: Record<string, number> = {
   OWNER: 5,
 };
 
-function hasManagerDeleteAccess() {
-  const user: any = getAuthUser();
-  const role = String(user?.role || "").toUpperCase();
-  return role === "OWNER" || role === "ADMIN" || role === "MANAGER";
-}
-
 function hasCultivationWriteAccess() {
   const user: any = getAuthUser();
   const role = String(user?.role || "").toUpperCase();
 
-  return ["CULTIVATION", "MANAGER", "ADMIN", "OWNER"].includes(role);
+  return [
+    "CULTIVATION",
+    "CULTIVATION_SPECIALIST",
+    "MANAGER",
+    "OPERATIONS_MANAGER",
+    "ADMIN",
+    "OWNER",
+  ].includes(role);
 }
 
 function makeDateCode(date: string) {
@@ -372,7 +374,7 @@ export default function Cultivation() {
   });
 
   useEffect(() => {
-    setCanDeleteRecords(hasManagerDeleteAccess());
+    setCanDeleteRecords(userCanDeleteWorkflow());
     setCanWriteRecords(hasCultivationWriteAccess());
 
     let mounted = true;
@@ -1794,7 +1796,7 @@ export default function Cultivation() {
 
 
   return (
-    <PageAccessGate allowedRoles={["CULTIVATION", "VIEW_ONLY"]}>
+    <PageAccessGate permission="page.cultivation">
       <div style={pageStyle}>
       <div style={shellStyle}>
         <Nav />

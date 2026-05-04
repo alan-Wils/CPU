@@ -5,6 +5,7 @@ import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import { store } from "@/lib/store";
 import { displayNameFromLogActor, getAuthUser } from "@/lib/auth";
+import { canDeleteRecords } from "@/lib/permissions";
 import { loadBackendStore, saveBackendStore } from "@/lib/backendStore";
 import {
   loadCultivationBatches,
@@ -667,15 +668,6 @@ function getLaborCostPerLb(batch: any, logs: any[], hourlyRate: any, sourceBatch
   if (lbsForCost <= 0) return 0;
 
   return laborData.calculatedLaborCost / lbsForCost;
-}
-
-function canDeleteRecords() {
-  if (typeof window === "undefined") return false;
-
-  const user = getAuthUser();
-  const role = String(user?.role || "").toUpperCase();
-
-  return role === "MANAGER" || role === "ADMIN" || role === "OWNER";
 }
 
 function canDeleteAllLogs() {
@@ -1701,7 +1693,7 @@ export default function DataHub() {
   }
 
   return (
-    <PageAccessGate allowedRoles={["VIEW_ONLY", "CULTIVATION", "EXTRACTION", "PACKAGING"]}>
+    <PageAccessGate permission="page.data-hub">
       <div style={pageStyle}>
       <div style={shellStyle}>
         <Nav />

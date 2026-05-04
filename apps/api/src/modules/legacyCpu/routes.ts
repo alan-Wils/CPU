@@ -8,7 +8,7 @@ import { Prisma, SourceMaterialRole } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
-import { requireRole } from "../../middleware/rbac.js";
+import { requireRole, requireRoleOrAppPermission } from "../../middleware/rbac.js";
 import { WorkflowService } from "../../services/workflowService.js";
 import { StoreService } from "../../services/storeService.js";
 import { TaskService } from "../../services/taskService.js";
@@ -504,8 +504,7 @@ legacyCpuRouter.put("/cultivation/:batchId", requireRole(cultivationWriteRoles),
     res.json(mapped);
 }));
 /** Matches `workflowRouter.delete("/cultivation-batches/:batchId")` — OWNER/ADMIN only. */
-const cultivationDeleteRoles = ["OWNER", "ADMIN"];
-legacyCpuRouter.delete("/cultivation/:batchId", requireRole(cultivationDeleteRoles), asyncHandler(async (req, res) => {
+legacyCpuRouter.delete("/cultivation/:batchId", requireRoleOrAppPermission(["OWNER", "ADMIN"], "workflow.delete"), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const batchId = String(req.params.batchId || "");
     const out = await workflowService.deleteCultivation(companyId, req.auth.userId, batchId);
@@ -621,7 +620,7 @@ legacyCpuRouter.put("/extraction/:runId", requireRole(extractionWriteRoles), asy
     res.json(mapped);
 }));
 /** SPA `lib/extractionApi.deleteExtractionBatchRecord` — same path family as GET/POST/PUT. */
-legacyCpuRouter.delete("/extraction/:runId", requireRole(extractionWriteRoles), asyncHandler(async (req, res) => {
+legacyCpuRouter.delete("/extraction/:runId", requireRoleOrAppPermission(["OWNER", "ADMIN"], "workflow.delete"), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const runId = String(req.params.runId || "");
     const out = await workflowService.deleteExtractionRun(companyId, req.auth.userId, runId);
@@ -741,7 +740,7 @@ legacyCpuRouter.put("/packaging/:lotId", requireRole(packagingWriteRoles), async
     });
     res.json(mapped);
 }));
-legacyCpuRouter.delete("/packaging/:lotId", requireRole(packagingWriteRoles), asyncHandler(async (req, res) => {
+legacyCpuRouter.delete("/packaging/:lotId", requireRoleOrAppPermission(["OWNER", "ADMIN"], "workflow.delete"), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const lotId = String(req.params.lotId || "");
     const out = await workflowService.deletePackagingLot(companyId, req.auth.userId, lotId);
@@ -809,7 +808,7 @@ legacyCpuRouter.put("/source-batches/:id", requireRole(sourceBatchWriteRoles), a
     await storeService.save(companyId, req.auth.userId, base);
     res.json(current[idx]);
 }));
-legacyCpuRouter.delete("/source-batches/:id", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
+legacyCpuRouter.delete("/source-batches/:id", requireRoleOrAppPermission(["OWNER", "ADMIN"], "workflow.delete"), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const id = String(req.params.id || "").trim();
     const snap = await storeService.load(companyId);

@@ -12,9 +12,22 @@ authRouter.post("/login", validate({ body: loginSchema }), asyncHandler(async (r
     res.json(result);
 }));
 authRouter.get("/me", authMiddleware, asyncHandler(async (req, res) => {
-    const a = req.auth as { userId: string; companyId?: string; sessionKind?: string };
+    const a = req.auth as {
+        userId: string;
+        companyId?: string;
+        sessionKind?: string;
+        role?: string;
+        platformRole?: string | null;
+    };
     const session = await authService.getSession(a.userId, String(a.companyId ?? ""), a.sessionKind);
-    res.json(session);
+    const refreshed = authService.issueRefreshedTokenIfNeeded(req.header("Authorization"), session.user as { permissions?: string[] }, {
+        userId: a.userId,
+        companyId: String(a.companyId ?? ""),
+        role: String(a.role ?? ""),
+        sessionKind: (a.sessionKind === "portal" ? "portal" : "company"),
+        platformRole: (a.platformRole as string | null) ?? null,
+    });
+    res.json({ ...session, ...(refreshed ? { token: refreshed } : {}) });
 }));
 authRouter.post("/select-company", authMiddleware, validate({ body: selectCompanySchema }), asyncHandler(async (req, res) => {
     const a = req.auth as { userId: string; platformRole?: string | null };

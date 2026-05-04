@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { TenantRepository } from "./TenantRepository.js";
 import { legacyUserRoleToCompanyRole } from "../lib/nexbatchRoles.js";
 export class AdminRepository extends TenantRepository {
@@ -12,7 +13,10 @@ export class AdminRepository extends TenantRepository {
             },
             orderBy: { createdAt: "desc" },
         });
-        return rows.map((r) => r.user);
+        return rows.map((r) => ({
+            user: r.user,
+            appPermissions: r.appPermissions ?? null,
+        }));
     }
     async updateUserStatus(companyId, userId, isActive) {
         const u = await this.findUserById(companyId, userId);
@@ -36,17 +40,32 @@ export class AdminRepository extends TenantRepository {
         });
         if (!m)
             return { count: 0 };
+        const membershipData: Prisma.CompanyMembershipUpdateInput = {};
         if (data.role) {
-            const nex = legacyUserRoleToCompanyRole(data.role);
+            membershipData.role = legacyUserRoleToCompanyRole(data.role);
+        }
+        if (Object.prototype.hasOwnProperty.call(data, "appPermissions")) {
+            membershipData.appPermissions =
+                data.appPermissions === null ? null : (data.appPermissions as Prisma.InputJsonValue);
+        }
+        let membershipTouched = false;
+        if (Object.keys(membershipData).length) {
             await this.db.companyMembership.update({
                 where: { id: m.id },
-                data: { role: nex },
+                data: membershipData,
             });
+            membershipTouched = true;
         }
-        return this.db.user.updateMany({
-            where: { id: userId },
-            data,
-        });
+        const userPatch: Prisma.UserUpdateManyMutationInput = {};
+        if (data.email !== undefined)
+            userPatch.email = data.email;
+        if (data.role !== undefined)
+            userPatch.role = data.role;
+        if (data.isActive !== undefined)
+            userPatch.isActive = data.isActive;
+        if (Object.keys(userPatch).length)
+            return this.db.user.updateMany({ where: { id: userId }, data: userPatch });
+        return { count: membershipTouched ? 1 : 0 };
     }
     async deleteUser(companyId, userId) {
         const before = await this.db.companyMembership.findFirst({

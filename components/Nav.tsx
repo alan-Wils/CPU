@@ -1,8 +1,14 @@
 "use client";
 
+import {
+  defaultPagePermissionsForRole,
+  hasAppPermission,
+  isElevatedManagerRole,
+} from "@cpu/shared";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { getMe } from "@/lib/api";
 import {
   clearAuthSession,
   getAuthCompany,
@@ -10,11 +16,25 @@ import {
   getPortalCompanies,
   isLoggedIn,
   isPortalSession,
+  mergeAuthSessionToken,
   saveAuthSession,
   type CpuCompany,
   type CpuUser,
 } from "@/lib/auth";
 import { clearSelectedCompanyId, selectPortalCompany, setSelectedCompanyId } from "@/lib/api";
+
+function canNavToPage(permission: string): boolean {
+  if (!isLoggedIn())
+    return true;
+  const u = getAuthUser();
+  const role = String(u?.role || "").toUpperCase();
+  if (isElevatedManagerRole(role))
+    return true;
+  const perms = Array.isArray(u?.permissions)
+    ? u.permissions
+    : defaultPagePermissionsForRole(role);
+  return hasAppPermission(perms, permission);
+}
 
 export default function Nav() {
   const pathname = usePathname();
@@ -26,6 +46,28 @@ export default function Nav() {
   useEffect(() => {
     setPortalCompaniesState(getPortalCompanies());
   }, [pathname]);
+
+  useEffect(() => {
+    if (!isLoggedIn())
+      return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await getMe();
+        if (cancelled || !me || typeof me !== "object")
+          return;
+        const raw = me as { token?: string; user?: CpuUser };
+        if (raw.token)
+          mergeAuthSessionToken(raw.token, raw.user);
+      }
+      catch {
+        /* offline / stale */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isLoggedIn()) return;
@@ -132,33 +174,41 @@ export default function Nav() {
             Home
           </Link>
 
-          <Link
-            href="/cultivation"
-            style={navButtonStyle(pathname === "/cultivation")}
-          >
-            Cultivation
-          </Link>
+          {canNavToPage("page.cultivation") && (
+            <Link
+              href="/cultivation"
+              style={navButtonStyle(pathname === "/cultivation")}
+            >
+              Cultivation
+            </Link>
+          )}
 
-          <Link
-            href="/extraction"
-            style={navButtonStyle(pathname === "/extraction")}
-          >
-            Extraction
-          </Link>
+          {canNavToPage("page.extraction") && (
+            <Link
+              href="/extraction"
+              style={navButtonStyle(pathname === "/extraction")}
+            >
+              Extraction
+            </Link>
+          )}
 
-          <Link
-            href="/packaging"
-            style={navButtonStyle(pathname === "/packaging")}
-          >
-            Packaging
-          </Link>
+          {canNavToPage("page.packaging") && (
+            <Link
+              href="/packaging"
+              style={navButtonStyle(pathname === "/packaging")}
+            >
+              Packaging
+            </Link>
+          )}
 
-          <Link
-            href="/data-hub"
-            style={navButtonStyle(pathname === "/data-hub")}
-          >
-            Data Hub
-          </Link>
+          {canNavToPage("page.data-hub") && (
+            <Link
+              href="/data-hub"
+              style={navButtonStyle(pathname === "/data-hub")}
+            >
+              Data Hub
+            </Link>
+          )}
         </div>
       )}
 

@@ -27,6 +27,7 @@ import {
 } from "@/lib/extractionApi";
 import { createPackagingBatch } from "@/lib/packagingApi";
 import { createLog } from "@/lib/logsApi";
+import { canDeleteRecords as userCanDeleteWorkflow } from "@/lib/permissions";
 
 const sourceMaterialTypes = {
   freshFrozen: [
@@ -91,9 +92,13 @@ function isCompletedSourceBatch(batch: any) {
 const ROLE_LEVELS: Record<string, number> = {
   VIEW_ONLY: 1,
   CULTIVATION: 2,
+  CULTIVATION_SPECIALIST: 2,
   EXTRACTION: 2,
+  EXTRACTION_SPECIALIST: 2,
   PACKAGING: 2,
+  PACKAGING_SPECIALIST: 2,
   MANAGER: 3,
+  OPERATIONS_MANAGER: 3,
   ADMIN: 4,
   OWNER: 5,
 };
@@ -102,7 +107,12 @@ function hasMinimumRole(userRole: any, minimumRole: string) {
   const role = String(userRole || "").toUpperCase();
 
   if (String(minimumRole || "").toUpperCase() === "MANAGER") {
-    return role === "OWNER" || role === "ADMIN" || role === "MANAGER";
+    return (
+      role === "OWNER" ||
+      role === "ADMIN" ||
+      role === "MANAGER" ||
+      role === "OPERATIONS_MANAGER"
+    );
   }
 
   const currentLevel = ROLE_LEVELS[role] || 0;
@@ -115,7 +125,9 @@ function canWriteExtraction(userRole: any) {
 
   return (
     role === "EXTRACTION" ||
+    role === "EXTRACTION_SPECIALIST" ||
     role === "MANAGER" ||
+    role === "OPERATIONS_MANAGER" ||
     role === "ADMIN" ||
     role === "OWNER"
   );
@@ -264,7 +276,7 @@ export default function Extraction() {
 
   useEffect(() => {
     const user = getAuthUser();
-    setUserCanDelete(hasMinimumRole(user?.role, "MANAGER"));
+    setUserCanDelete(userCanDeleteWorkflow());
     setUserCanWrite(canWriteExtraction(user?.role));
 
     let active = true;
@@ -2129,7 +2141,7 @@ export default function Extraction() {
   const allowedRunProducts = getAllowedRunProducts();
 
   return (
-    <PageAccessGate allowedRoles={["EXTRACTION", "VIEW_ONLY"]}>
+    <PageAccessGate permission="page.extraction">
       <div style={pageStyle}>
       <div style={shellStyle}>
         <Nav />

@@ -170,6 +170,8 @@ model CompanyMembership {
   companyId String
   company   Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
   role      NexBatchCompanyRole
+  /// JSON string[] of app permission ids (e.g. `page.cultivation`). `null` = use role defaults.
+  appPermissions Json?
   createdAt DateTime            @default(now())
   updatedAt DateTime            @updatedAt
 

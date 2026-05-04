@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
+import { canDeleteRecords as userCanDeleteWorkflow } from "@/lib/permissions";
 import { store } from "@/lib/store";
 import {
   displayNameFromLogActor,
@@ -212,7 +213,17 @@ function makePackageSetId(sourceBatchId: string, existingSets: any[]) {
 
 function hasPackagingWriteAccess() {
   const role = String(getAuthUser()?.role || "").toUpperCase();
-  return role !== "VIEW_ONLY" && ["PACKAGING", "MANAGER", "ADMIN", "OWNER"].includes(role);
+  return (
+    role !== "VIEW_ONLY" &&
+    [
+      "PACKAGING",
+      "PACKAGING_SPECIALIST",
+      "MANAGER",
+      "OPERATIONS_MANAGER",
+      "ADMIN",
+      "OWNER",
+    ].includes(role)
+  );
 }
 
 export default function Packaging() {
@@ -228,8 +239,7 @@ export default function Packaging() {
   const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
-    const role = String(getAuthUser()?.role || "").toUpperCase();
-    setCanDeleteRecords(role === "OWNER" || role === "ADMIN" || role === "MANAGER");
+    setCanDeleteRecords(userCanDeleteWorkflow());
     setCanWriteRecords(hasPackagingWriteAccess());
 
     let active = true;
@@ -1168,7 +1178,7 @@ export default function Packaging() {
   };
 
   return (
-    <PageAccessGate allowedRoles={["PACKAGING", "VIEW_ONLY"]}>
+    <PageAccessGate permission="page.packaging">
       <div style={pageStyle}>
       <div style={shellStyle}>
         <Nav />

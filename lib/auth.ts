@@ -3,6 +3,8 @@ export type CpuUser = {
   username: string;
   email?: string | null;
   role: string;
+  /** App permission ids from JWT (`page.*`, `workflow.delete`). */
+  permissions?: string[];
   sessionKind?: "company" | "portal";
   platformRole?: string | null;
   companyId?: string;
@@ -165,6 +167,18 @@ const LEGACY_AUTH_KEYS = [
   "authCompany",
   "cannabis_cpu_company",
 ];
+
+/** Apply a refreshed JWT (and optional user fields) after `GET /api/auth/me`. */
+export function mergeAuthSessionToken(token: string, userPatch?: Partial<CpuUser> | null) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(TOKEN_KEY, token);
+  if (userPatch && typeof userPatch === "object") {
+    const prev = getAuthUser();
+    const merged = { ...(prev || {}), ...userPatch } as CpuUser;
+    window.localStorage.setItem(USER_KEY, JSON.stringify(merged));
+  }
+  window.dispatchEvent(new Event(CPU_AUTH_CHANGED_EVENT));
+}
 
 export function clearAuthSession() {
   if (typeof window === "undefined") return;

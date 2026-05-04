@@ -1,68 +1,66 @@
 "use client";
 
+import {
+  defaultPagePermissionsForRole,
+  hasAppPermission,
+  isElevatedManagerRole,
+} from "@cpu/shared";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getAuthUser, isLoggedIn } from "@/lib/auth";
 
-type PageAccessGateProps = {
-  allowedRoles: string[];
-  children: React.ReactNode;
-};
+type PageAccessGateProps =
+  | {
+      /** e.g. `page.cultivation` — checked against JWT `user.permissions`. */
+      permission: string;
+      children: React.ReactNode;
+    }
+  | {
+      /** Legacy admin gate: exact role match (OWNER / ADMIN). */
+      allowedRoles: string[];
+      children: React.ReactNode;
+    };
 
-const ROLE_LEVELS: Record<string, number> = {
-  VIEW_ONLY: 1,
-  CULTIVATION: 2,
-  EXTRACTION: 2,
-  PACKAGING: 2,
-  MANAGER: 3,
-  ADMIN: 4,
-  OWNER: 5,
-};
-
-function normalizeRole(role: any) {
+function normalizeRole(role: unknown) {
   return String(role || "").toUpperCase();
 }
 
-function hasAccess(userRole: string, allowedRoles: string[]) {
-  const role = normalizeRole(userRole);
-  const allowed = allowedRoles.map(normalizeRole);
-
-  if (allowed.includes(role)) return true;
-
-  // Higher-level users can access production pages.
-  if (
-    ROLE_LEVELS[role] >= ROLE_LEVELS.MANAGER &&
-    allowed.some((allowedRole) =>
-      ["CULTIVATION", "EXTRACTION", "PACKAGING", "VIEW_ONLY"].includes(
-        allowedRole
-      )
-    )
-  ) {
-    return true;
-  }
-
-  return false;
+function effectivePermissionList(userRole: string, rawFromUser: unknown): string[] {
+  if (Array.isArray(rawFromUser))
+    return rawFromUser.map((x) => String(x));
+  return defaultPagePermissionsForRole(userRole);
 }
 
-export default function PageAccessGate({
-  allowedRoles,
-  children,
-}: PageAccessGateProps) {
+function hasAdminRoleAccess(userRole: string, allowedRoles: string[]) {
+  const role = normalizeRole(userRole);
+  const allowed = allowedRoles.map(normalizeRole);
+  return allowed.includes(role);
+}
+
+function hasPageAccess(userRole: string, permissions: string[], permission: string) {
+  const role = normalizeRole(userRole);
+  if (isElevatedManagerRole(role))
+    return true;
+  return hasAppPermission(permissions, permission);
+}
+
+export default function PageAccessGate(props: PageAccessGateProps) {
   const pathname = usePathname();
   const router = useRouter();
-  /** Avoid SSR/client mismatch: token only exists in `localStorage` after hydration. */
   const [hydrated, setHydrated] = useState(false);
   const [checking, setChecking] = useState(true);
   const [allowed, setAllowed] = useState(false);
   const [userRole, setUserRole] = useState("");
+  const [detail, setDetail] = useState("");
 
   useEffect(() => {
     setHydrated(true);
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated)
+      return;
 
     const loggedIn = isLoggedIn();
     const user = getAuthUser();
@@ -81,9 +79,17 @@ export default function PageAccessGate({
       return;
     }
 
-    setAllowed(hasAccess(role, allowedRoles));
+    if ("allowedRoles" in props) {
+      setAllowed(hasAdminRoleAccess(role, props.allowedRoles));
+      setDetail(props.allowedRoles.map(normalizeRole).join(", "));
+    }
+    else {
+      const perms = effectivePermissionList(role, user?.permissions);
+      setAllowed(hasPageAccess(role, perms, props.permission));
+      setDetail(props.permission);
+    }
     setChecking(false);
-  }, [hydrated, allowedRoles, pathname, router]);
+  }, [hydrated, props, pathname, router]);
 
   if (!hydrated || checking) {
     return (
@@ -114,13 +120,16 @@ export default function PageAccessGate({
   }
 
   if (!allowed) {
+    const isAdminGate = "allowedRoles" in props;
     return (
       <main style={pageStyle}>
         <div style={cardStyle}>
           <h1 style={{ marginTop: 0 }}>Access Denied</h1>
 
           <p style={mutedStyle}>
-            Your current role does not have permission to open this page.
+            {isAdminGate
+              ? "Your current role does not have permission to open this page."
+              : "You do not have access to this page. Ask a company admin to grant the matching permission."}
           </p>
 
           <div
@@ -138,9 +147,13 @@ export default function PageAccessGate({
               <b>Your Role:</b> {userRole || "Unknown"}
             </div>
             <div>
-              <b>Allowed Roles:</b>{" "}
-              {allowedRoles.map((role) => normalizeRole(role)).join(", ")}
+              <b>{isAdminGate ? "Allowed Roles:" : "Required:"}</b> {detail}
             </div>
+            {!isAdminGate && (
+              <div style={{ marginTop: 8, fontSize: 13 }}>
+                Admins can set page access under <b>Admin → Users → Edit</b>.
+              </div>
+            )}
           </div>
 
           <Link href="/" style={buttonStyle}>
@@ -151,7 +164,7 @@ export default function PageAccessGate({
     );
   }
 
-  return <>{children}</>;
+  return <>{props.children}</>;
 }
 
 const pageStyle: React.CSSProperties = {

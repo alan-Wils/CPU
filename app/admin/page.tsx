@@ -1,5 +1,10 @@
 "use client";
 
+import {
+  ALL_APP_PERMISSION_IDS,
+  APP_PERMISSION_LABELS,
+  defaultPagePermissionsForRole,
+} from "@cpu/shared";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -26,6 +31,8 @@ type AdminUser = {
   emailVerified?: boolean;
   mustChangePassword?: boolean;
   createdAt?: string;
+  /** From `CompanyMembership.appPermissions`; `null` = role defaults. */
+  appPermissions?: string[] | null;
 };
 
 type CompanyItem = {
@@ -356,6 +363,7 @@ export default function AdminPage() {
   const [editEmail, setEditEmail] = useState("");
   const [editRole, setEditRole] = useState("VIEW_ONLY");
   const [editActive, setEditActive] = useState(true);
+  const [editAppPermissions, setEditAppPermissions] = useState<string[]>([]);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [savingInviteId, setSavingInviteId] = useState<string | null>(null);
 
@@ -1397,6 +1405,13 @@ export default function AdminPage() {
     setEditEmail(user.email || "");
     setEditRole(user.role || "VIEW_ONLY");
     setEditActive(user.active);
+    const roleU = String(user.role || "VIEW_ONLY");
+    const raw = user.appPermissions;
+    const initial =
+      Array.isArray(raw) && raw.length
+        ? raw.map((x) => String(x))
+        : defaultPagePermissionsForRole(roleU);
+    setEditAppPermissions([...new Set(initial)]);
   }
 
   function cancelEditUser() {
@@ -1405,6 +1420,13 @@ export default function AdminPage() {
     setEditEmail("");
     setEditRole("VIEW_ONLY");
     setEditActive(true);
+    setEditAppPermissions([]);
+  }
+
+  function toggleEditPermission(id: string) {
+    setEditAppPermissions((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
   }
 
   async function saveEditedUser(user: AdminUser) {
@@ -1444,13 +1466,20 @@ export default function AdminPage() {
     setSavingUserId(user.id);
 
     try {
+      const elevatedTarget = ["OWNER", "ADMIN", "OPERATIONS_MANAGER"].includes(editRole);
+      const body: Record<string, unknown> = {
+        email: editEmail.trim() || undefined,
+        role: editRole,
+        isActive: editActive,
+      };
+      if (elevatedTarget)
+        body.appPermissions = null;
+      else
+        body.appPermissions = editAppPermissions;
+
       const updatedUser = await apiRequest<AdminUser>(`/api/admin/users/${user.id}`, {
         method: "PATCH",
-        body: {
-          email: editEmail.trim() || undefined,
-          role: editRole,
-          isActive: editActive,
-        },
+        body,
       });
 
       setUsers((current) =>
@@ -2248,6 +2277,77 @@ export default function AdminPage() {
                                     (option) => option.value === editRole,
                                   )?.description}
                                 </div>
+
+                                {!["OWNER", "ADMIN", "OPERATIONS_MANAGER"].includes(editRole) && (
+                                  <div
+                                    style={{
+                                      marginTop: 12,
+                                      padding: 14,
+                                      borderRadius: 14,
+                                      border: "1px solid rgba(56, 189, 248, 0.28)",
+                                      background: "rgba(8, 47, 73, 0.45)",
+                                      textAlign: "left",
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        color: "#bae6fd",
+                                        fontWeight: 900,
+                                        marginBottom: 10,
+                                        fontSize: 14,
+                                      }}
+                                    >
+                                      Page & action access
+                                    </div>
+                                    <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 12 }}>
+                                      Choose which areas this employee can open. Owner, Admin, and Operations Manager
+                                      always have full floor access; overrides do not apply to them.
+                                    </p>
+                                    <div
+                                      style={{
+                                        display: "grid",
+                                        gap: 10,
+                                        marginBottom: 12,
+                                      }}
+                                    >
+                                      {(ALL_APP_PERMISSION_IDS as readonly string[]).map((pid) => (
+                                        <label
+                                          key={pid}
+                                          style={{
+                                            display: "flex",
+                                            alignItems: "flex-start",
+                                            gap: 10,
+                                            cursor: "pointer",
+                                            color: "#e2e8f0",
+                                            fontSize: 14,
+                                          }}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={editAppPermissions.includes(pid)}
+                                            onChange={() => toggleEditPermission(pid)}
+                                            style={{ marginTop: 3 }}
+                                          />
+                                          <span>{APP_PERMISSION_LABELS[pid as keyof typeof APP_PERMISSION_LABELS]}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setEditAppPermissions(defaultPagePermissionsForRole(editRole))
+                                      }
+                                      style={{
+                                        ...smallButtonStyle,
+                                        background: "rgba(71, 85, 105, 0.4)",
+                                        border: "1px solid rgba(148, 163, 184, 0.35)",
+                                        color: "#cbd5e1",
+                                      }}
+                                    >
+                                      Reset to role defaults
+                                    </button>
+                                  </div>
+                                )}
 
                                 <div
                                   style={{

@@ -8,6 +8,23 @@ export function requireRole(allowedRoles) {
     };
 }
 
+/** Allows legacy roles **or** a granular JWT permission (e.g. `workflow.delete`). */
+export function requireRoleOrAppPermission(allowedRoles: string[], permission: string) {
+    return (req, res, next) => {
+        const role = req.auth?.role;
+        if (role && allowedRoles.includes(role)) {
+            next();
+            return;
+        }
+        const perms = (req.auth as { permissions?: string[] } | undefined)?.permissions;
+        if (Array.isArray(perms) && perms.includes(permission)) {
+            next();
+            return;
+        }
+        res.status(403).json({ message: "Forbidden" });
+    };
+}
+
 export function requirePlatformRoles(allowedPlatformRoles: string[]) {
     return (req, res, next) => {
         const pr = String((req.auth as { platformRole?: string | null })?.platformRole || "");

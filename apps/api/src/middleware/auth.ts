@@ -1,3 +1,4 @@
+import { computeEffectiveAppPermissions } from "@cpu/shared";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { attachScopedCompanyId } from "./companyScope.js";
@@ -14,6 +15,9 @@ export function authMiddleware(req, res, next) {
             payload.sessionKind = "company";
         if (payload.platformRole === undefined)
             payload.platformRole = null;
+        if (!Array.isArray(payload.permissions)) {
+            payload.permissions = computeEffectiveAppPermissions(String(payload.role ?? ""), null);
+        }
         req.auth = payload;
         attachScopedCompanyId(req);
         next();

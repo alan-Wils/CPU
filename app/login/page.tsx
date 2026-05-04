@@ -221,7 +221,7 @@ export default function LoginPage() {
             value={companyCode}
             onChange={(e) => setCompanyCode(e.target.value)}
             style={inputStyle}
-            placeholder="e.g. BUDFOX — leave blank only for NexBatch portal login"
+            placeholder="e.g. CODE — leave blank only for NexBatch portal login"
             autoComplete="organization"
           />
         </label>

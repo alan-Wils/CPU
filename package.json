@@ -16,6 +16,7 @@
     "build": "npm --workspace @cpu/shared run build && npm --workspace @cpu/api run build && npm --workspace @cpu/web run build"
   },
   "dependencies": {
+    "@cpu/shared": "file:./packages/shared",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest"
