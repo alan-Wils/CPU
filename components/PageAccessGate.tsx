@@ -3,7 +3,7 @@
 import {
   defaultPagePermissionsForRole,
   hasAppPermission,
-  isElevatedManagerRole,
+  isOwnerOrAdminRole,
 } from "@cpu/shared";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -40,7 +40,7 @@ function hasAdminRoleAccess(userRole: string, allowedRoles: string[]) {
 
 function hasPageAccess(userRole: string, permissions: string[], permission: string) {
   const role = normalizeRole(userRole);
-  if (isElevatedManagerRole(role))
+  if (isOwnerOrAdminRole(role))
     return true;
   return hasAppPermission(permissions, permission);
 }

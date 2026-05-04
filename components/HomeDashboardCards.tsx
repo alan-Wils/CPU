@@ -3,7 +3,7 @@
 import {
   defaultPagePermissionsForRole,
   hasAppPermission,
-  isElevatedManagerRole,
+  isOwnerOrAdminRole,
 } from "@cpu/shared";
 import { getAuthUser, isLoggedIn } from "@/lib/auth";
 
@@ -54,7 +54,7 @@ export default function HomeDashboardCards() {
   const visible = dashboardCards.filter((c) => {
     if (!isLoggedIn())
       return true;
-    if (isElevatedManagerRole(role))
+    if (isOwnerOrAdminRole(role))
       return true;
     const perms = Array.isArray(user?.permissions)
       ? user.permissions

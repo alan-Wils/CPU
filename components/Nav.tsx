@@ -3,7 +3,7 @@
 import {
   defaultPagePermissionsForRole,
   hasAppPermission,
-  isElevatedManagerRole,
+  isOwnerOrAdminRole,
 } from "@cpu/shared";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -28,7 +28,7 @@ function canNavToPage(permission: string): boolean {
     return true;
   const u = getAuthUser();
   const role = String(u?.role || "").toUpperCase();
-  if (isElevatedManagerRole(role))
+  if (isOwnerOrAdminRole(role))
     return true;
   const perms = Array.isArray(u?.permissions)
     ? u.permissions

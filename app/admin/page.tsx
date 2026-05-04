@@ -1466,13 +1466,13 @@ export default function AdminPage() {
     setSavingUserId(user.id);
 
     try {
-      const elevatedTarget = ["OWNER", "ADMIN", "OPERATIONS_MANAGER"].includes(editRole);
+      const ownerOrAdminRole = ["OWNER", "ADMIN"].includes(editRole);
       const body: Record<string, unknown> = {
         email: editEmail.trim() || undefined,
         role: editRole,
         isActive: editActive,
       };
-      if (elevatedTarget)
+      if (ownerOrAdminRole)
         body.appPermissions = null;
       else
         body.appPermissions = editAppPermissions;
@@ -2278,7 +2278,39 @@ export default function AdminPage() {
                                   )?.description}
                                 </div>
 
-                                {!["OWNER", "ADMIN", "OPERATIONS_MANAGER"].includes(editRole) && (
+                                {["OWNER", "ADMIN"].includes(editRole) ? (
+                                  <div
+                                    style={{
+                                      marginTop: 12,
+                                      padding: 14,
+                                      borderRadius: 14,
+                                      border: "1px solid rgba(245, 158, 11, 0.35)",
+                                      background: "rgba(69, 26, 3, 0.35)",
+                                      textAlign: "left",
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        color: "#fde68a",
+                                        fontWeight: 900,
+                                        marginBottom: 8,
+                                        fontSize: 14,
+                                      }}
+                                    >
+                                      Page & action access
+                                    </div>
+                                    <p style={{ color: "#fcd34d", fontSize: 13, margin: 0, lineHeight: 1.5 }}>
+                                      <b>Owner</b> and <b>Company Admin</b> always have every production page (Cultivation,
+                                      Extraction, Packaging, Data Hub). That cannot be limited here — it is how the
+                                      product keeps tenant administration working.
+                                    </p>
+                                    <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 12, marginBottom: 0, lineHeight: 1.5 }}>
+                                      To assign <b>specific pages or delete rights</b>, set the role to{" "}
+                                      <b>Operations Manager</b>, a <b>specialist</b> role, or <b>View Only</b>, then use
+                                      the checkboxes that appear below the role.
+                                    </p>
+                                  </div>
+                                ) : (
                                   <div
                                     style={{
                                       marginTop: 12,
@@ -2300,8 +2332,9 @@ export default function AdminPage() {
                                       Page & action access
                                     </div>
                                     <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 12 }}>
-                                      Choose which areas this employee can open. Owner, Admin, and Operations Manager
-                                      always have full floor access; overrides do not apply to them.
+                                      {editRole === "OPERATIONS_MANAGER"
+                                        ? "Operations managers get all floor pages by default. Uncheck any area they should not open, or grant “Delete workflow records” only when needed."
+                                        : "Choose which areas this employee can open and whether they may delete workflow records."}
                                     </p>
                                     <div
                                       style={{

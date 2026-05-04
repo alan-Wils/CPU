@@ -41,6 +41,11 @@ const PAGE_SET_OWNER_ADMIN: AppPagePermissionId[] = [...PAGE_SET_ALL];
 
 const PAGE_SET_OPERATIONS_MANAGER: AppPagePermissionId[] = [...PAGE_SET_ALL];
 
+export function isOwnerOrAdminRole(role: string): boolean {
+  const r = String(role || "").toUpperCase();
+  return r === "OWNER" || r === "ADMIN";
+}
+
 export function isElevatedManagerRole(role: string): boolean {
   const r = String(role || "").toUpperCase();
   return r === "OWNER" || r === "ADMIN" || r === "OPERATIONS_MANAGER";
@@ -95,8 +100,11 @@ export function computeEffectiveAppPermissions(role: string, storedMembershipJso
   const r = String(role || "").toUpperCase();
   if (r === "OWNER" || r === "ADMIN")
     return [...PAGE_SET_OWNER_ADMIN];
-  if (r === "OPERATIONS_MANAGER")
-    return [...PAGE_SET_OPERATIONS_MANAGER];
+  if (r === "OPERATIONS_MANAGER") {
+    if (storedMembershipJson === null || storedMembershipJson === undefined)
+      return [...PAGE_SET_OPERATIONS_MANAGER];
+    return normalizeAppPermissionList(storedMembershipJson);
+  }
   if (storedMembershipJson === null || storedMembershipJson === undefined)
     return defaultPagePermissionsForRole(r);
   return normalizeAppPermissionList(storedMembershipJson);

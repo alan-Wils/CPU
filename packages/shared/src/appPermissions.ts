@@ -3,7 +3,7 @@
  * `null` in DB means “use {@link defaultPagePermissionsForRole} for this user role”.
  *
  * **API duplicate:** `apps/api/src/lib/appPermissions.ts` — Railway builds `apps/api` without this package;
- * keep both files aligned when changing permission ids or defaults.
+ * keep both files aligned when changing permission ids, defaults, or `computeEffectiveAppPermissions` / `isOwnerOrAdminRole`.
  */
 export const APP_PAGE_PERMISSION_IDS = [
   "page.cultivation",
@@ -45,6 +45,13 @@ const PAGE_SET_OWNER_ADMIN: AppPagePermissionId[] = [...PAGE_SET_ALL];
 /** Operations manager: same production floor as legacy `PageAccessGate` manager bypass. */
 const PAGE_SET_OPERATIONS_MANAGER: AppPagePermissionId[] = [...PAGE_SET_ALL];
 
+/** OWNER / ADMIN always get full workflow pages (JWT ignores membership overrides). */
+export function isOwnerOrAdminRole(role: string): boolean {
+  const r = String(role || "").toUpperCase();
+  return r === "OWNER" || r === "ADMIN";
+}
+
+/** OWNER, ADMIN, or Operations Manager — used where legacy “elevated” wording still applies. */
 export function isElevatedManagerRole(role: string): boolean {
   const r = String(role || "").toUpperCase();
   return r === "OWNER" || r === "ADMIN" || r === "OPERATIONS_MANAGER";
@@ -104,8 +111,11 @@ export function computeEffectiveAppPermissions(role: string, storedMembershipJso
   const r = String(role || "").toUpperCase();
   if (r === "OWNER" || r === "ADMIN")
     return [...PAGE_SET_OWNER_ADMIN];
-  if (r === "OPERATIONS_MANAGER")
-    return [...PAGE_SET_OPERATIONS_MANAGER];
+  if (r === "OPERATIONS_MANAGER") {
+    if (storedMembershipJson === null || storedMembershipJson === undefined)
+      return [...PAGE_SET_OPERATIONS_MANAGER];
+    return normalizeAppPermissionList(storedMembershipJson);
+  }
   if (storedMembershipJson === null || storedMembershipJson === undefined)
     return defaultPagePermissionsForRole(r);
   return normalizeAppPermissionList(storedMembershipJson);

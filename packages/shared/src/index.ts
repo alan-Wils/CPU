@@ -25,6 +25,7 @@ export {
   hasAppPermission,
   isAdminOnlyRole,
   isElevatedManagerRole,
+  isOwnerOrAdminRole,
   normalizeAppPermissionList,
   type AppExtraPermissionId,
   type AppPagePermissionId,
