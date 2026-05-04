@@ -213,20 +213,25 @@ const INVITE_ROLE_OPTIONS: {
 ];
 
 /** Roles allowed when editing a user — must match `@cpu/api` `adminUserUpdateSchema` / Prisma `UserRole`. */
+/** Match `PageAccessGate` / JWT — tolerate lowercase or stray spaces. */
+function normalizePlatformRole(role: string | undefined | null): string {
+  return String(role ?? "").trim().toUpperCase();
+}
+
 function getEditUserRoleOptions(currentActorRole: string) {
   const ownerOption = {
     value: "OWNER",
     label: "Application Owner",
     description: "Application owner access.",
   };
-  if (currentActorRole === "OWNER") {
+  if (normalizePlatformRole(currentActorRole) === "OWNER") {
     return [...INVITE_ROLE_OPTIONS, ownerOption];
   }
   return [...INVITE_ROLE_OPTIONS];
 }
 
 function getAllowedRoleOptions(currentRole: string) {
-  if (currentRole === "OWNER") return getEditUserRoleOptions("OWNER");
+  if (normalizePlatformRole(currentRole) === "OWNER") return getEditUserRoleOptions("OWNER");
   return getEditUserRoleOptions(currentRole).filter((option) => option.value !== "OWNER");
 }
 
@@ -248,11 +253,13 @@ function getRoleColor(role: string) {
 }
 
 function canCreateUsers(role: string) {
-  return role === "OWNER" || role === "ADMIN";
+  const r = normalizePlatformRole(role);
+  return r === "OWNER" || r === "ADMIN";
 }
 
 function canManageUsers(role: string) {
-  return role === "OWNER" || role === "ADMIN";
+  const r = normalizePlatformRole(role);
+  return r === "OWNER" || r === "ADMIN";
 }
 
 type CheckMime = "image/jpeg" | "image/jpg" | "image/png" | "image/webp";
@@ -336,8 +343,10 @@ async function readImageFileForCheckUpload(file: File): Promise<{
 }
 
 function canEditTargetUser(currentRole: string, targetRole: string) {
-  if (currentRole === "OWNER") return true;
-  if (currentRole === "ADMIN" && targetRole !== "OWNER") return true;
+  const c = normalizePlatformRole(currentRole);
+  const t = normalizePlatformRole(targetRole);
+  if (c === "OWNER") return true;
+  if (c === "ADMIN" && t !== "OWNER") return true;
   return false;
 }
 
@@ -466,8 +475,15 @@ export default function AdminPage() {
     [users, pendingInvites],
   );
 
+  const editingTargetUser = useMemo(() => {
+    if (!editingUserId) return null;
+    const u = companyUsersDisplay.find((x) => x.id === editingUserId);
+    if (!u || isPendingInviteGridRow(u)) return null;
+    return u;
+  }, [editingUserId, companyUsersDisplay]);
+
   function checksCompanyId(): string {
-    if (String(currentUser?.role || "") === "OWNER") {
+    if (normalizePlatformRole(currentUser?.role) === "OWNER") {
       const sid = String(selectedCompanyId || "").trim();
       if (sid) return sid;
     }
@@ -1093,7 +1109,7 @@ export default function AdminPage() {
 
   function inviteAdminCompanyId(): string {
     return (
-      (currentUser?.role === "OWNER"
+      (normalizePlatformRole(currentUser?.role) === "OWNER"
         ? String(selectedCompanyId || "").trim()
         : "") ||
       getSelectedCompanyId().trim() ||
@@ -1177,7 +1193,7 @@ export default function AdminPage() {
       setCurrentUser(resolvedUser);
       setCompany(resolvedCompany);
 
-      if (resolvedUser?.role === "OWNER") {
+      if (normalizePlatformRole(resolvedUser?.role) === "OWNER") {
         const raw = await apiRequest<
           CompanyItem[] | { companies: CompanyItem[] }
         >("/api/companies/all");
@@ -1286,13 +1302,16 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!editingUserId) return;
-    const id = requestAnimationFrame(() => {
-      document
-        .getElementById(`admin-user-edit-${editingUserId}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    return () => cancelAnimationFrame(id);
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") cancelEditUser();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [editingUserId]);
+
+  useEffect(() => {
+    if (editingUserId && !editingTargetUser) cancelEditUser();
+  }, [editingUserId, editingTargetUser]);
 
   async function handleCompanySwitch(companyId: string) {
     setError("");
@@ -1370,7 +1389,7 @@ export default function AdminPage() {
       return;
     }
 
-    if (currentUser?.role === "ADMIN" && role === "OWNER") {
+    if (normalizePlatformRole(currentUser?.role) === "ADMIN" && role === "OWNER") {
       setError("Admins cannot invite application owners.");
       return;
     }
@@ -1382,12 +1401,14 @@ export default function AdminPage() {
         email: email.trim(),
         role,
         companyId:
-          currentUser?.role === "OWNER" ? selectedCompanyId : undefined,
+          normalizePlatformRole(currentUser?.role) === "OWNER"
+            ? selectedCompanyId
+            : undefined,
       });
 
       const handle = username.trim() || email.trim().split("@")[0] || "user";
       await loadPendingInvitesForCompany(
-        currentUser?.role === "OWNER"
+        normalizePlatformRole(currentUser?.role) === "OWNER"
           ? selectedCompanyId
           : getSelectedCompanyId() || getAuthCompany()?.id || "",
       );
@@ -1415,7 +1436,7 @@ export default function AdminPage() {
     setEditingUserId(user.id);
     setEditUsername(user.username || "");
     setEditEmail(user.email || "");
-    setEditRole(user.role || "VIEW_ONLY");
+    setEditRole(normalizePlatformRole(user.role) || "VIEW_ONLY");
     setEditActive(user.active);
     const roleU = String(user.role || "VIEW_ONLY").trim().toUpperCase();
     if (isOwnerOrAdminRoleKey(roleU)) {
@@ -1462,7 +1483,7 @@ export default function AdminPage() {
       return;
     }
 
-    if (currentUser?.role === "ADMIN" && editRole === "OWNER") {
+    if (normalizePlatformRole(currentUser?.role) === "ADMIN" && normalizePlatformRole(editRole) === "OWNER") {
       setError("Admins cannot make users application owners.");
       return;
     }
@@ -1710,7 +1731,7 @@ export default function AdminPage() {
                   {company?.name || "—"}
                 </div>
 
-                {currentUser?.role === "OWNER" && companies.length > 0 && (
+                {normalizePlatformRole(currentUser?.role) === "OWNER" && companies.length > 0 && (
                   <div style={{ marginTop: 14 }}>
                     <div style={smallLabelStyle}>View Company</div>
 
@@ -2063,7 +2084,6 @@ export default function AdminPage() {
                         return (
                           <div
                             key={user.id}
-                            id={isEditing ? `admin-user-edit-${user.id}` : undefined}
                             style={{
                               background: "rgba(2, 6, 23, 0.72)",
                               border: user.active
@@ -2243,207 +2263,34 @@ export default function AdminPage() {
                               <>
                                 <div
                                   style={{
-                                    padding: 14,
-                                    borderRadius: 14,
-                                    border: isOwnerOrAdminRoleKey(editRole)
-                                      ? "1px solid rgba(245, 158, 11, 0.45)"
-                                      : "1px solid rgba(56, 189, 248, 0.28)",
-                                    background: isOwnerOrAdminRoleKey(editRole)
-                                      ? "rgba(69, 26, 3, 0.42)"
-                                      : "rgba(8, 47, 73, 0.45)",
-                                    textAlign: "left",
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      color: isOwnerOrAdminRoleKey(editRole) ? "#fde68a" : "#bae6fd",
-                                      fontWeight: 900,
-                                      marginBottom: 10,
-                                      fontSize: 15,
-                                    }}
-                                  >
-                                    Access & permissions
-                                  </div>
-                                  {isOwnerOrAdminRoleKey(editRole) ? (
-                                    <p style={{ color: "#fcd34d", fontSize: 13, marginTop: 0, marginBottom: 12, lineHeight: 1.55 }}>
-                                      <b>Owner</b> and <b>Company Admin</b> always have full production access. These
-                                      checkboxes are read-only. To limit pages or delete rights, change the role to{" "}
-                                      <b>Operations Manager</b>, a <b>specialist</b>, or <b>View Only</b>, then edit again.
-                                    </p>
-                                  ) : (
-                                    <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 12, lineHeight: 1.55 }}>
-                                      {String(editRole || "").trim().toUpperCase() === "OPERATIONS_MANAGER"
-                                        ? "Operations managers get all floor pages by default. Uncheck any area they should not open, or grant “Delete workflow records” only when needed."
-                                        : "Choose which areas this employee can open and whether they may delete workflow records."}
-                                    </p>
-                                  )}
-                                  <div
-                                    style={{
-                                      display: "grid",
-                                      gap: 10,
-                                      marginBottom: 12,
-                                    }}
-                                  >
-                                    {(ALL_APP_PERMISSION_IDS as readonly string[]).map((pid) => {
-                                      const locked = isOwnerOrAdminRoleKey(editRole);
-                                      const checked =
-                                        locked || editAppPermissions.includes(pid);
-                                      return (
-                                        <label
-                                          key={pid}
-                                          style={{
-                                            display: "flex",
-                                            alignItems: "flex-start",
-                                            gap: 10,
-                                            cursor: locked ? "not-allowed" : "pointer",
-                                            color: "#e2e8f0",
-                                            fontSize: 14,
-                                            opacity: locked ? 0.92 : 1,
-                                          }}
-                                        >
-                                          <input
-                                            type="checkbox"
-                                            checked={checked}
-                                            disabled={locked}
-                                            onChange={() => toggleEditPermission(pid)}
-                                            style={{ marginTop: 3 }}
-                                          />
-                                          <span>
-                                            {APP_PERMISSION_LABELS[pid as keyof typeof APP_PERMISSION_LABELS]}
-                                            {locked ? " (always on)" : ""}
-                                          </span>
-                                        </label>
-                                      );
-                                    })}
-                                  </div>
-                                  {!isOwnerOrAdminRoleKey(editRole) && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setEditAppPermissions(defaultPagePermissionsForRole(editRole))
-                                      }
-                                      style={{
-                                        ...smallButtonStyle,
-                                        background: "rgba(71, 85, 105, 0.4)",
-                                        border: "1px solid rgba(148, 163, 184, 0.35)",
-                                        color: "#cbd5e1",
-                                      }}
-                                    >
-                                      Reset to role defaults
-                                    </button>
-                                  )}
-                                </div>
-
-                                <div
-                                  style={{
-                                    display: "grid",
-                                    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-                                    gap: 12,
-                                  }}
-                                >
-                                  <label style={labelStyle}>
-                                    Username
-                                    <input
-                                      value={editUsername}
-                                      onChange={(e) => setEditUsername(e.target.value)}
-                                      style={inputStyle}
-                                    />
-                                  </label>
-
-                                  <label style={labelStyle}>
-                                    Email Optional
-                                    <input
-                                      value={editEmail}
-                                      onChange={(e) => setEditEmail(e.target.value)}
-                                      style={inputStyle}
-                                    />
-                                  </label>
-
-                                  <label style={labelStyle}>
-                                    Role
-                                    <select
-                                      value={editRole}
-                                      onChange={(e) => {
-                                        const next = e.target.value;
-                                        setEditRole(next);
-                                        const nk = String(next || "").trim().toUpperCase();
-                                        if (isOwnerOrAdminRoleKey(nk))
-                                          setEditAppPermissions(fullAccessPermissionIds());
-                                        else
-                                          setEditAppPermissions(defaultPagePermissionsForRole(nk));
-                                      }}
-                                      style={inputStyle}
-                                    >
-                                      {allowedRoleOptions.map((option) => (
-                                        <option key={option.value} value={option.value}>
-                                          {option.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </label>
-
-                                  <label style={labelStyle}>
-                                    Status
-                                    <select
-                                      value={editActive ? "ACTIVE" : "INACTIVE"}
-                                      onChange={(e) => setEditActive(e.target.value === "ACTIVE")}
-                                      style={inputStyle}
-                                    >
-                                      <option value="ACTIVE">Active</option>
-                                      <option value="INACTIVE">Inactive</option>
-                                    </select>
-                                  </label>
-                                </div>
-
-                                <div
-                                  style={{
-                                    background: "rgba(2, 6, 23, 0.72)",
-                                    border: "1px solid rgba(148, 163, 184, 0.16)",
-                                    borderRadius: 14,
-                                    padding: 12,
-                                    color: "#94a3b8",
-                                    lineHeight: 1.45,
-                                  }}
-                                >
-                                  {getAllowedRoleOptions(currentUser?.role || "").find(
-                                    (option) => option.value === editRole,
-                                  )?.description}
-                                </div>
-
-                                <div
-                                  style={{
                                     display: "flex",
-                                    justifyContent: "flex-end",
-                                    gap: 8,
+                                    justifyContent: "space-between",
+                                    gap: 14,
+                                    alignItems: "center",
                                     flexWrap: "wrap",
                                   }}
                                 >
+                                  <div>
+                                    <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 4 }}>
+                                      {user.username}
+                                    </div>
+                                    <div style={{ color: "#67e8f9", fontSize: 13, fontWeight: 800, lineHeight: 1.45 }}>
+                                      Edit window open —{" "}
+                                      {"set Access & permissions in the dialog, then Save."}
+                                    </div>
+                                  </div>
                                   <button
                                     type="button"
                                     onClick={cancelEditUser}
-                                    disabled={savingUserId === user.id}
                                     style={{
                                       ...smallButtonStyle,
                                       background: "rgba(71, 85, 105, 0.32)",
                                       border: "1px solid rgba(148, 163, 184, 0.28)",
                                       color: "#cbd5e1",
+                                      cursor: "pointer",
                                     }}
                                   >
-                                    Cancel
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => saveEditedUser(user)}
-                                    disabled={savingUserId === user.id}
-                                    style={{
-                                      ...smallButtonStyle,
-                                      background: "#22c55e",
-                                      border: "1px solid rgba(34, 197, 94, 0.7)",
-                                      color: "white",
-                                    }}
-                                  >
-                                    {savingUserId === user.id ? "Saving..." : "Save Changes"}
+                                    Close dialog
                                   </button>
                                 </div>
                               </>
@@ -3717,6 +3564,243 @@ export default function AdminPage() {
                     onClick={confirmNotificationModal}
                   >
                     {notificationModal.confirmText || "Confirm"}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )}
+
+        {editingTargetUser &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="admin-edit-user-title"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) cancelEditUser();
+              }}
+              style={{ ...modalOverlayStyle, zIndex: 12000 }}
+            >
+              <div
+                style={{ ...modalStyle, maxWidth: 640, width: "100%" }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h2
+                  id="admin-edit-user-title"
+                  style={{ marginTop: 0, marginBottom: 6, fontSize: 22, fontWeight: 950 }}
+                >
+                  Edit employee
+                </h2>
+                <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: 18, fontSize: 14, lineHeight: 1.45 }}>
+                  <span style={{ color: "#e2e8f0", fontWeight: 800 }}>{editingTargetUser.username}</span>
+                  {editingTargetUser.email ? ` · ${editingTargetUser.email}` : ""}
+                </p>
+
+                <div
+                  style={{
+                    padding: 14,
+                    borderRadius: 14,
+                    border: isOwnerOrAdminRoleKey(editRole)
+                      ? "1px solid rgba(245, 158, 11, 0.45)"
+                      : "1px solid rgba(56, 189, 248, 0.28)",
+                    background: isOwnerOrAdminRoleKey(editRole)
+                      ? "rgba(69, 26, 3, 0.42)"
+                      : "rgba(8, 47, 73, 0.45)",
+                    textAlign: "left",
+                    marginBottom: 16,
+                  }}
+                >
+                  <div
+                    style={{
+                      color: isOwnerOrAdminRoleKey(editRole) ? "#fde68a" : "#bae6fd",
+                      fontWeight: 900,
+                      marginBottom: 10,
+                      fontSize: 15,
+                    }}
+                  >
+                    Access & permissions
+                  </div>
+                  {isOwnerOrAdminRoleKey(editRole) ? (
+                    <p
+                      style={{
+                        color: "#fcd34d",
+                        fontSize: 13,
+                        marginTop: 0,
+                        marginBottom: 12,
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      <b>Owner</b> and <b>Company Admin</b> always have full production access. These checkboxes are
+                      read-only. To limit pages or delete rights, change the role to <b>Operations Manager</b>, a{" "}
+                      <b>specialist</b>, or <b>View Only</b>, then save.
+                    </p>
+                  ) : (
+                    <p
+                      style={{
+                        color: "#94a3b8",
+                        fontSize: 13,
+                        marginTop: 0,
+                        marginBottom: 12,
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      {String(editRole || "").trim().toUpperCase() === "OPERATIONS_MANAGER"
+                        ? "Operations managers get all floor pages by default. Uncheck any area they should not open, or grant “Delete workflow records” only when needed."
+                        : "Choose which areas this employee can open and whether they may delete workflow records."}
+                    </p>
+                  )}
+                  <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+                    {(ALL_APP_PERMISSION_IDS as readonly string[]).map((pid) => {
+                      const locked = isOwnerOrAdminRoleKey(editRole);
+                      const checked = locked || editAppPermissions.includes(pid);
+                      return (
+                        <label
+                          key={pid}
+                          style={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            gap: 10,
+                            cursor: locked ? "not-allowed" : "pointer",
+                            color: "#e2e8f0",
+                            fontSize: 14,
+                            opacity: locked ? 0.92 : 1,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={locked}
+                            onChange={() => toggleEditPermission(pid)}
+                            style={{ marginTop: 3 }}
+                          />
+                          <span>
+                            {APP_PERMISSION_LABELS[pid as keyof typeof APP_PERMISSION_LABELS]}
+                            {locked ? " (always on)" : ""}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {!isOwnerOrAdminRoleKey(editRole) && (
+                    <button
+                      type="button"
+                      onClick={() => setEditAppPermissions(defaultPagePermissionsForRole(editRole))}
+                      style={{
+                        ...smallButtonStyle,
+                        background: "rgba(71, 85, 105, 0.4)",
+                        border: "1px solid rgba(148, 163, 184, 0.35)",
+                        color: "#cbd5e1",
+                      }}
+                    >
+                      Reset to role defaults
+                    </button>
+                  )}
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                    gap: 12,
+                    marginBottom: 12,
+                  }}
+                >
+                  <label style={labelStyle}>
+                    Username
+                    <input
+                      value={editUsername}
+                      onChange={(e) => setEditUsername(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </label>
+
+                  <label style={labelStyle}>
+                    Email Optional
+                    <input
+                      value={editEmail}
+                      onChange={(e) => setEditEmail(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </label>
+
+                  <label style={labelStyle}>
+                    Role
+                    <select
+                      value={editRole}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setEditRole(next);
+                        const nk = String(next || "").trim().toUpperCase();
+                        if (isOwnerOrAdminRoleKey(nk)) setEditAppPermissions(fullAccessPermissionIds());
+                        else setEditAppPermissions(defaultPagePermissionsForRole(nk));
+                      }}
+                      style={inputStyle}
+                    >
+                      {allowedRoleOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label style={labelStyle}>
+                    Status
+                    <select
+                      value={editActive ? "ACTIVE" : "INACTIVE"}
+                      onChange={(e) => setEditActive(e.target.value === "ACTIVE")}
+                      style={inputStyle}
+                    >
+                      <option value="ACTIVE">Active</option>
+                      <option value="INACTIVE">Inactive</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div
+                  style={{
+                    background: "rgba(2, 6, 23, 0.72)",
+                    border: "1px solid rgba(148, 163, 184, 0.16)",
+                    borderRadius: 14,
+                    padding: 12,
+                    color: "#94a3b8",
+                    lineHeight: 1.45,
+                    marginBottom: 18,
+                  }}
+                >
+                  {getAllowedRoleOptions(currentUser?.role || "").find((option) => option.value === editRole)
+                    ?.description}
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={cancelEditUser}
+                    disabled={savingUserId === editingTargetUser.id}
+                    style={{
+                      ...smallButtonStyle,
+                      background: "rgba(71, 85, 105, 0.32)",
+                      border: "1px solid rgba(148, 163, 184, 0.28)",
+                      color: "#cbd5e1",
+                    }}
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => saveEditedUser(editingTargetUser)}
+                    disabled={savingUserId === editingTargetUser.id}
+                    style={{
+                      ...smallButtonStyle,
+                      background: "#22c55e",
+                      border: "1px solid rgba(34, 197, 94, 0.7)",
+                      color: "white",
+                    }}
+                  >
+                    {savingUserId === editingTargetUser.id ? "Saving..." : "Save changes"}
                   </button>
                 </div>
               </div>
