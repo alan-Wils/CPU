@@ -1284,6 +1284,16 @@ export default function AdminPage() {
     setEditCashFieldKey((k) => k + 1);
   }, [cashBeingEdited]);
 
+  useEffect(() => {
+    if (!editingUserId) return;
+    const id = requestAnimationFrame(() => {
+      document
+        .getElementById(`admin-user-edit-${editingUserId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [editingUserId]);
+
   async function handleCompanySwitch(companyId: string) {
     setError("");
     setSuccess("");
@@ -1978,7 +1988,12 @@ export default function AdminPage() {
                   </div>
                 </section>
 
-                <section style={panelStyle}>
+                <section
+                  style={{
+                    ...panelStyle,
+                    gridColumn: "1 / -1",
+                  }}
+                >
                   <div
                     style={{
                       display: "flex",
@@ -2048,6 +2063,7 @@ export default function AdminPage() {
                         return (
                           <div
                             key={user.id}
+                            id={isEditing ? `admin-user-edit-${user.id}` : undefined}
                             style={{
                               background: "rgba(2, 6, 23, 0.72)",
                               border: user.active
@@ -2057,6 +2073,12 @@ export default function AdminPage() {
                               padding: 16,
                               display: "grid",
                               gap: 14,
+                              ...(isEditing
+                                ? {
+                                    boxShadow:
+                                      "0 0 0 2px rgba(56, 189, 248, 0.45), 0 12px 40px rgba(0,0,0,0.35)",
+                                  }
+                                : {}),
                             }}
                           >
                             {!isEditing ? (
@@ -2221,6 +2243,99 @@ export default function AdminPage() {
                               <>
                                 <div
                                   style={{
+                                    padding: 14,
+                                    borderRadius: 14,
+                                    border: isOwnerOrAdminRoleKey(editRole)
+                                      ? "1px solid rgba(245, 158, 11, 0.45)"
+                                      : "1px solid rgba(56, 189, 248, 0.28)",
+                                    background: isOwnerOrAdminRoleKey(editRole)
+                                      ? "rgba(69, 26, 3, 0.42)"
+                                      : "rgba(8, 47, 73, 0.45)",
+                                    textAlign: "left",
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      color: isOwnerOrAdminRoleKey(editRole) ? "#fde68a" : "#bae6fd",
+                                      fontWeight: 900,
+                                      marginBottom: 10,
+                                      fontSize: 15,
+                                    }}
+                                  >
+                                    Access & permissions
+                                  </div>
+                                  {isOwnerOrAdminRoleKey(editRole) ? (
+                                    <p style={{ color: "#fcd34d", fontSize: 13, marginTop: 0, marginBottom: 12, lineHeight: 1.55 }}>
+                                      <b>Owner</b> and <b>Company Admin</b> always have full production access. These
+                                      checkboxes are read-only. To limit pages or delete rights, change the role to{" "}
+                                      <b>Operations Manager</b>, a <b>specialist</b>, or <b>View Only</b>, then edit again.
+                                    </p>
+                                  ) : (
+                                    <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 12, lineHeight: 1.55 }}>
+                                      {String(editRole || "").trim().toUpperCase() === "OPERATIONS_MANAGER"
+                                        ? "Operations managers get all floor pages by default. Uncheck any area they should not open, or grant “Delete workflow records” only when needed."
+                                        : "Choose which areas this employee can open and whether they may delete workflow records."}
+                                    </p>
+                                  )}
+                                  <div
+                                    style={{
+                                      display: "grid",
+                                      gap: 10,
+                                      marginBottom: 12,
+                                    }}
+                                  >
+                                    {(ALL_APP_PERMISSION_IDS as readonly string[]).map((pid) => {
+                                      const locked = isOwnerOrAdminRoleKey(editRole);
+                                      const checked =
+                                        locked || editAppPermissions.includes(pid);
+                                      return (
+                                        <label
+                                          key={pid}
+                                          style={{
+                                            display: "flex",
+                                            alignItems: "flex-start",
+                                            gap: 10,
+                                            cursor: locked ? "not-allowed" : "pointer",
+                                            color: "#e2e8f0",
+                                            fontSize: 14,
+                                            opacity: locked ? 0.92 : 1,
+                                          }}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            disabled={locked}
+                                            onChange={() => toggleEditPermission(pid)}
+                                            style={{ marginTop: 3 }}
+                                          />
+                                          <span>
+                                            {APP_PERMISSION_LABELS[pid as keyof typeof APP_PERMISSION_LABELS]}
+                                            {locked ? " (always on)" : ""}
+                                          </span>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                  {!isOwnerOrAdminRoleKey(editRole) && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setEditAppPermissions(defaultPagePermissionsForRole(editRole))
+                                      }
+                                      style={{
+                                        ...smallButtonStyle,
+                                        background: "rgba(71, 85, 105, 0.4)",
+                                        border: "1px solid rgba(148, 163, 184, 0.35)",
+                                        color: "#cbd5e1",
+                                      }}
+                                    >
+                                      Reset to role defaults
+                                    </button>
+                                  )}
+                                </div>
+
+                                <div
+                                  style={{
                                     display: "grid",
                                     gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
                                     gap: 12,
@@ -2293,100 +2408,6 @@ export default function AdminPage() {
                                   {getAllowedRoleOptions(currentUser?.role || "").find(
                                     (option) => option.value === editRole,
                                   )?.description}
-                                </div>
-
-                                <div
-                                  style={{
-                                    marginTop: 12,
-                                    padding: 14,
-                                    borderRadius: 14,
-                                    border: isOwnerOrAdminRoleKey(editRole)
-                                      ? "1px solid rgba(245, 158, 11, 0.45)"
-                                      : "1px solid rgba(56, 189, 248, 0.28)",
-                                    background: isOwnerOrAdminRoleKey(editRole)
-                                      ? "rgba(69, 26, 3, 0.42)"
-                                      : "rgba(8, 47, 73, 0.45)",
-                                    textAlign: "left",
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      color: isOwnerOrAdminRoleKey(editRole) ? "#fde68a" : "#bae6fd",
-                                      fontWeight: 900,
-                                      marginBottom: 10,
-                                      fontSize: 15,
-                                    }}
-                                  >
-                                    Access & permissions
-                                  </div>
-                                  {isOwnerOrAdminRoleKey(editRole) ? (
-                                    <p style={{ color: "#fcd34d", fontSize: 13, marginTop: 0, marginBottom: 12, lineHeight: 1.55 }}>
-                                      <b>Owner</b> and <b>Company Admin</b> always have full production access. Checkboxes
-                                      below are read-only. To limit pages or delete rights, change the role to{" "}
-                                      <b>Operations Manager</b>, a <b>specialist</b>, or <b>View Only</b>, then edit again.
-                                    </p>
-                                  ) : (
-                                    <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 12, lineHeight: 1.55 }}>
-                                      {String(editRole || "").trim().toUpperCase() === "OPERATIONS_MANAGER"
-                                        ? "Operations managers get all floor pages by default. Uncheck any area they should not open, or grant “Delete workflow records” only when needed."
-                                        : "Choose which areas this employee can open and whether they may delete workflow records."}
-                                    </p>
-                                  )}
-                                  <div
-                                    style={{
-                                      display: "grid",
-                                      gap: 10,
-                                      marginBottom: 12,
-                                    }}
-                                  >
-                                    {(ALL_APP_PERMISSION_IDS as readonly string[]).map((pid) => {
-                                      const locked = isOwnerOrAdminRoleKey(editRole);
-                                      const checked =
-                                        locked || editAppPermissions.includes(pid);
-                                      return (
-                                        <label
-                                          key={pid}
-                                          style={{
-                                            display: "flex",
-                                            alignItems: "flex-start",
-                                            gap: 10,
-                                            cursor: locked ? "not-allowed" : "pointer",
-                                            color: "#e2e8f0",
-                                            fontSize: 14,
-                                            opacity: locked ? 0.92 : 1,
-                                          }}
-                                        >
-                                          <input
-                                            type="checkbox"
-                                            checked={checked}
-                                            disabled={locked}
-                                            onChange={() => toggleEditPermission(pid)}
-                                            style={{ marginTop: 3 }}
-                                          />
-                                          <span>
-                                            {APP_PERMISSION_LABELS[pid as keyof typeof APP_PERMISSION_LABELS]}
-                                            {locked ? " (always on)" : ""}
-                                          </span>
-                                        </label>
-                                      );
-                                    })}
-                                  </div>
-                                  {!isOwnerOrAdminRoleKey(editRole) && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setEditAppPermissions(defaultPagePermissionsForRole(editRole))
-                                      }
-                                      style={{
-                                        ...smallButtonStyle,
-                                        background: "rgba(71, 85, 105, 0.4)",
-                                        border: "1px solid rgba(148, 163, 184, 0.35)",
-                                        color: "#cbd5e1",
-                                      }}
-                                    >
-                                      Reset to role defaults
-                                    </button>
-                                  )}
                                 </div>
 
                                 <div
