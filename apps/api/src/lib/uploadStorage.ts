@@ -76,20 +76,67 @@ function contentTypeForExt(ext: string): string {
     return "image/jpeg";
 }
 
+/** Normalize AWS SDK v3 / R2 errors into a short, log-safe string. */
+function readS3LikeError(err: unknown): { code: string; message: string; httpStatus?: number } {
+    if (!err || typeof err !== "object") {
+        return { code: "UNKNOWN", message: String(err) };
+    }
+    const e = err as Record<string, unknown>;
+    const meta = e.$metadata as { httpStatusCode?: number } | undefined;
+    const httpStatus = meta?.httpStatusCode;
+    const name = typeof e.name === "string" ? e.name : "";
+    const code =
+        typeof e.Code === "string"
+            ? e.Code
+            : typeof e.code === "string"
+              ? e.code
+              : name || "S3Error";
+    let msg = typeof e.message === "string" ? e.message : "";
+    if (!msg)
+        msg = "Unknown error";
+    msg = msg.replace(/\s+/g, " ").trim().slice(0, 400);
+    return { code, message: msg, httpStatus };
+}
+
+/**
+ * Turn S3/R2 failures into {@link AppError} so clients see a useful message (not generic 500).
+ */
+export function toAppErrorFromS3(err: unknown, operation: string): AppError {
+    const { code, message, httpStatus } = readS3LikeError(err);
+    logError("s3_operation_failed", { operation, code, httpStatus, message });
+    const hint =
+        "Check Railway variables: S3_BUCKET, AWS_ACCESS_KEY_ID (full R2 access key id), AWS_SECRET_ACCESS_KEY, S3_ENDPOINT, S3_REGION=auto, S3_FORCE_PATH_STYLE=true. R2 token needs Object Read & Write on this bucket.";
+    const status =
+        httpStatus === 403 || code === "AccessDenied" || /access denied/i.test(message)
+            ? 403
+            : httpStatus === 404 || code === "NoSuchKey"
+              ? 404
+              : 502;
+    return new AppError(`${operation} (${code}): ${message}. ${hint}`, status, "S3_OPERATION_FAILED", {
+        code,
+        httpStatus
+    });
+}
+
 export async function putUploadObject(
     key: string,
     body: Buffer,
     mimeType: string
 ): Promise<void> {
     const bucket = env.S3_BUCKET!.trim();
-    await getS3Client().send(
-        new PutObjectCommand({
-            Bucket: bucket,
-            Key: key,
-            Body: body,
-            ContentType: mimeType || contentTypeForExt(path.extname(key).slice(1).toLowerCase() || "jpg")
-        })
-    );
+    try {
+        await getS3Client().send(
+            new PutObjectCommand({
+                Bucket: bucket,
+                Key: key,
+                Body: body,
+                ContentType: mimeType || contentTypeForExt(path.extname(key).slice(1).toLowerCase() || "jpg")
+            })
+        );
+    }
+    catch (err: unknown) {
+        throw toAppErrorFromS3(err, "Upload to object storage");
+    }
 }
 
 export async function deleteUploadObject(key: string): Promise<void> {
@@ -175,8 +222,7 @@ export function registerUploadStreamRoutes(app: Express): void {
                     res.status(404).type("text/plain").send("Cannot GET " + req.path);
                     return;
                 }
-                logError("upload_s3_get_failed", { key, err });
-                next(err);
+                next(toAppErrorFromS3(err, `Read object ${key}`));
             }
         };
 
