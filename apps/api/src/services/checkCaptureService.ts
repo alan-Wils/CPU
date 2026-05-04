@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import type { Prisma } from "@prisma/client";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { prisma } from "../config/prisma.js";
@@ -286,6 +287,91 @@ export class CheckCaptureService {
             }
         });
         return row;
+    }
+    async updateById(companyId, id, patch) {
+        const row = await prisma.checkCapture.findFirst({
+            where: {
+                id,
+                companyId
+            },
+            select: {
+                id: true,
+                imageUrl: true,
+                stubImageUrl: true,
+                checkDate: true,
+                amount: true,
+                checkNumber: true,
+                payerName: true,
+                routingNumber: true,
+                accountNumber: true,
+                bankName: true,
+                memo: true,
+                invoiceNumber: true
+            }
+        });
+        if (!row) {
+            throw new AppError("Check capture not found.", 404, "CHECK_CAPTURE_NOT_FOUND");
+        }
+        if (patch.imageUrl !== undefined && patch.imageUrl !== row.imageUrl) {
+            await removeStoredUpload(row.imageUrl);
+        }
+        if (patch.stubImageUrl !== undefined) {
+            const oldStub = row.stubImageUrl;
+            const newStub = patch.stubImageUrl;
+            if (oldStub && oldStub !== newStub) {
+                await removeStoredUpload(oldStub);
+            }
+        }
+        const data: Prisma.CheckCaptureUncheckedUpdateInput = {};
+        if (patch.checkDate !== undefined)
+            data.checkDate = patch.checkDate;
+        if (patch.amount !== undefined)
+            data.amount = patch.amount;
+        if (patch.checkNumber !== undefined)
+            data.checkNumber = patch.checkNumber;
+        if (patch.payerName !== undefined)
+            data.payerName = patch.payerName;
+        if (patch.routingNumber !== undefined)
+            data.routingNumber = patch.routingNumber;
+        if (patch.accountNumber !== undefined)
+            data.accountNumber = patch.accountNumber;
+        if (patch.bankName !== undefined)
+            data.bankName = patch.bankName;
+        if (patch.memo !== undefined)
+            data.memo = patch.memo;
+        if (patch.invoiceNumber !== undefined)
+            data.invoiceNumber = patch.invoiceNumber;
+        if (patch.imageUrl !== undefined)
+            data.imageUrl = patch.imageUrl;
+        if (patch.stubImageUrl !== undefined)
+            data.stubImageUrl = patch.stubImageUrl;
+        if (patch.rawOcrJson !== undefined) {
+            data.rawOcrJson = patch.rawOcrJson == null ? null : JSON.stringify(patch.rawOcrJson);
+        }
+        return prisma.checkCapture.update({
+            where: {
+                id: row.id
+            },
+            data,
+            select: {
+                id: true,
+                companyId: true,
+                createdByUserId: true,
+                checkDate: true,
+                amount: true,
+                checkNumber: true,
+                payerName: true,
+                routingNumber: true,
+                accountNumber: true,
+                bankName: true,
+                memo: true,
+                invoiceNumber: true,
+                imageUrl: true,
+                stubImageUrl: true,
+                createdAt: true,
+                updatedAt: true
+            }
+        });
     }
     buildDateFilter(opts) {
         const from = opts?.from ? parseUtcDayStart(opts.from) : undefined;

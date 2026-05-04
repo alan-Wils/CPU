@@ -403,6 +403,33 @@ export default function AdminPage() {
   const [deletingCashId, setDeletingCashId] = useState<string | null>(null);
   const [deletingCheckId, setDeletingCheckId] = useState<string | null>(null);
 
+  const [checkBeingEdited, setCheckBeingEdited] = useState<CheckCaptureRow | null>(null);
+  const editCheckFrontInputRef = useRef<HTMLInputElement | null>(null);
+  const editCheckStubInputRef = useRef<HTMLInputElement | null>(null);
+  const [editCheckFieldKey, setEditCheckFieldKey] = useState(0);
+  const [editCheckPayee, setEditCheckPayee] = useState("");
+  const [editCheckTotal, setEditCheckTotal] = useState("");
+  const [editCheckInvoice, setEditCheckInvoice] = useState("");
+  const [editCheckWrittenDate, setEditCheckWrittenDate] = useState("");
+  const [editCheckRemoveStub, setEditCheckRemoveStub] = useState(false);
+  const [editCheckSaving, setEditCheckSaving] = useState(false);
+  const [editCheckError, setEditCheckError] = useState("");
+
+  const [cashBeingEdited, setCashBeingEdited] = useState<CashLogRow | null>(null);
+  const editCashReceiptInputRef = useRef<HTMLInputElement | null>(null);
+  const [editCashFieldKey, setEditCashFieldKey] = useState(0);
+  const [editCashAmount, setEditCashAmount] = useState("");
+  const [editCashPayeeCompany, setEditCashPayeeCompany] = useState("");
+  const [editCashInvoiceNumber, setEditCashInvoiceNumber] = useState("");
+  const [editCashDepartment, setEditCashDepartment] = useState<CashLogDepartment>("GENERAL");
+  const [editCashMemo, setEditCashMemo] = useState("");
+  const [editCashEntryDate, setEditCashEntryDate] = useState("");
+  const [editCashRemoveReceipt, setEditCashRemoveReceipt] = useState(false);
+  const [editCashNewReceiptUrl, setEditCashNewReceiptUrl] = useState("");
+  const [editCashReceiptUploading, setEditCashReceiptUploading] = useState(false);
+  const [editCashSaving, setEditCashSaving] = useState(false);
+  const [editCashError, setEditCashError] = useState("");
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -867,6 +894,193 @@ export default function AdminPage() {
     }
   }
 
+  async function saveCheckEdit() {
+    if (!checkBeingEdited) return;
+    if (!canManageUsers(currentUser?.role || "")) return;
+    setEditCheckError("");
+    const cid = checksCompanyId();
+    if (!cid) {
+      setEditCheckError("Select a company context before saving.");
+      return;
+    }
+    const payee = editCheckPayee.trim();
+    if (!payee) {
+      setEditCheckError("Payee is required.");
+      return;
+    }
+    const totalRaw = String(editCheckTotal || "").replace(/,/g, "").trim();
+    const amount = Number(totalRaw);
+    if (!Number.isFinite(amount) || amount < 0) {
+      setEditCheckError("Total must be a valid non-negative number.");
+      return;
+    }
+
+    const body: Record<string, unknown> = {
+      payerName: payee,
+      amount,
+      invoiceNumber: editCheckInvoice.trim() || undefined,
+      checkDate: editCheckWrittenDate.trim()
+        ? new Date(`${editCheckWrittenDate.trim()}T12:00:00.000Z`).toISOString()
+        : undefined,
+    };
+
+    const front = editCheckFrontInputRef.current?.files?.[0];
+    const stubFile = editCheckStubInputRef.current?.files?.[0];
+
+    setEditCheckSaving(true);
+    try {
+      if (front) {
+        const checkPayload = await readImageFileForCheckUpload(front);
+        const uploadedCheck = await apiRequest<{ imageUrl: string }>(
+          withCompanyQuery("/api/checks/upload", cid),
+          {
+            method: "POST",
+            companyId: cid,
+            body: {
+              mimeType: checkPayload.mimeType,
+              dataBase64: checkPayload.dataBase64,
+              fileName: front.name,
+            },
+          },
+        );
+        body.imageUrl = uploadedCheck.imageUrl;
+      }
+
+      if (editCheckRemoveStub) {
+        body.stubImageUrl = null;
+      } else if (stubFile) {
+        const stubPayload = await readImageFileForCheckUpload(stubFile);
+        const uploadedStub = await apiRequest<{ imageUrl: string }>(
+          withCompanyQuery("/api/checks/upload", cid),
+          {
+            method: "POST",
+            companyId: cid,
+            body: {
+              mimeType: stubPayload.mimeType,
+              dataBase64: stubPayload.dataBase64,
+              fileName: stubFile.name,
+            },
+          },
+        );
+        body.stubImageUrl = uploadedStub.imageUrl;
+      }
+
+      await apiRequest(withCompanyQuery(`/api/checks/${encodeURIComponent(checkBeingEdited.id)}`, cid), {
+        method: "PATCH",
+        companyId: cid,
+        body,
+      });
+
+      setCheckFormSuccess("Check entry updated.");
+      setCheckBeingEdited(null);
+      await loadCheckCaptures();
+    } catch (e: any) {
+      setEditCheckError(e?.message || "Could not update check.");
+    } finally {
+      setEditCheckSaving(false);
+    }
+  }
+
+  async function handleEditCashReceiptFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !cashBeingEdited || cashBeingEdited.direction !== "OUTGOING") return;
+    if (!canManageUsers(currentUser?.role || "")) return;
+    const cid = checksCompanyId();
+    if (!cid) {
+      setEditCashError("Select a company context before attaching a receipt.");
+      return;
+    }
+    setEditCashError("");
+    setEditCashReceiptUploading(true);
+    try {
+      const payload = await readImageFileForCheckUpload(file);
+      const uploaded = await apiRequest<{ imageUrl: string }>(
+        withCompanyQuery("/api/cash-log/upload-receipt", cid),
+        {
+          method: "POST",
+          companyId: cid,
+          body: {
+            mimeType: payload.mimeType,
+            dataBase64: payload.dataBase64,
+            fileName: file.name,
+          },
+        },
+      );
+      setEditCashNewReceiptUrl(uploaded.imageUrl);
+      setEditCashRemoveReceipt(false);
+    } catch (err: any) {
+      setEditCashError(err?.message || "Could not upload receipt.");
+    } finally {
+      setEditCashReceiptUploading(false);
+    }
+  }
+
+  async function saveCashEdit() {
+    if (!cashBeingEdited) return;
+    if (!canManageUsers(currentUser?.role || "")) return;
+    setEditCashError("");
+    const cid = checksCompanyId();
+    if (!cid) {
+      setEditCashError("Select a company context before saving.");
+      return;
+    }
+    const totalRaw = String(editCashAmount || "").replace(/,/g, "").trim();
+    const amount = Number(totalRaw);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setEditCashError("Amount must be a positive number.");
+      return;
+    }
+
+    const body: Record<string, unknown> = {
+      amount,
+    };
+
+    if (cashBeingEdited.direction === "INCOMING") {
+      if (!editCashPayeeCompany.trim()) {
+        setEditCashError("Payee company is required for incoming entries.");
+        return;
+      }
+      if (!editCashEntryDate.trim()) {
+        setEditCashError("Date is required for incoming entries.");
+        return;
+      }
+      body.payeeCompany = editCashPayeeCompany.trim();
+      body.invoiceNumber = editCashInvoiceNumber.trim() || undefined;
+      body.entryDate = new Date(`${editCashEntryDate.trim()}T12:00:00.000Z`).toISOString();
+    } else {
+      body.department = editCashDepartment;
+      body.memo = editCashMemo.trim() || undefined;
+      body.entryDate = editCashEntryDate.trim()
+        ? new Date(`${editCashEntryDate.trim()}T12:00:00.000Z`).toISOString()
+        : null;
+      if (editCashRemoveReceipt) {
+        body.receiptImageUrl = null;
+      } else if (editCashNewReceiptUrl.trim()) {
+        body.receiptImageUrl = editCashNewReceiptUrl.trim();
+      }
+    }
+
+    setEditCashSaving(true);
+    try {
+      await apiRequest(
+        withCompanyQuery(`/api/cash-log/${encodeURIComponent(cashBeingEdited.id)}`, cid),
+        {
+          method: "PATCH",
+          companyId: cid,
+          body,
+        },
+      );
+
+      setCashFormSuccess("Cash entry updated.");
+      setCashBeingEdited(null);
+      await loadCashEntries();
+    } catch (e: any) {
+      setEditCashError(e?.message || "Could not update cash entry.");
+    } finally {
+      setEditCashSaving(false);
+    }
+  }
+
   function inviteAdminCompanyId(): string {
     return (
       (currentUser?.role === "OWNER"
@@ -1032,6 +1246,33 @@ export default function AdminPage() {
     if (!canManageUsers(currentUser?.role || "")) return;
     void loadCashEntries();
   }, [cashLogOpen, loading, currentUser?.role, selectedCompanyId, company?.id]);
+
+  useEffect(() => {
+    if (!checkBeingEdited) return;
+    setEditCheckPayee(checkBeingEdited.payerName || "");
+    setEditCheckTotal(checkBeingEdited.amount != null ? String(checkBeingEdited.amount) : "");
+    setEditCheckInvoice(checkBeingEdited.invoiceNumber || "");
+    const cd = checkBeingEdited.checkDate;
+    setEditCheckWrittenDate(cd ? String(cd).slice(0, 10) : "");
+    setEditCheckRemoveStub(false);
+    setEditCheckError("");
+    setEditCheckFieldKey((k) => k + 1);
+  }, [checkBeingEdited]);
+
+  useEffect(() => {
+    if (!cashBeingEdited) return;
+    setEditCashAmount(String(cashBeingEdited.amount ?? ""));
+    setEditCashPayeeCompany(cashBeingEdited.payeeCompany || "");
+    setEditCashInvoiceNumber(cashBeingEdited.invoiceNumber || "");
+    setEditCashDepartment((cashBeingEdited.department as CashLogDepartment) || "GENERAL");
+    setEditCashMemo(cashBeingEdited.memo || "");
+    const ed = cashBeingEdited.entryDate;
+    setEditCashEntryDate(ed ? String(ed).slice(0, 10) : "");
+    setEditCashRemoveReceipt(false);
+    setEditCashNewReceiptUrl("");
+    setEditCashError("");
+    setEditCashFieldKey((k) => k + 1);
+  }, [cashBeingEdited]);
 
   async function handleCompanySwitch(companyId: string) {
     setError("");
@@ -2429,23 +2670,39 @@ export default function AdminPage() {
                                   )}
                                 </td>
                                 <td style={checkTdStyle}>
-                                  <button
-                                    type="button"
-                                    disabled={deletingCheckId === row.id}
-                                    onClick={() => requestDeleteCheckCapture(row)}
-                                    style={{
-                                      ...smallButtonStyle,
-                                      background:
-                                        deletingCheckId === row.id
-                                          ? "rgba(71, 85, 105, 0.5)"
-                                          : "rgba(127, 29, 29, 0.55)",
-                                      border: "1px solid rgba(248, 113, 113, 0.45)",
-                                      color: "#fecaca",
-                                      cursor: deletingCheckId === row.id ? "wait" : "pointer",
-                                    }}
-                                  >
-                                    {deletingCheckId === row.id ? "…" : "Delete"}
-                                  </button>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                    <button
+                                      type="button"
+                                      disabled={editCheckSaving && checkBeingEdited?.id === row.id}
+                                      onClick={() => setCheckBeingEdited(row)}
+                                      style={{
+                                        ...smallButtonStyle,
+                                        background: "rgba(30, 64, 175, 0.45)",
+                                        border: "1px solid rgba(96, 165, 250, 0.5)",
+                                        color: "#dbeafe",
+                                        cursor: editCheckSaving && checkBeingEdited?.id === row.id ? "wait" : "pointer",
+                                      }}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={deletingCheckId === row.id}
+                                      onClick={() => requestDeleteCheckCapture(row)}
+                                      style={{
+                                        ...smallButtonStyle,
+                                        background:
+                                          deletingCheckId === row.id
+                                            ? "rgba(71, 85, 105, 0.5)"
+                                            : "rgba(127, 29, 29, 0.55)",
+                                        border: "1px solid rgba(248, 113, 113, 0.45)",
+                                        color: "#fecaca",
+                                        cursor: deletingCheckId === row.id ? "wait" : "pointer",
+                                      }}
+                                    >
+                                      {deletingCheckId === row.id ? "…" : "Delete"}
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             ))
@@ -2863,23 +3120,39 @@ export default function AdminPage() {
                               )}
                             </td>
                             <td style={checkTdStyle}>
-                              <button
-                                type="button"
-                                disabled={deletingCashId === row.id}
-                                onClick={() => requestDeleteCashEntry(row)}
-                                style={{
-                                  ...smallButtonStyle,
-                                  background:
-                                    deletingCashId === row.id
-                                      ? "rgba(71, 85, 105, 0.5)"
-                                      : "rgba(127, 29, 29, 0.55)",
-                                  border: "1px solid rgba(248, 113, 113, 0.45)",
-                                  color: "#fecaca",
-                                  cursor: deletingCashId === row.id ? "wait" : "pointer",
-                                }}
-                              >
-                                {deletingCashId === row.id ? "…" : "Delete"}
-                              </button>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                <button
+                                  type="button"
+                                  disabled={editCashSaving && cashBeingEdited?.id === row.id}
+                                  onClick={() => setCashBeingEdited(row)}
+                                  style={{
+                                    ...smallButtonStyle,
+                                    background: "rgba(30, 64, 175, 0.45)",
+                                    border: "1px solid rgba(96, 165, 250, 0.5)",
+                                    color: "#dbeafe",
+                                    cursor: editCashSaving && cashBeingEdited?.id === row.id ? "wait" : "pointer",
+                                  }}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={deletingCashId === row.id}
+                                  onClick={() => requestDeleteCashEntry(row)}
+                                  style={{
+                                    ...smallButtonStyle,
+                                    background:
+                                      deletingCashId === row.id
+                                        ? "rgba(71, 85, 105, 0.5)"
+                                        : "rgba(127, 29, 29, 0.55)",
+                                    border: "1px solid rgba(248, 113, 113, 0.45)",
+                                    color: "#fecaca",
+                                    cursor: deletingCashId === row.id ? "wait" : "pointer",
+                                  }}
+                                >
+                                  {deletingCashId === row.id ? "…" : "Delete"}
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))
@@ -2887,6 +3160,335 @@ export default function AdminPage() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {checkBeingEdited ? (
+          <div style={{ ...modalOverlayStyle, zIndex: 1150 }}>
+            <div
+              style={{
+                ...modalStyle,
+                maxWidth: 520,
+                width: "100%",
+                maxHeight: "92vh",
+                overflowY: "auto",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  marginBottom: 12,
+                }}
+              >
+                <h2 style={{ ...sectionTitleStyle, marginBottom: 0 }}>Edit check</h2>
+                <button type="button" onClick={() => setCheckBeingEdited(null)} style={{ ...modalButtonStyle }}>
+                  Close
+                </button>
+              </div>
+              <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.5, fontSize: 13 }}>
+                Change payee or amounts below. Optionally choose a new{" "}
+                <strong style={{ color: "#e2e8f0" }}>check front</strong> image to replace the stored file — the previous
+                image is deleted from storage when you save. Same for stub.
+              </p>
+              {editCheckError ? (
+                <div style={{ ...messageStyle, background: "rgba(127, 29, 29, 0.58)", color: "#fecaca", marginBottom: 12 }}>
+                  {editCheckError}
+                </div>
+              ) : null}
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center" }}>
+                  <a
+                    href={checkBeingEdited.imageUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: "#38bdf8", fontWeight: 800, fontSize: 13 }}
+                  >
+                    Current check image
+                  </a>
+                  {checkBeingEdited.stubImageUrl ? (
+                    <a
+                      href={checkBeingEdited.stubImageUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: "#a78bfa", fontWeight: 800, fontSize: 13 }}
+                    >
+                      Current stub
+                    </a>
+                  ) : (
+                    <span style={{ color: "#64748b", fontSize: 13 }}>No stub on file</span>
+                  )}
+                </div>
+                <label style={{ ...labelStyle, marginBottom: 0 }}>
+                  Payee / payee name
+                  <input value={editCheckPayee} onChange={(e) => setEditCheckPayee(e.target.value)} style={{ ...inputStyle }} />
+                </label>
+                <label style={{ ...labelStyle, marginBottom: 0 }}>
+                  Total
+                  <input
+                    value={editCheckTotal}
+                    onChange={(e) => setEditCheckTotal(e.target.value)}
+                    inputMode="decimal"
+                    style={{ ...inputStyle }}
+                  />
+                </label>
+                <label style={{ ...labelStyle, marginBottom: 0 }}>
+                  Invoice # (optional)
+                  <input value={editCheckInvoice} onChange={(e) => setEditCheckInvoice(e.target.value)} style={{ ...inputStyle }} />
+                </label>
+                <label style={{ ...labelStyle, marginBottom: 0 }}>
+                  Check date (optional)
+                  <input
+                    type="date"
+                    value={editCheckWrittenDate}
+                    onChange={(e) => setEditCheckWrittenDate(e.target.value)}
+                    style={{ ...inputStyle }}
+                  />
+                </label>
+                <label style={{ ...labelStyle, marginBottom: 0 }}>
+                  Replace check photo (optional)
+                  <input
+                    key={`ec-front-${editCheckFieldKey}`}
+                    ref={editCheckFrontInputRef}
+                    type="file"
+                    accept="image/jpeg,image/jpg,image/png,image/webp"
+                    capture="environment"
+                    style={{ ...inputStyle, padding: "8px 10px" }}
+                  />
+                </label>
+                <label style={{ ...labelStyle, marginBottom: 0, opacity: editCheckRemoveStub ? 0.55 : 1 }}>
+                  Replace stub photo (optional)
+                  <input
+                    key={`ec-stub-${editCheckFieldKey}`}
+                    ref={editCheckStubInputRef}
+                    type="file"
+                    accept="image/jpeg,image/jpg,image/png,image/webp"
+                    capture="environment"
+                    disabled={editCheckRemoveStub}
+                    style={{ ...inputStyle, padding: "8px 10px" }}
+                  />
+                </label>
+                <label style={{ ...labelStyle, marginBottom: 0, cursor: "pointer", alignItems: "center", display: "flex", gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={editCheckRemoveStub}
+                    disabled={editCheckSaving}
+                    onChange={(e) => {
+                      setEditCheckRemoveStub(e.target.checked);
+                      if (e.target.checked && editCheckStubInputRef.current) editCheckStubInputRef.current.value = "";
+                    }}
+                  />
+                  Remove stub image from record
+                </label>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 18 }}>
+                <button
+                  type="button"
+                  disabled={editCheckSaving}
+                  onClick={() => void saveCheckEdit()}
+                  style={{
+                    ...smallButtonStyle,
+                    background: editCheckSaving ? "rgba(71, 85, 105, 0.5)" : "#059669",
+                    border: "1px solid rgba(34, 197, 94, 0.7)",
+                    color: "#fff",
+                    cursor: editCheckSaving ? "wait" : "pointer",
+                  }}
+                >
+                  {editCheckSaving ? "Saving…" : "Save changes"}
+                </button>
+                <button type="button" disabled={editCheckSaving} onClick={() => setCheckBeingEdited(null)} style={modalButtonStyle}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {cashBeingEdited ? (
+          <div style={{ ...modalOverlayStyle, zIndex: 1160 }}>
+            <div
+              style={{
+                ...modalStyle,
+                maxWidth: 520,
+                width: "100%",
+                maxHeight: "92vh",
+                overflowY: "auto",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  marginBottom: 12,
+                }}
+              >
+                <h2 style={{ ...sectionTitleStyle, marginBottom: 0 }}>
+                  Edit cash ({cashBeingEdited.direction === "INCOMING" ? "incoming" : "outgoing"})
+                </h2>
+                <button type="button" onClick={() => setCashBeingEdited(null)} style={{ ...modalButtonStyle }}>
+                  Close
+                </button>
+              </div>
+              <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.5, fontSize: 13 }}>
+                Amount and labels update the row. Outgoing rows can swap the receipt photo; the old receipt file is removed
+                from storage when you save a replacement.
+              </p>
+              {editCashError ? (
+                <div style={{ ...messageStyle, background: "rgba(127, 29, 29, 0.58)", color: "#fecaca", marginBottom: 12 }}>
+                  {editCashError}
+                </div>
+              ) : null}
+              <div style={{ display: "grid", gap: 12 }}>
+                <label style={{ ...labelStyle, marginBottom: 0 }}>
+                  Amount
+                  <input
+                    value={editCashAmount}
+                    onChange={(e) => setEditCashAmount(e.target.value)}
+                    inputMode="decimal"
+                    style={{ ...inputStyle }}
+                  />
+                </label>
+                {cashBeingEdited.direction === "INCOMING" ? (
+                  <>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Payee company
+                      <input value={editCashPayeeCompany} onChange={(e) => setEditCashPayeeCompany(e.target.value)} style={{ ...inputStyle }} />
+                    </label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Date
+                      <input type="date" value={editCashEntryDate} onChange={(e) => setEditCashEntryDate(e.target.value)} style={{ ...inputStyle }} />
+                    </label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Invoice # (optional)
+                      <input
+                        value={editCashInvoiceNumber}
+                        onChange={(e) => setEditCashInvoiceNumber(e.target.value)}
+                        style={{ ...inputStyle }}
+                      />
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Department
+                      <select
+                        value={editCashDepartment}
+                        onChange={(e) => setEditCashDepartment(e.target.value as CashLogDepartment)}
+                        style={{ ...inputStyle }}
+                      >
+                        <option value="CULTIVATION">Cultivation</option>
+                        <option value="EXTRACTION">Extraction</option>
+                        <option value="PACKAGING">Packaging</option>
+                        <option value="GENERAL">General</option>
+                      </select>
+                    </label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Date (optional)
+                      <input type="date" value={editCashEntryDate} onChange={(e) => setEditCashEntryDate(e.target.value)} style={{ ...inputStyle }} />
+                    </label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Memo (optional)
+                      <textarea
+                        value={editCashMemo}
+                        onChange={(e) => setEditCashMemo(e.target.value)}
+                        rows={3}
+                        style={{ ...inputStyle, resize: "vertical" }}
+                      />
+                    </label>
+                    <div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 8 }}>
+                        {cashBeingEdited.receiptImageUrl && !editCashRemoveReceipt ? (
+                          <a
+                            href={
+                              editCashNewReceiptUrl.trim()
+                                ? editCashNewReceiptUrl.trim()
+                                : cashBeingEdited.receiptImageUrl
+                            }
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ color: "#38bdf8", fontWeight: 800, fontSize: 13 }}
+                          >
+                            {editCashNewReceiptUrl.trim() ? "Preview new receipt (unsaved)" : "Current receipt"}
+                          </a>
+                        ) : (
+                          <span style={{ color: "#64748b", fontSize: 13 }}>
+                            {editCashRemoveReceipt ? "Receipt will be cleared on save." : "No receipt on file"}
+                          </span>
+                        )}
+                      </div>
+                      <label style={{ ...labelStyle, marginBottom: 0 }}>
+                        New receipt photo (optional)
+                        <input
+                          key={`ec-cr-${editCashFieldKey}`}
+                          ref={editCashReceiptInputRef}
+                          type="file"
+                          accept="image/jpeg,image/jpg,image/png,image/webp"
+                          capture="environment"
+                          disabled={editCashReceiptUploading || editCashSaving || editCashRemoveReceipt}
+                          onChange={(e) => void handleEditCashReceiptFileChange(e)}
+                          style={{ ...inputStyle, padding: "8px 10px" }}
+                        />
+                        {editCashReceiptUploading ? (
+                          <div style={{ fontSize: 12, marginTop: 6, color: "#94a3b8" }}>Uploading…</div>
+                        ) : null}
+                      </label>
+                      <label
+                        style={{
+                          ...labelStyle,
+                          marginBottom: 0,
+                          marginTop: 8,
+                          cursor: "pointer",
+                          display: "flex",
+                          gap: 8,
+                          alignItems: "center",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={editCashRemoveReceipt}
+                          disabled={editCashSaving || editCashReceiptUploading}
+                          onChange={(e) => {
+                            setEditCashRemoveReceipt(e.target.checked);
+                            if (e.target.checked) {
+                              setEditCashNewReceiptUrl("");
+                              if (editCashReceiptInputRef.current) editCashReceiptInputRef.current.value = "";
+                              setEditCashFieldKey((k) => k + 1);
+                            }
+                          }}
+                        />
+                        Remove receipt from record
+                      </label>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 18 }}>
+                <button
+                  type="button"
+                  disabled={editCashSaving || editCashReceiptUploading}
+                  onClick={() => void saveCashEdit()}
+                  style={{
+                    ...smallButtonStyle,
+                    background:
+                      editCashSaving || editCashReceiptUploading ? "rgba(71, 85, 105, 0.5)" : "#059669",
+                    border: "1px solid rgba(34, 197, 94, 0.7)",
+                    color: "#fff",
+                    cursor: editCashSaving ? "wait" : "pointer",
+                  }}
+                >
+                  {editCashSaving ? "Saving…" : "Save changes"}
+                </button>
+                <button type="button" disabled={editCashSaving} onClick={() => setCashBeingEdited(null)} style={modalButtonStyle}>
+                  Cancel
+                </button>
               </div>
             </div>
           </div>

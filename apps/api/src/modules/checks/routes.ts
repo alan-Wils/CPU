@@ -4,7 +4,7 @@ import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { requireRole } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
-import { checkExtractSchema, checkSaveSchema, checkUploadSchema } from "../../validation/schemas.js";
+import { checkCaptureUpdateSchema, checkExtractSchema, checkSaveSchema, checkUploadSchema } from "../../validation/schemas.js";
 import { CheckCaptureService } from "../../services/checkCaptureService.js";
 import { AppError } from "../../errors/AppError.js";
 import { logInfo } from "../../lib/logger.js";
@@ -93,6 +93,19 @@ checksRouter.post("/", requireRole([...writeRoles]), validate({ body: checkSaveS
         rawOcrJson: req.body.rawOcrJson
     });
     res.status(201).json(saved);
+}));
+checksRouter.patch("/:id", requireRole([...adminExportRoles]), validate({ params: checkCaptureIdParam, body: checkCaptureUpdateSchema }), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    if (!companyId) {
+        throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
+    }
+    const updated = await service.updateById(companyId, req.params.id, req.body);
+    logInfo("[ADMIN] check_capture_update", {
+        companyId,
+        captureId: req.params.id,
+        actorUserId: req.auth?.userId
+    });
+    res.json(updated);
 }));
 checksRouter.delete("/:id", requireRole([...adminExportRoles]), validate({ params: checkCaptureIdParam }), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);

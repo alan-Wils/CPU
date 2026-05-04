@@ -4,7 +4,7 @@ import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { requireRole } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
-import { cashLogCreateSchema, checkUploadSchema } from "../../validation/schemas.js";
+import { cashLogCreateSchema, cashLogUpdateSchema, checkUploadSchema } from "../../validation/schemas.js";
 import { CashLogService } from "../../services/cashLogService.js";
 import { AppError } from "../../errors/AppError.js";
 import { logInfo } from "../../lib/logger.js";
@@ -95,6 +95,20 @@ cashLogRouter.post("/", requireRole([...adminRoles]), validate({ body: cashLogCr
         receiptImageUrl: req.body.receiptImageUrl
     });
     res.status(201).json(saved);
+}));
+
+cashLogRouter.patch("/:id", requireRole([...adminRoles]), validate({ params: cashLogIdParam, body: cashLogUpdateSchema }), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    if (!companyId) {
+        throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
+    }
+    const updated = await service.updateById(companyId, req.params.id, req.body);
+    logInfo("[ADMIN] cash_log_update", {
+        companyId,
+        entryId: req.params.id,
+        actorUserId: req.auth?.userId
+    });
+    res.json(updated);
 }));
 
 cashLogRouter.delete("/:id", requireRole([...adminRoles]), validate({ params: cashLogIdParam }), asyncHandler(async (req, res) => {

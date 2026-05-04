@@ -225,6 +225,20 @@ export const checkSaveSchema = z.object({
     stubImageUrl: z.string().url().optional(),
     rawOcrJson: z.unknown().optional()
 });
+export const checkCaptureUpdateSchema = checkSaveSchema
+    .partial()
+    .extend({
+        stubImageUrl: z.union([z.string().url(), z.null()]).optional()
+    })
+    .superRefine((data, ctx) => {
+        const entries = Object.entries(data).filter(([, v]) => v !== undefined);
+        if (entries.length === 0) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Provide at least one field to update."
+            });
+        }
+    });
 const cashLogDepartmentSchema = z.enum(["CULTIVATION", "EXTRACTION", "PACKAGING", "GENERAL"]);
 export const cashLogCreateSchema = z
     .object({
@@ -268,6 +282,26 @@ export const cashLogCreateSchema = z
                 code: z.ZodIssueCode.custom,
                 message: "department is required for outgoing cash",
                 path: ["department"]
+            });
+        }
+    });
+export const cashLogUpdateSchema = z
+    .object({
+        amount: z.number().positive().max(10_000_000).optional(),
+        memo: z.string().max(500).optional().nullable(),
+        payeeCompany: z.string().max(200).optional().nullable(),
+        invoiceNumber: z.string().max(120).optional().nullable(),
+        department: cashLogDepartmentSchema.optional().nullable(),
+        entryDate: z.coerce.date().optional().nullable(),
+        receiptImageUrl: z.union([z.string().url().max(2000), z.null()]).optional()
+    })
+    .superRefine((data, ctx) => {
+        const n = Object.entries(data).filter(([, v]) => v !== undefined).length;
+        if (n === 0) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Provide at least one field to update.",
+                path: ["amount"]
             });
         }
     });

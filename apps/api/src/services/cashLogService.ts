@@ -152,6 +152,93 @@ export class CashLogService {
             }
         });
     }
+    async updateById(companyId: string, id: string, patch: {
+        amount?: number;
+        memo?: string | null;
+        payeeCompany?: string | null;
+        invoiceNumber?: string | null;
+        department?: "CULTIVATION" | "EXTRACTION" | "PACKAGING" | "GENERAL" | null;
+        entryDate?: Date | null;
+        receiptImageUrl?: string | null;
+    }) {
+        const row = await prisma.cashLogEntry.findFirst({
+            where: {
+                id,
+                companyId
+            },
+            select: {
+                id: true,
+                direction: true,
+                receiptImageUrl: true
+            }
+        });
+        if (!row) {
+            throw new AppError("Cash log entry not found.", 404, "CASH_LOG_NOT_FOUND");
+        }
+        const incoming = row.direction === "INCOMING";
+        if (incoming) {
+            if (patch.receiptImageUrl !== undefined) {
+                throw new AppError("Receipt image only applies to outgoing cash entries.", 400, "CASH_LOG_RECEIPT_NOT_ALLOWED");
+            }
+            if (patch.department !== undefined) {
+                throw new AppError("Department only applies to outgoing cash entries.", 400, "CASH_LOG_DEPARTMENT_NOT_ALLOWED");
+            }
+        }
+        else {
+            if (patch.payeeCompany !== undefined || patch.invoiceNumber !== undefined) {
+                throw new AppError("Payee company and invoice number only apply to incoming cash entries.", 400, "CASH_LOG_INCOMING_FIELDS_NOT_ALLOWED");
+            }
+        }
+        if (!incoming && patch.receiptImageUrl !== undefined) {
+            const oldR = row.receiptImageUrl;
+            const newR = patch.receiptImageUrl;
+            if (oldR && oldR !== newR) {
+                await removeStoredUpload(oldR);
+            }
+        }
+        const data: Record<string, unknown> = {};
+        if (patch.amount !== undefined)
+            data.amount = patch.amount;
+        if (patch.memo !== undefined)
+            data.memo = patch.memo;
+        if (incoming) {
+            if (patch.payeeCompany !== undefined)
+                data.payeeCompany = patch.payeeCompany ? String(patch.payeeCompany).trim() || null : null;
+            if (patch.invoiceNumber !== undefined)
+                data.invoiceNumber = patch.invoiceNumber ? String(patch.invoiceNumber).trim() || null : null;
+            if (patch.entryDate !== undefined)
+                data.entryDate = patch.entryDate;
+        }
+        else {
+            if (patch.department !== undefined)
+                data.department = patch.department;
+            if (patch.entryDate !== undefined)
+                data.entryDate = patch.entryDate;
+            if (patch.receiptImageUrl !== undefined)
+                data.receiptImageUrl = patch.receiptImageUrl ? String(patch.receiptImageUrl).trim() || null : null;
+        }
+        return prisma.cashLogEntry.update({
+            where: {
+                id: row.id
+            },
+            data: data as Prisma.CashLogEntryUpdateInput,
+            select: {
+                id: true,
+                companyId: true,
+                createdByUserId: true,
+                direction: true,
+                amount: true,
+                payeeCompany: true,
+                invoiceNumber: true,
+                department: true,
+                memo: true,
+                entryDate: true,
+                receiptImageUrl: true,
+                createdAt: true,
+                updatedAt: true
+            }
+        });
+    }
     async list(companyId: string, take = 100, opts?: {
         from?: string;
         to?: string;
