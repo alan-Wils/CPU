@@ -82,3 +82,19 @@ export function mergeCashLogEodPrefs(partial: unknown): CashLogEodPrefs {
   const validated = cashLogEodPrefsSchema.safeParse(base);
   return validated.success ? validated.data : defaultCashLogEodPrefs;
 }
+
+/**
+ * When one user saves the digest schedule, apply weekdays / send time / timezone / rolling window
+ * company-wide while keeping each member's own `enabled` (who receives mail).
+ */
+export function mergeScheduleIntoExistingMembershipPrefs(
+  scheduleFromSaver: CashLogEodPrefs,
+  existingRaw: unknown,
+): CashLogEodPrefs {
+  const prev = mergeCashLogEodPrefs(existingRaw);
+  const merged: CashLogEodPrefs = {
+    ...scheduleFromSaver,
+    enabled: prev.enabled,
+  };
+  return cashLogEodPrefsSchema.parse(merged);
+}

@@ -3394,9 +3394,10 @@ export default function AdminPage() {
                 </button>
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.55, fontSize: 14 }}>
-                Applies to <strong>your</strong> account in the current company. Pick which weekdays to send, the local
-                time, timezone, and whether the body covers the last 24 hours or the last 7 days (rolling from send
-                time).
+                <strong>Schedule</strong> (days, time, timezone, 24h vs 7-day window) is saved for the{" "}
+                <strong>whole company</strong>—everyone who has digest email enabled gets the same timing and report
+                window. The <strong>Send digest…</strong> checkbox below applies only to <strong>your</strong> account
+                (whether you receive the email).
               </p>
               {cashEodError ? (
                 <div

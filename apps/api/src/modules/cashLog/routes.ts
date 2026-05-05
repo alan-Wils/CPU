@@ -12,6 +12,7 @@ import { prisma } from "../../config/prisma.js";
 import {
     cashLogEodPrefsSchema,
     mergeCashLogEodPrefs,
+    mergeScheduleIntoExistingMembershipPrefs,
 } from "../../lib/cashLogEodPrefs.js";
 
 const cashLogWriteRoles = ["OWNER", "ADMIN"];
@@ -156,13 +157,47 @@ cashLogRouter.put(
             throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
         }
         const body = req.body as z.infer<typeof cashLogEodPrefsSchema>;
-        await prisma.companyMembership.update({
-            where: { userId_companyId: { userId, companyId } },
-            data: {
-                cashLogEodPrefs: body,
-                cashLogEodScheduleGeneration: { increment: 1 },
-                cashLogEodDigestSentScheduleGeneration: null,
-            },
+        await prisma.$transaction(async (tx) => {
+            const caller = await tx.companyMembership.findUnique({
+                where: { userId_companyId: { userId, companyId } },
+                select: { id: true },
+            });
+            if (!caller) {
+                throw new AppError("Company membership not found", 404, "MEMBERSHIP_NOT_FOUND");
+            }
+            await tx.companyMembership.update({
+                where: { id: caller.id },
+                data: {
+                    cashLogEodPrefs: body,
+                    cashLogEodScheduleGeneration: { increment: 1 },
+                    cashLogEodDigestSentScheduleGeneration: null,
+                },
+            });
+            const peers = await tx.companyMembership.findMany({
+                where: { companyId, NOT: { id: caller.id } },
+                select: { id: true, cashLogEodPrefs: true },
+            });
+            let propagated = 0;
+            for (const row of peers) {
+                if (row.cashLogEodPrefs == null) continue;
+                const next = mergeScheduleIntoExistingMembershipPrefs(body, row.cashLogEodPrefs);
+                await tx.companyMembership.update({
+                    where: { id: row.id },
+                    data: {
+                        cashLogEodPrefs: next,
+                        cashLogEodScheduleGeneration: { increment: 1 },
+                        cashLogEodDigestSentScheduleGeneration: null,
+                    },
+                });
+                propagated += 1;
+            }
+            if (propagated > 0) {
+                logInfo("[cash_log_eod] schedule_propagated_company_wide", {
+                    companyId,
+                    actorUserId: userId,
+                    peerMembershipsUpdated: propagated,
+                });
+            }
         });
         res.json({ prefs: body });
     }),

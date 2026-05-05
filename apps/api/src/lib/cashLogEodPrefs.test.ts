@@ -6,6 +6,7 @@ import {
   defaultCashLogEodPrefs,
   isValidIanaTimeZone,
   mergeCashLogEodPrefs,
+  mergeScheduleIntoExistingMembershipPrefs,
 } from "./cashLogEodPrefs.js";
 
 describe("cashLogEodPrefs", () => {
@@ -65,5 +66,33 @@ describe("cashLogEodPrefs", () => {
     });
     expect(r.success).toBe(true);
     if (r.success) expect(r.data.sendTime).toBe(CASH_LOG_EOD_DEFAULT_SEND_TIME);
+  });
+
+  it("mergeScheduleIntoExistingMembershipPrefs keeps peer enabled but copies window/schedule", () => {
+    const saver = {
+      ...defaultCashLogEodPrefs,
+      enabled: true,
+      window: "LAST_7_DAYS" as const,
+      sendTime: "12:52",
+    };
+    const peerRaw = {
+      enabled: true,
+      weekdays: [1, 2, 3, 4, 5],
+      sendTime: "09:00",
+      window: "LAST_24H",
+      timezone: "America/Denver",
+    };
+    const next = mergeScheduleIntoExistingMembershipPrefs(saver, peerRaw);
+    expect(next.enabled).toBe(true);
+    expect(next.window).toBe("LAST_7_DAYS");
+    expect(next.sendTime).toBe("12:52");
+  });
+
+  it("mergeScheduleIntoExistingMembershipPrefs turns off peer digest when peer was disabled", () => {
+    const saver = { ...defaultCashLogEodPrefs, enabled: true, window: "LAST_7_DAYS" };
+    const peerRaw = { ...defaultCashLogEodPrefs, enabled: false, window: "LAST_24H" };
+    const next = mergeScheduleIntoExistingMembershipPrefs(saver, peerRaw);
+    expect(next.enabled).toBe(false);
+    expect(next.window).toBe("LAST_7_DAYS");
   });
 });
