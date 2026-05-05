@@ -131,10 +131,32 @@ export class AdminService {
         const target = await this.repo.findUserById(input.companyId, input.targetUserId);
         if (!target)
             throw new AppError("Target user not found", 404);
+        const membershipBefore = await this.repo.db.companyMembership.findFirst({
+            where: { companyId: input.companyId, userId: input.targetUserId },
+            select: { appPermissions: true },
+        });
+
         if (input.targetUserId === input.actorUserId) {
-            throw new AppError("Cannot edit your own user via admin endpoint", 400);
+            const emailViolates =
+                input.email !== undefined &&
+                input.email.trim().toLowerCase() !== target.email.trim().toLowerCase();
+            const roleViolates =
+                input.role !== undefined && input.role !== target.role;
+            const activeViolates =
+                input.isActive !== undefined && input.isActive !== target.isActive;
+            const appPermsViolates =
+                input.appPermissions !== undefined &&
+                JSON.stringify(input.appPermissions ?? null) !==
+                    JSON.stringify(membershipBefore?.appPermissions ?? null);
+            if (emailViolates || roleViolates || activeViolates || appPermsViolates) {
+                throw new AppError(
+                    "You can only change \"Receive EOD financial digest emails\" on your own account here. Ask another OWNER/ADMIN to change your email, role, status, or app access.",
+                    400,
+                    "ADMIN_SELF_EDIT_LIMITED",
+                );
+            }
         }
-        if (input.actorRole === "ADMIN" && target.role === "OWNER") {
+        else if (input.actorRole === "ADMIN" && target.role === "OWNER") {
             throw new AppError("Admins cannot edit owner users", 403);
         }
         if (input.actorRole === "ADMIN" && input.role === "OWNER") {
@@ -152,11 +174,11 @@ export class AdminService {
         const next = await this.repo.findUserById(input.companyId, input.targetUserId);
         if (!next)
             throw new AppError("User not found after update", 404);
-        const membership = await this.repo.db.companyMembership.findFirst({
+        const membershipAfter = await this.repo.db.companyMembership.findFirst({
             where: { companyId: input.companyId, userId: input.targetUserId },
             select: { appPermissions: true, cashLogEodPrefs: true },
         });
-        const cashLogEodEnabled = mergeCashLogEodPrefs(membership?.cashLogEodPrefs ?? null).enabled;
+        const cashLogEodEnabled = mergeCashLogEodPrefs(membershipAfter?.cashLogEodPrefs ?? null).enabled;
         await this.auditService.logAction({
             companyId: input.companyId,
             actorUserId: input.actorUserId,
@@ -167,7 +189,7 @@ export class AdminService {
                 email: next.email,
                 role: next.role,
                 isActive: next.isActive,
-                appPermissions: membership?.appPermissions ?? null,
+                appPermissions: membershipAfter?.appPermissions ?? null,
                 cashLogEodEnabled,
             },
         });
@@ -178,7 +200,7 @@ export class AdminService {
             role: next.role,
             active: next.isActive,
             status: next.isActive ? "ACTIVE" : "INACTIVE",
-            appPermissions: membership?.appPermissions ?? null,
+            appPermissions: membershipAfter?.appPermissions ?? null,
             cashLogEodEnabled,
         };
     }

@@ -4122,7 +4122,8 @@ export default function AdminPage() {
                       <b>Receive EOD financial digest emails</b>
                       <br />
                       <span style={{ color: "#94a3b8" }}>
-                        Unchecked by default until saved for this employee.
+                        Applies per company membership. Editing your own account here can only change this
+                        checkbox; other fields need another OWNER or ADMIN.
                       </span>
                     </span>
                   </label>

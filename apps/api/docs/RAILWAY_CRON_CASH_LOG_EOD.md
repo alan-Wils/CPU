@@ -95,3 +95,11 @@ Success (**200**) after Bearer auth:
 ## Operational logs
 
 Every run emits **`[cash_log_eod] membership_eval`** once per membership with **`localDate`** (today in that TZ), **`lastSuccessDigestLocalDate`** (marker’s calendar day, if any), **`alreadySentToday`** (those two dates match — means a digest already **succeeded** earlier, not “this skipped tick burned the day”), **`evalHint`** (plain-language tie-break), **`outcome`**, and **`skipReason`**. **`outside_send_window`** only describes *this poll*; **`alreadySentToday`** can still be **true** if an earlier successful send landed today. **`[cash_log_eod] job_complete`** summarizes **`skipReasons`** and **`errors`**.
+
+### Multiple recipients (Admin vs Financial logs)
+
+The job sends **one digest per enabled `CompanyMembership`** (that user's email). **OWNER** can save **only** the digest checkbox on their own account from Admin; other profile fields still require another OWNER or ADMIN.
+
+Rows with **`cashLogEodPrefs.enabled: false`** are excluded in the job's SQL, so an unchecked box stops mail for that membership.
+
+Enabling digest **only** via Admin applies **default** schedule (see `mergeCashLogEodPrefs`). Users who need a specific timezone or send time should open **Financial logs → digest schedule** once and **Save** (`PUT /api/cash-log/eod-prefs`).

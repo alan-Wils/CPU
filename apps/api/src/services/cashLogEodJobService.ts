@@ -512,7 +512,11 @@ export async function runCashLogEodJob(options?: {
   let skipped = 0;
 
   const idRows = await prisma.$queryRaw<Array<{ id: string }>>(
-    Prisma.sql`SELECT "id" FROM "CompanyMembership" WHERE "cashLogEodPrefs" IS NOT NULL`,
+    Prisma.sql`
+      SELECT "id" FROM "CompanyMembership"
+      WHERE "cashLogEodPrefs" IS NOT NULL
+        AND COALESCE(("cashLogEodPrefs"::jsonb ->> 'enabled'), 'false') = 'true'
+    `,
   );
   const ids = idRows.map((r) => r.id).filter(Boolean);
   if (!ids.length) {
