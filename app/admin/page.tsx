@@ -25,6 +25,7 @@ import {
   setSelectedCompanyId,
 } from "@/lib/api";
 import { getAuthCompany, getAuthToken, getAuthUser } from "@/lib/auth";
+import { defaultCashLogEodPrefsUi } from "@/lib/cashLogEodDefaults";
 
 type AdminUser = {
   id: string;
@@ -97,9 +98,9 @@ const PENDING_INVITE_ROW_PREFIX = "pending-invite:";
 
 const CASH_EOD_WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const CASH_EOD_TIMEZONE_OPTIONS = [
+  "America/Denver",
   "America/New_York",
   "America/Chicago",
-  "America/Denver",
   "America/Los_Angeles",
   "America/Phoenix",
   "Pacific/Honolulu",
@@ -486,13 +487,9 @@ export default function AdminPage() {
   const [cashEodLoading, setCashEodLoading] = useState(false);
   const [cashEodSaving, setCashEodSaving] = useState(false);
   const [cashEodError, setCashEodError] = useState("");
-  const [cashEodPrefs, setCashEodPrefs] = useState<CashLogEodPrefsDto>({
-    enabled: false,
-    weekdays: [1, 2, 3, 4, 5],
-    sendTime: "17:00",
-    window: "LAST_24H",
-    timezone: "America/New_York",
-  });
+  const [cashEodPrefs, setCashEodPrefs] = useState<CashLogEodPrefsDto>(() =>
+    defaultCashLogEodPrefsUi(),
+  );
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");

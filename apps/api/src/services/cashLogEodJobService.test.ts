@@ -144,6 +144,60 @@ describe("cashLogEodJobService", () => {
     expect(d.alreadySentToday).toBe(true);
   });
 
+  it("Denver 11:16 interprets UTC wall clock separately from America/New_York 17:00", () => {
+    const utc = new Date("2026-05-05T17:22:00.000Z"); // ~11:22 America/Denver (MDT), ~13:22 America/New_York (EDT)
+    const denver = decideMembershipCashLogDigest(
+      baseDecisionInput(null, utc, undefined),
+    );
+    expect(denver.sendWindowMode).toBe("strict_slack");
+    expect(denver.decision).toBe("send");
+    expect(denver.prefs?.timezone).toBe("America/Denver");
+    expect(denver.prefs?.sendTime).toBe("11:16");
+
+    const nycPrefs: CashLogEodPrefs = {
+      enabled: true,
+      weekdays: [0, 1, 2, 3, 4, 5, 6],
+      sendTime: "17:00",
+      window: "LAST_24H",
+      timezone: "America/New_York",
+    };
+    const nyc = decideMembershipCashLogDigest({
+      nowUtc: utc,
+      slackMinutes: 25,
+      prefsRaw: nycPrefs,
+      cashLogEodLastSentAt: null,
+      cashLogEodScheduleGeneration: 0,
+      cashLogEodDigestSentScheduleGeneration: null,
+      userActive: true,
+      userEmail: "x@y.z",
+    });
+    expect(nyc.decision).toBe("skip");
+    expect(nyc.skipReason).toBe("outside_send_window");
+    expect(nyc.prefs?.sendTime).toBe("17:00");
+  });
+
+  it("America/New_York 17:00 triggers inside strict slack", () => {
+    const utc = new Date("2026-05-05T21:18:00.000Z"); // 17:18 Eastern (EDT)
+    const nycPrefs: CashLogEodPrefs = {
+      enabled: true,
+      weekdays: [0, 1, 2, 3, 4, 5, 6],
+      sendTime: "17:00",
+      window: "LAST_24H",
+      timezone: "America/New_York",
+    };
+    const d = decideMembershipCashLogDigest({
+      nowUtc: utc,
+      slackMinutes: 25,
+      prefsRaw: nycPrefs,
+      cashLogEodLastSentAt: null,
+      cashLogEodScheduleGeneration: 0,
+      cashLogEodDigestSentScheduleGeneration: null,
+      userActive: true,
+      userEmail: "x@y.z",
+    });
+    expect(d.decision).toBe("send");
+  });
+
   it("new saved schedule revision allows another digest same calendar day after an earlier send", () => {
     const inWindow = new Date("2026-05-05T17:20:00.000Z"); // 11:20 MDT
     const lastSentEarlier = new Date("2026-05-05T17:10:00.000Z"); // 11:10 MDT

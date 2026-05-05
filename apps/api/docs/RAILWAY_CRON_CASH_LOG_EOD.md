@@ -102,4 +102,4 @@ The job sends **one digest per enabled `CompanyMembership`** (that user's email)
 
 Rows with **`cashLogEodPrefs.enabled: false`** are excluded in the job's SQL, so an unchecked box stops mail for that membership.
 
-Enabling digest **only** via Admin applies **default** schedule (see `mergeCashLogEodPrefs`). Users who need a specific timezone or send time should open **Financial logs → digest schedule** once and **Save** (`PUT /api/cash-log/eod-prefs`).
+Enabling digest **only** via Admin applies **default** schedule (`mergeCashLogEodPrefs`: **`America/Denver`**, **`11:16`**, weekdays Mon–Fri, `LAST_24H`). Users who need something else should open **Financial logs → digest schedule** and **Save** (`PUT /api/cash-log/eod-prefs`). API validation requires a real **IANA** `timezone` and **HH:MM** `sendTime`.
