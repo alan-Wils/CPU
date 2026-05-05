@@ -89,8 +89,12 @@ type AppConfig = {
     productNames: ProductNameRecord[];
     blendNameHistory: BlendNameHistoryRecord[];
     supplies: Supply[];
-    /** Custom Markdown for AI product naming; optional `{{STRAIN_LIST}}` (strain labels). Empty uses server default file. */
+    /** Custom Markdown for AI product naming (advanced). When non-empty, overrides guided fields and server default. */
     productNameAiPromptMarkdown?: string;
+    /** Plain-language intro for guided naming (simple); server wraps with fixed rules and JSON output. */
+    productNameAiGuidedIntro?: string;
+    /** Extra preferences for guided naming (simple). */
+    productNameAiGuidedExtraRules?: string;
   };
   packaging: {
     supplies: Supply[];
@@ -132,13 +136,29 @@ function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 }
 
+function extractionAiNamingStatusLine(extraction: AppConfig["extraction"]): string {
+  const md = String(extraction.productNameAiPromptMarkdown || "").trim();
+  const intro = String(extraction.productNameAiGuidedIntro || "").trim();
+  const extra = String(extraction.productNameAiGuidedExtraRules || "").trim();
+  if (md) {
+    return "Advanced: custom Markdown prompt (Save Config to persist).";
+  }
+  if (intro || extra) {
+    return "Simple: custom wording on top of built-in naming rules (Save Config to persist).";
+  }
+  return "Using the built-in server naming prompt.";
+}
+
 export default function ConfigPage() {
   const pathname = usePathname();
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [aiPromptModalOpen, setAiPromptModalOpen] = useState(false);
+  const [aiPromptModalTab, setAiPromptModalTab] = useState<"simple" | "advanced">("simple");
   const [aiPromptDraft, setAiPromptDraft] = useState("");
+  const [aiGuidedIntroDraft, setAiGuidedIntroDraft] = useState("");
+  const [aiGuidedExtraDraft, setAiGuidedExtraDraft] = useState("");
   const [aiPromptShippedDefault, setAiPromptShippedDefault] = useState("");
   const [aiPromptModalLoading, setAiPromptModalLoading] = useState(false);
   const [aiPromptModalError, setAiPromptModalError] = useState("");
@@ -607,6 +627,10 @@ export default function ConfigPage() {
   async function openAiPromptModal() {
     setAiPromptModalError("");
     setAiPromptModalOpen(true);
+    const hasMarkdown = Boolean(String(config.extraction.productNameAiPromptMarkdown || "").trim());
+    setAiPromptModalTab(hasMarkdown ? "advanced" : "simple");
+    setAiGuidedIntroDraft(String(config.extraction.productNameAiGuidedIntro || ""));
+    setAiGuidedExtraDraft(String(config.extraction.productNameAiGuidedExtraRules || ""));
     setAiPromptModalLoading(true);
     try {
       const data = await apiRequest<{ defaultMarkdown: string }>(
@@ -628,15 +652,31 @@ export default function ConfigPage() {
     }
   }
 
-  function applyAiPromptDraftToConfig() {
-    const trimmed = aiPromptDraft.trim();
-    setConfig((prev) => ({
-      ...prev,
-      extraction: {
-        ...prev.extraction,
-        productNameAiPromptMarkdown: trimmed,
-      },
-    }));
+  function applyAiPromptModalToConfig() {
+    if (aiPromptModalTab === "simple") {
+      const intro = aiGuidedIntroDraft.trim();
+      const extra = aiGuidedExtraDraft.trim();
+      setConfig((prev) => ({
+        ...prev,
+        extraction: {
+          ...prev.extraction,
+          productNameAiGuidedIntro: intro,
+          productNameAiGuidedExtraRules: extra,
+          productNameAiPromptMarkdown: "",
+        },
+      }));
+    }
+    else {
+      setConfig((prev) => ({
+        ...prev,
+        extraction: {
+          ...prev.extraction,
+          productNameAiPromptMarkdown: aiPromptDraft.trim(),
+          productNameAiGuidedIntro: "",
+          productNameAiGuidedExtraRules: "",
+        },
+      }));
+    }
     setAiPromptModalOpen(false);
   }
 
@@ -972,12 +1012,10 @@ export default function ConfigPage() {
 
         <div style={styles.inline}>
           <button type="button" style={styles.secondaryButton} onClick={() => void openAiPromptModal()}>
-            Edit AI product-name prompt
+            Configure AI naming
           </button>
           <span style={{ color: "#94a3b8", fontSize: 13 }}>
-            {String(config.extraction.productNameAiPromptMarkdown || "").trim()
-              ? "Custom prompt is configured (Save Config to persist)."
-              : "Using built-in server prompt until you save a custom one."}
+            {extractionAiNamingStatusLine(config.extraction)}
           </span>
         </div>
 
@@ -1126,15 +1164,7 @@ export default function ConfigPage() {
               margin: 0,
             }}
           >
-            <h3 style={{ ...styles.sectionTitle, marginBottom: 8 }}>AI extraction product-name prompt</h3>
-            <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
-              This Markdown becomes the OpenAI <strong style={{ color: "#e5e7eb" }}>user</strong> message when
-              operators use Create new name (AI). Put{" "}
-              <code style={{ color: "#7dd3fc" }}>{`{{STRAIN_LIST}}`}</code> where the current
-              batch&apos;s strain labels should appear (comma-separated). If you omit it, strains are appended
-              automatically so batch info always reaches the model. Keep JSON output expectations compatible with the
-              app (suggestions array) or naming may fail.
-            </p>
+            <h3 style={{ ...styles.sectionTitle, marginBottom: 8 }}>AI extraction product naming</h3>
 
             {aiPromptModalError ? (
               <p style={{ color: "#fca5a5", fontSize: 14 }}>{aiPromptModalError}</p>
@@ -1144,36 +1174,119 @@ export default function ConfigPage() {
               <p style={{ color: "#94a3b8" }}>Loading built-in prompt…</p>
             ) : (
               <>
-                <textarea
-                  style={{ ...styles.textarea, minHeight: 340, fontFamily: "ui-monospace, monospace", fontSize: 13 }}
-                  value={aiPromptDraft}
-                  onChange={(e) => setAiPromptDraft(e.target.value)}
-                  spellCheck={false}
-                />
-
-                <div style={{ ...styles.inline, marginTop: 12, flexWrap: "wrap" }}>
+                <div style={{ ...styles.inline, marginBottom: 12, gap: 8 }}>
                   <button
                     type="button"
-                    style={styles.addButton}
-                    onClick={() => setAiPromptDraft(aiPromptShippedDefault)}
-                    disabled={!aiPromptShippedDefault}
+                    style={
+                      aiPromptModalTab === "simple"
+                        ? { ...styles.addButton, opacity: 1 }
+                        : styles.secondaryButton
+                    }
+                    onClick={() => setAiPromptModalTab("simple")}
                   >
-                    Reset to built-in prompt
+                    Simple
                   </button>
                   <button
                     type="button"
-                    style={styles.secondaryButton}
-                    onClick={() => setAiPromptDraft("")}
+                    style={
+                      aiPromptModalTab === "advanced"
+                        ? { ...styles.addButton, opacity: 1 }
+                        : styles.secondaryButton
+                    }
+                    onClick={() => setAiPromptModalTab("advanced")}
                   >
-                    Clear override (use built-in)
-                  </button>
-                  <button type="button" style={styles.deleteButton} onClick={() => setAiPromptModalOpen(false)}>
-                    Cancel
-                  </button>
-                  <button type="button" style={styles.saveButton} onClick={applyAiPromptDraftToConfig}>
-                    Apply &amp; close
+                    Advanced (full prompt)
                   </button>
                 </div>
+                <p style={{ color: "#64748b", fontSize: 12, marginTop: 0, marginBottom: 14 }}>
+                  Only the <strong style={{ color: "#94a3b8" }}>active</strong> tab is saved when you click Apply.
+                  Switching tabs does not save.
+                </p>
+
+                {aiPromptModalTab === "simple" ? (
+                  <>
+                    <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
+                      Write in plain language. The app injects the batch&apos;s strains and keeps the required JSON
+                      response format for you—no templates or code.
+                    </p>
+                    <label style={{ ...styles.label, display: "block", marginBottom: 8 }}>
+                      Tone and style (optional)
+                      <textarea
+                        style={{ ...styles.textarea, minHeight: 100, fontFamily: "inherit", fontSize: 14 }}
+                        placeholder="Example: Short, premium-sounding names. Prefer two words. No puns."
+                        value={aiGuidedIntroDraft}
+                        onChange={(e) => setAiGuidedIntroDraft(e.target.value)}
+                      />
+                    </label>
+                    <label style={{ ...styles.label, display: "block", marginBottom: 8 }}>
+                      Extra preferences (optional)
+                      <textarea
+                        style={{ ...styles.textarea, minHeight: 140, fontFamily: "inherit", fontSize: 14 }}
+                        placeholder="Example: Avoid strain acronyms in the product name. Mention &quot;blend&quot; when multiple strains."
+                        value={aiGuidedExtraDraft}
+                        onChange={(e) => setAiGuidedExtraDraft(e.target.value)}
+                      />
+                    </label>
+                    <div style={{ ...styles.inline, marginTop: 12, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={styles.secondaryButton}
+                        onClick={() => {
+                          setAiGuidedIntroDraft("");
+                          setAiGuidedExtraDraft("");
+                        }}
+                      >
+                        Clear simple wording
+                      </button>
+                      <button type="button" style={styles.deleteButton} onClick={() => setAiPromptModalOpen(false)}>
+                        Cancel
+                      </button>
+                      <button type="button" style={styles.saveButton} onClick={applyAiPromptModalToConfig}>
+                        Apply &amp; close
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
+                      This Markdown becomes the OpenAI <strong style={{ color: "#e5e7eb" }}>user</strong> message when
+                      operators use Create new name (AI). You may put{" "}
+                      <code style={{ color: "#7dd3fc" }}>{`{{STRAIN_LIST}}`}</code> where strain labels should appear; if
+                      you omit it, strains are appended automatically. Keep JSON output compatible with the app
+                      (suggestions array) or naming may fail.
+                    </p>
+                    <textarea
+                      style={{ ...styles.textarea, minHeight: 340, fontFamily: "ui-monospace, monospace", fontSize: 13 }}
+                      value={aiPromptDraft}
+                      onChange={(e) => setAiPromptDraft(e.target.value)}
+                      spellCheck={false}
+                    />
+
+                    <div style={{ ...styles.inline, marginTop: 12, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={styles.addButton}
+                        onClick={() => setAiPromptDraft(aiPromptShippedDefault)}
+                        disabled={!aiPromptShippedDefault}
+                      >
+                        Reset to built-in prompt
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.secondaryButton}
+                        onClick={() => setAiPromptDraft("")}
+                      >
+                        Clear Markdown override
+                      </button>
+                      <button type="button" style={styles.deleteButton} onClick={() => setAiPromptModalOpen(false)}>
+                        Cancel
+                      </button>
+                      <button type="button" style={styles.saveButton} onClick={applyAiPromptModalToConfig}>
+                        Apply &amp; close
+                      </button>
+                    </div>
+                  </>
+                )}
                 <p style={{ color: "#64748b", fontSize: 12, marginTop: 10 }}>
                   &quot;Apply &amp; close&quot; updates this page only — click Save Config when ready to persist to the server.
                 </p>

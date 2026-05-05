@@ -392,7 +392,7 @@ export async function saveLog(
   });
 }
 
-/** Strain-only labels; server builds the OpenAI prompt from bundled Markdown or optional company config override. */
+/** Strain-only labels; server builds the OpenAI user prompt from default file, guided plain-text settings, or full Markdown override. */
 export async function suggestExtractionProductNames(
   strains: string[],
   companyId?: string

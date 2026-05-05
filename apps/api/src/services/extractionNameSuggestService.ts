@@ -26,6 +26,51 @@ export function loadDefaultExtractionProductNamePromptMarkdown(): string {
  * Builds the OpenAI **user** message from a Markdown template + strain labels.
  * If the template omits `{{STRAIN_LIST}}`, a standard strain block is appended so batch strains are always injected.
  */
+/** Core naming rules + JSON contract (same intent as bundled Markdown). */
+const EXTRACTION_NAME_RULES_BLOCK = `## Naming rules
+
+- Suggest **3 to 5** short, professional product names suitable for a regulated market.
+- Names may reflect the **blend** of strains when multiple are listed (e.g. combine or hybrid-style wording).
+- Do **not** include medical claims, THC/CBD potency numbers, or geographic origin unless already implied by the strain list.
+- Avoid profanity and slang unsuitable for B2B packaging.`;
+
+const EXTRACTION_NAME_OUTPUT_BLOCK = `## Output format (required)
+
+Reply with **only** a single JSON object (no markdown, no commentary), exactly:
+
+{ "suggestions": ["Name One", "Name Two", "Name Three"] }
+
+Use 3 to 5 strings. Each must be non-empty and under 80 characters.`;
+
+/**
+ * Build a full user prompt without raw Markdown editing: strains + optional company wording + fixed rules/output.
+ */
+export function buildGuidedExtractionProductNamePromptMarkdown(guidedIntro: string, guidedExtraRules: string): string {
+    const intro = String(guidedIntro || "").trim();
+    const extra = String(guidedExtraRules || "").trim();
+    const parts: string[] = [
+        `# Extraction product naming`,
+        ``,
+        `You help a licensed cannabis operator name a **finished extraction product** for labeling and packaging.`,
+        ``,
+    ];
+    if (intro) {
+        parts.push(`## What we want`, ``, intro, ``);
+    }
+    parts.push(
+        `## Strains in this batch (use only these — do not invent or assume other cultivars)`,
+        ``,
+        `{{STRAIN_LIST}}`,
+        ``,
+        EXTRACTION_NAME_RULES_BLOCK
+    );
+    if (extra) {
+        parts.push(``, `## Extra preferences from our team`, ``, extra);
+    }
+    parts.push(``, EXTRACTION_NAME_OUTPUT_BLOCK);
+    return parts.join("\n");
+}
+
 export function buildExtractionProductNameUserPromptMarkdown(
     strains: string[],
     templateMarkdown: string
@@ -39,8 +84,12 @@ export function buildExtractionProductNameUserPromptMarkdown(
 }
 
 export type SuggestExtractionProductNamesOptions = {
-    /** Per-company override from Company Config; empty/whitespace uses bundled default file. */
+    /** Full Markdown override (advanced); takes precedence when non-empty over guided fields and file default. */
     promptTemplateMarkdown?: string | null;
+    /** Plain-language introduction (guided); used when no Markdown override is set and at least one guided field is set. */
+    guidedIntro?: string | null;
+    /** Plain-language extra preferences (guided). */
+    guidedExtraRules?: string | null;
 };
 
 export async function suggestExtractionProductNames(
@@ -53,8 +102,23 @@ export async function suggestExtractionProductNames(
     }
     const model = env.OPENAI_MODEL || "gpt-4o-mini";
     const base = (env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
-    const custom = typeof options?.promptTemplateMarkdown === "string" ? options.promptTemplateMarkdown.trim() : "";
-    const template = custom ? custom : loadDefaultExtractionProductNamePromptMarkdown();
+    const rawOverride =
+        typeof options?.promptTemplateMarkdown === "string" ? options.promptTemplateMarkdown.trim() : "";
+    const gIntro =
+        typeof options?.guidedIntro === "string" ? options.guidedIntro.trim() : "";
+    const gExtra =
+        typeof options?.guidedExtraRules === "string" ? options.guidedExtraRules.trim() : "";
+
+    let template: string;
+    if (rawOverride) {
+        template = rawOverride;
+    }
+    else if (gIntro || gExtra) {
+        template = buildGuidedExtractionProductNamePromptMarkdown(gIntro, gExtra);
+    }
+    else {
+        template = loadDefaultExtractionProductNamePromptMarkdown();
+    }
     const userContent = buildExtractionProductNameUserPromptMarkdown(strains, template);
 
     const res = await fetch(`${base}/chat/completions`, {

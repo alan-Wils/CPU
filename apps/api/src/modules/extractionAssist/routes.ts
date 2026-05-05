@@ -52,25 +52,41 @@ extractionAssistRouter.post(
     asyncHandler(async (req, res) => {
         const strains = req.body.strains as string[];
         let promptTemplateMarkdown: string | undefined;
+        let guidedIntro: string | undefined;
+        let guidedExtraRules: string | undefined;
         try {
             const companyId = getScopedCompanyId(req);
             const rows = await configService.list(companyId);
-            const extractionVal = rows.find((r) => r.key === "extraction")?.value;
-            const raw =
-                extractionVal &&
-                typeof extractionVal === "object" &&
-                !Array.isArray(extractionVal) &&
-                typeof (extractionVal as Record<string, unknown>).productNameAiPromptMarkdown === "string"
-                    ? String((extractionVal as { productNameAiPromptMarkdown?: string }).productNameAiPromptMarkdown)
+            const extractionVal = rows.find((r) => r.key === "extraction")?.value as Record<string, unknown> | undefined;
+            if (extractionVal && typeof extractionVal === "object" && !Array.isArray(extractionVal)) {
+                const raw = typeof extractionVal.productNameAiPromptMarkdown === "string"
+                    ? String(extractionVal.productNameAiPromptMarkdown)
                     : "";
-            if (raw.trim())
-                promptTemplateMarkdown = raw;
+                if (raw.trim())
+                    promptTemplateMarkdown = raw;
+                const intro = typeof extractionVal.productNameAiGuidedIntro === "string"
+                    ? String(extractionVal.productNameAiGuidedIntro)
+                    : "";
+                const rules = typeof extractionVal.productNameAiGuidedExtraRules === "string"
+                    ? String(extractionVal.productNameAiGuidedExtraRules)
+                    : "";
+                if (intro.trim())
+                    guidedIntro = intro;
+                if (rules.trim())
+                    guidedExtraRules = rules;
+            }
         }
         catch {
             promptTemplateMarkdown = undefined;
+            guidedIntro = undefined;
+            guidedExtraRules = undefined;
         }
         try {
-            const suggestions = await suggestExtractionProductNames(strains, { promptTemplateMarkdown });
+            const suggestions = await suggestExtractionProductNames(strains, {
+                promptTemplateMarkdown,
+                guidedIntro,
+                guidedExtraRules,
+            });
             res.json({ suggestions });
         }
         catch (e: unknown) {
