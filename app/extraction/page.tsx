@@ -27,6 +27,7 @@ import {
 } from "@/lib/extractionApi";
 import { createPackagingBatch } from "@/lib/packagingApi";
 import { createLog } from "@/lib/logsApi";
+import { suggestExtractionProductNames } from "@/lib/api";
 import { canDeleteRecords as userCanDeleteWorkflow } from "@/lib/permissions";
 
 const sourceMaterialTypes = {
@@ -188,6 +189,20 @@ function cleanAcronym(value: any) {
   return String(value || "")
     .replace(/[^a-zA-Z0-9]/g, "")
     .toUpperCase();
+}
+
+/** Strain-only label for AI naming — never use batch display `name` / `type` / `sourceId`. */
+function getStrainNameFromSourceRecord(src: any): string | null {
+  if (!src || typeof src !== "object") return null;
+  const fromField = String(src.strainName ?? "").trim();
+  if (fromField) return fromField;
+  if (typeof src.strain === "string" && String(src.strain).trim())
+    return String(src.strain).trim();
+  if (src.strain && typeof src.strain === "object") {
+    const n = String((src.strain as { name?: string }).name ?? "").trim();
+    if (n) return n;
+  }
+  return null;
 }
 
 function getSourceAcronym(src: any) {
@@ -421,6 +436,11 @@ export default function Extraction() {
 
   const [finalOilGrams, setFinalOilGrams] = useState("");
   const [extraTerpsGrams, setExtraTerpsGrams] = useState("");
+
+  const [showAiNameModal, setShowAiNameModal] = useState(false);
+  const [aiNameLoading, setAiNameLoading] = useState(false);
+  const [aiNameError, setAiNameError] = useState("");
+  const [aiNameSuggestions, setAiNameSuggestions] = useState<string[]>([]);
 
   const [notificationModal, setNotificationModal] = useState<{
     open: boolean;
@@ -701,7 +721,30 @@ export default function Extraction() {
   }
 
   function getSource(sourceId: string) {
-    return s.sourceBatches.find((b: any) => b.id === sourceId);
+    const id = String(sourceId || "").trim();
+    if (!id) return undefined;
+    const active = s.sourceBatches.find((b: any) => String(b.id) === id);
+    if (active) return active;
+    return s.completedSourceBatches?.find((b: any) => String(b.id) === id);
+  }
+
+  function collectStrainNamesForExtractionBatch(ext: any): string[] {
+    if (!ext?.sources || !Array.isArray(ext.sources)) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const row of ext.sources) {
+      let strain =
+        typeof row?.strainName === "string" ? String(row.strainName).trim() : "";
+      if (!strain && row?.sourceId) {
+        strain = getStrainNameFromSourceRecord(getSource(row.sourceId)) || "";
+      }
+      if (!strain) continue;
+      const key = strain.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(strain);
+    }
+    return out;
   }
 
   function getSourceOriginalLbs(source: any) {
@@ -1092,6 +1135,34 @@ export default function Extraction() {
 
     setFinalOilGrams("");
     setExtraTerpsGrams("");
+
+    setShowAiNameModal(false);
+    setAiNameLoading(false);
+    setAiNameError("");
+    setAiNameSuggestions([]);
+  }
+
+  async function generateAiProductNames() {
+    if (!selectedExt) return;
+    const strains = collectStrainNamesForExtractionBatch(selectedExt);
+    if (strains.length === 0) {
+      showNotice(
+        "No strain names",
+        "None of the selected sources have a strain-only field (e.g. strainName). Add strain data on source batches, or ensure this batch was created after the latest update.",
+      );
+      return;
+    }
+    setAiNameError("");
+    setAiNameSuggestions([]);
+    setAiNameLoading(true);
+    try {
+      const res = await suggestExtractionProductNames(strains);
+      setAiNameSuggestions(Array.isArray(res?.suggestions) ? res.suggestions : []);
+    } catch (e: any) {
+      setAiNameError(e?.message || "Could not get suggestions.");
+    } finally {
+      setAiNameLoading(false);
+    }
   }
 
   function openTaskModal(batch?: any) {
@@ -1463,6 +1534,7 @@ export default function Extraction() {
         return {
           sourceId: row.sourceId,
           name: source?.name || source?.type || row.sourceId,
+          strainName: getStrainNameFromSourceRecord(source) || "",
           acronym: getSourceAcronym(source || row),
           materialType: getSourceMaterialType(source),
           amountUsed: +num(row.amount).toFixed(2),
@@ -3053,6 +3125,32 @@ export default function Extraction() {
                     <p style={{ color: "#94a3b8" }}>
                       This will finish the extraction batch and send it to packaging.
                     </p>
+
+                    <p style={{ color: "#cbd5e1", fontSize: 14 }}>
+                      Current batch display name:{" "}
+                      <b style={{ color: "#e2e8f0" }}>{selectedExt?.name || "—"}</b>
+                    </p>
+
+                    {userCanWrite ? (
+                      <button
+                        type="button"
+                        style={{
+                          ...buttonStyle,
+                          background: "rgba(168, 85, 247, 0.2)",
+                          border: "1px solid rgba(168, 85, 247, 0.45)",
+                          color: "#e9d5ff",
+                          fontWeight: 800,
+                          cursor: "pointer",
+                        }}
+                        onClick={() => {
+                          setAiNameError("");
+                          setAiNameSuggestions([]);
+                          setShowAiNameModal(true);
+                        }}
+                      >
+                        Create new name (AI)
+                      </button>
+                    ) : null}
                   </>
                 )}
 
@@ -3080,6 +3178,86 @@ export default function Extraction() {
                   ) : null}
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {showAiNameModal && selectedExt && (
+          <div style={{ ...modalBackStyle, zIndex: 10050 }}>
+            <div style={{ ...modalStyle, maxWidth: 520 }}>
+              <h2 style={{ marginTop: 0 }}>AI product name</h2>
+              <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.5 }}>
+                Strain names from this batch&apos;s selected sources (only these are sent to the
+                model):
+              </p>
+              <ul style={{ color: "#e2e8f0", marginTop: 8, paddingLeft: 20 }}>
+                {collectStrainNamesForExtractionBatch(selectedExt).length === 0 ? (
+                  <li style={{ color: "#f87171" }}>No strain names found on sources.</li>
+                ) : (
+                  collectStrainNamesForExtractionBatch(selectedExt).map((sn) => (
+                    <li key={sn}>{sn}</li>
+                  ))
+                )}
+              </ul>
+
+              {aiNameError ? (
+                <p style={{ color: "#fca5a5", fontSize: 14 }}>{aiNameError}</p>
+              ) : null}
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+                <button
+                  type="button"
+                  style={greenButtonStyle}
+                  disabled={aiNameLoading}
+                  onClick={() => void generateAiProductNames()}
+                >
+                  {aiNameLoading ? "Generating…" : "Generate suggestions"}
+                </button>
+                <button
+                  type="button"
+                  style={buttonStyle}
+                  disabled={aiNameLoading}
+                  onClick={() => setShowAiNameModal(false)}
+                >
+                  Close
+                </button>
+              </div>
+
+              {aiNameSuggestions.length > 0 ? (
+                <div style={{ marginTop: 18 }}>
+                  <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 8 }}>
+                    Tap a name to use it as the batch display name (saved when you click Save Task).
+                  </div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {aiNameSuggestions.map((sug) => (
+                      <button
+                        key={sug}
+                        type="button"
+                        style={{
+                          ...buttonStyle,
+                          textAlign: "left",
+                          background: "#1e293b",
+                          border: "1px solid #38bdf8",
+                          color: "#bae6fd",
+                          cursor: "pointer",
+                        }}
+                        onClick={() => {
+                          if (!selectedExt) return;
+                          selectedExt.name = sug;
+                          const row = s.extractionBatches.find(
+                            (b: any) => b.id === selectedExt.id
+                          );
+                          if (row) row.name = sug;
+                          setSelectedExt({ ...selectedExt, name: sug });
+                          setShowAiNameModal(false);
+                        }}
+                      >
+                        {sug}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
         )}

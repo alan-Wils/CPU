@@ -32,6 +32,9 @@ Use values from your secrets manager, **not** committed files. Example shape is 
 | `APP_URL` | Same app URL as the browser, `https://…` |
 | `OWNER_BOOTSTRAP_EMAIL` | Optional; e.g. `owner@example.com` if your bootstrap path uses it |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | Optional until outbound email is wired; if any is set, fill host, port, and `SMTP_FROM` at minimum |
+| `OPENAI_API_KEY` | Optional. Required for **Extraction → Finish Batch → Create new name (AI)** (`POST /api/extraction-assist/suggest-product-names`). Without it, that endpoint returns **503** with a clear message. |
+| `OPENAI_MODEL` | Optional. Default `gpt-4o-mini`. |
+| `OPENAI_BASE_URL` | Optional. Default `https://api.openai.com/v1` (trim trailing slash). Use only if you proxy or use a compatible API. |
 
 **Note:** The API enforces: in `NODE_ENV=production`, `CORS_ORIGIN` is not `*`, `JWT_SECRET` is at least 32 characters, `DATABASE_URL` is not `file:…`, and `APP_URL` is set.
 
@@ -50,6 +53,7 @@ Same command as the **Custom release command** in Railway. Run locally with `DAT
 2. `GET https://<railway-app>.up.railway.app/health/ready` → `200` when DB is reachable, `check: "ready"`.
 3. `GET https://<railway-app>.up.railway.app/health` → same as **ready** (readiness with DB check).
 4. `POST /api/...` from the Vercel app with a token — must not CORS-fail in the browser (origin must be listed in `CORS_ORIGIN`).
+5. (Optional) With `OPENAI_API_KEY` set, log in as an extraction-capable user and call `POST /api/extraction-assist/suggest-product-names` with body `{ "strains": ["Strain A"] }` — expect `200` and `{ "suggestions": [...] }`. If the key is missing, expect `503`.
 
 ## 5. If you exposed `DATABASE_URL` or passwords (e.g. in chat, logs)
 

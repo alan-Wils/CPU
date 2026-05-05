@@ -391,3 +391,18 @@ export async function saveLog(
     companyId,
   });
 }
+
+/** Strain-only labels; server builds the OpenAI prompt from `apps/api/prompts/extraction-product-name.md`. */
+export async function suggestExtractionProductNames(
+  strains: string[],
+  companyId?: string
+): Promise<{ suggestions: string[] }> {
+  return apiRequest<{ suggestions: string[] }>(
+    "/api/extraction-assist/suggest-product-names",
+    {
+      method: "POST",
+      body: { strains },
+      companyId,
+    }
+  );
+}

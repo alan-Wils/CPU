@@ -94,7 +94,26 @@ const envSchema = z
         if (s === "false" || s === "0" || s === "no")
             return false;
         return undefined;
-    }, z.boolean().optional())
+    }, z.boolean().optional()),
+    /** Optional: extraction product-name suggestions via OpenAI (see POST /api/extraction-assist/suggest-product-names). */
+    OPENAI_API_KEY: z.preprocess((v) => {
+        if (typeof v !== "string")
+            return undefined;
+        const t = v.trim();
+        return t === "" ? undefined : t;
+    }, z.string().min(1).optional()),
+    OPENAI_MODEL: z.preprocess((v) => {
+        if (typeof v !== "string")
+            return undefined;
+        const t = v.trim();
+        return t === "" ? undefined : t;
+    }, z.string().optional()),
+    OPENAI_BASE_URL: z.preprocess((v) => {
+        if (typeof v !== "string")
+            return undefined;
+        const t = v.trim().replace(/\/+$/, "");
+        return t === "" ? undefined : t;
+    }, z.string().url().optional())
 })
     .superRefine((data, ctx) => {
     if (data.NODE_ENV !== "production")
