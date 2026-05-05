@@ -536,7 +536,7 @@ legacyCpuRouter.get("/extraction", asyncHandler(async (req, res) => {
     }
     res.json([...byId.values()]);
 }));
-legacyCpuRouter.post("/extraction", requireRole(extractionWriteRoles), asyncHandler(async (req, res) => {
+legacyCpuRouter.post("/extraction", requireRoleOrAppPermission(extractionWriteRoles, "page.extraction"), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const body = asUiRecord(req.body);
     const customId = String(body.id ?? "").trim();
@@ -569,7 +569,7 @@ legacyCpuRouter.post("/extraction", requireRole(extractionWriteRoles), asyncHand
     });
     res.status(201).json(mapExtractionRunToLegacy(run));
 }));
-legacyCpuRouter.put("/extraction/:runId", requireRole(extractionWriteRoles), asyncHandler(async (req, res) => {
+legacyCpuRouter.put("/extraction/:runId", requireRoleOrAppPermission(extractionWriteRoles, "page.extraction"), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const runId = String(req.params.runId || "");
     const body = req.body || {};

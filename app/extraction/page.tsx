@@ -205,6 +205,47 @@ function getStrainNameFromSourceRecord(src: any): string | null {
   return null;
 }
 
+function findCultivationBatchInStore(store: any, cultivationBatchId: string) {
+  const id = String(cultivationBatchId || "").trim();
+  if (!id || !store) return undefined;
+  const open = Array.isArray(store.cultivationBatches) ? store.cultivationBatches : [];
+  const done = Array.isArray(store.completedCultivationBatches)
+    ? store.completedCultivationBatches
+    : [];
+  return (
+    open.find((b: any) => String(b?.id) === id) ||
+    done.find((b: any) => String(b?.id) === id)
+  );
+}
+
+function strainFromCultivationRecord(cult: any): string | null {
+  if (!cult || typeof cult !== "object") return null;
+  const top = String(cult.strain ?? "").trim();
+  if (top) return top;
+  const ui = cult.cultivationUiState;
+  if (ui && typeof ui === "object") {
+    const nested = String((ui as { strain?: string }).strain ?? "").trim();
+    if (nested) return nested;
+  }
+  return null;
+}
+
+/** Strain from source row, or from linked cultivation batch when the source omits strain fields. */
+function resolveStrainNameFromSourceRecord(store: any, src: any): string | null {
+  const direct = getStrainNameFromSourceRecord(src);
+  if (direct) return direct;
+  if (!src || typeof src !== "object") return null;
+  const cultId = String(src.source ?? src.cultivationBatchId ?? "").trim();
+  if (!cultId) return null;
+  const cult = findCultivationBatchInStore(store, cultId);
+  return strainFromCultivationRecord(cult);
+}
+
+function strainFromCultivationBatchId(store: any, cultivationBatchId: string): string | null {
+  const cult = findCultivationBatchInStore(store, cultivationBatchId);
+  return strainFromCultivationRecord(cult);
+}
+
 function getSourceAcronym(src: any) {
   const genericPrefixes = new Set([
     "FF",
@@ -472,6 +513,12 @@ export default function Extraction() {
     });
   }
 
+  function backendSaveNoticeDetails(error: unknown, backupLine: string) {
+    const apiMsg =
+      error instanceof Error && error.message.trim() ? error.message.trim() : "";
+    return apiMsg ? `${apiMsg}\n\n${backupLine}` : backupLine;
+  }
+
   function showConfirm(
     title: string,
     message: string,
@@ -729,21 +776,48 @@ export default function Extraction() {
   }
 
   function collectStrainNamesForExtractionBatch(ext: any): string[] {
-    if (!ext?.sources || !Array.isArray(ext.sources)) return [];
+    if (!ext) return [];
     const seen = new Set<string>();
     const out: string[] = [];
-    for (const row of ext.sources) {
+    const add = (strain: string) => {
+      const t = String(strain || "").trim();
+      if (!t) return;
+      const key = t.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(t);
+    };
+
+    const rows: any[] = Array.isArray(ext.sources) ? [...ext.sources] : [];
+    if (rows.length === 0 && ext.source) {
+      const ids = String(ext.source)
+        .split(",")
+        .map((x: string) => x.trim())
+        .filter(Boolean);
+      for (const sourceId of ids) rows.push({ sourceId });
+    }
+
+    for (const row of rows) {
       let strain =
         typeof row?.strainName === "string" ? String(row.strainName).trim() : "";
       if (!strain && row?.sourceId) {
-        strain = getStrainNameFromSourceRecord(getSource(row.sourceId)) || "";
+        const src = getSource(String(row.sourceId));
+        strain = resolveStrainNameFromSourceRecord(s, src) || "";
       }
-      if (!strain) continue;
-      const key = strain.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(strain);
+      if (!strain && row && typeof row === "object") {
+        strain = resolveStrainNameFromSourceRecord(s, row) || "";
+      }
+      if (strain) add(strain);
     }
+
+    if (out.length === 0) {
+      const cid = String(ext.cultivationBatchId ?? "").trim();
+      if (cid) {
+        const st = strainFromCultivationBatchId(s, cid);
+        if (st) add(st);
+      }
+    }
+
     return out;
   }
 
@@ -1148,7 +1222,7 @@ export default function Extraction() {
     if (strains.length === 0) {
       showNotice(
         "No strain names",
-        "None of the selected sources have a strain-only field (e.g. strainName). Add strain data on source batches, or ensure this batch was created after the latest update.",
+        "Could not resolve strain from this batch’s sources or linked cultivation batches. Check that source batches are linked to a cultivation batch with a strain, then reload the page.",
       );
       return;
     }
@@ -1534,7 +1608,7 @@ export default function Extraction() {
         return {
           sourceId: row.sourceId,
           name: source?.name || source?.type || row.sourceId,
-          strainName: getStrainNameFromSourceRecord(source) || "",
+          strainName: resolveStrainNameFromSourceRecord(s, source) || "",
           acronym: getSourceAcronym(source || row),
           materialType: getSourceMaterialType(source),
           amountUsed: +num(row.amount).toFixed(2),
@@ -1675,7 +1749,10 @@ export default function Extraction() {
       showNotice(
         "Backend Save Failed",
         "The extraction batch changed locally, but the real database save failed.",
-        "The backup sync will still try to save the current store."
+        backendSaveNoticeDetails(
+          error,
+          "The backup sync will still try to save the current store."
+        )
       );
     }
 
@@ -2017,7 +2094,10 @@ export default function Extraction() {
       showNotice(
         "Backend Save Failed",
         "The extraction task was saved locally, but the real database update failed.",
-        "The backup sync will still try to save the current store."
+        backendSaveNoticeDetails(
+          error,
+          "The backup sync will still try to save the current store."
+        )
       );
     }
 
@@ -3394,6 +3474,7 @@ export default function Extraction() {
                     marginTop: 12,
                     marginBottom: 18,
                     color: "#cbd5e1",
+                    whiteSpace: "pre-wrap",
                   }}
                 >
                   {notificationModal.details}
