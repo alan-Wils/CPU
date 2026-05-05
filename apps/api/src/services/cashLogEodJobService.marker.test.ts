@@ -146,4 +146,39 @@ describe("cashLogEodJobService DB marker", () => {
       vi.useRealTimers();
     }
   });
+
+  it("cron trigger uses eod_local_day: sends after strict slack window closed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-05T19:00:00.000Z"));
+
+    try {
+      const prisma = (await import("../config/prisma.js")).prisma;
+      const { sendHtmlEmail } = await import("../lib/mailer.js");
+      prisma.$queryRaw = vi.fn().mockResolvedValue([{ id: "mem4" }]);
+      prisma.companyMembership.findMany = vi.fn().mockResolvedValue([
+        {
+          id: "mem4",
+          userId: "u4",
+          companyId: "c4",
+          cashLogEodPrefs: denverPrefs,
+          cashLogEodLastSentAt: null,
+          cashLogEodScheduleGeneration: 0,
+          cashLogEodDigestSentScheduleGeneration: null,
+          company: { name: "Delta" },
+          user: { email: "d@b.co", isActive: true },
+        },
+      ]);
+      prisma.companyMembership.update = vi.fn().mockResolvedValue({});
+      vi.mocked(sendHtmlEmail).mockResolvedValueOnce(undefined);
+
+      const { runCashLogEodJob } = await import("./cashLogEodJobService.js");
+      const out = await runCashLogEodJob({ trigger: "cron" });
+
+      expect(out.sendWindowMode).toBe("eod_local_day");
+      expect(sendHtmlEmail).toHaveBeenCalledTimes(1);
+      expect(prisma.companyMembership.update).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

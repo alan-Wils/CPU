@@ -1,6 +1,6 @@
 # Railway Cron — cash log EOD digest
 
-The financial **cash log digest email** runs the same logic as the in-process API scheduler (`CASH_LOG_EOD_INTERNAL_SCHEDULER`). For production, **Railway Cron** should `POST` to the API on a fixed cadence so digests still fire if the dyno restarts often or sleeps.
+The financial **cash log digest email** can run from the in-process API scheduler (`CASH_LOG_EOD_INTERNAL_SCHEDULER`) and/or **Railway Cron** `POST` (see send-window defaults below). For production, Railway Cron on a fixed cadence helps if the dyno restarts often or sleeps.
 
 ## Endpoint
 
@@ -31,7 +31,11 @@ Authorization: Bearer <CRON_SECRET>
 
 Trigger **every 10 minutes** or **every 15 minutes**.
 
-Digest emails only send during each member’s configured **local send window** (`sendTime` through `sendTime + CASH_LOG_EOD_SEND_WINDOW_MINUTES`, default **25** minutes). Frequent cron ensures a hit inside that narrow window without relying on a long-lived `setInterval`.
+**Cron-triggered** runs (`POST …/cash-log-eod`) default to **`eod_local_day`** eligibility: once local time is **at or after** each member’s configured `sendTime`, that tick can send (until **same-day duplicate suppression** blocks a repeat for the current schedule generation). You do **not** need the railway hit to land inside the narrow **`sendTime` … `sendTime + CASH_LOG_EOD_SEND_WINDOW_MINUTES`** slice.
+
+The in-process **internal scheduler** defaults to **`strict_slack`** (same narrow window) so frequent ticks stay tidy when both are enabled.
+
+Set **`CASH_LOG_EOD_SEND_WINDOW_MODE=strict`** on the API to force the narrow window for **both** cron and internal runs. Set **`CASH_LOG_EOD_SEND_WINDOW_MODE=eod_local_day`** to use remainder-of-local-day eligibility for **both**.
 
 **Idempotency:** `CompanyMembership.cashLogEodLastSentAt` is updated **only after** Resend/SMTP reports success for that digest. Ticks outside the window, disabled digests, or failed mail sends **do not** write this field, so they never block a later in-window attempt the same calendar day.
 
@@ -49,7 +53,8 @@ Cron expression examples (cron syntax depends on Railway’s cron UI):
 | Variable | Required for cron | Notes |
 |----------|-------------------|--------|
 | `CRON_SECRET` | **Yes** | Strong random string, **≥ 16 characters**. Same value used in the `Authorization: Bearer …` header. |
-| `CASH_LOG_EOD_SEND_WINDOW_MINUTES` | No | Default `25`. Width of the send window after `sendTime` (per member timezone). |
+| `CASH_LOG_EOD_SEND_WINDOW_MINUTES` | No | Default `25`. Used for **`strict_slack`** mode (internal scheduler by default, and cron when `CASH_LOG_EOD_SEND_WINDOW_MODE=strict`). |
+| `CASH_LOG_EOD_SEND_WINDOW_MODE` | No | `strict` \| `eod_local_day` (aliases: `strict_slack`, `eod`). When unset: **cron → `eod_local_day`**, **internal → `strict_slack`**. |
 | `CASH_LOG_EOD_INTERNAL_SCHEDULER` | No | Default `true`. Leave enabled as a backup, or set `false` if you want **only** Railway Cron to drive the job. |
 
 ## Railway Cron setup (short)
@@ -71,6 +76,7 @@ Success (**200**) after Bearer auth:
   "message": "...",
   "job": {
     "trigger": "cron",
+    "sendWindowMode": "eod_local_day",
     "utcNow": "...",
     "slackMinutes": 25,
     "examined": 2,

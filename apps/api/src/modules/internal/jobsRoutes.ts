@@ -44,7 +44,8 @@ export function buildCashLogEodCronResponse(result: CashLogEodJobResult): {
 }
 
 /**
- * Cash log EOD digest — same logic as the in-process scheduler.
+ * Cash log EOD digest — shares core rules with the in-process scheduler but defaults to **eod_local_day**
+ * send eligibility (see `resolveCashLogEodSendWindowMode` and `CASH_LOG_EOD_SEND_WINDOW_MODE`).
  *
  * Auth: `Authorization: Bearer <CRON_SECRET>` (must match `CRON_SECRET` on the API service).
  *

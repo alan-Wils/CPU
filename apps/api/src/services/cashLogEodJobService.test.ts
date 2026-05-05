@@ -3,6 +3,7 @@ import {
   computeLocalSendWindowSummary,
   decideMembershipCashLogDigest,
   digestAlreadySentToday,
+  isAtOrPastConfiguredLocalSendTime,
   isWithinSendWindow,
   zonedCalendarParts,
 } from "./cashLogEodJobService.js";
@@ -75,6 +76,30 @@ describe("cashLogEodJobService", () => {
     expect(h.windowStartLocal).toBe("11:16");
     expect(h.windowEndLocal).toBe("11:41");
     expect(h.currentLocalTime).toBe("11:17");
+    expect(h.sendWindowMode).toBe("strict_slack");
+    const he = computeLocalSendWindowSummary(now, prefs, 25, "eod_local_day");
+    expect(he.windowEndLocal).toBe("23:59 (end of local day)");
+    expect(he.sendWindowMode).toBe("eod_local_day");
+  });
+
+  it("isAtOrPastConfiguredLocalSendTime matches strict lower bound without upper cap", () => {
+    const prefs: CashLogEodPrefs = denverPrefs;
+    const strictEdge = new Date("2026-05-05T17:40:59.999Z"); // ~11:40 MDT vs send 11:16 + 25m → still within strict
+    expect(isWithinSendWindow(strictEdge, prefs, 25)).toBe(true);
+    const pastStrict = new Date("2026-05-05T19:00:00.000Z"); // 13:00 MDT
+    expect(isWithinSendWindow(pastStrict, prefs, 25)).toBe(false);
+    expect(isAtOrPastConfiguredLocalSendTime(pastStrict, prefs)).toBe(true);
+    const inputPastStrict = baseDecisionInput(null, pastStrict);
+    expect(decideMembershipCashLogDigest(inputPastStrict).decision).toBe("skip");
+    expect(decideMembershipCashLogDigest(inputPastStrict).skipReason).toBe(
+      "outside_send_window",
+    );
+    expect(
+      decideMembershipCashLogDigest({
+        ...inputPastStrict,
+        sendWindowMode: "eod_local_day",
+      }).decision,
+    ).toBe("send");
   });
 
   it("outside-window tick skips; later in-window same day chooses send without prior marker", () => {
