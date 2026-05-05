@@ -27,7 +27,7 @@ import {
 } from "@/lib/extractionApi";
 import { createPackagingBatch } from "@/lib/packagingApi";
 import { createLog } from "@/lib/logsApi";
-import { suggestExtractionProductNames } from "@/lib/api";
+import { apiRequest, suggestExtractionProductNames } from "@/lib/api";
 
 const sourceMaterialTypes = {
   freshFrozen: [
@@ -296,6 +296,14 @@ function getSourceAcronym(src: any) {
   return "MIX";
 }
 
+type BlendNameHistoryRow = {
+  id: string;
+  blendKey: string;
+  blendLabel: string;
+  productName: string;
+  lastUsedAt: string;
+};
+
 function makeProductionBatchId(sources: any[]) {
   const acronymMix = sources
     .map((src) => getSourceAcronym(src))
@@ -459,6 +467,10 @@ export default function Extraction() {
     };
   }, []);
 
+  useEffect(() => {
+    void loadBlendNameHistory();
+  }, []);
+
   if (!s.sourceBatches) s.sourceBatches = [];
   if (!s.completedSourceBatches) s.completedSourceBatches = [];
   if (!s.extractionBatches) s.extractionBatches = [];
@@ -480,6 +492,7 @@ export default function Extraction() {
   const [draftFinishBatchName, setDraftFinishBatchName] = useState("");
   const [draftFinishBatchCode, setDraftFinishBatchCode] = useState("");
   const [finishBatchManualName, setFinishBatchManualName] = useState("");
+  const [blendNameHistory, setBlendNameHistory] = useState<BlendNameHistoryRow[]>([]);
 
   const [type, setType] = useState(productTypes[0]);
   const [sourceInputs, setSourceInputs] = useState<any[]>([
@@ -679,6 +692,75 @@ export default function Extraction() {
     });
   }
 
+  function makeBlendSignatureFromBatch(batch: any) {
+    const parts = collectStrainNamesForExtractionBatch(batch)
+      .map((n) => String(n || "").trim())
+      .filter(Boolean)
+      .map((n) => n.toLowerCase())
+      .sort();
+    return {
+      blendKey: parts.join("|"),
+      blendLabel: parts
+        .map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase()))
+        .join(" · "),
+    };
+  }
+
+  async function loadBlendNameHistory() {
+    try {
+      const cfg = await apiRequest<any>("/api/config");
+      const rows = Array.isArray(cfg?.extraction?.blendNameHistory)
+        ? cfg.extraction.blendNameHistory
+        : [];
+      setBlendNameHistory(rows as BlendNameHistoryRow[]);
+    } catch (error) {
+      console.error("Could not load extraction blend name history:", error);
+    }
+  }
+
+  async function saveBlendNameToConfig(batch: any, productName: string) {
+    const cleanName = String(productName || "").trim();
+    if (!batch || !cleanName) return;
+    const { blendKey, blendLabel } = makeBlendSignatureFromBatch(batch);
+    if (!blendKey) return;
+    const nowIso = new Date().toISOString();
+    const cfg = await apiRequest<any>("/api/config");
+    const extractionCfg =
+      cfg?.extraction && typeof cfg.extraction === "object" ? cfg.extraction : {};
+    const current = Array.isArray(extractionCfg?.blendNameHistory)
+      ? [...extractionCfg.blendNameHistory]
+      : [];
+    const existing = current.find(
+      (row) =>
+        String(row.blendKey || "") === blendKey &&
+        String(row.productName || "").trim().toLowerCase() === cleanName.toLowerCase()
+    );
+    const nextRows = existing
+      ? current.map((row) =>
+          row.id === existing.id ? { ...row, blendLabel, lastUsedAt: nowIso } : row
+        )
+      : [
+          {
+            id: `blend-name-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+            blendKey,
+            blendLabel,
+            productName: cleanName,
+            lastUsedAt: nowIso,
+          },
+          ...current,
+        ];
+    await apiRequest("/api/config", {
+      method: "PUT",
+      body: {
+        extraction: {
+          ...extractionCfg,
+          blendNameHistory: nextRows,
+        },
+      },
+    });
+    setBlendNameHistory(nextRows);
+  }
+
   function saveLog(log: any) {
     s.logs.unshift(log);
 
@@ -858,6 +940,18 @@ export default function Extraction() {
       .map((row: any) => String(row?.name || "").trim())
       .filter((n: string) => n.length > 0);
     return [...new Set(names)];
+  }
+
+  function getSavedNamesForSelectedBlend(batch: any): BlendNameHistoryRow[] {
+    const { blendKey } = makeBlendSignatureFromBatch(batch);
+    if (!blendKey) return [];
+    return blendNameHistory
+      .filter((row) => String(row?.blendKey || "") === blendKey)
+      .sort(
+        (a, b) =>
+          new Date(String(b.lastUsedAt || 0)).getTime() -
+          new Date(String(a.lastUsedAt || 0)).getTime()
+      );
   }
 
   function getSourceOriginalLbs(source: any) {
@@ -2245,6 +2339,13 @@ export default function Extraction() {
     try {
       showSyncMessageNotice("Task saved locally. Syncing to server...");
       const updated = await updateExtractionBatch(targetBatchId, localSnapshot);
+      if (selectedTask === "Finish Batch" && !isBlank(localSnapshot?.name)) {
+        try {
+          await saveBlendNameToConfig(localSnapshot, String(localSnapshot.name));
+        } catch (historyError) {
+          console.error("Could not save blend-name history:", historyError);
+        }
+      }
       if (updated && typeof updated === "object") {
         const row = s.extractionBatches.find((b: any) => b.id === targetBatchId);
         if (row) Object.assign(row, updated);
@@ -3445,6 +3546,53 @@ export default function Extraction() {
                         </>
                       ) : null}
                     </p>
+
+                    {selectedExt ? (
+                      (() => {
+                        const savedNames = getSavedNamesForSelectedBlend(selectedExt);
+                        if (savedNames.length === 0) return null;
+                        return (
+                          <div
+                            style={{
+                              border: "1px solid #334155",
+                              borderRadius: 10,
+                              padding: 10,
+                              background: "#0b1220",
+                              display: "grid",
+                              gap: 8,
+                            }}
+                          >
+                            <div style={{ color: "#93c5fd", fontSize: 13, fontWeight: 700 }}>
+                              Previously used names for this blend
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                              {savedNames.slice(0, 12).map((row) => (
+                                <button
+                                  key={row.id}
+                                  type="button"
+                                  style={{
+                                    ...buttonStyle,
+                                    background: "#1e293b",
+                                    border: "1px solid #38bdf8",
+                                    color: "#bae6fd",
+                                    fontWeight: 700,
+                                  }}
+                                  onClick={() => {
+                                    setFinishBatchManualName(row.productName || "");
+                                    setDraftFinishBatchName("");
+                                    setDraftFinishBatchCode(
+                                      makeMarketBatchCode(row.productName || "", selectedExt.id)
+                                    );
+                                  }}
+                                >
+                                  {row.productName}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()
+                    ) : null}
 
                     {userCanWrite ? (
                       <button

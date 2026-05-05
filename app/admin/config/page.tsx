@@ -55,6 +55,14 @@ type ProductNameRecord = {
   productName: string;
 };
 
+type BlendNameHistoryRecord = {
+  id: string;
+  blendKey: string;
+  blendLabel: string;
+  productName: string;
+  lastUsedAt: string;
+};
+
 type AppConfig = {
   company: {
     metrc: {
@@ -78,6 +86,7 @@ type AppConfig = {
   };
   extraction: {
     productNames: ProductNameRecord[];
+    blendNameHistory: BlendNameHistoryRecord[];
     supplies: Supply[];
   };
   packaging: {
@@ -108,6 +117,7 @@ const emptyConfig: AppConfig = {
   },
   extraction: {
     productNames: [],
+    blendNameHistory: [],
     supplies: [],
   },
   packaging: {
@@ -962,6 +972,49 @@ export default function ConfigPage() {
               </button>
             </div>
           ))}
+        </div>
+
+        <h3 style={styles.subTitle}>Previously Used Blend Names</h3>
+
+        <div style={styles.list}>
+          {config.extraction.blendNameHistory.length === 0 ? (
+            <div style={styles.row}>
+              <span style={{ color: "#94a3b8" }}>
+                No blend-name history saved yet.
+              </span>
+            </div>
+          ) : (
+            config.extraction.blendNameHistory.map((item) => (
+              <div key={item.id} style={styles.row}>
+                <span>
+                  <strong>{item.blendLabel || item.blendKey || "Blend"}</strong> ={" "}
+                  {item.productName}
+                  {item.lastUsedAt ? (
+                    <span style={{ color: "#94a3b8" }}>
+                      {" "}
+                      (Last used: {new Date(item.lastUsedAt).toLocaleString()})
+                    </span>
+                  ) : null}
+                </span>
+                <button
+                  style={styles.deleteButton}
+                  onClick={() =>
+                    setConfig((prev) => ({
+                      ...prev,
+                      extraction: {
+                        ...prev.extraction,
+                        blendNameHistory: prev.extraction.blendNameHistory.filter(
+                          (row) => row.id !== item.id
+                        ),
+                      },
+                    }))
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+            ))
+          )}
         </div>
 
         <h3 style={styles.subTitle}>Extraction Supplies & Cost</h3>
