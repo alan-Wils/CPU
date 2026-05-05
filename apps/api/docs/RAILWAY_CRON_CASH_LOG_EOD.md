@@ -31,17 +31,15 @@ Authorization: Bearer <CRON_SECRET>
 
 Trigger **every 10 minutes** or **every 15 minutes**.
 
-**Cron-triggered** runs (`POST …/cash-log-eod`) default to **`eod_local_day`** eligibility: once local time is **at or after** each member’s configured `sendTime`, that tick can send (until **same-day duplicate suppression** blocks a repeat for the current schedule generation). You do **not** need the railway hit to land inside the narrow **`sendTime` … `sendTime + CASH_LOG_EOD_SEND_WINDOW_MINUTES`** slice.
+**Cron-triggered** runs (`POST …/cash-log-eod`) default to **`eod_local_day`** eligibility: once local time is **at or after** each member’s configured `sendTime`, that tick can send. There is **no same-day cap** — each eligible tick sends again. You do **not** need the railway hit to land inside the narrow **`sendTime` … `sendTime + CASH_LOG_EOD_SEND_WINDOW_MINUTES`** slice.
 
 The in-process **internal scheduler** defaults to **`strict_slack`** (same narrow window) so frequent ticks stay tidy when both are enabled.
 
 Set **`CASH_LOG_EOD_SEND_WINDOW_MODE=strict`** on the API to force the narrow window for **both** cron and internal runs. Set **`CASH_LOG_EOD_SEND_WINDOW_MODE=eod_local_day`** to use remainder-of-local-day eligibility for **both**.
 
-**Idempotency:** `CompanyMembership.cashLogEodLastSentAt` is updated **only after** Resend/SMTP reports success for that digest. Ticks outside the window, disabled digests, or failed mail sends **do not** write this field, so they never block a later in-window attempt the same calendar day.
+**Last-sent marker:** `CompanyMembership.cashLogEodLastSentAt` (and `cashLogEodDigestSentScheduleGeneration`) are updated **only after** Resend/SMTP reports success. They are for **auditing / UI**, not to limit how many digests go out per day.
 
-**Same-day duplicate suppression** uses `cashLogEodScheduleGeneration` and `cashLogEodDigestSentScheduleGeneration`: saving digest prefs (`PUT /api/cash-log/eod-prefs` or toggling digest in Admin) **increments the generation** and **clears** the digest success generation, so you can switch from **11:00 → 17:00** local send time **the same calendar day** and still receive the new-slot digest.
-
-**Aggregation keys** (see `job.skipReasons`): `outside_send_window`, `already_sent_today`, `digest_disabled`, `no_recipient`, `prefs_invalid`, `wrong_weekday`, and **`email_send_failed`** (attempted send that threw — not counted in `skipped`).
+**Aggregation keys** (see `job.skipReasons`): `outside_send_window`, `digest_disabled`, `no_recipient`, `prefs_invalid`, `wrong_weekday`, **`email_send_failed`**, and legacy **`already_sent_today`** (unused — should stay at 0).
 
 Cron expression examples (cron syntax depends on Railway’s cron UI):
 

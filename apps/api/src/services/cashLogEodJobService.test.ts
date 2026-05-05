@@ -3,6 +3,7 @@ import {
   computeLocalSendWindowSummary,
   decideMembershipCashLogDigest,
   digestAlreadySentToday,
+  duplicateDigestSuppressesSameSchedule,
   isAtOrPastConfiguredLocalSendTime,
   isWithinSendWindow,
   zonedCalendarParts,
@@ -123,7 +124,7 @@ describe("cashLogEodJobService", () => {
     expect(digestAlreadySentToday(yesterdaySend, thisMorningUtc, "America/Denver")).toBe(false);
   });
 
-  it("second in-window decision same day skips as already_sent_today after marker instant", () => {
+  it("second in-window decision same day still sends (no daily duplicate cap)", () => {
     const inWindowFirst = new Date("2026-05-05T17:17:00.000Z");
     let d = decideMembershipCashLogDigest(
       baseDecisionInput(null, inWindowFirst),
@@ -138,10 +139,23 @@ describe("cashLogEodJobService", () => {
         cashLogEodDigestSentScheduleGeneration: 0,
       }),
     );
-    expect(d.decision).toBe("skip");
-    expect(d.skipReason).toBe("already_sent_today");
-    expect(d.suppressDuplicateSchedule).toBe(true);
+    expect(d.decision).toBe("send");
+    expect(d.suppressDuplicateSchedule).toBe(false);
     expect(d.alreadySentToday).toBe(true);
+  });
+
+  it("duplicateDigestSuppressesSameSchedule reflects legacy generation rule (unused for eligibility)", () => {
+    const nowUtc = new Date("2026-05-05T17:21:00.000Z");
+    const marker = new Date("2026-05-05T17:17:00.000Z");
+    expect(
+      duplicateDigestSuppressesSameSchedule({
+        lastSentAt: marker,
+        nowUtc,
+        timezone: "America/Denver",
+        scheduleGeneration: 1,
+        digestSentScheduleGeneration: 1,
+      }),
+    ).toBe(true);
   });
 
   it("Denver 11:16 interprets UTC wall clock separately from America/New_York 17:00", () => {
@@ -198,25 +212,24 @@ describe("cashLogEodJobService", () => {
     expect(d.decision).toBe("send");
   });
 
-  it("new saved schedule revision allows another digest same calendar day after an earlier send", () => {
+  it("in-window sends even when digestSentScheduleGeneration matches schedule generation", () => {
     const inWindow = new Date("2026-05-05T17:20:00.000Z"); // 11:20 MDT
     const lastSentEarlier = new Date("2026-05-05T17:10:00.000Z"); // 11:10 MDT
-    const block = decideMembershipCashLogDigest(
+    const d = decideMembershipCashLogDigest(
       baseDecisionInput(lastSentEarlier, inWindow, {
         cashLogEodScheduleGeneration: 4,
         cashLogEodDigestSentScheduleGeneration: 4,
       }),
     );
-    expect(block.decision).toBe("skip");
-    expect(block.skipReason).toBe("already_sent_today");
+    expect(d.decision).toBe("send");
 
-    const allow = decideMembershipCashLogDigest(
+    const d2 = decideMembershipCashLogDigest(
       baseDecisionInput(lastSentEarlier, inWindow, {
         cashLogEodScheduleGeneration: 5,
         cashLogEodDigestSentScheduleGeneration: null,
       }),
     );
-    expect(allow.decision).toBe("send");
-    expect(allow.suppressDuplicateSchedule).toBe(false);
+    expect(d2.decision).toBe("send");
+    expect(d2.suppressDuplicateSchedule).toBe(false);
   });
 });

@@ -61,7 +61,7 @@ export function isWithinSendWindow(
   return current >= target && current < target + slackMinutes;
 }
 
-/** True when local clock is at or after `prefs.sendTime` (same calendar day in that TZ implied by callers). Used for sporadic cron so a tick after send time still delivers until duplicate suppression stops it. */
+/** True when local clock is at or after `prefs.sendTime` (same calendar day in that TZ implied by callers). Used for sporadic cron so a tick after send time still delivers. */
 export function isAtOrPastConfiguredLocalSendTime(
   nowUtc: Date,
   prefs: CashLogEodPrefs,
@@ -107,9 +107,8 @@ export function digestAlreadySentToday(
 }
 
 /**
- * Same calendar day suppression only counts when the membership's **saved digest schedule revision**
- * matches the row that successfully sent (`cashLogEodDigestSentScheduleGeneration`).
- * Saving prefs (PUT /cash-log/eod-prefs or admin toggle) clears that anchor so a **new send time works same day**.
+ * Historical helper describing the old same-day duplicate rule (generation match).
+ * **Eligibility does not use this** — digest sends on every eligible tick even if already sent today.
  */
 export function duplicateDigestSuppressesSameSchedule(input: {
   lastSentAt: Date | null;
@@ -145,11 +144,11 @@ function digestMembershipEvalHint(row: CashLogEodMembershipDiag): string | undef
   switch (row.skipReason) {
     case "outside_send_window":
       if (row.alreadySentToday) {
-        return "Outside send window on this tick (no mail attempted); schedule-duplicate guard not evaluated yet. If lastSuccessDigestLocalDate matches localDate, a digest already succeeded earlier today—changing send time + Save schedule can allow another run today.";
+        return "Outside send window on this tick (no mail attempted). If lastSuccessDigestLocalDate matches localDate, an earlier send succeeded today; the next tick inside the window will send again (no daily cap).";
       }
-      return "Before configured local send time — no mail on this tick. Duplicate-for-schedule logic runs only after eligibility passes (at/after send time for eod_local_day, or inside the strict slack slice for strict_slack).";
+      return "Before configured local send time — no mail on this tick. Next tick inside the window can send again (no daily cap). Eligibility uses eod_local_day (at/after send time through end of day) vs strict slack (narrow slice after send time).";
     case "already_sent_today":
-      return "Inside send window: digest already sent for the **current saved schedule** today. Saving new send time clears this (schedule generation bumped).";
+      return "Reserved skip reason — same-day duplicate cap is disabled; you should not see this.";
     case "digest_disabled":
       return "Digest disabled for this membership.";
     case "no_recipient":
@@ -271,10 +270,10 @@ export type CashLogEodMembershipDiag = {
   lastSuccessDigestLocalDate: string | null;
   /** True iff marker's local calendar date equals `localDate` (prior state for skips; updated after successful send). */
   alreadySentToday: boolean;
-  /** Rev bumped when digest prefs are saved; duplicate suppression compares to `digestSentScheduleGeneration`. */
+  /** Rev bumped when digest prefs are saved; persisted alongside last successful send for auditing. */
   scheduleGeneration: number | null;
   digestSentScheduleGeneration: number | null;
-  /** True iff inside the send window and schedule-generation duplicate guard fires (`already_sent_today`). Always false for `outside_send_window` (guard not evaluated until in-window). */
+  /** Legacy diagnostic; always **false** (same-day send cap removed). */
   suppressDuplicateSchedule: boolean;
   /** Eligibility mode for this job run (`strict_slack` vs remainder of local day for cron). */
   sendWindowMode: CashLogEodSendWindowMode;
@@ -337,8 +336,8 @@ export type MembershipDigestDecisionResult = {
 };
 
 /**
- * Pure eligibility: duplicate-for-schedule checks run only after local send-window rules pass (`strict_slack` vs `eod_local_day`).
- * Saving new digest prefs increments `cashLogEodScheduleGeneration`, so a new send time can deliver same calendar day.
+ * Pure eligibility after local send-window rules (`strict_slack` vs `eod_local_day`).
+ * No same-day duplicate cap — every eligible tick attempts a send; `cashLogEodLastSentAt` still tracks last success.
  */
 export function decideMembershipCashLogDigest(input: {
   nowUtc: Date;
@@ -434,27 +433,6 @@ export function decideMembershipCashLogDigest(input: {
     };
   }
 
-  const suppressDuplicateSchedule = duplicateDigestSuppressesSameSchedule({
-    lastSentAt: input.cashLogEodLastSentAt,
-    nowUtc: input.nowUtc,
-    timezone: prefs.timezone,
-    scheduleGeneration: input.cashLogEodScheduleGeneration,
-    digestSentScheduleGeneration:
-      input.cashLogEodDigestSentScheduleGeneration,
-  });
-
-  if (suppressDuplicateSchedule) {
-    return {
-      decision: "skip",
-      skipReason: "already_sent_today",
-      prefs,
-      win,
-      alreadySentToday,
-      suppressDuplicateSchedule: true,
-      localDateKey: dateKey,
-      sendWindowMode,
-    };
-  }
   return {
     decision: "send",
     prefs,
@@ -659,7 +637,7 @@ export async function runCashLogEodJob(options?: {
         alreadySentToday: true,
         scheduleGeneration: sg,
         digestSentScheduleGeneration: sg,
-        suppressDuplicateSchedule: true,
+        suppressDuplicateSchedule: false,
         sendWindowMode,
         outcome: "sent",
       });
@@ -692,14 +670,7 @@ export async function runCashLogEodJob(options?: {
         scheduleGeneration: sgErr,
         digestSentScheduleGeneration:
           m.cashLogEodDigestSentScheduleGeneration,
-        suppressDuplicateSchedule: duplicateDigestSuppressesSameSchedule({
-          lastSentAt: m.cashLogEodLastSentAt,
-          nowUtc: now,
-          timezone: prefs.timezone,
-          scheduleGeneration: sgErr,
-          digestSentScheduleGeneration:
-            m.cashLogEodDigestSentScheduleGeneration,
-        }),
+        suppressDuplicateSchedule: false,
         sendWindowMode,
         outcome: "error",
         skipReason: "email_send_failed",
