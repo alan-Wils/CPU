@@ -116,8 +116,11 @@ export function digestAlreadySentToday(
 }
 
 /**
- * In **strict_slack** mode: after a successful send today, suppress further sends for the same `scheduleGeneration`.
- * If `digestSentScheduleGeneration` is null (legacy row), treat as “already satisfied today” when the marker is today.
+ * In **strict_slack** mode: suppress another send the same local day only when the last successful send was already
+ * tied to the **current** `cashLogEodScheduleGeneration`.
+ *
+ * Saving digest settings (send time, weekdays, window, etc.) increments schedule generation and sets
+ * `digestSentScheduleGeneration` to **null**, so the cap resets and one more in-window send is allowed the same day.
  */
 export function duplicateDigestSuppressesSameSchedule(input: {
   lastSentAt: Date | null;
@@ -129,7 +132,7 @@ export function duplicateDigestSuppressesSameSchedule(input: {
   if (!input.lastSentAt) return false;
   if (!digestAlreadySentToday(input.lastSentAt, input.nowUtc, input.timezone)) return false;
   const sentGen = input.digestSentScheduleGeneration;
-  if (sentGen === null || sentGen === undefined) return true;
+  if (sentGen === null || sentGen === undefined) return false;
   return sentGen === input.scheduleGeneration;
 }
 
@@ -162,7 +165,7 @@ function digestMembershipEvalHint(row: CashLogEodMembershipDiag): string | undef
       }
       return "Before configured local send time — no mail on this tick. eod_local_day: after send time, every eligible tick can send again the same day (no cap).";
     case "already_sent_today":
-      return "Strict schedule mode: a digest already succeeded today for this schedule revision. Saving new digest settings bumps the schedule generation and allows one more send in-window today.";
+      return "Strict mode: today's digest already went out for this schedule revision. Change the send time or other schedule fields and click Save schedule—that clears the duplicate marker and allows one more send in the new window today.";
     case "digest_disabled":
       return "Digest disabled for this membership.";
     case "no_recipient":

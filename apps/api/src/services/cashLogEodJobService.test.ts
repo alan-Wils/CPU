@@ -170,6 +170,19 @@ describe("cashLogEodJobService", () => {
     expect(d.alreadySentToday).toBe(true);
   });
 
+  it("strict mode allows send same day after schedule save (digestSent cleared, generation bumped)", () => {
+    const inWindow = new Date("2026-05-05T17:25:00.000Z");
+    const lastSent = new Date("2026-05-05T17:17:00.000Z");
+    const d = decideMembershipCashLogDigest(
+      baseDecisionInput(lastSent, inWindow, {
+        cashLogEodScheduleGeneration: 6,
+        cashLogEodDigestSentScheduleGeneration: null,
+      }),
+    );
+    expect(d.decision).toBe("send");
+    expect(d.skipReason).toBeUndefined();
+  });
+
   it("eod_local_day allows second in-window send same day (legacy, no cap)", () => {
     const inWindowFirst = new Date("2026-05-05T17:17:00.000Z");
     const simulatedMarker = new Date(inWindowFirst.getTime());
@@ -204,7 +217,7 @@ describe("cashLogEodJobService", () => {
         scheduleGeneration: 1,
         digestSentScheduleGeneration: null,
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("Denver 11:16 interprets UTC wall clock separately from America/New_York 17:00", () => {

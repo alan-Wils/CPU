@@ -35,7 +35,7 @@ Trigger **every 5 minutes** (or **every 10 minutes**) so at least one poll lands
 
 - Mail is only attempted when local time is in **`[sendTime … sendTime + slack]`** (inclusive end minute; see `isWithinSendWindow`).
 - **Default `slack`** is **10 minutes** when env is unset (`CASH_LOG_EOD_SEND_WINDOW_MINUTES`). Override with that variable (1–120).
-- **At most one successful send per local calendar day** per membership **for the current schedule revision** (`cashLogEodScheduleGeneration`). Saving digest settings in Admin bumps the generation and allows **one more** in-window send the same day.
+- **At most one successful send per local calendar day** per membership **for the current schedule revision** (`cashLogEodScheduleGeneration` matches `cashLogEodDigestSentScheduleGeneration`). Saving digest settings (including send time) increments generation and **clears** `cashLogEodDigestSentScheduleGeneration`, which **resets** the same-day cap so the new window can deliver once more today.
 
 ### Legacy: **`eod_local_day`**
 
