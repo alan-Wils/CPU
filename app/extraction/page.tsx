@@ -298,6 +298,68 @@ function makeProductionBatchId(sources: any[]) {
   return `EXT-${acronymMix || "MIX"}-${getDateCode()}`;
 }
 
+function extractionPollTaskNodeIsEmpty(value: any): boolean {
+  if (value === undefined || value === null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") return Object.keys(value).length === 0;
+  return false;
+}
+
+/** When polling, keep optimistic task progress if the server row is briefly stale. */
+function mergeExtractionPollState(serverBatch: any, localBatch: any): any {
+  if (!localBatch || !serverBatch || String(serverBatch.id) !== String(localBatch.id)) {
+    return serverBatch || localBatch;
+  }
+  const ctS = Array.isArray(serverBatch.completedTasks)
+    ? serverBatch.completedTasks.map(String)
+    : [];
+  const ctL = Array.isArray(localBatch.completedTasks)
+    ? localBatch.completedTasks.map(String)
+    : [];
+  const completedTasks = [...ctS, ...ctL.filter((t) => !ctS.includes(t))];
+
+  const tdS =
+    serverBatch.taskData &&
+    typeof serverBatch.taskData === "object" &&
+    !Array.isArray(serverBatch.taskData)
+      ? serverBatch.taskData
+      : {};
+  const tdL =
+    localBatch.taskData &&
+    typeof localBatch.taskData === "object" &&
+    !Array.isArray(localBatch.taskData)
+      ? localBatch.taskData
+      : {};
+  const keys = new Set([...Object.keys(tdS), ...Object.keys(tdL)]);
+  const taskData: Record<string, unknown> = {};
+  for (const k of keys) {
+    const b = tdS[k];
+    const a = tdL[k];
+    if (extractionPollTaskNodeIsEmpty(b) && !extractionPollTaskNodeIsEmpty(a)) {
+      taskData[k] = a;
+    } else if (extractionPollTaskNodeIsEmpty(a) && !extractionPollTaskNodeIsEmpty(b)) {
+      taskData[k] = b;
+    } else if (
+      typeof a === "object" &&
+      typeof b === "object" &&
+      a &&
+      b &&
+      !Array.isArray(a) &&
+      !Array.isArray(b)
+    ) {
+      taskData[k] = { ...(b as Record<string, unknown>), ...(a as Record<string, unknown>) };
+    } else {
+      taskData[k] = !extractionPollTaskNodeIsEmpty(b) ? b : a;
+    }
+  }
+
+  return {
+    ...serverBatch,
+    completedTasks: completedTasks.length ? completedTasks : serverBatch.completedTasks,
+    taskData,
+  };
+}
+
 export default function Extraction() {
   const s: any = store;
   const [userCanDelete, setUserCanDelete] = useState(false);
@@ -333,12 +395,18 @@ export default function Extraction() {
           (batch: any) =>
             isCompletedSourceBatch(batch) || getSourceAvailable(batch) <= 0
         );
-        s.extractionBatches = extractionList;
+        const prevExById = new Map(
+          (s.extractionBatches || []).map((b: any) => [String(b?.id || ""), b]).filter(([k]) => k)
+        );
+        s.extractionBatches = extractionList.map((b: any) => {
+          const prev = prevExById.get(String(b?.id || ""));
+          return prev ? mergeExtractionPollState(b, prev) : b;
+        });
 
         setSelectedExt((current: any) => {
           if (current?.id) {
             const stillExists = extractionList.find((batch: any) => batch.id === current.id);
-            if (stillExists) return stillExists;
+            if (stillExists) return mergeExtractionPollState(stillExists, current);
           }
 
           return extractionList[0] || null;

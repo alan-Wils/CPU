@@ -143,6 +143,40 @@ function asUiRecord(value: unknown): Record<string, unknown> {
 function mergeRecord(base: unknown, patch: unknown): Record<string, unknown> {
     return { ...asUiRecord(base), ...asUiRecord(patch) };
 }
+function extractionTaskNodeIsEmpty(value: unknown): boolean {
+    if (value === undefined || value === null)
+        return true;
+    if (Array.isArray(value))
+        return value.length === 0;
+    if (typeof value === "object")
+        return Object.keys(value as Record<string, unknown>).length === 0;
+    return false;
+}
+/** Per-task merge: never replace a non-empty node with an empty object (common JSON partial). */
+function mergeExtractionTaskDataMaps(
+    tdStore: Record<string, unknown>,
+    tdDb: Record<string, unknown>
+): Record<string, unknown> {
+    const keys = new Set([...Object.keys(tdStore), ...Object.keys(tdDb)]);
+    const out: Record<string, unknown> = {};
+    for (const k of keys) {
+        const a = tdStore[k];
+        const b = tdDb[k];
+        if (extractionTaskNodeIsEmpty(b) && !extractionTaskNodeIsEmpty(a)) {
+            out[k] = a;
+        }
+        else if (extractionTaskNodeIsEmpty(a) && !extractionTaskNodeIsEmpty(b)) {
+            out[k] = b;
+        }
+        else if (typeof a === "object" && typeof b === "object" && a && b && !Array.isArray(a) && !Array.isArray(b)) {
+            out[k] = { ...(a as Record<string, unknown>), ...(b as Record<string, unknown>) };
+        }
+        else {
+            out[k] = !extractionTaskNodeIsEmpty(b) ? b : a;
+        }
+    }
+    return out;
+}
 /** Merge company-store snapshot into a DB-backed extraction row without losing newer task progress. */
 function mergeExtractionLegacyRow(
     fromDb: Record<string, unknown>,
@@ -152,7 +186,7 @@ function mergeExtractionLegacyRow(
     const st = asUiRecord(fromStore);
     const tdDb = asUiRecord(db.taskData);
     const tdSt = asUiRecord(st.taskData);
-    const taskData = { ...tdSt, ...tdDb };
+    const taskData = mergeExtractionTaskDataMaps(tdSt, tdDb);
     const ctDb = Array.isArray(db.completedTasks) ? (db.completedTasks as unknown[]).map(String) : [];
     const ctSt = Array.isArray(st.completedTasks) ? (st.completedTasks as unknown[]).map(String) : [];
     const completedTasks = [...ctDb, ...ctSt.filter((t) => !ctDb.includes(t))];
