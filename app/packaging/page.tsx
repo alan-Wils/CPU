@@ -93,36 +93,25 @@ function lower(value: any) {
   return String(value || "").toLowerCase();
 }
 
-/** Comma-separated FF-/TRIM- ids from embedded extraction source rows (most reliable for mixes). */
-function joinedSourcePackageIds(batch: any): string {
-  const arr = batch?.extractionSources ?? batch?.sources;
-  if (!Array.isArray(arr)) return "";
-  return arr
-    .map((r: any) => String(r?.sourceId ?? "").trim())
-    .filter(Boolean)
-    .join(", ");
-}
-
-/** Public header: market code, else custom lot title (AI name), else internal id. */
+/** Finished extraction lots may set `marketBatchCode` (e.g. ABCD.050426); otherwise use internal id. */
 function packagingBatchPublicLabel(batch: any): string {
   const code = String(batch?.marketBatchCode ?? "").trim();
   if (code) return code;
-  const display = String(batch?.name ?? "").trim();
-  const pt = String(batch?.productType || batch?.type || "").trim();
-  if (display && (!pt || display !== pt)) return display;
   return String(batch?.id ?? "—");
 }
 
-/** Comma-separated source package tags (FF-… / TRIM-…), never the extraction run id alone. */
+/** Comma-separated source package tags (FF-…), not the extraction run id. */
 function packagingSourceMaterialLabel(batch: any): string {
-  const fromRows = joinedSourcePackageIds(batch);
-  if (fromRows) return fromRows;
   const raw = String(batch?.source ?? "").trim();
-  const id = String(batch?.id ?? "").trim();
-  if (raw && raw !== id && !raw.match(/^EXT-[^,]+$/)) return raw;
+  if (raw) return raw;
+  if (Array.isArray(batch?.extractionSources) && batch.extractionSources.length > 0) {
+    return batch.extractionSources
+      .map((r: any) => String(r?.sourceId ?? "").trim())
+      .filter(Boolean)
+      .join(", ");
+  }
   const sb = batch?.sourceBatchId;
-  if (sb && sb !== id && String(sb).trim() && !String(sb).match(/^EXT-[^,]+$/))
-    return String(sb);
+  if (sb && sb !== batch?.id) return String(sb);
   return "—";
 }
 
@@ -153,15 +142,8 @@ function mergePackagingRowWithExtraction(batch: any, exById: Map<string, any>) {
     ].join(" · ");
     if (derived) next.sourceBlendLabel = derived;
   }
-  const exJoined = joinedSourcePackageIds(ex);
-  const exSource = String(ex.source || "").trim();
-  const bestSource = exJoined || exSource;
-  if (bestSource) {
-    const cur = String(next.source || "").trim();
-    const lotId = String(next.id || "").trim();
-    if (!cur || cur === lotId || cur === exId || /^EXT-[^,]+$/i.test(cur)) {
-      next.source = bestSource;
-    }
+  if (!String(next.source || "").trim() && ex.source) {
+    next.source = ex.source;
   }
   if (
     Array.isArray(ex.sources) &&
@@ -171,11 +153,7 @@ function mergePackagingRowWithExtraction(batch: any, exById: Map<string, any>) {
   }
   const exName = String(ex.name || "").trim();
   const exProduct = String(ex.productType || "").trim();
-  const nextProduct = String(next.productType || next.type || "").trim();
   if (exName && exProduct && exName !== exProduct) {
-    next.name = exName;
-  }
-  else if (exName && exName !== nextProduct && (!next.name || next.name === nextProduct)) {
     next.name = exName;
   }
   return next;
@@ -340,8 +318,10 @@ export default function Packaging() {
 
         if (!active) return;
 
-        const exById = new Map(
-          extractionList.map((e: any) => [String(e?.id || "").trim(), e]).filter(([k]) => k)
+        const exById = new Map<string, any>(
+          extractionList
+            .map((e: any): [string, any] => [String(e?.id || "").trim(), e])
+            .filter(([k]: [string, any]) => k)
         );
         const mergeEx = (b: any) => mergePackagingRowWithExtraction(b, exById);
 

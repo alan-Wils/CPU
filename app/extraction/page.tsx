@@ -316,7 +316,7 @@ function mergeExtractionPollState(serverBatch: any, localBatch: any): any {
   const ctL = Array.isArray(localBatch.completedTasks)
     ? localBatch.completedTasks.map(String)
     : [];
-  const completedTasks = [...ctS, ...ctL.filter((t) => !ctS.includes(t))];
+  const completedTasks = [...ctS, ...ctL.filter((t: string) => !ctS.includes(t))];
 
   const tdS =
     serverBatch.taskData &&
@@ -395,8 +395,10 @@ export default function Extraction() {
           (batch: any) =>
             isCompletedSourceBatch(batch) || getSourceAvailable(batch) <= 0
         );
-        const prevExById = new Map(
-          (s.extractionBatches || []).map((b: any) => [String(b?.id || ""), b]).filter(([k]) => k)
+        const prevExById = new Map<string, any>(
+          (s.extractionBatches || [])
+            .map((b: any): [string, any] => [String(b?.id || ""), b])
+            .filter(([k]: [string, any]) => k)
         );
         s.extractionBatches = extractionList.map((b: any) => {
           const prev = prevExById.get(String(b?.id || ""));
@@ -825,9 +827,10 @@ export default function Extraction() {
 
   function collectStrainNamesForExtractionBatch(batch: any): string[] {
     if (!Array.isArray(batch?.sources)) return [];
-    const names = batch.sources
+    const rows = batch.sources as any[];
+    const names: string[] = rows
       .map((row: any) => String(row?.name || "").trim())
-      .filter(Boolean);
+      .filter((n: string) => n.length > 0);
     return [...new Set(names)];
   }
 
@@ -1978,8 +1981,8 @@ export default function Extraction() {
 
   function buildOutput(data: any) {
     return Object.entries(data)
-      .filter(([key]) => !["loggedBy", "loggedAtIso"].includes(key))
-      .map(([key, value]) => {
+      .filter(([key]: [string, unknown]) => !["loggedBy", "loggedAtIso"].includes(key))
+      .map(([key, value]: [string, unknown]) => {
         if (Array.isArray(value)) return `${key}: ${value.join(", ")}`;
         if (typeof value === "object" && value !== null) return "";
         return `${key}: ${value || "—"}`;
