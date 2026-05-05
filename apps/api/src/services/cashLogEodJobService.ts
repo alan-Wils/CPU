@@ -119,9 +119,9 @@ function digestMembershipEvalHint(row: CashLogEodMembershipDiag): string | undef
   switch (row.skipReason) {
     case "outside_send_window":
       if (row.alreadySentToday) {
-        return "Outside send window on this tick (no mail attempted). Stored marker indicates a digest already succeeded earlier on today's local calendar (compare localDate vs lastSuccessDigestLocalDate)—no duplicate send until the next calendar day.";
+        return "Outside send window on this tick (no mail attempted); schedule-duplicate guard not evaluated yet. If lastSuccessDigestLocalDate matches localDate, a digest already succeeded earlier today—changing send time + Save schedule can allow another run today.";
       }
-      return "Outside send window — no mail on this tick. If no digest landed yet today, a later tick inside the window can deliver.";
+      return "Outside send window — no mail on this tick. Duplicate-for-schedule logic runs only after local time enters the window.";
     case "already_sent_today":
       return "Inside send window: digest already sent for the **current saved schedule** today. Saving new send time clears this (schedule generation bumped).";
     case "digest_disabled":
@@ -242,7 +242,7 @@ export type CashLogEodMembershipDiag = {
   /** Rev bumped when digest prefs are saved; duplicate suppression compares to `digestSentScheduleGeneration`. */
   scheduleGeneration: number | null;
   digestSentScheduleGeneration: number | null;
-  /** True iff we suppress as `already_sent_today` — same calendar day **and** sent-generation matches saved schedule revision. */
+  /** True iff inside the send window and schedule-generation duplicate guard fires (`already_sent_today`). Always false for `outside_send_window` (guard not evaluated until in-window). */
   suppressDuplicateSchedule: boolean;
   /** Short operator-readable explanation (also in `[cash_log_eod] membership_eval` logs). */
   evalHint?: string;
@@ -340,14 +340,6 @@ export function decideMembershipCashLogDigest(input: {
     input.nowUtc,
     prefs.timezone,
   );
-  const suppressDuplicateSchedule = duplicateDigestSuppressesSameSchedule({
-    lastSentAt: input.cashLogEodLastSentAt,
-    nowUtc: input.nowUtc,
-    timezone: prefs.timezone,
-    scheduleGeneration: input.cashLogEodScheduleGeneration,
-    digestSentScheduleGeneration:
-      input.cashLogEodDigestSentScheduleGeneration,
-  });
 
   if (!prefs.enabled) {
     return {
@@ -356,7 +348,7 @@ export function decideMembershipCashLogDigest(input: {
       prefs,
       win,
       alreadySentToday,
-      suppressDuplicateSchedule,
+      suppressDuplicateSchedule: false,
       localDateKey: dateKey,
     };
   }
@@ -367,7 +359,7 @@ export function decideMembershipCashLogDigest(input: {
       prefs,
       win,
       alreadySentToday,
-      suppressDuplicateSchedule,
+      suppressDuplicateSchedule: false,
       localDateKey: dateKey,
     };
   }
@@ -378,7 +370,7 @@ export function decideMembershipCashLogDigest(input: {
       prefs,
       win,
       alreadySentToday,
-      suppressDuplicateSchedule,
+      suppressDuplicateSchedule: false,
       localDateKey: dateKey,
     };
   }
@@ -389,10 +381,20 @@ export function decideMembershipCashLogDigest(input: {
       prefs,
       win,
       alreadySentToday,
-      suppressDuplicateSchedule,
+      suppressDuplicateSchedule: false,
       localDateKey: dateKey,
     };
   }
+
+  const suppressDuplicateSchedule = duplicateDigestSuppressesSameSchedule({
+    lastSentAt: input.cashLogEodLastSentAt,
+    nowUtc: input.nowUtc,
+    timezone: prefs.timezone,
+    scheduleGeneration: input.cashLogEodScheduleGeneration,
+    digestSentScheduleGeneration:
+      input.cashLogEodDigestSentScheduleGeneration,
+  });
+
   if (suppressDuplicateSchedule) {
     return {
       decision: "skip",
