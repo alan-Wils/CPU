@@ -5,29 +5,57 @@ import { env } from "../config/env.js";
 import { parseModelSuggestionsJson } from "../lib/extractionNameSuggestJson.js";
 import { logError, logWarn } from "../lib/logger.js";
 
-function promptFilePath(): string {
+export function extractionProductNamePromptFilePath(): string {
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     return path.resolve(__dirname, "../../prompts/extraction-product-name.md");
 }
 
-export async function suggestExtractionProductNames(strains: string[]): Promise<string[]> {
+/** Readable default prompt (bundled Markdown). Caller may cache; errors if file missing on disk. */
+export function loadDefaultExtractionProductNamePromptMarkdown(): string {
+    const templatePath = extractionProductNamePromptFilePath();
+    try {
+        return fs.readFileSync(templatePath, "utf8");
+    }
+    catch (e) {
+        logError("extraction_name_suggest_prompt_read", { error: e, templatePath });
+        throw new Error("Prompt template missing");
+    }
+}
+
+/**
+ * Builds the OpenAI **user** message from a Markdown template + strain labels.
+ * If the template omits `{{STRAIN_LIST}}`, a standard strain block is appended so batch strains are always injected.
+ */
+export function buildExtractionProductNameUserPromptMarkdown(
+    strains: string[],
+    templateMarkdown: string
+): string {
+    const strainList = strains.map((s) => String(s || "").trim()).filter(Boolean).join(", ");
+    let tpl = String(templateMarkdown || "").trimEnd();
+    if (!tpl.includes("{{STRAIN_LIST}}")) {
+        tpl = `${tpl}\n\n## Input strains (use only these — do not invent or assume other cultivars)\n\n{{STRAIN_LIST}}\n`;
+    }
+    return tpl.replace(/\{\{STRAIN_LIST\}\}/g, strainList);
+}
+
+export type SuggestExtractionProductNamesOptions = {
+    /** Per-company override from Company Config; empty/whitespace uses bundled default file. */
+    promptTemplateMarkdown?: string | null;
+};
+
+export async function suggestExtractionProductNames(
+    strains: string[],
+    options?: SuggestExtractionProductNamesOptions
+): Promise<string[]> {
     const key = env.OPENAI_API_KEY;
     if (!key) {
         throw new Error("OPENAI_API_KEY is not configured");
     }
     const model = env.OPENAI_MODEL || "gpt-4o-mini";
     const base = (env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
-    const templatePath = promptFilePath();
-    let template: string;
-    try {
-        template = fs.readFileSync(templatePath, "utf8");
-    }
-    catch (e) {
-        logError("extraction_name_suggest_prompt_read", { error: e, templatePath });
-        throw new Error("Prompt template missing");
-    }
-    const strainList = strains.join(", ");
-    const userContent = template.replace(/\{\{STRAIN_LIST\}\}/g, strainList);
+    const custom = typeof options?.promptTemplateMarkdown === "string" ? options.promptTemplateMarkdown.trim() : "";
+    const template = custom ? custom : loadDefaultExtractionProductNamePromptMarkdown();
+    const userContent = buildExtractionProductNameUserPromptMarkdown(strains, template);
 
     const res = await fetch(`${base}/chat/completions`, {
         method: "POST",

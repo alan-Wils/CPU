@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import Nav from "@/components/Nav";
 import {
   API_BASE_URL,
+  apiRequest,
   appendCompanyIdQuery,
   getSelectedCompanyId,
 } from "@/lib/api";
@@ -88,6 +89,8 @@ type AppConfig = {
     productNames: ProductNameRecord[];
     blendNameHistory: BlendNameHistoryRecord[];
     supplies: Supply[];
+    /** Custom Markdown for AI product naming; optional `{{STRAIN_LIST}}` (strain labels). Empty uses server default file. */
+    productNameAiPromptMarkdown?: string;
   };
   packaging: {
     supplies: Supply[];
@@ -134,6 +137,11 @@ export default function ConfigPage() {
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [aiPromptModalOpen, setAiPromptModalOpen] = useState(false);
+  const [aiPromptDraft, setAiPromptDraft] = useState("");
+  const [aiPromptShippedDefault, setAiPromptShippedDefault] = useState("");
+  const [aiPromptModalLoading, setAiPromptModalLoading] = useState(false);
+  const [aiPromptModalError, setAiPromptModalError] = useState("");
 
   const [strainForm, setStrainForm] = useState({
     name: "",
@@ -596,6 +604,42 @@ export default function ConfigPage() {
     }));
   }
 
+  async function openAiPromptModal() {
+    setAiPromptModalError("");
+    setAiPromptModalOpen(true);
+    setAiPromptModalLoading(true);
+    try {
+      const data = await apiRequest<{ defaultMarkdown: string }>(
+        "/api/extraction-assist/product-name-prompt-default"
+      );
+      const shipped = String(data?.defaultMarkdown || "");
+      setAiPromptShippedDefault(shipped);
+      const saved = String(config.extraction.productNameAiPromptMarkdown || "").trim();
+      setAiPromptDraft(saved || shipped);
+    } catch (error) {
+      console.error(error);
+      setAiPromptModalError(
+        error instanceof Error
+          ? error.message
+          : "Could not load the default prompt (check Admin / Owner role and API URL)."
+      );
+    } finally {
+      setAiPromptModalLoading(false);
+    }
+  }
+
+  function applyAiPromptDraftToConfig() {
+    const trimmed = aiPromptDraft.trim();
+    setConfig((prev) => ({
+      ...prev,
+      extraction: {
+        ...prev.extraction,
+        productNameAiPromptMarkdown: trimmed,
+      },
+    }));
+    setAiPromptModalOpen(false);
+  }
+
   if (loading) {
     return (
       <main style={styles.page}>
@@ -926,6 +970,17 @@ export default function ConfigPage() {
       <section style={styles.card}>
         <h2 style={styles.sectionTitle}>3. Extraction</h2>
 
+        <div style={styles.inline}>
+          <button type="button" style={styles.secondaryButton} onClick={() => void openAiPromptModal()}>
+            Edit AI product-name prompt
+          </button>
+          <span style={{ color: "#94a3b8", fontSize: 13 }}>
+            {String(config.extraction.productNameAiPromptMarkdown || "").trim()
+              ? "Custom prompt is configured (Save Config to persist)."
+              : "Using built-in server prompt until you save a custom one."}
+          </span>
+        </div>
+
         <h3 style={styles.subTitle}>Product Name Database</h3>
 
         <div style={styles.grid}>
@@ -1047,6 +1102,86 @@ export default function ConfigPage() {
           onRemove={(id) => removeSupply("packaging", id)}
         />
       </section>
+
+      {aiPromptModalOpen ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 20000,
+            background: "rgba(2,6,23,0.85)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              ...styles.card,
+              maxWidth: 900,
+              width: "100%",
+              maxHeight: "92vh",
+              overflow: "auto",
+              margin: 0,
+            }}
+          >
+            <h3 style={{ ...styles.sectionTitle, marginBottom: 8 }}>AI extraction product-name prompt</h3>
+            <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
+              This Markdown becomes the OpenAI <strong style={{ color: "#e5e7eb" }}>user</strong> message when
+              operators use Create new name (AI). Put{" "}
+              <code style={{ color: "#7dd3fc" }}>{`{{STRAIN_LIST}}`}</code> where the current
+              batch&apos;s strain labels should appear (comma-separated). If you omit it, strains are appended
+              automatically so batch info always reaches the model. Keep JSON output expectations compatible with the
+              app (suggestions array) or naming may fail.
+            </p>
+
+            {aiPromptModalError ? (
+              <p style={{ color: "#fca5a5", fontSize: 14 }}>{aiPromptModalError}</p>
+            ) : null}
+
+            {aiPromptModalLoading ? (
+              <p style={{ color: "#94a3b8" }}>Loading built-in prompt…</p>
+            ) : (
+              <>
+                <textarea
+                  style={{ ...styles.textarea, minHeight: 340, fontFamily: "ui-monospace, monospace", fontSize: 13 }}
+                  value={aiPromptDraft}
+                  onChange={(e) => setAiPromptDraft(e.target.value)}
+                  spellCheck={false}
+                />
+
+                <div style={{ ...styles.inline, marginTop: 12, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    style={styles.addButton}
+                    onClick={() => setAiPromptDraft(aiPromptShippedDefault)}
+                    disabled={!aiPromptShippedDefault}
+                  >
+                    Reset to built-in prompt
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.secondaryButton}
+                    onClick={() => setAiPromptDraft("")}
+                  >
+                    Clear override (use built-in)
+                  </button>
+                  <button type="button" style={styles.deleteButton} onClick={() => setAiPromptModalOpen(false)}>
+                    Cancel
+                  </button>
+                  <button type="button" style={styles.saveButton} onClick={applyAiPromptDraftToConfig}>
+                    Apply &amp; close
+                  </button>
+                </div>
+                <p style={{ color: "#64748b", fontSize: 12, marginTop: 10 }}>
+                  &quot;Apply &amp; close&quot; updates this page only — click Save Config when ready to persist to the server.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -1213,6 +1348,15 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#2563eb",
     color: "white",
     border: "none",
+    borderRadius: 10,
+    padding: "10px 14px",
+    fontWeight: 800,
+    cursor: "pointer",
+  },
+  secondaryButton: {
+    background: "#334155",
+    color: "#e2e8f0",
+    border: "1px solid #475569",
     borderRadius: 10,
     padding: "10px 14px",
     fontWeight: 800,

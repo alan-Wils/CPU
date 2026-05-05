@@ -1,9 +1,14 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
-import { requireRoleOrAppPermission } from "../../middleware/rbac.js";
+import { getScopedCompanyId } from "../../middleware/companyScope.js";
+import { requireRole, requireRoleOrAppPermission } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
-import { suggestExtractionProductNames } from "../../services/extractionNameSuggestService.js";
+import {
+    loadDefaultExtractionProductNamePromptMarkdown,
+    suggestExtractionProductNames,
+} from "../../services/extractionNameSuggestService.js";
+import { ConfigService } from "../../services/configService.js";
 import { AppError } from "../../errors/AppError.js";
 
 const extractionWriteRoles = [
@@ -26,6 +31,19 @@ const suggestBodySchema = z.object({
 });
 
 export const extractionAssistRouter = Router();
+const configService = new ConfigService();
+
+/** Same roles as PUT /api/config (Company Config editing). */
+const configEditors = ["OWNER", "ADMIN", "OPERATIONS_MANAGER"];
+
+extractionAssistRouter.get(
+    "/product-name-prompt-default",
+    requireRole(configEditors),
+    asyncHandler(async (_req, res) => {
+        const defaultMarkdown = loadDefaultExtractionProductNamePromptMarkdown();
+        res.json({ defaultMarkdown });
+    }),
+);
 
 extractionAssistRouter.post(
     "/suggest-product-names",
@@ -33,8 +51,26 @@ extractionAssistRouter.post(
     validate({ body: suggestBodySchema }),
     asyncHandler(async (req, res) => {
         const strains = req.body.strains as string[];
+        let promptTemplateMarkdown: string | undefined;
         try {
-            const suggestions = await suggestExtractionProductNames(strains);
+            const companyId = getScopedCompanyId(req);
+            const rows = await configService.list(companyId);
+            const extractionVal = rows.find((r) => r.key === "extraction")?.value;
+            const raw =
+                extractionVal &&
+                typeof extractionVal === "object" &&
+                !Array.isArray(extractionVal) &&
+                typeof (extractionVal as Record<string, unknown>).productNameAiPromptMarkdown === "string"
+                    ? String((extractionVal as { productNameAiPromptMarkdown?: string }).productNameAiPromptMarkdown)
+                    : "";
+            if (raw.trim())
+                promptTemplateMarkdown = raw;
+        }
+        catch {
+            promptTemplateMarkdown = undefined;
+        }
+        try {
+            const suggestions = await suggestExtractionProductNames(strains, { promptTemplateMarkdown });
             res.json({ suggestions });
         }
         catch (e: unknown) {
