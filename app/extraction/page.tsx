@@ -246,6 +246,29 @@ function strainFromCultivationBatchId(store: any, cultivationBatchId: string): s
   return strainFromCultivationRecord(cult);
 }
 
+/**
+ * Legacy source rows often store a human label on `name` (e.g. "Cheetah Piss Fresh Frozen") while
+ * `strain` / `strainName` / cultivation link are empty after sync — strip the material suffix for AI context.
+ */
+function strainFromSourceDisplayName(name: unknown): string | null {
+  const n = String(name ?? "").trim();
+  if (!n) return null;
+  const lower = n.toLowerCase();
+  const cutSuffixes = [
+    " fresh frozen",
+    " dry trim",
+    " a grade flower",
+    " popcorn",
+  ];
+  for (const suf of cutSuffixes) {
+    if (lower.endsWith(suf)) {
+      const cut = n.slice(0, n.length - suf.length).trim();
+      return cut || null;
+    }
+  }
+  return null;
+}
+
 function getSourceAcronym(src: any) {
   const genericPrefixes = new Set([
     "FF",
@@ -789,23 +812,31 @@ export default function Extraction() {
     };
 
     const rows: any[] = Array.isArray(ext.sources) ? [...ext.sources] : [];
-    if (rows.length === 0 && ext.source) {
-      const ids = String(ext.source)
-        .split(",")
-        .map((x: string) => x.trim())
-        .filter(Boolean);
-      for (const sourceId of ids) rows.push({ sourceId });
+    const idsFromCommaField = String(ext.source ?? "")
+      .split(",")
+      .map((x: string) => x.trim())
+      .filter(Boolean);
+    for (const sourceId of idsFromCommaField) {
+      if (!rows.some((r) => String(r?.sourceId ?? "").trim() === sourceId)) {
+        rows.push({ sourceId });
+      }
     }
 
     for (const row of rows) {
       let strain =
         typeof row?.strainName === "string" ? String(row.strainName).trim() : "";
-      if (!strain && row?.sourceId) {
-        const src = getSource(String(row.sourceId));
+      const src = row?.sourceId ? getSource(String(row.sourceId)) : undefined;
+      if (!strain && src) {
         strain = resolveStrainNameFromSourceRecord(s, src) || "";
       }
       if (!strain && row && typeof row === "object") {
         strain = resolveStrainNameFromSourceRecord(s, row) || "";
+      }
+      if (!strain) {
+        strain = strainFromSourceDisplayName(row?.name) || "";
+      }
+      if (!strain && src) {
+        strain = strainFromSourceDisplayName(src?.name) || "";
       }
       if (strain) add(strain);
     }
