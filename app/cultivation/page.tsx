@@ -31,9 +31,48 @@ type ConfigStrain = {
   averageYield?: string;
 };
 
-const flowerRoomOptions = ["1", "2", "3", "4"] as const;
-const flowerBayOptions = ["A", "B", "C"] as const;
-const flowerTableOptions = ["1", "2", "3", "4", "5"] as const;
+type CultivationTableConfig = {
+  id: string;
+  name: string;
+  squareFeet?: string;
+};
+
+type CultivationBayConfig = {
+  id: string;
+  name: string;
+  tables: CultivationTableConfig[];
+};
+
+type CultivationFlowerRoom = {
+  id: string;
+  name: string;
+  bays: CultivationBayConfig[];
+};
+
+type CultivationVegRoom = {
+  id: string;
+  name: string;
+};
+
+type CultivationRoomsConfig = {
+  vegRooms: CultivationVegRoom[];
+  flowerRooms: CultivationFlowerRoom[];
+};
+
+const emptyCultivationRooms: CultivationRoomsConfig = { vegRooms: [], flowerRooms: [] };
+
+function pickCultivationRoomsFromConfigPayload(data: {
+  cultivation?: { rooms?: unknown };
+}): CultivationRoomsConfig {
+  const rooms = data?.cultivation?.rooms;
+  if (!rooms || typeof rooms !== "object" || Array.isArray(rooms)) {
+    return { ...emptyCultivationRooms };
+  }
+  const r = rooms as Record<string, unknown>;
+  const vegRooms = Array.isArray(r.vegRooms) ? (r.vegRooms as CultivationVegRoom[]) : [];
+  const flowerRooms = Array.isArray(r.flowerRooms) ? (r.flowerRooms as CultivationFlowerRoom[]) : [];
+  return { vegRooms, flowerRooms };
+}
 
 const defaultCloneTasks = [
   "Maintenance",
@@ -317,6 +356,8 @@ export default function Cultivation() {
   const [newFlowerTask, setNewFlowerTask] = useState("");
 
   const [configStrains, setConfigStrains] = useState<ConfigStrain[]>([]);
+  const [cultivationRooms, setCultivationRooms] =
+    useState<CultivationRoomsConfig>(emptyCultivationRooms);
   const [strain, setStrain] = useState("");
   const [acronym, setAcronym] = useState("");
   const [cloneDate, setCloneDate] = useState("");
@@ -328,9 +369,12 @@ export default function Cultivation() {
   const [people, setPeople] = useState("");
   const [minutes, setMinutes] = useState("");
   const [output, setOutput] = useState("");
-  const [flowerRoom, setFlowerRoom] = useState("1");
-  const [flowerBay, setFlowerBay] = useState("A");
-  const [flowerTables, setFlowerTables] = useState<string[]>([]);
+  /** Destination veg room (config `cultivation.rooms.vegRooms`); required when that list is non-empty. */
+  const [vegRoomId, setVegRoomId] = useState("");
+  /** Flower layout from config — store ids in modal, persist names on batch/log. */
+  const [flowerRoomId, setFlowerRoomId] = useState("");
+  const [flowerBayId, setFlowerBayId] = useState("");
+  const [flowerTableIds, setFlowerTableIds] = useState<string[]>([]);
 
   const [harvestType, setHarvestType] = useState("A Grade Flower");
   const [harvestPlants, setHarvestPlants] = useState("");
@@ -382,13 +426,14 @@ export default function Cultivation() {
 
     let mounted = true;
 
-    async function loadConfigStrains() {
+    async function loadCompanyCultivationConfig() {
       try {
         const data = await apiRequest<{
-          cultivation?: { strains?: ConfigStrain[] };
+          cultivation?: { strains?: ConfigStrain[]; rooms?: unknown };
           strains?: ConfigStrain[] | string[];
         }>("/api/config");
         const strains = normalizeStrainConfigList(pickStrainsFromConfigPayload(data));
+        const rooms = pickCultivationRoomsFromConfigPayload(data);
 
         if (!mounted) return;
 
@@ -397,11 +442,13 @@ export default function Cultivation() {
             return getConfigStrainName(item) && getConfigStrainAcronym(item);
           })
         );
+        setCultivationRooms(rooms);
       } catch (error) {
-        console.error("Could not load config strain list:", error);
+        console.error("Could not load company cultivation config:", error);
 
         if (mounted) {
           setConfigStrains([]);
+          setCultivationRooms(emptyCultivationRooms);
         }
       }
     }
@@ -411,7 +458,7 @@ export default function Cultivation() {
         /** CompanyStore JSON often lags `/api/cultivation`; applying it to cultivation lists causes stage flicker (e.g. Veg → Flower). */
         await loadBackendStore({ omitCultivation: true });
         await hydrateTaskLogsFromApi();
-        await loadConfigStrains();
+        await loadCompanyCultivationConfig();
 
         /** Company store may list FF/trim only under sourceBatches (DATABASE_ONLY skips full PUT); mirror into production panel. */
         const prodIds = new Set(
@@ -1602,12 +1649,57 @@ export default function Cultivation() {
     }
   }
 
-  function toggleFlowerTable(table: string) {
-    setFlowerTables((current) =>
-      current.includes(table)
-        ? current.filter((item) => item !== table)
-        : [...current, table].sort((a, b) => Number(a) - Number(b))
+  function toggleFlowerTableId(tableId: string) {
+    setFlowerTableIds((current) =>
+      current.includes(tableId)
+        ? current.filter((id) => id !== tableId)
+        : [...current, tableId]
     );
+  }
+
+  function primeTaskModalLocationFields(rooms: CultivationRoomsConfig) {
+    const veg = rooms.vegRooms || [];
+    if (veg.length === 1) {
+      setVegRoomId(veg[0].id);
+    }
+    else if (veg.length > 1) {
+      setVegRoomId(veg[0].id);
+    }
+    else {
+      setVegRoomId("");
+    }
+
+    const flowers = rooms.flowerRooms || [];
+    if (flowers.length === 0) {
+      setFlowerRoomId("");
+      setFlowerBayId("");
+      setFlowerTableIds([]);
+      return;
+    }
+    const room = flowers[0];
+    setFlowerRoomId(room.id);
+    const firstBay = room.bays?.[0];
+    if (firstBay) {
+      setFlowerBayId(firstBay.id);
+    }
+    else {
+      setFlowerBayId("");
+    }
+    setFlowerTableIds([]);
+  }
+
+  function resolveFlowerSelectionLabels() {
+    const room = cultivationRooms.flowerRooms.find((r) => r.id === flowerRoomId);
+    const bay = room?.bays?.find((b) => b.id === flowerBayId);
+    const tableNames =
+      bay?.tables
+        .filter((t) => flowerTableIds.includes(t.id))
+        .map((t) => t.name) || [];
+    return {
+      roomName: room?.name || "",
+      bayName: bay?.name || "",
+      tableNames,
+    };
   }
 
   async function save() {
@@ -1627,15 +1719,27 @@ export default function Cultivation() {
 
     if (selectedTask === "Clone → Veg") {
       taskRequiredFields.push({ label: "Plants Moved to Veg", value: output, positive: true });
+      if (cultivationRooms.vegRooms.length > 0) {
+        taskRequiredFields.push({ label: "Veg room", value: vegRoomId });
+      }
     }
 
     if (selectedTask === "Move to Flower") {
       taskRequiredFields.push(
         { label: "Plants Moved to Flower", value: output, positive: true },
-        { label: "Flower Room", value: flowerRoom },
-        { label: "Flower Bay", value: flowerBay },
-        { label: "Flower Table", value: flowerTables.length > 0 ? flowerTables.join(",") : "" }
+        { label: "Flower room (configure under Admin → Company Config if empty)", value: flowerRoomId }
       );
+      const flowerRoomObj = cultivationRooms.flowerRooms.find((r) => r.id === flowerRoomId);
+      if (flowerRoomObj && flowerRoomObj.bays.length > 0) {
+        taskRequiredFields.push({ label: "Flower bay", value: flowerBayId });
+        const bayObj = flowerRoomObj.bays.find((b) => b.id === flowerBayId);
+        if (bayObj && bayObj.tables.length > 0) {
+          taskRequiredFields.push({
+            label: "Flower table(s)",
+            value: flowerTableIds.length > 0 ? flowerTableIds.join(",") : "",
+          });
+        }
+      }
     }
 
     if (!requireFieldsStyled(taskRequiredFields)) {
@@ -1655,9 +1759,22 @@ export default function Cultivation() {
     }
 
     let taskOutput = output;
+    let logRoom: string | undefined;
+    let logBay: string | undefined;
+    let logTables: string[] | undefined;
+
+    if (selectedTask === "Clone → Veg") {
+      const vegLabel =
+        cultivationRooms.vegRooms.find((v) => v.id === vegRoomId)?.name || "—";
+      taskOutput = `${output} plants moved to Veg | Veg room: ${vegLabel}`;
+    }
 
     if (selectedTask === "Move to Flower") {
-      taskOutput = `${output || selectedBatch.plants || 0} plants moved to Flower | Room: ${flowerRoom || "—"} | Bay: ${flowerBay || "—"} | Tables: ${formatFlowerTables(flowerTables)}`;
+      const fl = resolveFlowerSelectionLabels();
+      taskOutput = `${output || selectedBatch.plants || 0} plants moved to Flower | Room: ${fl.roomName || "—"} | Bay: ${fl.bayName || "—"} | Tables: ${fl.tableNames.length ? fl.tableNames.join(", ") : "—"}`;
+      logRoom = fl.roomName;
+      logBay = fl.bayName;
+      logTables = fl.tableNames.length ? [...fl.tableNames] : undefined;
     }
 
     s.logs.unshift(withLoggedBy({
@@ -1667,33 +1784,33 @@ export default function Cultivation() {
       people,
       minutes,
       output: taskOutput,
-      room: selectedTask === "Move to Flower" ? flowerRoom : undefined,
-      bay: selectedTask === "Move to Flower" ? flowerBay : undefined,
-      tables: selectedTask === "Move to Flower" ? [...flowerTables] : undefined,
+      room: logRoom,
+      bay: logBay,
+      tables: logTables,
       time: new Date().toLocaleString(),
     }))
 
     if (selectedTask === "Clone → Veg") {
       selectedBatch.stage = "Veg";
       selectedBatch.plants = Number(output || selectedBatch.plants || 0);
+      selectedBatch.vegRoom = cultivationRooms.vegRooms.find((v) => v.id === vegRoomId)?.name || "";
       setSelectedTask("Set Irrigation Up");
     }
 
     if (selectedTask === "Move to Flower") {
+      const fl = resolveFlowerSelectionLabels();
       selectedBatch.stage = "Flower";
       selectedBatch.plants = Number(output || selectedBatch.plants || 0);
-      selectedBatch.flowerRoom = flowerRoom;
-      selectedBatch.flowerBay = flowerBay;
-      selectedBatch.flowerTables = [...flowerTables];
+      selectedBatch.flowerRoom = fl.roomName;
+      selectedBatch.flowerBay = fl.bayName;
+      selectedBatch.flowerTables = [...fl.tableNames];
       setSelectedTask("Set Irrigation Up");
     }
 
     setPeople("");
     setMinutes("");
     setOutput("");
-    setFlowerRoom("1");
-    setFlowerBay("A");
-    setFlowerTables([]);
+    primeTaskModalLocationFields(cultivationRooms);
     setShowTaskWindow(false);
     forceRefresh();
     try {
@@ -1885,6 +2002,12 @@ export default function Cultivation() {
                     <b>{b.id}</b>
                     <br />
                     {b.strain} | Stage: {b.stage} | Plants Left: {b.plants}
+                    {b.stage === "Veg" && b.vegRoom && (
+                      <>
+                        <br />
+                        Veg room: {b.vegRoom}
+                      </>
+                    )}
                     {b.stage === "Flower" && (b.flowerRoom || b.flowerBay || b.flowerTable || b.flowerTables) && (
                       <>
                         <br />
@@ -1956,7 +2079,13 @@ export default function Cultivation() {
                       flexWrap: "wrap",
                     }}
                   >
-                    <button style={primaryButtonStyle} onClick={() => setShowTaskWindow(true)}>
+                    <button
+                      style={primaryButtonStyle}
+                      onClick={() => {
+                        primeTaskModalLocationFields(cultivationRooms);
+                        setShowTaskWindow(true);
+                      }}
+                    >
                       Log Selected Task
                     </button>
                     <button style={buttonStyle} onClick={() => setShowAddTaskWindow(true)}>
@@ -2117,6 +2246,12 @@ export default function Cultivation() {
                     <b>{b.id}</b>
                     <br />
                     {b.strain} | Stage: {b.stage} | Plants Left: {b.plants} | Completed: {b.completedAt}
+                    {b.vegRoom && (
+                      <>
+                        <br />
+                        Veg room: {b.vegRoom}
+                      </>
+                    )}
                     {(b.flowerRoom || b.flowerBay || b.flowerTable || b.flowerTables) && (
                       <>
                         <br />
@@ -2278,52 +2413,122 @@ export default function Cultivation() {
                 />
               )}
 
+              {selectedTask === "Clone → Veg" && cultivationRooms.vegRooms.length > 0 && (
+                <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                  Veg destination
+                  <select
+                    style={inputStyle}
+                    value={vegRoomId}
+                    onChange={(e) => setVegRoomId(e.target.value)}
+                  >
+                    {cultivationRooms.vegRooms.map((room) => (
+                      <option key={room.id} value={room.id}>
+                        {room.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
               {selectedTask === "Move to Flower" && (
                 <>
-                  <select style={inputStyle} value={flowerRoom} onChange={(e) => setFlowerRoom(e.target.value)}>
-                    {flowerRoomOptions.map((room) => (
-                      <option key={room} value={room}>
-                        Room {room}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select style={inputStyle} value={flowerBay} onChange={(e) => setFlowerBay(e.target.value)}>
-                    {flowerBayOptions.map((bay) => (
-                      <option key={bay} value={bay}>
-                        Bay {bay}
-                      </option>
-                    ))}
-                  </select>
-
-                  <div style={{ ...inputStyle, display: "grid", gap: 8 }}>
-                    <b>Tables</b>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      {flowerTableOptions.map((table) => (
-                        <label
-                          key={table}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            border: "1px solid #334155",
-                            borderRadius: 10,
-                            padding: "8px 10px",
-                            background: flowerTables.includes(table) ? "#22c55e" : "#1e293b",
-                            color: flowerTables.includes(table) ? "black" : "white",
-                            cursor: "pointer",
+                  {cultivationRooms.flowerRooms.length === 0 ? (
+                    <p style={{ color: "#fbbf24", fontSize: 14, margin: 0, lineHeight: 1.5 }}>
+                      No flower rooms are configured yet. An Admin can add them under{" "}
+                      <strong style={{ color: "#fef08a" }}>Admin → Company Config → Cultivation → Flower rooms</strong>.
+                    </p>
+                  ) : (
+                    <>
+                      <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                        Flower room
+                        <select
+                          style={inputStyle}
+                          value={flowerRoomId}
+                          onChange={(e) => {
+                            const id = e.target.value;
+                            setFlowerRoomId(id);
+                            const room = cultivationRooms.flowerRooms.find((r) => r.id === id);
+                            const b0 = room?.bays?.[0];
+                            setFlowerBayId(b0?.id || "");
+                            setFlowerTableIds([]);
                           }}
                         >
-                          <input
-                            type="checkbox"
-                            checked={flowerTables.includes(table)}
-                            onChange={() => toggleFlowerTable(table)}
-                          />
-                          Table {table}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
+                          {cultivationRooms.flowerRooms.map((room) => (
+                            <option key={room.id} value={room.id}>
+                              {room.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      {(() => {
+                        const flowerRoomObj = cultivationRooms.flowerRooms.find((r) => r.id === flowerRoomId);
+                        const bayObj = flowerRoomObj?.bays?.find((b) => b.id === flowerBayId);
+                        return (
+                          <>
+                            {flowerRoomObj && flowerRoomObj.bays.length > 0 ? (
+                              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                                Bay
+                                <select
+                                  style={inputStyle}
+                                  value={flowerBayId}
+                                  onChange={(e) => {
+                                    setFlowerBayId(e.target.value);
+                                    setFlowerTableIds([]);
+                                  }}
+                                >
+                                  {flowerRoomObj.bays.map((bay) => (
+                                    <option key={bay.id} value={bay.id}>
+                                      Bay {bay.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            ) : (
+                              <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                                This flower room has no bays yet—add bays in Company Config.
+                              </p>
+                            )}
+
+                            {bayObj && bayObj.tables.length > 0 ? (
+                              <div style={{ ...inputStyle, display: "grid", gap: 8 }}>
+                                <b>Tables</b>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                  {bayObj.tables.map((table) => (
+                                    <label
+                                      key={table.id}
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        border: "1px solid #334155",
+                                        borderRadius: 10,
+                                        padding: "8px 10px",
+                                        background: flowerTableIds.includes(table.id) ? "#22c55e" : "#1e293b",
+                                        color: flowerTableIds.includes(table.id) ? "black" : "white",
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={flowerTableIds.includes(table.id)}
+                                        onChange={() => toggleFlowerTableId(table.id)}
+                                      />
+                                      Table {table.name}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : flowerRoomObj && flowerRoomObj.bays.length > 0 ? (
+                              <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                                No tables in this bay—add tables in Company Config.
+                              </p>
+                            ) : null}
+                          </>
+                        );
+                      })()}
+                    </>
+                  )}
                 </>
               )}
 

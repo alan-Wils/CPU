@@ -191,6 +191,9 @@ export default function ConfigPage() {
 
   const [vegRoomName, setVegRoomName] = useState("");
   const [flowerRoomName, setFlowerRoomName] = useState("");
+  /** Quick-add flower room: number of bays and tables per bay (generated names A,B,… and table 1,2,…). */
+  const [flowerQuickBayCount, setFlowerQuickBayCount] = useState("3");
+  const [flowerQuickTablesPerBay, setFlowerQuickTablesPerBay] = useState("5");
   const [productNameForm, setProductNameForm] = useState({
     sourceMix: "",
     productName: "",
@@ -446,6 +449,58 @@ export default function ConfigPage() {
               id: makeId("flower-room"),
               name: flowerRoomName.trim(),
               bays: [],
+            },
+          ],
+        },
+      },
+    }));
+
+    setFlowerRoomName("");
+  }
+
+  function addFlowerRoomWithLayout() {
+    const name = flowerRoomName.trim();
+    const bayCount = Math.min(26, Math.max(1, Math.floor(Number(flowerQuickBayCount))));
+    const tablesPerBay = Math.max(1, Math.floor(Number(flowerQuickTablesPerBay)));
+    if (!name) {
+      alert("Enter a flower room name first.");
+      return;
+    }
+    if (!Number.isFinite(bayCount) || bayCount < 1) {
+      alert("Number of bays must be at least 1 (max 26).");
+      return;
+    }
+    if (!Number.isFinite(tablesPerBay) || tablesPerBay < 1) {
+      alert("Tables per bay must be at least 1.");
+      return;
+    }
+
+    const bays = Array.from({ length: bayCount }, (_, i) => {
+      const bayLabel = i < 26 ? String.fromCharCode(65 + i) : String(i + 1);
+      const tables = Array.from({ length: tablesPerBay }, (_, j) => ({
+        id: makeId("table"),
+        name: String(j + 1),
+        squareFeet: "",
+      }));
+      return {
+        id: makeId("bay"),
+        name: bayLabel,
+        tables,
+      };
+    });
+
+    setConfig((prev) => ({
+      ...prev,
+      cultivation: {
+        ...prev.cultivation,
+        rooms: {
+          ...prev.cultivation.rooms,
+          flowerRooms: [
+            ...prev.cultivation.rooms.flowerRooms,
+            {
+              id: makeId("flower-room"),
+              name,
+              bays,
             },
           ],
         },
@@ -937,15 +992,39 @@ export default function ConfigPage() {
 
         <h3 style={styles.subTitle}>Flower Rooms / Bays / Tables</h3>
 
-        <div style={styles.inline}>
+        <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
+          Use <strong style={{ color: "#e5e7eb" }}>Add room with layout</strong> to name a flower room and generate bays
+          (A, B, C, …) with numbered tables (1, 2, …) per bay. Those locations appear when operators log{" "}
+          <strong style={{ color: "#e5e7eb" }}>Move to Flower</strong> on the Cultivation page. You can still add an empty
+          room or edit bays and tables below.
+        </p>
+
+        <div style={{ ...styles.grid, marginBottom: 12 }}>
           <input
             style={styles.input}
-            placeholder="Flower Room Name"
+            placeholder="Flower room name"
             value={flowerRoomName}
             onChange={(e) => setFlowerRoomName(e.target.value)}
           />
-          <button style={styles.addButton} onClick={addFlowerRoom}>
-            Add Flower Room
+          <input
+            style={styles.input}
+            placeholder="Number of bays"
+            inputMode="numeric"
+            value={flowerQuickBayCount}
+            onChange={(e) => setFlowerQuickBayCount(e.target.value)}
+          />
+          <input
+            style={styles.input}
+            placeholder="Tables per bay"
+            inputMode="numeric"
+            value={flowerQuickTablesPerBay}
+            onChange={(e) => setFlowerQuickTablesPerBay(e.target.value)}
+          />
+          <button style={styles.addButton} type="button" onClick={addFlowerRoomWithLayout}>
+            Add room with layout
+          </button>
+          <button style={styles.secondaryButton} type="button" onClick={addFlowerRoom}>
+            Add empty room
           </button>
         </div>
 
