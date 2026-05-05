@@ -28,7 +28,6 @@ import {
 import { createPackagingBatch } from "@/lib/packagingApi";
 import { createLog } from "@/lib/logsApi";
 import { suggestExtractionProductNames } from "@/lib/api";
-import { canDeleteRecords as userCanDeleteWorkflow } from "@/lib/permissions";
 
 const sourceMaterialTypes = {
   freshFrozen: [
@@ -93,13 +92,9 @@ function isCompletedSourceBatch(batch: any) {
 const ROLE_LEVELS: Record<string, number> = {
   VIEW_ONLY: 1,
   CULTIVATION: 2,
-  CULTIVATION_SPECIALIST: 2,
   EXTRACTION: 2,
-  EXTRACTION_SPECIALIST: 2,
   PACKAGING: 2,
-  PACKAGING_SPECIALIST: 2,
   MANAGER: 3,
-  OPERATIONS_MANAGER: 3,
   ADMIN: 4,
   OWNER: 5,
 };
@@ -108,12 +103,7 @@ function hasMinimumRole(userRole: any, minimumRole: string) {
   const role = String(userRole || "").toUpperCase();
 
   if (String(minimumRole || "").toUpperCase() === "MANAGER") {
-    return (
-      role === "OWNER" ||
-      role === "ADMIN" ||
-      role === "MANAGER" ||
-      role === "OPERATIONS_MANAGER"
-    );
+    return role === "OWNER" || role === "ADMIN" || role === "MANAGER";
   }
 
   const currentLevel = ROLE_LEVELS[role] || 0;
@@ -126,9 +116,7 @@ function canWriteExtraction(userRole: any) {
 
   return (
     role === "EXTRACTION" ||
-    role === "EXTRACTION_SPECIALIST" ||
     role === "MANAGER" ||
-    role === "OPERATIONS_MANAGER" ||
     role === "ADMIN" ||
     role === "OWNER"
   );
@@ -185,88 +173,25 @@ function getDateCode() {
   return `${mm}${dd}${yy}`;
 }
 
+function extractDateCodeFromBatchId(batchId: string): string | null {
+  const m = String(batchId || "").match(/-(\d{6})$/);
+  return m ? m[1] : null;
+}
+
+/** First 4 letters of the creative name + . + MMDDYY (from extraction id suffix when present). */
+function makeMarketBatchCode(creativeName: string, extractionBatchId: string): string {
+  const letters = String(creativeName || "")
+    .replace(/[^a-zA-Z]/g, "")
+    .toUpperCase();
+  const core = (letters + "XXXX").slice(0, 4);
+  const datePart = extractDateCodeFromBatchId(extractionBatchId) || getDateCode();
+  return `${core}.${datePart}`;
+}
+
 function cleanAcronym(value: any) {
   return String(value || "")
     .replace(/[^a-zA-Z0-9]/g, "")
     .toUpperCase();
-}
-
-/** Strain-only label for AI naming — never use batch display `name` / `type` / `sourceId`. */
-function getStrainNameFromSourceRecord(src: any): string | null {
-  if (!src || typeof src !== "object") return null;
-  const fromField = String(src.strainName ?? "").trim();
-  if (fromField) return fromField;
-  if (typeof src.strain === "string" && String(src.strain).trim())
-    return String(src.strain).trim();
-  if (src.strain && typeof src.strain === "object") {
-    const n = String((src.strain as { name?: string }).name ?? "").trim();
-    if (n) return n;
-  }
-  return null;
-}
-
-function findCultivationBatchInStore(store: any, cultivationBatchId: string) {
-  const id = String(cultivationBatchId || "").trim();
-  if (!id || !store) return undefined;
-  const open = Array.isArray(store.cultivationBatches) ? store.cultivationBatches : [];
-  const done = Array.isArray(store.completedCultivationBatches)
-    ? store.completedCultivationBatches
-    : [];
-  return (
-    open.find((b: any) => String(b?.id) === id) ||
-    done.find((b: any) => String(b?.id) === id)
-  );
-}
-
-function strainFromCultivationRecord(cult: any): string | null {
-  if (!cult || typeof cult !== "object") return null;
-  const top = String(cult.strain ?? "").trim();
-  if (top) return top;
-  const ui = cult.cultivationUiState;
-  if (ui && typeof ui === "object") {
-    const nested = String((ui as { strain?: string }).strain ?? "").trim();
-    if (nested) return nested;
-  }
-  return null;
-}
-
-/** Strain from source row, or from linked cultivation batch when the source omits strain fields. */
-function resolveStrainNameFromSourceRecord(store: any, src: any): string | null {
-  const direct = getStrainNameFromSourceRecord(src);
-  if (direct) return direct;
-  if (!src || typeof src !== "object") return null;
-  const cultId = String(src.source ?? src.cultivationBatchId ?? "").trim();
-  if (!cultId) return null;
-  const cult = findCultivationBatchInStore(store, cultId);
-  return strainFromCultivationRecord(cult);
-}
-
-function strainFromCultivationBatchId(store: any, cultivationBatchId: string): string | null {
-  const cult = findCultivationBatchInStore(store, cultivationBatchId);
-  return strainFromCultivationRecord(cult);
-}
-
-/**
- * Legacy source rows often store a human label on `name` (e.g. "Cheetah Piss Fresh Frozen") while
- * `strain` / `strainName` / cultivation link are empty after sync — strip the material suffix for AI context.
- */
-function strainFromSourceDisplayName(name: unknown): string | null {
-  const n = String(name ?? "").trim();
-  if (!n) return null;
-  const lower = n.toLowerCase();
-  const cutSuffixes = [
-    " fresh frozen",
-    " dry trim",
-    " a grade flower",
-    " popcorn",
-  ];
-  for (const suf of cutSuffixes) {
-    if (lower.endsWith(suf)) {
-      const cut = n.slice(0, n.length - suf.length).trim();
-      return cut || null;
-    }
-  }
-  return null;
 }
 
 function getSourceAcronym(src: any) {
@@ -355,7 +280,7 @@ export default function Extraction() {
 
   useEffect(() => {
     const user = getAuthUser();
-    setUserCanDelete(userCanDeleteWorkflow());
+    setUserCanDelete(hasMinimumRole(user?.role, "MANAGER"));
     setUserCanWrite(canWriteExtraction(user?.role));
 
     let active = true;
@@ -437,6 +362,10 @@ export default function Extraction() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [viewBatch, setViewBatch] = useState<any>(null);
+  const [showAiNameModal, setShowAiNameModal] = useState(false);
+  const [aiNameLoading, setAiNameLoading] = useState(false);
+  const [aiNameError, setAiNameError] = useState("");
+  const [aiNameSuggestions, setAiNameSuggestions] = useState<string[]>([]);
 
   const [type, setType] = useState(productTypes[0]);
   const [sourceInputs, setSourceInputs] = useState<any[]>([
@@ -501,11 +430,6 @@ export default function Extraction() {
   const [finalOilGrams, setFinalOilGrams] = useState("");
   const [extraTerpsGrams, setExtraTerpsGrams] = useState("");
 
-  const [showAiNameModal, setShowAiNameModal] = useState(false);
-  const [aiNameLoading, setAiNameLoading] = useState(false);
-  const [aiNameError, setAiNameError] = useState("");
-  const [aiNameSuggestions, setAiNameSuggestions] = useState<string[]>([]);
-
   const [notificationModal, setNotificationModal] = useState<{
     open: boolean;
     title: string;
@@ -534,12 +458,6 @@ export default function Extraction() {
       cancelText: "",
       onConfirm: null,
     });
-  }
-
-  function backendSaveNoticeDetails(error: unknown, backupLine: string) {
-    const apiMsg =
-      error instanceof Error && error.message.trim() ? error.message.trim() : "";
-    return apiMsg ? `${apiMsg}\n\n${backupLine}` : backupLine;
   }
 
   function showConfirm(
@@ -791,65 +709,15 @@ export default function Extraction() {
   }
 
   function getSource(sourceId: string) {
-    const id = String(sourceId || "").trim();
-    if (!id) return undefined;
-    const active = s.sourceBatches.find((b: any) => String(b.id) === id);
-    if (active) return active;
-    return s.completedSourceBatches?.find((b: any) => String(b.id) === id);
+    return s.sourceBatches.find((b: any) => b.id === sourceId);
   }
 
-  function collectStrainNamesForExtractionBatch(ext: any): string[] {
-    if (!ext) return [];
-    const seen = new Set<string>();
-    const out: string[] = [];
-    const add = (strain: string) => {
-      const t = String(strain || "").trim();
-      if (!t) return;
-      const key = t.toLowerCase();
-      if (seen.has(key)) return;
-      seen.add(key);
-      out.push(t);
-    };
-
-    const rows: any[] = Array.isArray(ext.sources) ? [...ext.sources] : [];
-    const idsFromCommaField = String(ext.source ?? "")
-      .split(",")
-      .map((x: string) => x.trim())
+  function collectStrainNamesForExtractionBatch(batch: any): string[] {
+    if (!Array.isArray(batch?.sources)) return [];
+    const names = batch.sources
+      .map((row: any) => String(row?.name || "").trim())
       .filter(Boolean);
-    for (const sourceId of idsFromCommaField) {
-      if (!rows.some((r) => String(r?.sourceId ?? "").trim() === sourceId)) {
-        rows.push({ sourceId });
-      }
-    }
-
-    for (const row of rows) {
-      let strain =
-        typeof row?.strainName === "string" ? String(row.strainName).trim() : "";
-      const src = row?.sourceId ? getSource(String(row.sourceId)) : undefined;
-      if (!strain && src) {
-        strain = resolveStrainNameFromSourceRecord(s, src) || "";
-      }
-      if (!strain && row && typeof row === "object") {
-        strain = resolveStrainNameFromSourceRecord(s, row) || "";
-      }
-      if (!strain) {
-        strain = strainFromSourceDisplayName(row?.name) || "";
-      }
-      if (!strain && src) {
-        strain = strainFromSourceDisplayName(src?.name) || "";
-      }
-      if (strain) add(strain);
-    }
-
-    if (out.length === 0) {
-      const cid = String(ext.cultivationBatchId ?? "").trim();
-      if (cid) {
-        const st = strainFromCultivationBatchId(s, cid);
-        if (st) add(st);
-      }
-    }
-
-    return out;
+    return [...new Set(names)];
   }
 
   function getSourceOriginalLbs(source: any) {
@@ -1253,7 +1121,7 @@ export default function Extraction() {
     if (strains.length === 0) {
       showNotice(
         "No strain names",
-        "Could not resolve strain from this batch’s sources or linked cultivation batches. Check that source batches are linked to a cultivation batch with a strain, then reload the page.",
+        "Could not read strain names from this batch's saved source rows. Open batch details to confirm sources, then try again.",
       );
       return;
     }
@@ -1639,9 +1507,6 @@ export default function Extraction() {
         return {
           sourceId: row.sourceId,
           name: source?.name || source?.type || row.sourceId,
-          /** Linked cultivation batch id — lets API resolve materialized runs when store snapshot omits completed sources. */
-          source: String(source?.source ?? source?.cultivationBatchId ?? "").trim(),
-          strainName: resolveStrainNameFromSourceRecord(s, source) || "",
           acronym: getSourceAcronym(source || row),
           materialType: getSourceMaterialType(source),
           amountUsed: +num(row.amount).toFixed(2),
@@ -1782,10 +1647,7 @@ export default function Extraction() {
       showNotice(
         "Backend Save Failed",
         "The extraction batch changed locally, but the real database save failed.",
-        backendSaveNoticeDetails(
-          error,
-          "The backup sync will still try to save the current store."
-        )
+        "The backup sync will still try to save the current store."
       );
     }
 
@@ -2068,6 +1930,10 @@ export default function Extraction() {
           type: selectedExt.productType,
           productType: selectedExt.productType,
           source: selectedExt.source,
+          marketBatchCode: selectedExt.marketBatchCode,
+          extractionSources: Array.isArray(selectedExt.sources)
+            ? selectedExt.sources
+            : [],
           sourceBatchId: selectedExt.id,
           extractionBatchId: selectedExt.id,
           finalOilGrams,
@@ -2117,19 +1983,6 @@ export default function Extraction() {
       time: loggedAt,
     });
 
-    if (Array.isArray(selectedExt.sources)) {
-      for (const row of selectedExt.sources) {
-        if (!row || typeof row !== "object") continue;
-        const r = row as { source?: string; sourceId?: string };
-        if (String(r.source ?? "").trim()) continue;
-        const sid = String(r.sourceId ?? "").trim();
-        if (!sid) continue;
-        const src = getSource(sid);
-        const cid = String(src?.source ?? src?.cultivationBatchId ?? "").trim();
-        if (cid) r.source = cid;
-      }
-    }
-
     try {
       const updated = await updateExtractionBatch(selectedExt.id, selectedExt);
       if (updated && typeof updated === "object") {
@@ -2140,10 +1993,7 @@ export default function Extraction() {
       showNotice(
         "Backend Save Failed",
         "The extraction task was saved locally, but the real database update failed.",
-        backendSaveNoticeDetails(
-          error,
-          "The backup sync will still try to save the current store."
-        )
+        "The backup sync will still try to save the current store."
       );
     }
 
@@ -2339,7 +2189,7 @@ export default function Extraction() {
   const allowedRunProducts = getAllowedRunProducts();
 
   return (
-    <PageAccessGate permission="page.extraction">
+    <PageAccessGate allowedRoles={["EXTRACTION", "VIEW_ONLY"]}>
       <div style={pageStyle}>
       <div style={shellStyle}>
         <Nav />
@@ -2503,7 +2353,11 @@ export default function Extraction() {
                     onClick={() => setSelectedExt(b)}
                     style={{ flex: 1, cursor: "pointer" }}
                   >
-                    <b>{b.id}</b> | {b.name} | Biomass Used:{" "}
+                    <b>{b.marketBatchCode || b.id}</b>
+                    {b.marketBatchCode ? (
+                      <span style={{ fontWeight: 600 }}> ({b.id})</span>
+                    ) : null}{" "}
+                    | {b.name} | Biomass Used:{" "}
                     {b.totalBiomassUsed || b.amount || "—"} lbs | Final:{" "}
                     {num(b.totalFinalGrams) || "—"} g | Yield:{" "}
                     {getYieldPercentage(b) || "—"} | Status: {b.status}
@@ -3253,8 +3107,15 @@ export default function Extraction() {
                     </p>
 
                     <p style={{ color: "#cbd5e1", fontSize: 14 }}>
-                      Current batch display name:{" "}
+                      Product title:{" "}
                       <b style={{ color: "#e2e8f0" }}>{selectedExt?.name || "—"}</b>
+                      {selectedExt?.marketBatchCode ? (
+                        <>
+                          {" "}
+                          | Public code:{" "}
+                          <b style={{ color: "#e2e8f0" }}>{selectedExt.marketBatchCode}</b>
+                        </>
+                      ) : null}
                     </p>
 
                     {userCanWrite ? (
@@ -3266,7 +3127,6 @@ export default function Extraction() {
                           border: "1px solid rgba(168, 85, 247, 0.45)",
                           color: "#e9d5ff",
                           fontWeight: 800,
-                          cursor: "pointer",
                         }}
                         onClick={() => {
                           setAiNameError("");
@@ -3313,12 +3173,11 @@ export default function Extraction() {
             <div style={{ ...modalStyle, maxWidth: 520 }}>
               <h2 style={{ marginTop: 0 }}>AI product name</h2>
               <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.5 }}>
-                Strain names from this batch&apos;s selected sources (only these are sent to the
-                model):
+                Strain labels from this batch&apos;s source rows (sent to the model):
               </p>
               <ul style={{ color: "#e2e8f0", marginTop: 8, paddingLeft: 20 }}>
                 {collectStrainNamesForExtractionBatch(selectedExt).length === 0 ? (
-                  <li style={{ color: "#f87171" }}>No strain names found on sources.</li>
+                  <li style={{ color: "#f87171" }}>No source names found on this batch.</li>
                 ) : (
                   collectStrainNamesForExtractionBatch(selectedExt).map((sn) => (
                     <li key={sn}>{sn}</li>
@@ -3352,7 +3211,8 @@ export default function Extraction() {
               {aiNameSuggestions.length > 0 ? (
                 <div style={{ marginTop: 18 }}>
                   <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 8 }}>
-                    Tap a name to use it as the batch display name (saved when you click Save Task).
+                    Tap a suggestion to set the title and public code (first 4 letters of the name +
+                    the run date). This saves to the server immediately.
                   </div>
                   <div style={{ display: "grid", gap: 8 }}>
                     {aiNameSuggestions.map((sug) => (
@@ -3368,17 +3228,56 @@ export default function Extraction() {
                           cursor: "pointer",
                         }}
                         onClick={() => {
-                          if (!selectedExt) return;
-                          selectedExt.name = sug;
-                          const row = s.extractionBatches.find(
-                            (b: any) => b.id === selectedExt.id
-                          );
-                          if (row) row.name = sug;
-                          setSelectedExt({ ...selectedExt, name: sug });
-                          setShowAiNameModal(false);
+                          void (async () => {
+                            if (!selectedExt) return;
+                            const marketBatchCode = makeMarketBatchCode(sug, selectedExt.id);
+                            const row = s.extractionBatches.find(
+                              (b: any) => b.id === selectedExt.id
+                            );
+                            const next = {
+                              ...selectedExt,
+                              name: sug,
+                              marketBatchCode,
+                            };
+                            if (row) {
+                              row.name = sug;
+                              row.marketBatchCode = marketBatchCode;
+                            }
+                            setSelectedExt(next);
+                            setShowAiNameModal(false);
+                            try {
+                              const updated = await updateExtractionBatch(selectedExt.id, next);
+                              if (updated && typeof updated === "object" && row) {
+                                Object.assign(row, updated);
+                              }
+                              if (updated && typeof updated === "object") {
+                                setSelectedExt((cur: any) =>
+                                  cur?.id === selectedExt.id ? { ...cur, ...updated } : cur
+                                );
+                              }
+                            } catch (error) {
+                              console.error("Could not save AI batch name to server:", error);
+                              showNotice(
+                                "Name not saved",
+                                "The new name shows here but did not save to the server. Check your connection and try again.",
+                                "Until it saves, refresh may bring back the old title."
+                              );
+                            }
+                            forceRefresh();
+                          })();
                         }}
                       >
                         {sug}
+                        <span
+                          style={{
+                            display: "block",
+                            fontSize: 12,
+                            color: "#94a3b8",
+                            marginTop: 4,
+                          }}
+                        >
+                          Code: {makeMarketBatchCode(sug, selectedExt.id)}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -3394,7 +3293,13 @@ export default function Extraction() {
               <h2 style={{ marginTop: 0 }}>Batch Details</h2>
 
               <p>
-                <b>{viewBatch.id}</b>
+                <b>{viewBatch.marketBatchCode || viewBatch.id}</b>
+                {viewBatch.marketBatchCode ? (
+                  <span style={{ color: "#94a3b8", fontWeight: 600 }}>
+                    {" "}
+                    (run {viewBatch.id})
+                  </span>
+                ) : null}
               </p>
 
               <p>
@@ -3520,7 +3425,6 @@ export default function Extraction() {
                     marginTop: 12,
                     marginBottom: 18,
                     color: "#cbd5e1",
-                    whiteSpace: "pre-wrap",
                   }}
                 >
                   {notificationModal.details}

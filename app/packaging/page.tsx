@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
-import { canDeleteRecords as userCanDeleteWorkflow } from "@/lib/permissions";
 import { store } from "@/lib/store";
 import {
   displayNameFromLogActor,
@@ -91,6 +90,28 @@ function isBlank(value: any) {
 
 function lower(value: any) {
   return String(value || "").toLowerCase();
+}
+
+/** Finished extraction lots may set `marketBatchCode` (e.g. ABCD.050426); otherwise use internal id. */
+function packagingBatchPublicLabel(batch: any): string {
+  const code = String(batch?.marketBatchCode ?? "").trim();
+  if (code) return code;
+  return String(batch?.id ?? "—");
+}
+
+/** Comma-separated source package tags (FF-…), not the extraction run id. */
+function packagingSourceMaterialLabel(batch: any): string {
+  const raw = String(batch?.source ?? "").trim();
+  if (raw) return raw;
+  if (Array.isArray(batch?.extractionSources) && batch.extractionSources.length > 0) {
+    return batch.extractionSources
+      .map((r: any) => String(r?.sourceId ?? "").trim())
+      .filter(Boolean)
+      .join(", ");
+  }
+  const sb = batch?.sourceBatchId;
+  if (sb && sb !== batch?.id) return String(sb);
+  return "—";
 }
 
 function isFlowerBatch(batch: any) {
@@ -213,17 +234,7 @@ function makePackageSetId(sourceBatchId: string, existingSets: any[]) {
 
 function hasPackagingWriteAccess() {
   const role = String(getAuthUser()?.role || "").toUpperCase();
-  return (
-    role !== "VIEW_ONLY" &&
-    [
-      "PACKAGING",
-      "PACKAGING_SPECIALIST",
-      "MANAGER",
-      "OPERATIONS_MANAGER",
-      "ADMIN",
-      "OWNER",
-    ].includes(role)
-  );
+  return role !== "VIEW_ONLY" && ["PACKAGING", "MANAGER", "ADMIN", "OWNER"].includes(role);
 }
 
 export default function Packaging() {
@@ -239,7 +250,8 @@ export default function Packaging() {
   const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
-    setCanDeleteRecords(userCanDeleteWorkflow());
+    const role = String(getAuthUser()?.role || "").toUpperCase();
+    setCanDeleteRecords(role === "OWNER" || role === "ADMIN" || role === "MANAGER");
     setCanWriteRecords(hasPackagingWriteAccess());
 
     let active = true;
@@ -1178,7 +1190,7 @@ export default function Packaging() {
   };
 
   return (
-    <PageAccessGate permission="page.packaging">
+    <PageAccessGate allowedRoles={["PACKAGING", "VIEW_ONLY"]}>
       <div style={pageStyle}>
       <div style={shellStyle}>
         <Nav />
@@ -1226,7 +1238,11 @@ export default function Packaging() {
                 }}
               >
                 <div>
-                  <b>{b.id}</b> | {b.name || b.type || b.productType} | Available to
+                  <b>{packagingBatchPublicLabel(b)}</b>
+                  {b.marketBatchCode ? (
+                    <span style={{ fontWeight: 700 }}> ({b.id})</span>
+                  ) : null}{" "}
+                  | {b.name || b.type || b.productType} | Available to
                   Package: {getFinalGrams(b) || "—"}g | Packaged:{" "}
                   {getPackagedGrams(b) || 0}g | Remaining:{" "}
                   {getRemainingGrams(b) || "—"}g | Yield: {b.yieldPercentage || "—"} |
@@ -1268,7 +1284,21 @@ export default function Packaging() {
             <p style={{ color: "#94a3b8" }}>Select an extraction batch to package.</p>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
-              <input style={inputStyle} value={selected.id || ""} readOnly />
+              <input
+                style={inputStyle}
+                value={
+                  selected.marketBatchCode
+                    ? `${packagingBatchPublicLabel(selected)} (run ${selected.id})`
+                    : selected.id || ""
+                }
+                readOnly
+              />
+
+              <input
+                style={inputStyle}
+                value={`Source packages: ${packagingSourceMaterialLabel(selected)}`}
+                readOnly
+              />
 
               <input
                 style={inputStyle}
@@ -1379,7 +1409,9 @@ export default function Packaging() {
                 }}
               >
                 <div>
-                  <b>{b.id}</b> | Source: {b.sourceBatchId || b.id} |{" "}
+                  <b>{packagingBatchPublicLabel(b)}</b>
+                  {b.marketBatchCode ? <span> ({b.id})</span> : null} | Source packages:{" "}
+                  {packagingSourceMaterialLabel(b)} |{" "}
                   {b.name || b.type || b.productType} | Units: {b.packagedUnits || 0} |
                   This Set Packaged: {b.packagedGrams || 0}g | Source Remaining:{" "}
                   {b.sourceRemainingGrams ?? 0}g | Labor Time:{" "}
@@ -1427,8 +1459,16 @@ export default function Packaging() {
 
               <input
                 style={inputStyle}
-                value={`Source Batch: ${
-                  selectedInProgress.sourceBatchId || selectedInProgress.id
+                value={`Source packages: ${packagingSourceMaterialLabel(selectedInProgress)}`}
+                readOnly
+              />
+
+              <input
+                style={inputStyle}
+                value={`Extraction run: ${
+                  selectedInProgress.extractionBatchId ||
+                  selectedInProgress.sourceBatchId ||
+                  selectedInProgress.id
                 }`}
                 readOnly
               />
@@ -1629,7 +1669,9 @@ export default function Packaging() {
                 }}
               >
                 <div>
-                  <b>{b.id}</b> | Source: {b.sourceBatchId || b.id} |{" "}
+                  <b>{packagingBatchPublicLabel(b)}</b>
+                  {b.marketBatchCode ? <span> ({b.id})</span> : null} | Source packages:{" "}
+                  {packagingSourceMaterialLabel(b)} |{" "}
                   {b.name || b.type || b.productType} | Units: {b.packagedUnits || 0} |
                   This Set Packaged: {b.packagedGrams || 0}g | Labor Time:{" "}
                   {getTotalLaborMinutes(b)} min | Yield: {b.yieldPercentage || "—"} |
@@ -1900,10 +1942,13 @@ export default function Packaging() {
               <div>
                 <h2 style={{ margin: 0 }}>Task History</h2>
                 <p style={{ color: "#94a3b8", marginBottom: 0 }}>
-                  {taskHistoryModal.batch?.id || "—"} | Source:{" "}
-                  {taskHistoryModal.batch?.sourceBatchId ||
-                    taskHistoryModal.batch?.id ||
-                    "—"}
+                  <b style={{ color: "#e2e8f0" }}>
+                    {packagingBatchPublicLabel(taskHistoryModal.batch)}
+                  </b>
+                  {taskHistoryModal.batch?.marketBatchCode ? (
+                    <span> (run {taskHistoryModal.batch.id})</span>
+                  ) : null}{" "}
+                  | Source packages: {packagingSourceMaterialLabel(taskHistoryModal.batch)}
                 </p>
               </div>
 
