@@ -396,14 +396,21 @@ export default function Extraction() {
         const sourceList = asArray(realSourceBatches);
         const extractionList = asArray(realExtractionBatches);
 
-        s.sourceBatches = sourceList.filter(
-          (batch: any) =>
-            !isCompletedSourceBatch(batch) && getSourceAvailable(batch) > 0
-        );
-        s.completedSourceBatches = sourceList.filter(
-          (batch: any) =>
-            isCompletedSourceBatch(batch) || getSourceAvailable(batch) <= 0
-        );
+        s.sourceBatches = sourceList.filter((batch: any) => {
+          const isDbSourcePackage = isLikelyDatabaseSourcePackageId(batch?.id);
+          if (isDbSourcePackage) {
+            // Prisma-backed source packages do not carry legacy weight fields.
+            return !isCompletedSourceBatch(batch);
+          }
+          return !isCompletedSourceBatch(batch) && getSourceAvailable(batch) > 0;
+        });
+        s.completedSourceBatches = sourceList.filter((batch: any) => {
+          const isDbSourcePackage = isLikelyDatabaseSourcePackageId(batch?.id);
+          if (isDbSourcePackage) {
+            return isCompletedSourceBatch(batch);
+          }
+          return isCompletedSourceBatch(batch) || getSourceAvailable(batch) <= 0;
+        });
         const prevExById = new Map<string, any>(
           (s.extractionBatches || [])
             .map((b: any): [string, any] => [String(b?.id || ""), b])

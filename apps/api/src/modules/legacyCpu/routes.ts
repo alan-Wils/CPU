@@ -53,6 +53,12 @@ function mapSourcePackageToLegacyBatch(p) {
         bundles: 0
     };
 }
+function isLikelyPrismaSourcePackageId(id) {
+    const s = String(id || "").trim();
+    if (!s)
+        return false;
+    return /^c[a-z0-9]{20,}$/i.test(s) || (!s.includes("-") && s.length >= 22);
+}
 function mapAreaToWorkflowStage(area) {
     const a = String(area || "").toLowerCase();
     if (a.includes("extract"))
@@ -857,8 +863,17 @@ legacyCpuRouter.get("/source-batches", asyncHandler(async (req, res) => {
     const byId = new Map();
     for (const row of derived)
         byId.set(String(row.id), row);
-    for (const row of fromStore)
-        byId.set(String(row?.id || ""), row);
+    for (const row of fromStore) {
+        const id = String(row?.id || "").trim();
+        if (!id)
+            continue;
+        if (byId.has(id))
+            continue;
+        // Do not resurrect stale DB-style ids from legacy CompanyStore snapshots.
+        if (isLikelyPrismaSourcePackageId(id))
+            continue;
+        byId.set(id, row);
+    }
     res.json([...byId.values()].filter((row) => Boolean(row?.id)));
 }));
 legacyCpuRouter.post("/source-batches", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
