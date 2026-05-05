@@ -2,6 +2,7 @@ import { resolvePublicWebBaseUrl } from "../config/publicWebUrl.js";
 import { AppError } from "../errors/AppError.js";
 import { logInfo } from "../lib/logger.js";
 import { sendInviteEmail } from "../lib/mailer.js";
+import { mergeCashLogEodPrefs } from "../lib/cashLogEodPrefs.js";
 import { AdminRepository } from "../repositories/adminRepository.js";
 import { AuditService } from "./auditService.js";
 export class AdminService {
@@ -114,7 +115,7 @@ export class AdminService {
     }
     async listUsers(input) {
         const rows = await this.repo.listUsers(input.companyId);
-        return rows.map(({ user: u, appPermissions }) => ({
+        return rows.map(({ user: u, appPermissions, cashLogEodEnabled }) => ({
             id: u.id,
             username: u.email.split("@")[0],
             email: u.email,
@@ -123,6 +124,7 @@ export class AdminService {
             status: u.isActive ? "ACTIVE" : "INACTIVE",
             createdAt: u.createdAt,
             appPermissions: appPermissions ?? null,
+            cashLogEodEnabled: Boolean(cashLogEodEnabled),
         }));
     }
     async updateUser(input) {
@@ -143,6 +145,7 @@ export class AdminService {
             role: input.role,
             isActive: input.isActive,
             appPermissions: input.appPermissions,
+            cashLogEodEnabled: input.cashLogEodEnabled,
         });
         if (changed.count === 0)
             throw new AppError("No user changes persisted", 400);
@@ -151,8 +154,9 @@ export class AdminService {
             throw new AppError("User not found after update", 404);
         const membership = await this.repo.db.companyMembership.findFirst({
             where: { companyId: input.companyId, userId: input.targetUserId },
-            select: { appPermissions: true },
+            select: { appPermissions: true, cashLogEodPrefs: true },
         });
+        const cashLogEodEnabled = mergeCashLogEodPrefs(membership?.cashLogEodPrefs ?? null).enabled;
         await this.auditService.logAction({
             companyId: input.companyId,
             actorUserId: input.actorUserId,
@@ -164,6 +168,7 @@ export class AdminService {
                 role: next.role,
                 isActive: next.isActive,
                 appPermissions: membership?.appPermissions ?? null,
+                cashLogEodEnabled,
             },
         });
         return {
@@ -174,6 +179,7 @@ export class AdminService {
             active: next.isActive,
             status: next.isActive ? "ACTIVE" : "INACTIVE",
             appPermissions: membership?.appPermissions ?? null,
+            cashLogEodEnabled,
         };
     }
     async deleteUser(input) {

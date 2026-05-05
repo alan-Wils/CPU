@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { TenantRepository } from "./TenantRepository.js";
 import { legacyUserRoleToCompanyRole } from "../lib/nexbatchRoles.js";
+import { mergeCashLogEodPrefs } from "../lib/cashLogEodPrefs.js";
 export class AdminRepository extends TenantRepository {
     async listUsers(companyId) {
         const rows = await this.db.companyMembership.findMany({
@@ -16,6 +17,7 @@ export class AdminRepository extends TenantRepository {
         return rows.map((r) => ({
             user: r.user,
             appPermissions: r.appPermissions ?? null,
+            cashLogEodEnabled: mergeCashLogEodPrefs(r.cashLogEodPrefs).enabled,
         }));
     }
     async updateUserStatus(companyId, userId, isActive) {
@@ -47,6 +49,11 @@ export class AdminRepository extends TenantRepository {
         if (Object.prototype.hasOwnProperty.call(data, "appPermissions")) {
             membershipData.appPermissions =
                 data.appPermissions === null ? null : (data.appPermissions as Prisma.InputJsonValue);
+        }
+        if (data.cashLogEodEnabled !== undefined) {
+            const mergedPrefs = mergeCashLogEodPrefs(m.cashLogEodPrefs);
+            mergedPrefs.enabled = Boolean(data.cashLogEodEnabled);
+            membershipData.cashLogEodPrefs = mergedPrefs as unknown as Prisma.InputJsonValue;
         }
         let membershipTouched = false;
         if (Object.keys(membershipData).length) {

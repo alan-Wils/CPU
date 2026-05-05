@@ -365,9 +365,11 @@ export const adminUserUpdateSchema = z.preprocess(preprocessBodyNormalizeUserRol
     role: adminUserUpdateRoleEnum.optional(),
     isActive: z.boolean().optional(),
     /** `null` clears overrides (role defaults). Omitted = do not change membership permissions. */
-    appPermissions: z.array(appPermissionIdSchema).max(32).nullable().optional()
+    appPermissions: z.array(appPermissionIdSchema).max(32).nullable().optional(),
+    /** Per-employee EOD financial digest recipient toggle (defaults false when unset). */
+    cashLogEodEnabled: z.boolean().optional(),
 }).superRefine((val, ctx) => {
-    const n = [val.email, val.role, val.isActive, val.appPermissions].filter((x) => x !== undefined).length;
+    const n = [val.email, val.role, val.isActive, val.appPermissions, val.cashLogEodEnabled].filter((x) => x !== undefined).length;
     if (n === 0) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,

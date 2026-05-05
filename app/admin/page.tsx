@@ -38,6 +38,8 @@ type AdminUser = {
   createdAt?: string;
   /** From `CompanyMembership.appPermissions`; `null` = role defaults. */
   appPermissions?: string[] | null;
+  /** Per-employee EOD financial digest recipient toggle (default false). */
+  cashLogEodEnabled?: boolean;
 };
 
 type CompanyItem = {
@@ -405,6 +407,7 @@ export default function AdminPage() {
   const [editRole, setEditRole] = useState("VIEW_ONLY");
   const [editActive, setEditActive] = useState(true);
   const [editAppPermissions, setEditAppPermissions] = useState<string[]>([]);
+  const [editCashLogEodEnabled, setEditCashLogEodEnabled] = useState(false);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [savingInviteId, setSavingInviteId] = useState<string | null>(null);
 
@@ -1527,6 +1530,7 @@ export default function AdminPage() {
     setEditEmail(user.email || "");
     setEditRole(normalizePlatformRole(user.role) || "VIEW_ONLY");
     setEditActive(user.active);
+    setEditCashLogEodEnabled(Boolean(user.cashLogEodEnabled));
     const roleU = String(user.role || "VIEW_ONLY").trim().toUpperCase();
     if (isOwnerOrAdminRoleKey(roleU)) {
       setEditAppPermissions(fullAccessPermissionIds());
@@ -1548,6 +1552,7 @@ export default function AdminPage() {
     setEditRole("VIEW_ONLY");
     setEditActive(true);
     setEditAppPermissions([]);
+    setEditCashLogEodEnabled(false);
   }
 
   function toggleEditPermission(id: string) {
@@ -1600,6 +1605,7 @@ export default function AdminPage() {
         email: editEmail.trim() || undefined,
         role: editRole,
         isActive: editActive,
+        cashLogEodEnabled: editCashLogEodEnabled,
       };
       if (ownerOrAdminRole)
         body.appPermissions = null;
@@ -4082,6 +4088,43 @@ export default function AdminPage() {
                       <option value="ACTIVE">Active</option>
                       <option value="INACTIVE">Inactive</option>
                     </select>
+                  </label>
+                </div>
+
+                <div
+                  style={{
+                    marginBottom: 14,
+                    borderRadius: 12,
+                    border: "1px solid rgba(148, 163, 184, 0.22)",
+                    background: "rgba(2, 6, 23, 0.42)",
+                    padding: 12,
+                    textAlign: "left",
+                  }}
+                >
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 10,
+                      cursor: "pointer",
+                      color: "#e2e8f0",
+                      fontSize: 14,
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={editCashLogEodEnabled}
+                      onChange={(e) => setEditCashLogEodEnabled(e.target.checked)}
+                      style={{ marginTop: 3 }}
+                    />
+                    <span>
+                      <b>Receive EOD financial digest emails</b>
+                      <br />
+                      <span style={{ color: "#94a3b8" }}>
+                        Unchecked by default until saved for this employee.
+                      </span>
+                    </span>
                   </label>
                 </div>
 
