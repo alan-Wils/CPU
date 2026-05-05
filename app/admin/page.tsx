@@ -1530,7 +1530,9 @@ export default function AdminPage() {
     setEditEmail(user.email || "");
     setEditRole(normalizePlatformRole(user.role) || "VIEW_ONLY");
     setEditActive(user.active);
-    setEditCashLogEodEnabled(Boolean(user.cashLogEodEnabled));
+    setEditCashLogEodEnabled(
+      normalizePlatformRole(user.role) === "OWNER" ? false : Boolean(user.cashLogEodEnabled),
+    );
     const roleU = String(user.role || "VIEW_ONLY").trim().toUpperCase();
     if (isOwnerOrAdminRoleKey(roleU)) {
       setEditAppPermissions(fullAccessPermissionIds());
@@ -1597,18 +1599,6 @@ export default function AdminPage() {
       return;
     }
 
-    if (
-      normalizePlatformRole(currentUser?.role) === "ADMIN" &&
-      normalizePlatformRole(user.role) === "OWNER" &&
-      editCashLogEodEnabled &&
-      !user.cashLogEodEnabled
-    ) {
-      setError(
-        "Only the application owner can turn on digest emails for their account. They can sign in as owner and check this box themselves (or use Financial digest settings).",
-      );
-      return;
-    }
-
     setSavingUserId(user.id);
 
     try {
@@ -1617,8 +1607,11 @@ export default function AdminPage() {
         email: editEmail.trim() || undefined,
         role: editRole,
         isActive: editActive,
-        cashLogEodEnabled: editCashLogEodEnabled,
       };
+      // Application owners opt in/out only via Admin → Financial logs (digest modal), not this field.
+      if (normalizePlatformRole(user.role) !== "OWNER") {
+        body.cashLogEodEnabled = editCashLogEodEnabled;
+      }
       if (ownerOrAdminRole)
         body.appPermissions = null;
       else
@@ -4109,42 +4102,64 @@ export default function AdminPage() {
                   </label>
                 </div>
 
-                <div
-                  style={{
-                    marginBottom: 14,
-                    borderRadius: 12,
-                    border: "1px solid rgba(148, 163, 184, 0.22)",
-                    background: "rgba(2, 6, 23, 0.42)",
-                    padding: 12,
-                    textAlign: "left",
-                  }}
-                >
-                  <label
+                {normalizePlatformRole(editingTargetUser.role) === "OWNER" ? (
+                  <div
                     style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 10,
-                      cursor: "pointer",
-                      color: "#e2e8f0",
+                      marginBottom: 14,
+                      borderRadius: 12,
+                      border: "1px solid rgba(148, 163, 184, 0.22)",
+                      background: "rgba(2, 6, 23, 0.42)",
+                      padding: 12,
+                      textAlign: "left",
+                      color: "#94a3b8",
                       fontSize: 14,
-                      lineHeight: 1.45,
+                      lineHeight: 1.5,
                     }}
                   >
-                    <input
-                      type="checkbox"
-                      checked={editCashLogEodEnabled}
-                      onChange={(e) => setEditCashLogEodEnabled(e.target.checked)}
-                      style={{ marginTop: 3 }}
-                    />
-                    <span>
-                      <b>Receive EOD financial digest emails</b>
-                      <br />
-                      <span style={{ color: "#94a3b8" }}>
-                        Unchecked by default until saved for this employee.
+                    <b style={{ color: "#e2e8f0" }}>EOD financial digest emails</b>
+                    <br />
+                    Not controlled here for the <strong>application owner</strong>. They turn digests on or off under{" "}
+                    <strong>Admin → Financial logs</strong> using <strong>Financial digest email (cash & checks)</strong>{" "}
+                    (same schedule as the rest of the company; only “receive mail” is per person there).
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      marginBottom: 14,
+                      borderRadius: 12,
+                      border: "1px solid rgba(148, 163, 184, 0.22)",
+                      background: "rgba(2, 6, 23, 0.42)",
+                      padding: 12,
+                      textAlign: "left",
+                    }}
+                  >
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 10,
+                        cursor: "pointer",
+                        color: "#e2e8f0",
+                        fontSize: 14,
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={editCashLogEodEnabled}
+                        onChange={(e) => setEditCashLogEodEnabled(e.target.checked)}
+                        style={{ marginTop: 3 }}
+                      />
+                      <span>
+                        <b>Receive EOD financial digest emails</b>
+                        <br />
+                        <span style={{ color: "#94a3b8" }}>
+                          Unchecked by default until saved for this employee.
+                        </span>
                       </span>
-                    </span>
-                  </label>
-                </div>
+                    </label>
+                  </div>
+                )}
 
                 <div
                   style={{
