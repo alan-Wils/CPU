@@ -970,6 +970,35 @@ export default function Extraction() {
     return nextId;
   }
 
+  function allPackagingLotIds(): string[] {
+    const chunks = [
+      s.packagingBatches,
+      s.inProgressPackagingBatches,
+      s.completedPackagingBatches,
+    ];
+    const out: string[] = [];
+    for (const arr of chunks) {
+      if (!Array.isArray(arr)) continue;
+      for (const b of arr) {
+        const id = String(b?.id || "").trim();
+        if (id) out.push(id);
+      }
+    }
+    return out;
+  }
+
+  function makeUniquePackagingLotId(baseId: string) {
+    const existing = new Set(allPackagingLotIds());
+    if (!existing.has(baseId)) return baseId;
+    let count = 2;
+    let nextId = `${baseId}-${count}`;
+    while (existing.has(nextId)) {
+      count += 1;
+      nextId = `${baseId}-${count}`;
+    }
+    return nextId;
+  }
+
   function updateSourceInput(index: number, key: string, value: string) {
     const next = [...sourceInputs];
     next[index] = { ...next[index], [key]: value };
@@ -2044,22 +2073,34 @@ export default function Extraction() {
       selectedExt.yieldPercentage = getYieldPercentage(selectedExt);
 
       const alreadyInPackaging = s.packagingBatches.some(
-        (b: any) => b.id === selectedExt.id
+        (b: any) =>
+          String(b.extractionBatchId || "") === String(selectedExt.id) ||
+          String(b.sourceBatchId || "") === String(selectedExt.id) ||
+          b.id === selectedExt.id
       );
 
       if (!alreadyInPackaging) {
-        const sourcePackageLine = Array.isArray(selectedExt.sources)
-          ? selectedExt.sources
-              .map((r: any) => String(r?.sourceId ?? "").trim())
-              .filter(Boolean)
-              .join(", ")
-          : "";
+        const productLabel = String(selectedExt.productType || "").trim();
+        const displayName = String(selectedExt.name || "").trim();
+        const useCreativeProductionId =
+          displayName.length > 0 && displayName !== productLabel;
+        const productionLotBase = useCreativeProductionId
+          ? makeMarketBatchCode(displayName, `P-${getDateCode()}`)
+          : String(selectedExt.id);
+        const packagingLotId = useCreativeProductionId
+          ? makeUniquePackagingLotId(productionLotBase)
+          : selectedExt.id;
+        if (useCreativeProductionId) {
+          selectedExt.productionPackagingLotId = packagingLotId;
+          selectedExt.marketBatchCode = packagingLotId;
+        }
+
         const packagingBatch = {
-          id: selectedExt.id,
+          id: packagingLotId,
           name: selectedExt.name,
           type: selectedExt.productType,
           productType: selectedExt.productType,
-          source: sourcePackageLine || String(selectedExt.source || "").trim(),
+          source: selectedExt.source,
           marketBatchCode: selectedExt.marketBatchCode,
           sourceBlendLabel: selectedExt.sourceBlendLabel,
           extractionSources: Array.isArray(selectedExt.sources)
@@ -2135,7 +2176,13 @@ export default function Extraction() {
 
   async function runDeleteBatch(batchId: string) {
     const deletedExtraction = s.extractionBatches.find((b: any) => b.id === batchId) || null;
-    const deletedPackaging = s.packagingBatches.find((b: any) => b.id === batchId) || null;
+    const deletedPackaging =
+      s.packagingBatches.find(
+        (b: any) =>
+          b.id === batchId ||
+          String(b.extractionBatchId || "") === batchId ||
+          String(b.sourceBatchId || "") === batchId
+      ) || null;
     const loggedBy = getLoggedBy();
 
     try {
@@ -2170,9 +2217,19 @@ export default function Extraction() {
     s.extractionBatches = s.extractionBatches.filter(
       (b: any) => b.id !== batchId
     );
-    s.packagingBatches = s.packagingBatches.filter(
-      (b: any) => b.id !== batchId
-    );
+    const packagingRemove = (b: any) =>
+      !(
+        String(b.extractionBatchId || "") === batchId ||
+        String(b.sourceBatchId || "") === batchId ||
+        b.id === batchId
+      );
+    s.packagingBatches = s.packagingBatches.filter(packagingRemove);
+    if (Array.isArray(s.inProgressPackagingBatches)) {
+      s.inProgressPackagingBatches = s.inProgressPackagingBatches.filter(packagingRemove);
+    }
+    if (Array.isArray(s.completedPackagingBatches)) {
+      s.completedPackagingBatches = s.completedPackagingBatches.filter(packagingRemove);
+    }
 
     if (selectedExt?.id === batchId) {
       setSelectedExt(s.extractionBatches[0] || null);

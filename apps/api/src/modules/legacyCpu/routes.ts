@@ -752,9 +752,17 @@ legacyCpuRouter.post("/packaging", requireRole(packagingWriteRoles), asyncHandle
     if (dup) {
         throw new AppError("Packaging lot already exists", 409);
     }
-    const extractionRunId = String(body.extractionBatchId || body.sourceBatchId || body.id || "").trim();
+    let extractionRunId = String(body.extractionBatchId || body.sourceBatchId || "").trim();
     if (!extractionRunId) {
-        throw new AppError("extractionBatchId is required to link packaging to an extraction run", 400);
+        const tryId = String(body.id ?? "").trim();
+        if (tryId) {
+            const probe = await prisma.extractionRun.findFirst({ where: { id: tryId, companyId } });
+            if (probe)
+                extractionRunId = tryId;
+        }
+    }
+    if (!extractionRunId) {
+        throw new AppError("extractionBatchId (or sourceBatchId) is required to link packaging to an extraction run", 400);
     }
     const run = await prisma.extractionRun.findFirst({ where: { id: extractionRunId, companyId } });
     if (!run) {
