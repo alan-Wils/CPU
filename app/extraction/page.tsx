@@ -477,6 +477,8 @@ export default function Extraction() {
   const [aiNameLoading, setAiNameLoading] = useState(false);
   const [aiNameError, setAiNameError] = useState("");
   const [aiNameSuggestions, setAiNameSuggestions] = useState<string[]>([]);
+  const [draftFinishBatchName, setDraftFinishBatchName] = useState("");
+  const [draftFinishBatchCode, setDraftFinishBatchCode] = useState("");
 
   const [type, setType] = useState(productTypes[0]);
   const [sourceInputs, setSourceInputs] = useState<any[]>([
@@ -1279,6 +1281,8 @@ export default function Extraction() {
     setAiNameLoading(false);
     setAiNameError("");
     setAiNameSuggestions([]);
+    setDraftFinishBatchName("");
+    setDraftFinishBatchCode("");
   }
 
   async function generateAiProductNames() {
@@ -1319,6 +1323,8 @@ export default function Extraction() {
       : productTypes;
 
     setFinalProduct(allowedProducts[0] || b.productType || productTypes[0]);
+    setDraftFinishBatchName("");
+    setDraftFinishBatchCode("");
     setSelectedTask(getDefaultTaskForBatch(b));
     setShowTaskModal(true);
   }
@@ -2116,6 +2122,12 @@ export default function Extraction() {
     }
 
     if (selectedTask === "Finish Batch") {
+      if (!isBlank(draftFinishBatchName)) {
+        selectedExt.name = draftFinishBatchName.trim();
+      }
+      if (!isBlank(draftFinishBatchCode)) {
+        selectedExt.marketBatchCode = draftFinishBatchCode.trim();
+      }
       selectedExt.status = "Finished - Sent To Packaging";
       selectedExt.finalOilGrams = finalOilGrams;
       selectedExt.extraTerpsGrams = extraTerpsGrams;
@@ -3384,12 +3396,16 @@ export default function Extraction() {
 
                     <p style={{ color: "#cbd5e1", fontSize: 14 }}>
                       Product title:{" "}
-                      <b style={{ color: "#e2e8f0" }}>{selectedExt?.name || "—"}</b>
-                      {selectedExt?.marketBatchCode ? (
+                      <b style={{ color: "#e2e8f0" }}>
+                        {draftFinishBatchName || selectedExt?.name || "—"}
+                      </b>
+                      {(draftFinishBatchCode || selectedExt?.marketBatchCode) ? (
                         <>
                           {" "}
                           | Public code:{" "}
-                          <b style={{ color: "#e2e8f0" }}>{selectedExt.marketBatchCode}</b>
+                          <b style={{ color: "#e2e8f0" }}>
+                            {draftFinishBatchCode || selectedExt?.marketBatchCode}
+                          </b>
                         </>
                       ) : null}
                     </p>
@@ -3492,7 +3508,7 @@ export default function Extraction() {
                 <div style={{ marginTop: 18 }}>
                   <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 8 }}>
                     Tap a suggestion to set the title and public code (first 4 letters of the name +
-                    the run date). This saves to the server immediately.
+                    the run date). This is saved only when you save the Finish Batch task.
                   </div>
                   <div style={{ display: "grid", gap: 8 }}>
                     {aiNameSuggestions.map((sug) => (
@@ -3508,43 +3524,11 @@ export default function Extraction() {
                           cursor: "pointer",
                         }}
                         onClick={() => {
-                          void (async () => {
-                            if (!selectedExt) return;
-                            const marketBatchCode = makeMarketBatchCode(sug, selectedExt.id);
-                            const row = s.extractionBatches.find(
-                              (b: any) => b.id === selectedExt.id
-                            );
-                            const next = {
-                              ...selectedExt,
-                              name: sug,
-                              marketBatchCode,
-                            };
-                            if (row) {
-                              row.name = sug;
-                              row.marketBatchCode = marketBatchCode;
-                            }
-                            setSelectedExt(next);
-                            setShowAiNameModal(false);
-                            try {
-                              const updated = await updateExtractionBatch(selectedExt.id, next);
-                              if (updated && typeof updated === "object" && row) {
-                                Object.assign(row, updated);
-                              }
-                              if (updated && typeof updated === "object") {
-                                setSelectedExt((cur: any) =>
-                                  cur?.id === selectedExt.id ? { ...cur, ...updated } : cur
-                                );
-                              }
-                            } catch (error) {
-                              console.error("Could not save AI batch name to server:", error);
-                              showNotice(
-                                "Name not saved",
-                                "The new name shows here but did not save to the server. Check your connection and try again.",
-                                "Until it saves, refresh may bring back the old title."
-                              );
-                            }
-                            forceRefresh();
-                          })();
+                          if (!selectedExt) return;
+                          const marketBatchCode = makeMarketBatchCode(sug, selectedExt.id);
+                          setDraftFinishBatchName(sug);
+                          setDraftFinishBatchCode(marketBatchCode);
+                          setShowAiNameModal(false);
                         }}
                       >
                         {sug}
