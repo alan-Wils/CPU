@@ -296,22 +296,6 @@ function getSourceAcronym(src: any) {
   return "MIX";
 }
 
-function normalizeBlendNamePart(name: any) {
-  return String(name || "")
-    .toLowerCase()
-    .replace(/\b(fresh\s*frozen|freshfrozen|dry\s*trim|drytrim|trim|flower|popcorn)\b/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function normalizeBlendTokenFromSourceRow(row: any) {
-  const acr = cleanAcronym(row?.acronym);
-  if (acr) return `acr:${acr}`;
-  const normalizedName = normalizeBlendNamePart(row?.name || row?.type || "");
-  if (normalizedName) return `name:${normalizedName}`;
-  return "";
-}
-
 type BlendNameHistoryRow = {
   id: string;
   blendKey: string;
@@ -423,8 +407,8 @@ export default function Extraction() {
         s.sourceBatches = sourceList.filter((batch: any) => {
           const isDbSourcePackage = isLikelyDatabaseSourcePackageId(batch?.id);
           if (isDbSourcePackage) {
-            // Prisma-backed source packages do not carry legacy weight fields.
-            return !isCompletedSourceBatch(batch);
+            // Prisma-backed source packages can still be stale if available was consumed to 0.
+            return !isCompletedSourceBatch(batch) && getSourceAvailable(batch) > 0;
           }
           return !isCompletedSourceBatch(batch) && getSourceAvailable(batch) > 0;
         });
@@ -709,24 +693,16 @@ export default function Extraction() {
   }
 
   function makeBlendSignatureFromBatch(batch: any) {
-    const sourceRows = Array.isArray(batch?.sources) ? batch.sources : [];
-    const fromRows = sourceRows
-      .map((row: any) => normalizeBlendTokenFromSourceRow(row))
-      .filter(Boolean);
-    const fallbackFromNames = collectStrainNamesForExtractionBatch(batch)
-      .map((n) => normalizeBlendNamePart(n))
+    const parts = collectStrainNamesForExtractionBatch(batch)
+      .map((n) => String(n || "").trim())
       .filter(Boolean)
-      .map((n) => `name:${n}`);
-    const parts = [...new Set((fromRows.length ? fromRows : fallbackFromNames).filter(Boolean))]
+      .map((n) => n.toLowerCase())
       .sort();
-    const prettyLabelParts = parts.map((p) =>
-      String(p)
-        .replace(/^(acr:|name:)/, "")
-        .replace(/\b\w/g, (c) => c.toUpperCase())
-    );
     return {
       blendKey: parts.join("|"),
-      blendLabel: prettyLabelParts.join(" · "),
+      blendLabel: parts
+        .map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase()))
+        .join(" · "),
     };
   }
 
@@ -2642,12 +2618,12 @@ export default function Extraction() {
           </div>
 
           <div style={lockedListStyle}>
-            {s.sourceBatches.length === 0 ? (
+            {availableSources.length === 0 ? (
               <p style={{ color: "#94a3b8" }}>
                 No source batches available for extraction.
               </p>
             ) : (
-              s.sourceBatches.map((b: any) => {
+              availableSources.map((b: any) => {
                 const available = getSourceAvailable(b);
                 const isEmpty =
                   available <= 0 || b.status === "Used in Extraction";
