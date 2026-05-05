@@ -213,18 +213,24 @@ function cultivationIdFromSourceRowInSnap(sourceId: string, snap: unknown): stri
     const cid = row.source ?? row.parentCultivationBatch ?? row.cultivationBatchId;
     return cid != null && String(cid).length > 0 ? String(cid) : null;
 }
+type ExtractionCultivationResolution = {
+    cultivationBatchId: string;
+    /** Distinct cultivation batches tied to the selected sources (order preserved). */
+    blendCultivationBatchIds: string[];
+};
 /**
- * Every extraction run ties to one cultivation batch. Resolve from each source (store or SourcePackage);
- * all must map to the same cultivation id.
+ * ExtractionRun keeps one FK (`cultivationBatchId`). For multi-batch blends we pick an anchor id
+ * (optional `primaryCultivationBatchId` on the body, else first source's batch) and persist the
+ * full list in `extractionUiState.blendCultivationBatchIds` at create time.
  */
-async function resolveCultivationBatchIdForExtractionCreate(companyId: string, body: Record<string, unknown>, snap: unknown): Promise<string> {
+async function resolveCultivationBatchIdForExtractionCreate(companyId: string, body: Record<string, unknown>, snap: unknown): Promise<ExtractionCultivationResolution> {
     const direct = String(body.cultivationBatchId ?? "").trim();
     if (direct) {
         const row = await prisma.cultivationBatch.findFirst({
             where: { id: direct, companyId }
         });
         if (row) {
-            return direct;
+            return { cultivationBatchId: direct, blendCultivationBatchIds: [direct] };
         }
     }
     const sources = Array.isArray(body.sources) ? body.sources : [];
@@ -253,18 +259,28 @@ async function resolveCultivationBatchIdForExtractionCreate(companyId: string, b
         }
         throw new AppError(`Could not resolve cultivation batch for source ${sid}`, 400);
     }
-    const unique = [...new Set(ids)];
-    if (unique.length > 1) {
-        throw new AppError("All sources must belong to the same cultivation batch for one extraction run", 400);
+    const blendCultivationBatchIds = [...new Set(ids)];
+    let cultivationBatchId = blendCultivationBatchIds[0];
+    if (blendCultivationBatchIds.length > 1) {
+        const preferred = String(body.primaryCultivationBatchId ?? "").trim();
+        if (preferred && blendCultivationBatchIds.includes(preferred)) {
+            cultivationBatchId = preferred;
+        }
+        logInfo("[EXTRACTION_CREATE] multi_cultivation_blend", {
+            companyId,
+            anchorCultivationBatchId: cultivationBatchId,
+            blendCultivationBatchIds
+        });
     }
-    const cultivationBatchId = unique[0];
-    const batchRow = await prisma.cultivationBatch.findFirst({
-        where: { id: cultivationBatchId, companyId }
-    });
-    if (!batchRow) {
-        throw new AppError("Cultivation batch not found for extraction", 404);
+    for (const cid of blendCultivationBatchIds) {
+        const batchRow = await prisma.cultivationBatch.findFirst({
+            where: { id: cid, companyId }
+        });
+        if (!batchRow) {
+            throw new AppError(`Cultivation batch not found for extraction: ${cid}`, 404);
+        }
     }
-    return cultivationBatchId;
+    return { cultivationBatchId, blendCultivationBatchIds };
 }
 const extractionWriteRoles = [
     "OWNER",
@@ -603,15 +619,19 @@ legacyCpuRouter.post("/extraction", requireRole(extractionWriteRoles), asyncHand
         throw new AppError("Extraction batch already exists", 409);
     }
     const snap = await storeService.load(companyId);
-    const cultivationBatchId = await resolveCultivationBatchIdForExtractionCreate(companyId, body, snap);
+    const resolved = await resolveCultivationBatchIdForExtractionCreate(companyId, body, snap);
     const mergedUi = mergeRecord({}, body);
     if (mergedUi.id)
         delete mergedUi.id;
+    if (resolved.blendCultivationBatchIds.length > 1) {
+        mergedUi.blendCultivationBatchIds = resolved.blendCultivationBatchIds;
+        mergedUi.blendCultivationAnchorId = resolved.cultivationBatchId;
+    }
     const run = await prisma.extractionRun.create({
         data: {
             id: customId,
             companyId,
-            cultivationBatchId,
+            cultivationBatchId: resolved.cultivationBatchId,
             phase: "PENDING_BIOMASS_PREP",
             method: "",
             extractionUiState: mergedUi as Prisma.InputJsonValue
@@ -620,7 +640,8 @@ legacyCpuRouter.post("/extraction", requireRole(extractionWriteRoles), asyncHand
     logInfo("[WORKFLOW_FIX] extraction_run_legacy_created", {
         entityType: "ExtractionRun",
         entityId: run.id,
-        cultivationBatchId
+        cultivationBatchId: resolved.cultivationBatchId,
+        blendCount: resolved.blendCultivationBatchIds.length
     });
     res.status(201).json(mapExtractionRunToLegacy(run));
 }));
@@ -631,15 +652,19 @@ legacyCpuRouter.put("/extraction/:runId", requireRole(extractionWriteRoles), asy
     let existing = await prisma.extractionRun.findFirst({ where: { id: runId, companyId } });
     if (!existing) {
         const snap = await storeService.load(companyId);
-        const cultivationBatchId = await resolveCultivationBatchIdForExtractionCreate(companyId, asUiRecord(body), snap);
+        const resolved = await resolveCultivationBatchIdForExtractionCreate(companyId, asUiRecord(body), snap);
         const shellUi = mergeRecord({}, body);
         if (shellUi.id)
             delete shellUi.id;
+        if (resolved.blendCultivationBatchIds.length > 1) {
+            shellUi.blendCultivationBatchIds = resolved.blendCultivationBatchIds;
+            shellUi.blendCultivationAnchorId = resolved.cultivationBatchId;
+        }
         existing = await prisma.extractionRun.create({
             data: {
                 id: runId,
                 companyId,
-                cultivationBatchId,
+                cultivationBatchId: resolved.cultivationBatchId,
                 phase: "PENDING_BIOMASS_PREP",
                 method: "",
                 extractionUiState: shellUi as Prisma.InputJsonValue
@@ -648,7 +673,8 @@ legacyCpuRouter.put("/extraction/:runId", requireRole(extractionWriteRoles), asy
         logInfo("[WORKFLOW_FIX] extraction_run_materialized_on_put", {
             entityType: "ExtractionRun",
             entityId: runId,
-            cultivationBatchId
+            cultivationBatchId: resolved.cultivationBatchId,
+            blendCount: resolved.blendCultivationBatchIds.length
         });
     }
     const prevUi = asUiRecord(existing.extractionUiState);
