@@ -699,12 +699,12 @@ export async function runCashLogEodJob(options?: {
         checkService.listByCreatedAtRange(m.companyId, from, to),
       ]);
       const publicWebBase = resolvePublicWebBaseUrl().replace(/\/+$/, "");
-      const windowLabel =
-        prefs.window === "LAST_7_DAYS" ? "last 7 days" : "last 24 hours";
-      const subject = `[${m.company?.name || "Company"}] Financial digest — cash & checks (${windowLabel})`;
+      const dailyFlowPeriod =
+        prefs.window === "LAST_7_DAYS" ? "Last 7 days" : "Last 24 hours";
+      const subject = `[${m.company?.name || "Company"}] Daily Cash Flow - ${dailyFlowPeriod}`;
       const html = `
         <div style="font-family:system-ui,sans-serif;line-height:1.5">
-          <h2>Financial digest — ${escapeHtml(windowLabel)}</h2>
+          <h2>Daily Cash Flow - ${escapeHtml(dailyFlowPeriod)}</h2>
           <p><strong>Company:</strong> ${escapeHtml(m.company?.name || "")}</p>
           <p><strong>Period:</strong> ${escapeHtml(from.toISOString())} to ${escapeHtml(to.toISOString())} (UTC)</p>
           <h3 style="margin-top:1.25em">Cash log</h3>
