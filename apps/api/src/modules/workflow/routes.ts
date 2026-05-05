@@ -125,7 +125,7 @@ workflowRouter.patch("/packaging-lots/:lotId", requireRole(["OWNER", "ADMIN", "O
 }));
 workflowRouter.delete("/packaging-lots/:lotId", requireRoleOrAppPermission(["OWNER", "ADMIN"], "workflow.delete"), validate({ params: lotIdParam }), asyncHandler(async (req, res) => {
     const { lotId } = req.params;
-    const out = await workflowService.deletePackagingLot(getScopedCompanyId(req), req.auth.userId, lotId);
+    const out = await workflowService.deletePackagingLot(getScopedCompanyId(req), req.auth.userId, lotId, { allowDeleteCompletedLots: true });
     res.json(out);
 }));
 workflowRouter.post("/cultivation-packaging-runs/:runId/weigh", requireRole(["OWNER", "ADMIN", "OPERATIONS_MANAGER", "CULTIVATION_SPECIALIST", "PACKAGING_SPECIALIST"]), validate({ params: runIdParam, body: cultWeighSchema }), asyncHandler(async (req, res) => {

@@ -609,7 +609,11 @@ legacyCpuRouter.get("/extraction", asyncHandler(async (req, res) => {
         if (!id)
             continue;
         const prev = byId.get(id);
-        byId.set(id, prev ? mergeExtractionLegacyRow(asUiRecord(prev), asUiRecord(row)) : row);
+        // DB is authoritative for extraction run existence; do not rehydrate ghost rows
+        // from legacy company-store snapshots (those rows 404 on delete/update).
+        if (!prev)
+            continue;
+        byId.set(id, mergeExtractionLegacyRow(asUiRecord(prev), asUiRecord(row)));
     }
     res.json([...byId.values()]);
 }));
@@ -717,6 +721,7 @@ legacyCpuRouter.delete("/extraction/:runId", requireRole(extractionWriteRoles), 
 const packagingWriteRoles = [
     "OWNER",
     "ADMIN",
+    "MANAGER",
     "OPERATIONS_MANAGER",
     "PACKAGING_SPECIALIST"
 ];
@@ -835,10 +840,13 @@ legacyCpuRouter.put("/packaging/:lotId", requireRole(packagingWriteRoles), async
     });
     res.json(mapped);
 }));
+const packagingCompletedDeleteRoles = new Set(["OWNER", "ADMIN", "OPERATIONS_MANAGER", "MANAGER"]);
 legacyCpuRouter.delete("/packaging/:lotId", requireRole(packagingWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const lotId = String(req.params.lotId || "");
-    const out = await workflowService.deletePackagingLot(companyId, req.auth.userId, lotId);
+    const role = String(req.auth?.role || "").toUpperCase();
+    const allowDeleteCompletedLots = packagingCompletedDeleteRoles.has(role);
+    const out = await workflowService.deletePackagingLot(companyId, req.auth.userId, lotId, { allowDeleteCompletedLots });
     logInfo("[WORKFLOW_FIX] legacy_packaging_deleted", { entityType: "PackagingLot", entityId: lotId });
     res.json(out);
 }));

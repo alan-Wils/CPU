@@ -1021,7 +1021,8 @@ export class OperationalWorkflowService {
         const lot = await prisma.packagingLot.findFirst({ where: { id: input.lotId, companyId: input.companyId } });
         if (!lot)
             throw new AppError("Packaging lot not found", 404);
-        if (lot.status === "COMPLETED")
+        const allowCompleted = Boolean(input.allowDeleteCompletedLots);
+        if (lot.status === "COMPLETED" && !allowCompleted)
             throw new AppError("Cannot delete completed packaging lot", 400);
         await prisma.packagingLot.delete({ where: { id: lot.id } });
         await this.audit.logAction({

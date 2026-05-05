@@ -133,8 +133,7 @@ function startInternalCashLogEodSchedulerIfEnabled() {
             return;
         cashLogEodSchedulerRunning = true;
         try {
-            const out = await runCashLogEodJob();
-            logInfo("cash_log_eod_internal_tick", out);
+            await runCashLogEodJob({ trigger: "internal_scheduler" });
         }
         catch (error) {
             logWarn("cash_log_eod_internal_tick_failed", {

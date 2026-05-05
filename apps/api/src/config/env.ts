@@ -114,7 +114,11 @@ const envSchema = z
         const t = v.trim().replace(/\/+$/, "");
         return t === "" ? undefined : t;
     }, z.string().url().optional()),
-    /** Bearer secret for POST /api/internal/jobs/* (e.g. cash-log EOD digest). Optional. */
+    /**
+     * Bearer secret for `POST /api/internal/jobs/*` when called by Railway Cron
+     * (cash log digest job). Minimum 16 characters. Must be set identically as
+     * the `Authorization: Bearer …` header value (see docs/RAILWAY_CRON_CASH_LOG_EOD.md).
+     */
     CRON_SECRET: z.preprocess((v) => {
         if (typeof v !== "string")
             return undefined;

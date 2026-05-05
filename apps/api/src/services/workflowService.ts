@@ -83,8 +83,13 @@ export class WorkflowService {
     async updatePackagingLot(companyId, actorUserId, body) {
         return operational.updatePackagingLot({ companyId, actorUserId, ...body });
     }
-    async deletePackagingLot(companyId, actorUserId, lotId) {
-        return operational.deletePackagingLot({ companyId, actorUserId, lotId });
+    async deletePackagingLot(companyId, actorUserId, lotId, options) {
+        return operational.deletePackagingLot({
+            companyId,
+            actorUserId,
+            lotId,
+            allowDeleteCompletedLots: options?.allowDeleteCompletedLots
+        });
     }
     /// Legacy name retained: creates extraction packaging in IN_PROGRESS; completion only via `finishExtractionPackaging`
     async createPackaging(input) {
