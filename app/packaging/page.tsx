@@ -491,6 +491,8 @@ export default function Packaging() {
   const [taskPeople, setTaskPeople] = useState("");
   const [taskTime, setTaskTime] = useState("");
   const [taskNotes, setTaskNotes] = useState("");
+  const [isSavingTask, setIsSavingTask] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
 
   const [notificationModal, setNotificationModal] = useState<{
     open: boolean;
@@ -571,6 +573,11 @@ export default function Packaging() {
       cancelText: "",
       onConfirm: null,
     });
+  }
+
+  function showSyncMessageNotice(message: string) {
+    setSyncMessage(message);
+    window.setTimeout(() => setSyncMessage(""), 2200);
   }
 
   function confirmNotificationModal() {
@@ -904,6 +911,7 @@ export default function Packaging() {
   }
 
   async function savePackagingTask() {
+    if (isSavingTask) return;
     if (!canWriteRecords) {
       showNotice("Read Only Mode", "Your role can view packaging data but cannot save packaging tasks.");
       return;
@@ -913,22 +921,33 @@ export default function Packaging() {
       showNotice("No Package Selected", "Select an in-progress package first.");
       return;
     }
+    setIsSavingTask(true);
 
-    if (!requireField(taskType, "Task")) return;
+    if (!requireField(taskType, "Task")) {
+      setIsSavingTask(false);
+      return;
+    }
 
     if (taskType === "Test" && selectedTestTypes.length === 0) {
       showNotice(
         "Test Type Required",
         "Select at least one test type before saving the test task."
       );
+      setIsSavingTask(false);
       return;
     }
 
     const isFinishPackage = taskType === "Finish Package";
 
     if (!isFinishPackage) {
-      if (!requireField(taskPeople, "People")) return;
-      if (!requireField(taskTime, "Time")) return;
+      if (!requireField(taskPeople, "People")) {
+        setIsSavingTask(false);
+        return;
+      }
+      if (!requireField(taskTime, "Time")) {
+        setIsSavingTask(false);
+        return;
+      }
     }
 
     const taskPeopleNum = isFinishPackage ? 0 : num(taskPeople);
@@ -937,11 +956,13 @@ export default function Packaging() {
 
     if (!isFinishPackage && taskPeopleNum <= 0) {
       showNotice("Invalid People Count", "People must be greater than 0.");
+      setIsSavingTask(false);
       return;
     }
 
     if (!isFinishPackage && taskTimeNum <= 0) {
       showNotice("Invalid Time", "Time must be greater than 0.");
+      setIsSavingTask(false);
       return;
     }
 
@@ -1039,14 +1060,20 @@ export default function Packaging() {
       });
     }
 
-    await updateRealPackagingBatch(selectedInProgress);
-
     setTaskType(PACKAGING_TASKS[0]);
     setSelectedTestTypes([]);
     setTaskPeople("");
     setTaskTime("");
     setTaskNotes("");
     forceRefresh();
+
+    try {
+      showSyncMessageNotice("Task saved locally. Syncing to server...");
+      await updateRealPackagingBatch(selectedInProgress);
+      showSyncMessageNotice("Task synced to server.");
+    } finally {
+      setIsSavingTask(false);
+    }
   }
 
   async function runDeletePackagingBatch(batchId: string) {
@@ -1344,6 +1371,26 @@ export default function Packaging() {
             ))
           )}
         </div>
+
+        {syncMessage ? (
+          <div
+            style={{
+              position: "fixed",
+              right: 18,
+              bottom: 18,
+              zIndex: 11000,
+              background: "rgba(15, 23, 42, 0.96)",
+              border: "1px solid rgba(56, 189, 248, 0.6)",
+              color: "#bae6fd",
+              borderRadius: 10,
+              padding: "8px 12px",
+              fontSize: 13,
+              boxShadow: "0 10px 28px rgba(0,0,0,0.35)",
+            }}
+          >
+            {syncMessage}
+          </div>
+        ) : null}
 
         <div style={cardStyle}>
           <h2 style={{ marginTop: 0 }}>Package Selected Batch</h2>
@@ -1676,8 +1723,12 @@ export default function Packaging() {
               />
 
               {canWriteRecords && (
-                <button style={greenButtonStyle} onClick={savePackagingTask}>
-                  Save Task
+                <button
+                  style={greenButtonStyle}
+                  onClick={savePackagingTask}
+                  disabled={isSavingTask}
+                >
+                  {isSavingTask ? "Saving..." : "Save Task"}
                 </button>
               )}
 

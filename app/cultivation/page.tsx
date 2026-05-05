@@ -349,6 +349,9 @@ export default function Cultivation() {
   const [dryPackagingMode, setDryPackagingMode] = useState("Single package by weight");
   const [dryPackageCategory, setDryPackageCategory] = useState("A Grade Flower");
   const [dryPackageCount, setDryPackageCount] = useState("");
+  const [isSavingTask, setIsSavingTask] = useState(false);
+  const [isSavingDryTask, setIsSavingDryTask] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
 
   const [failBatch, setFailBatch] = useState<any>(null);
   const [failureReason, setFailureReason] = useState("");
@@ -533,6 +536,11 @@ export default function Cultivation() {
       cancelText: "",
       onConfirm: null,
     });
+  }
+
+  function showSyncMessageNotice(message: string) {
+    setSyncMessage(message);
+    window.setTimeout(() => setSyncMessage(""), 2200);
   }
 
   function confirmNotificationModal() {
@@ -1273,12 +1281,14 @@ export default function Cultivation() {
   }
 
   async function saveDryFlowerTask() {
+    if (isSavingDryTask) return;
     if (!canWriteRecords) {
       showReadOnlyNotice();
       return;
     }
 
     if (!selectedDryFlowerBatch) return;
+    setIsSavingDryTask(true);
 
     const dryRequiredFields: { label: string; value: any; positive?: boolean; zeroOrPositive?: boolean }[] = [
       { label: "People", value: dryPeople },
@@ -1289,6 +1299,7 @@ export default function Cultivation() {
       dryRequiredFields.push({ label: "Bucked Weight", value: dryOutput, positive: true });
     }
 
+    try {
     if (selectedDryFlowerTask === "Trimming") {
       dryRequiredFields.push(
         { label: "Total A Grade Flower", value: dryOutput, zeroOrPositive: true },
@@ -1586,6 +1597,9 @@ export default function Cultivation() {
     setDryPackageCount("");
     setShowDryTaskWindow(false);
     forceRefresh();
+    } finally {
+      setIsSavingDryTask(false);
+    }
   }
 
   function toggleFlowerTable(table: string) {
@@ -1597,12 +1611,14 @@ export default function Cultivation() {
   }
 
   async function save() {
+    if (isSavingTask) return;
     if (!canWriteRecords) {
       showReadOnlyNotice();
       return;
     }
 
     if (!selectedBatch) return;
+    setIsSavingTask(true);
 
     const taskRequiredFields: { label: string; value: any; positive?: boolean; zeroOrPositive?: boolean }[] = [
       { label: "People", value: people },
@@ -1623,15 +1639,18 @@ export default function Cultivation() {
     }
 
     if (!requireFieldsStyled(taskRequiredFields)) {
+      setIsSavingTask(false);
       return;
     }
 
     if (!confirmRepeatTask(selectedBatch.id, selectedTask, save)) {
+      setIsSavingTask(false);
       return;
     }
 
     if (selectedTask === "Harvest") {
       saveHarvest();
+      setIsSavingTask(false);
       return;
     }
 
@@ -1676,8 +1695,14 @@ export default function Cultivation() {
     setFlowerBay("A");
     setFlowerTables([]);
     setShowTaskWindow(false);
-    await saveRealCultivationBatch(selectedBatch);
     forceRefresh();
+    try {
+      showSyncMessageNotice("Task saved locally. Syncing to server...");
+      await saveRealCultivationBatch(selectedBatch);
+      showSyncMessageNotice("Task synced to server.");
+    } finally {
+      setIsSavingTask(false);
+    }
   }
 
   const selectedBatchLogs = viewBatch
@@ -2310,8 +2335,8 @@ export default function Cultivation() {
               <button style={buttonStyle} onClick={() => setShowTaskWindow(false)}>
                 Cancel
               </button>
-              <button style={primaryButtonStyle} onClick={save}>
-                Save Task to Batch
+              <button style={primaryButtonStyle} onClick={save} disabled={isSavingTask}>
+                {isSavingTask ? "Saving..." : "Save Task to Batch"}
               </button>
             </div>
           </div>
@@ -2417,13 +2442,37 @@ export default function Cultivation() {
               <button style={buttonStyle} onClick={() => setShowDryTaskWindow(false)}>
                 Cancel
               </button>
-              <button style={primaryButtonStyle} onClick={saveDryFlowerTask}>
-                Save Dry Flower Task
+              <button
+                style={primaryButtonStyle}
+                onClick={saveDryFlowerTask}
+                disabled={isSavingDryTask}
+              >
+                {isSavingDryTask ? "Saving..." : "Save Dry Flower Task"}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {syncMessage ? (
+        <div
+          style={{
+            position: "fixed",
+            right: 18,
+            bottom: 18,
+            zIndex: 11000,
+            background: "rgba(15, 23, 42, 0.96)",
+            border: "1px solid rgba(34, 197, 94, 0.55)",
+            color: "#bbf7d0",
+            borderRadius: 10,
+            padding: "8px 12px",
+            fontSize: 13,
+            boxShadow: "0 10px 28px rgba(0,0,0,0.35)",
+          }}
+        >
+          {syncMessage}
+        </div>
+      ) : null}
 
       {viewBatch && (
         <div style={modalOverlayStyle}>

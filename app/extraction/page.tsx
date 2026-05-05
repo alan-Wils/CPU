@@ -533,6 +533,8 @@ export default function Extraction() {
 
   const [finalOilGrams, setFinalOilGrams] = useState("");
   const [extraTerpsGrams, setExtraTerpsGrams] = useState("");
+  const [isSavingTask, setIsSavingTask] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
 
   const [notificationModal, setNotificationModal] = useState<{
     open: boolean;
@@ -591,6 +593,11 @@ export default function Extraction() {
       cancelText: "",
       onConfirm: null,
     });
+  }
+
+  function showSyncMessageNotice(message: string) {
+    setSyncMessage(message);
+    window.setTimeout(() => setSyncMessage(""), 2200);
   }
 
   function confirmNotificationModal() {
@@ -2001,6 +2008,7 @@ export default function Extraction() {
   }
 
   async function saveTask() {
+    if (isSavingTask) return;
     if (!requireWriteAccess("log extraction tasks")) return;
 
     if (!selectedExt) {
@@ -2039,6 +2047,7 @@ export default function Extraction() {
     }
 
     if (!validateTaskForm()) return;
+    setIsSavingTask(true);
 
     const loggedBy = getLoggedBy();
     const loggedAt = new Date().toLocaleString();
@@ -2167,11 +2176,24 @@ export default function Extraction() {
       time: loggedAt,
     });
 
+    const targetBatchId = selectedExt.id;
+    const localSnapshot = { ...selectedExt };
+    setSelectedExt(localSnapshot);
+    resetTaskForm();
+    setShowTaskModal(false);
+    forceRefresh();
+
     try {
-      const updated = await updateExtractionBatch(selectedExt.id, selectedExt);
+      showSyncMessageNotice("Task saved locally. Syncing to server...");
+      const updated = await updateExtractionBatch(targetBatchId, localSnapshot);
       if (updated && typeof updated === "object") {
-        Object.assign(selectedExt, updated);
+        const row = s.extractionBatches.find((b: any) => b.id === targetBatchId);
+        if (row) Object.assign(row, updated);
+        setSelectedExt((cur: any) =>
+          cur?.id === targetBatchId ? { ...cur, ...updated } : cur
+        );
       }
+      showSyncMessageNotice("Task synced to server.");
     } catch (error) {
       console.error("Could not update extraction real table:", error);
       showNotice(
@@ -2179,11 +2201,9 @@ export default function Extraction() {
         "The extraction task was saved locally, but the real database update failed.",
         "The backup sync will still try to save the current store."
       );
+    } finally {
+      setIsSavingTask(false);
     }
-
-    resetTaskForm();
-    setShowTaskModal(false);
-    forceRefresh();
   }
 
   async function runDeleteBatch(batchId: string) {
@@ -3385,8 +3405,12 @@ export default function Extraction() {
                   </button>
 
                   {userCanWrite ? (
-                    <button style={greenButtonStyle} onClick={saveTask}>
-                      Save Task
+                    <button
+                      style={greenButtonStyle}
+                      onClick={saveTask}
+                      disabled={isSavingTask}
+                    >
+                      {isSavingTask ? "Saving..." : "Save Task"}
                     </button>
                   ) : null}
                 </div>
@@ -3513,6 +3537,26 @@ export default function Extraction() {
             </div>
           </div>
         )}
+
+      {syncMessage ? (
+        <div
+          style={{
+            position: "fixed",
+            right: 18,
+            bottom: 18,
+            zIndex: 11000,
+            background: "rgba(15, 23, 42, 0.96)",
+            border: "1px solid rgba(56, 189, 248, 0.6)",
+            color: "#bae6fd",
+            borderRadius: 10,
+            padding: "8px 12px",
+            fontSize: 13,
+            boxShadow: "0 10px 28px rgba(0,0,0,0.35)",
+          }}
+        >
+          {syncMessage}
+        </div>
+      ) : null}
 
         {viewBatch && (
           <div style={modalBackStyle}>
