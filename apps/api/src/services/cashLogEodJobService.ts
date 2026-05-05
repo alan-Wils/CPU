@@ -77,14 +77,17 @@ export type CashLogEodTrigger = "internal_scheduler" | "cron";
 /** How local “in-window” eligibility is computed (`decideMembershipCashLogDigest`). */
 export type CashLogEodSendWindowMode = "strict_slack" | "eod_local_day";
 
-/** Default: internal scheduler stays strict; sporadic cron can hit after the slack window closes. Override with `CASH_LOG_EOD_SEND_WINDOW_MODE=strict|eod_local_day`. */
+/**
+ * Defaults **both** in-process ticks and cron to **`eod_local_day`** (local time ≥ sendTime through end of calendar day).
+ * Set `CASH_LOG_EOD_SEND_WINDOW_MODE=strict` (alias `strict_slack`) only if you want the narrow `sendTime`…`sendTime+slack` slice for **all** triggers.
+ */
 export function resolveCashLogEodSendWindowMode(
-  trigger: CashLogEodTrigger,
+  _trigger: CashLogEodTrigger,
 ): CashLogEodSendWindowMode {
   const raw = process.env.CASH_LOG_EOD_SEND_WINDOW_MODE?.trim().toLowerCase();
   if (raw === "strict" || raw === "strict_slack") return "strict_slack";
   if (raw === "eod" || raw === "eod_local_day") return "eod_local_day";
-  return trigger === "cron" ? "eod_local_day" : "strict_slack";
+  return "eod_local_day";
 }
 
 function zonedDateKeyForInstant(isoUtc: Date, timeZone: string): string {
@@ -275,7 +278,7 @@ export type CashLogEodMembershipDiag = {
   digestSentScheduleGeneration: number | null;
   /** Legacy diagnostic; always **false** (same-day send cap removed). */
   suppressDuplicateSchedule: boolean;
-  /** Eligibility mode for this job run (`strict_slack` vs remainder of local day for cron). */
+  /** Eligibility mode (`strict_slack` vs remainder of local day); both triggers default `eod_local_day` unless env forces strict. */
   sendWindowMode: CashLogEodSendWindowMode;
   /** Short operator-readable explanation (also in `[cash_log_eod] membership_eval` logs). */
   evalHint?: string;

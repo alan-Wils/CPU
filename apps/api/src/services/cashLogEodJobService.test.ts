@@ -6,6 +6,7 @@ import {
   duplicateDigestSuppressesSameSchedule,
   isAtOrPastConfiguredLocalSendTime,
   isWithinSendWindow,
+  resolveCashLogEodSendWindowMode,
   zonedCalendarParts,
 } from "./cashLogEodJobService.js";
 import type { CashLogEodPrefs } from "../lib/cashLogEodPrefs.js";
@@ -40,6 +41,30 @@ function baseDecisionInput(
 }
 
 describe("cashLogEodJobService", () => {
+  it("resolveCashLogEodSendWindowMode defaults to eod_local_day for cron and internal", () => {
+    const prev = process.env.CASH_LOG_EOD_SEND_WINDOW_MODE;
+    delete process.env.CASH_LOG_EOD_SEND_WINDOW_MODE;
+    try {
+      expect(resolveCashLogEodSendWindowMode("internal_scheduler")).toBe("eod_local_day");
+      expect(resolveCashLogEodSendWindowMode("cron")).toBe("eod_local_day");
+    } finally {
+      if (prev === undefined) delete process.env.CASH_LOG_EOD_SEND_WINDOW_MODE;
+      else process.env.CASH_LOG_EOD_SEND_WINDOW_MODE = prev;
+    }
+  });
+
+  it("resolveCashLogEodSendWindowMode strict env forces strict_slack", () => {
+    const prev = process.env.CASH_LOG_EOD_SEND_WINDOW_MODE;
+    process.env.CASH_LOG_EOD_SEND_WINDOW_MODE = "strict";
+    try {
+      expect(resolveCashLogEodSendWindowMode("internal_scheduler")).toBe("strict_slack");
+      expect(resolveCashLogEodSendWindowMode("cron")).toBe("strict_slack");
+    } finally {
+      if (prev === undefined) delete process.env.CASH_LOG_EOD_SEND_WINDOW_MODE;
+      else process.env.CASH_LOG_EOD_SEND_WINDOW_MODE = prev;
+    }
+  });
+
   it("zonedCalendarParts returns weekday and dateKey in America/New_York", () => {
     const d = new Date("2026-05-05T22:30:00.000Z");
     const p = zonedCalendarParts(d, "America/New_York");

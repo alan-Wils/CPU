@@ -33,9 +33,9 @@ Trigger **every 10 minutes** or **every 15 minutes**.
 
 **Cron-triggered** runs (`POST …/cash-log-eod`) default to **`eod_local_day`** eligibility: once local time is **at or after** each member’s configured `sendTime`, that tick can send. There is **no same-day cap** — each eligible tick sends again. You do **not** need the railway hit to land inside the narrow **`sendTime` … `sendTime + CASH_LOG_EOD_SEND_WINDOW_MINUTES`** slice.
 
-The in-process **internal scheduler** defaults to **`strict_slack`** (same narrow window) so frequent ticks stay tidy when both are enabled.
+The in-process **internal scheduler** uses the **same** default as cron: **`eod_local_day`**, so digest delivery does not require hitting a 25-minute slice.
 
-Set **`CASH_LOG_EOD_SEND_WINDOW_MODE=strict`** on the API to force the narrow window for **both** cron and internal runs. Set **`CASH_LOG_EOD_SEND_WINDOW_MODE=eod_local_day`** to use remainder-of-local-day eligibility for **both**.
+Set **`CASH_LOG_EOD_SEND_WINDOW_MODE=strict`** on the API to force the **narrow** `[sendTime … sendTime + slack]` slice for **both** cron and internal runs.
 
 **Last-sent marker:** `CompanyMembership.cashLogEodLastSentAt` (and `cashLogEodDigestSentScheduleGeneration`) are updated **only after** Resend/SMTP reports success. They are for **auditing / UI**, not to limit how many digests go out per day.
 
@@ -52,7 +52,7 @@ Cron expression examples (cron syntax depends on Railway’s cron UI):
 |----------|-------------------|--------|
 | `CRON_SECRET` | **Yes** | Strong random string, **≥ 16 characters**. Same value used in the `Authorization: Bearer …` header. |
 | `CASH_LOG_EOD_SEND_WINDOW_MINUTES` | No | Default `25`. Used for **`strict_slack`** mode (internal scheduler by default, and cron when `CASH_LOG_EOD_SEND_WINDOW_MODE=strict`). |
-| `CASH_LOG_EOD_SEND_WINDOW_MODE` | No | `strict` \| `eod_local_day` (aliases: `strict_slack`, `eod`). When unset: **cron → `eod_local_day`**, **internal → `strict_slack`**. |
+| `CASH_LOG_EOD_SEND_WINDOW_MODE` | No | `strict` \| `eod_local_day` (aliases: `strict_slack`, `eod`). **Unset:** both cron and internal scheduler use **`eod_local_day`**. |
 | `CASH_LOG_EOD_INTERNAL_SCHEDULER` | No | Default `true`. Leave enabled as a backup, or set `false` if you want **only** Railway Cron to drive the job. |
 
 ## Railway Cron setup (short)
