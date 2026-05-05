@@ -78,6 +78,18 @@ export function nexBatchInviteTierToPlatformRole(tier: NexBatchInviteUiTier): Ne
     throw new Error(`Invalid NexBatch invite tier: ${tier}`);
 }
 
+/** Stored platform role -> portal UI tier. */
+export function platformRoleToNexBatchInviteUiTier(role: NexBatchPlatformRole | string): NexBatchInviteUiTier {
+    const r = String(role || "").trim();
+    if (r === "owner")
+        return "owner";
+    if (r === "nexbatch_admin")
+        return "nexbatch_admin";
+    if (r === "management")
+        return "management";
+    return "staff";
+}
+
 /** Human label for invite email / UI copy. */
 export function nexBatchPlatformRoleInviteLabel(role: NexBatchPlatformRole | string): string {
     const r = String(role || "").trim();

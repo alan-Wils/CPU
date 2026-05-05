@@ -17,6 +17,17 @@ import {
 type NexBatchInviteTier = "owner" | "nexbatch_admin" | "management" | "staff";
 import { loadBackendStore } from "@/lib/backendStore";
 
+type NexBatchStaffRow = {
+  id: string;
+  email: string;
+  platformRole: string;
+  tier: NexBatchInviteTier;
+  roleLabel: string;
+  active: boolean;
+  companiesGranted: number;
+  createdAt: string;
+};
+
 function codeToSlug(code: string): string {
   return code
     .trim()
@@ -69,6 +80,13 @@ function PortalBody() {
   const [staffBusy, setStaffBusy] = useState(false);
   const [staffErr, setStaffErr] = useState("");
   const [staffOk, setStaffOk] = useState<string | null>(null);
+  const [staffRows, setStaffRows] = useState<NexBatchStaffRow[]>([]);
+  const [staffListLoading, setStaffListLoading] = useState(false);
+  const [staffListErr, setStaffListErr] = useState("");
+  const [staffSavingId, setStaffSavingId] = useState<string | null>(null);
+  const [staffEditById, setStaffEditById] = useState<
+    Record<string, { tier: NexBatchInviteTier; active: boolean }>
+  >({});
 
   const fetchAccessibleList = useCallback(async (): Promise<CpuCompany[]> => {
     const raw = await apiRequest<{ companies: CpuCompany[] }>(
@@ -88,6 +106,48 @@ function PortalBody() {
   }, []);
 
   const canCreate = canCreatePlatformCompanies();
+
+  const allowedTierOptions = (
+    [
+      ["staff", "NexBatch Staff"],
+      ["management", "Management"],
+      ["nexbatch_admin", "NexBatch Admin"],
+      ["owner", "Owner (full platform)"],
+    ] as const
+  ).filter(([value]) =>
+    value === "owner"
+      ? String(getAuthUser()?.platformRole || "") === "owner"
+      : true,
+  );
+
+  const fetchStaffRows = useCallback(async () => {
+    if (!canCreate) return;
+    setStaffListLoading(true);
+    setStaffListErr("");
+    try {
+      const out = await apiRequest<{ staff: NexBatchStaffRow[] }>(
+        "/api/nexbatch/staff",
+        { omitCompanyHeader: true },
+      );
+      const rows = out.staff || [];
+      setStaffRows(rows);
+      setStaffEditById(
+        rows.reduce(
+          (acc, row) => {
+            acc[row.id] = { tier: row.tier, active: row.active };
+            return acc;
+          },
+          {} as Record<string, { tier: NexBatchInviteTier; active: boolean }>,
+        ),
+      );
+    } catch (err: unknown) {
+      setStaffListErr(
+        err instanceof Error ? err.message : "Could not load NexBatch staff.",
+      );
+    } finally {
+      setStaffListLoading(false);
+    }
+  }, [canCreate]);
 
   useEffect(() => {
     let cancelled = false;
@@ -137,6 +197,10 @@ function PortalBody() {
       cancelled = true;
     };
   }, [router, searchParams, fetchAccessibleList]);
+
+  useEffect(() => {
+    void fetchStaffRows();
+  }, [fetchStaffRows]);
 
   async function onPick(companyId: string) {
     setError("");
@@ -237,12 +301,41 @@ function PortalBody() {
       );
       setStaffEmail("");
       setStaffTier("staff");
+      await fetchStaffRows();
     } catch (err: unknown) {
       setStaffErr(
         err instanceof Error ? err.message : "Could not send NexBatch staff invite.",
       );
     } finally {
       setStaffBusy(false);
+    }
+  }
+
+  async function onSaveStaffRow(userId: string) {
+    const edit = staffEditById[userId];
+    if (!edit) return;
+    setStaffSavingId(userId);
+    setStaffErr("");
+    setStaffOk(null);
+    try {
+      const out = await apiRequest<NexBatchStaffRow>(`/api/nexbatch/staff/${encodeURIComponent(userId)}`, {
+        method: "PATCH",
+        omitCompanyHeader: true,
+        body: {
+          tier: edit.tier,
+          active: edit.active,
+        },
+      });
+      setStaffRows((prev) => prev.map((row) => (row.id === userId ? out : row)));
+      setStaffEditById((prev) => ({
+        ...prev,
+        [userId]: { tier: out.tier, active: out.active },
+      }));
+      setStaffOk(`Updated ${out.email} to ${out.roleLabel}${out.active ? "" : " (inactive)"}.`);
+    } catch (err: unknown) {
+      setStaffErr(err instanceof Error ? err.message : "Could not update NexBatch staff member.");
+    } finally {
+      setStaffSavingId(null);
     }
   }
 
@@ -486,24 +579,11 @@ function PortalBody() {
                   }}
                   name="nb-staff-tier"
                 >
-                  {(
-                    [
-                      ["staff", "NexBatch Staff"],
-                      ["management", "Management"],
-                      ["nexbatch_admin", "NexBatch Admin"],
-                      ["owner", "Owner (full platform)"],
-                    ] as const
-                  )
-                    .filter(([value]) =>
-                      value === "owner"
-                        ? String(getAuthUser()?.platformRole || "") === "owner"
-                        : true,
-                    )
-                    .map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
+                  {allowedTierOptions.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
                 </select>
               </label>
               <button
@@ -524,6 +604,134 @@ function PortalBody() {
                 {staffBusy ? "Sending…" : "Send invite email"}
               </button>
             </form>
+
+            <div
+              style={{
+                marginTop: 24,
+                paddingTop: 18,
+                borderTop: "1px solid rgba(148, 163, 184, 0.2)",
+              }}
+            >
+              <h3 style={{ margin: "0 0 10px", fontSize: 18, fontWeight: 800 }}>
+                Current NexBatch staff
+              </h3>
+              {staffListErr ? (
+                <p style={{ color: "#fca5a5", fontSize: 13, margin: "6px 0 10px" }}>
+                  {staffListErr}
+                </p>
+              ) : null}
+              {staffListLoading ? (
+                <p style={{ color: "#94a3b8", fontSize: 13, margin: "6px 0 10px" }}>
+                  Loading staff list…
+                </p>
+              ) : null}
+              {!staffListLoading && staffRows.length === 0 ? (
+                <p style={{ color: "#94a3b8", fontSize: 13, margin: "6px 0 10px" }}>
+                  No NexBatch staff users yet.
+                </p>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {staffRows.map((row) => {
+                    const edit = staffEditById[row.id] || {
+                      tier: row.tier,
+                      active: row.active,
+                    };
+                    const saving = staffSavingId === row.id;
+                    return (
+                      <div
+                        key={row.id}
+                        style={{
+                          border: "1px solid rgba(148, 163, 184, 0.28)",
+                          borderRadius: 12,
+                          padding: 12,
+                          background: "#020617",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <strong>{row.email}</strong>
+                          <span style={{ color: row.active ? "#86efac" : "#fca5a5", fontSize: 12, fontWeight: 700 }}>
+                            {row.active ? "ACTIVE" : "INACTIVE"}
+                          </span>
+                        </div>
+                        <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 12 }}>
+                          {row.companiesGranted} workspace(s) • Added {new Date(row.createdAt).toLocaleDateString()}
+                        </p>
+                        <div
+                          style={{
+                            marginTop: 10,
+                            display: "grid",
+                            gridTemplateColumns: "minmax(180px,1fr) auto auto",
+                            gap: 10,
+                            alignItems: "center",
+                          }}
+                        >
+                          <select
+                            value={edit.tier}
+                            onChange={(e) =>
+                              setStaffEditById((prev) => ({
+                                ...prev,
+                                [row.id]: {
+                                  ...edit,
+                                  tier: e.target.value as NexBatchInviteTier,
+                                },
+                              }))
+                            }
+                            style={{ ...inputStyle, marginTop: 0, padding: "8px 10px", fontSize: 14 }}
+                            disabled={saving}
+                          >
+                            {allowedTierOptions.map(([value, label]) => (
+                              <option key={value} value={value}>
+                                {label}
+                              </option>
+                            ))}
+                          </select>
+                          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#cbd5e1" }}>
+                            <input
+                              type="checkbox"
+                              checked={edit.active}
+                              onChange={(e) =>
+                                setStaffEditById((prev) => ({
+                                  ...prev,
+                                  [row.id]: {
+                                    ...edit,
+                                    active: e.target.checked,
+                                  },
+                                }))
+                              }
+                              disabled={saving}
+                            />
+                            Active
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => void onSaveStaffRow(row.id)}
+                            disabled={saving}
+                            style={{
+                              border: "none",
+                              borderRadius: 10,
+                              padding: "8px 12px",
+                              background: saving ? "#475569" : "#0ea5e9",
+                              color: "white",
+                              fontWeight: 800,
+                              cursor: saving ? "wait" : "pointer",
+                            }}
+                          >
+                            {saving ? "Saving…" : "Save"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </section>
         )}
 

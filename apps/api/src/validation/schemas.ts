@@ -87,6 +87,18 @@ export const inviteNexBatchStaffSchema = z.object({
     email: z.string().email().max(200),
     tier: z.enum(["owner", "nexbatch_admin", "management", "staff"]),
 });
+export const updateNexBatchStaffSchema = z.object({
+    tier: z.enum(["owner", "nexbatch_admin", "management", "staff"]).optional(),
+    active: z.boolean().optional(),
+}).superRefine((data, ctx) => {
+    if (data.tier === undefined && data.active === undefined) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Provide at least one field to update.",
+            path: ["tier"],
+        });
+    }
+});
 export const updateCompanySchema = z.preprocess((raw) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw))
         return raw;

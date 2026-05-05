@@ -175,6 +175,7 @@ export default function ConfigPage() {
   const [fieldModalTableName, setFieldModalTableName] = useState("");
   const [fieldModalSquareFeet, setFieldModalSquareFeet] = useState("");
   const [fieldModalError, setFieldModalError] = useState("");
+  const [saveSuccessModalOpen, setSaveSuccessModalOpen] = useState(false);
 
   const [strainForm, setStrainForm] = useState({
     name: "",
@@ -301,7 +302,7 @@ export default function ConfigPage() {
 
       const data = await res.json();
       setConfig(data);
-      alert("Config saved");
+      setSaveSuccessModalOpen(true);
     } catch (error) {
       console.error(error);
       alert("Could not save config");
@@ -1368,6 +1369,58 @@ export default function ConfigPage() {
               </button>
               <button type="button" style={styles.saveButton} onClick={confirmCultivationFieldModal}>
                 {cultivationFieldModal.kind === "addBay" ? "Add bay" : "Add table"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {saveSuccessModalOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="save-config-success-title"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 20002,
+            background: "rgba(2,6,23,0.88)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSaveSuccessModalOpen(false);
+          }}
+        >
+          <div
+            style={{
+              ...styles.card,
+              maxWidth: 560,
+              width: "100%",
+              margin: 0,
+              border: "1px solid #334155",
+              boxShadow: "0 24px 48px rgba(0,0,0,0.45)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              id="save-config-success-title"
+              style={{ ...styles.sectionTitle, marginTop: 0, marginBottom: 8 }}
+            >
+              Config saved
+            </h3>
+            <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
+              Company settings were saved successfully.
+            </p>
+            <div style={{ ...styles.inline, justifyContent: "flex-end", marginTop: 16 }}>
+              <button
+                type="button"
+                style={styles.saveButton}
+                onClick={() => setSaveSuccessModalOpen(false)}
+              >
+                OK
               </button>
             </div>
           </div>
