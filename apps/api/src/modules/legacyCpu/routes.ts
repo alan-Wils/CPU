@@ -8,7 +8,7 @@ import { Prisma, SourceMaterialRole } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
-import { requireRole, requireRoleOrAppPermission } from "../../middleware/rbac.js";
+import { requireRole } from "../../middleware/rbac.js";
 import { WorkflowService } from "../../services/workflowService.js";
 import { StoreService } from "../../services/storeService.js";
 import { TaskService } from "../../services/taskService.js";
@@ -32,25 +32,6 @@ function snapshotForStoreSave(snap) {
         completedPackagingBatches: snap.completedPackagingBatches ?? [],
         logs: snap.logs ?? []
     };
-}
-/** Keep Production panel in sync when only `/api/source-batches` is written (company store PUT often skipped in DATABASE_ONLY). */
-function upsertProductionBatchMirror(base, row) {
-    const id = String(row?.id ?? "").trim();
-    if (!id)
-        return;
-    const list = Array.isArray(base.productionBatches) ? [...base.productionBatches] : [];
-    const idx = list.findIndex((b) => String(b?.id ?? "") === id);
-    if (idx >= 0)
-        list[idx] = { ...list[idx], ...row, id };
-    else
-        list.unshift(row);
-    base.productionBatches = list;
-}
-function removeProductionBatchMirror(base, id) {
-    const idStr = String(id ?? "").trim();
-    if (!idStr)
-        return;
-    base.productionBatches = (Array.isArray(base.productionBatches) ? base.productionBatches : []).filter((b) => String(b?.id ?? "") !== idStr);
 }
 function mapSourcePackageToLegacyBatch(p) {
     const batch = p.sourceChain?.cultivationBatch;
@@ -162,20 +143,32 @@ function asUiRecord(value: unknown): Record<string, unknown> {
 function mergeRecord(base: unknown, patch: unknown): Record<string, unknown> {
     return { ...asUiRecord(base), ...asUiRecord(patch) };
 }
-/** Active + completed legacy source rows from the company JSON snapshot (used packages move to completed). */
-function allLegacySourceRowsInSnap(snap: unknown): unknown[] {
-    const s = snap as {
-        sourceBatches?: unknown[];
-        completedSourceBatches?: unknown[];
-    } | null | undefined;
-    const open = Array.isArray(s?.sourceBatches) ? s.sourceBatches : [];
-    const done = Array.isArray(s?.completedSourceBatches) ? s.completedSourceBatches : [];
-    return [...open, ...done];
+/** Merge company-store snapshot into a DB-backed extraction row without losing newer task progress. */
+function mergeExtractionLegacyRow(
+    fromDb: Record<string, unknown>,
+    fromStore: Record<string, unknown>
+): Record<string, unknown> {
+    const db = asUiRecord(fromDb);
+    const st = asUiRecord(fromStore);
+    const tdDb = asUiRecord(db.taskData);
+    const tdSt = asUiRecord(st.taskData);
+    const taskData = { ...tdSt, ...tdDb };
+    const ctDb = Array.isArray(db.completedTasks) ? (db.completedTasks as unknown[]).map(String) : [];
+    const ctSt = Array.isArray(st.completedTasks) ? (st.completedTasks as unknown[]).map(String) : [];
+    const completedTasks = [...ctDb, ...ctSt.filter((t) => !ctDb.includes(t))];
+    return {
+        ...st,
+        ...db,
+        taskData,
+        completedTasks
+    };
 }
 /** SPA source row id → cultivation batch id from company store snapshot. */
 function cultivationIdFromSourceRowInSnap(sourceId: string, snap: unknown): string | null {
-    const list = allLegacySourceRowsInSnap(snap);
-    const fromStore = list.find((item) => String((item as { id?: unknown })?.id) === String(sourceId));
+    const list = Array.isArray((snap as { sourceBatches?: unknown })?.sourceBatches)
+        ? (snap as { sourceBatches: unknown[] }).sourceBatches
+        : [];
+    const fromStore = list.find((s) => String((s as { id?: unknown })?.id) === String(sourceId));
     if (!fromStore || typeof fromStore !== "object")
         return null;
     const row = fromStore as {
@@ -187,9 +180,8 @@ function cultivationIdFromSourceRowInSnap(sourceId: string, snap: unknown): stri
     return cid != null && String(cid).length > 0 ? String(cid) : null;
 }
 /**
- * ExtractionRun has a single cultivationBatchId FK; legacy SPA allows multiple source packages from
- * different cultivations. Resolve each source, then anchor the FK to the first source’s cultivation
- * (full source list stays in extraction JSON). Prefer company-store rows (incl. completed) before Prisma id.
+ * Every extraction run ties to one cultivation batch. Resolve from each source (store or SourcePackage);
+ * all must map to the same cultivation id.
  */
 async function resolveCultivationBatchIdForExtractionCreate(companyId: string, body: Record<string, unknown>, snap: unknown): Promise<string> {
     const direct = String(body.cultivationBatchId ?? "").trim();
@@ -207,22 +199,10 @@ async function resolveCultivationBatchIdForExtractionCreate(companyId: string, b
     }
     const ids: string[] = [];
     for (const row of sources) {
-        const r = row && typeof row === "object"
-            ? (row as { sourceId?: unknown; source?: unknown; cultivationBatchId?: unknown })
-            : {};
+        const r = row && typeof row === "object" ? (row as { sourceId?: unknown }) : {};
         const sid = String(r.sourceId ?? "").trim();
         if (!sid) {
             throw new AppError("Each source row must have sourceId", 400);
-        }
-        const embeddedCult = String(r.source ?? r.cultivationBatchId ?? "").trim();
-        if (embeddedCult) {
-            const embeddedRow = await prisma.cultivationBatch.findFirst({
-                where: { id: embeddedCult, companyId }
-            });
-            if (embeddedRow) {
-                ids.push(embeddedCult);
-                continue;
-            }
         }
         const fromSnap = cultivationIdFromSourceRowInSnap(sid, snap);
         if (fromSnap) {
@@ -240,22 +220,10 @@ async function resolveCultivationBatchIdForExtractionCreate(companyId: string, b
         throw new AppError(`Could not resolve cultivation batch for source ${sid}`, 400);
     }
     const unique = [...new Set(ids)];
-    if (ids.length === 0 || !unique.length) {
-        throw new AppError("Could not resolve cultivation batch for extraction sources", 400);
+    if (unique.length > 1) {
+        throw new AppError("All sources must belong to the same cultivation batch for one extraction run", 400);
     }
-    let cultivationBatchId: string;
-    if (unique.length === 1) {
-        cultivationBatchId = unique[0];
-    }
-    else {
-        cultivationBatchId = ids[0];
-        logInfo("[WORKFLOW_FIX] extraction_run_multi_cultivation_anchor", {
-            companyId,
-            anchoredCultivationBatchId: cultivationBatchId,
-            distinctCultivationBatchIds: unique,
-            sourceCultivationOrder: ids
-        });
-    }
+    const cultivationBatchId = unique[0];
     const batchRow = await prisma.cultivationBatch.findFirst({
         where: { id: cultivationBatchId, companyId }
     });
@@ -556,7 +524,8 @@ legacyCpuRouter.put("/cultivation/:batchId", requireRole(cultivationWriteRoles),
     res.json(mapped);
 }));
 /** Matches `workflowRouter.delete("/cultivation-batches/:batchId")` — OWNER/ADMIN only. */
-legacyCpuRouter.delete("/cultivation/:batchId", requireRoleOrAppPermission(["OWNER", "ADMIN"], "workflow.delete"), asyncHandler(async (req, res) => {
+const cultivationDeleteRoles = ["OWNER", "ADMIN"];
+legacyCpuRouter.delete("/cultivation/:batchId", requireRole(cultivationDeleteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const batchId = String(req.params.batchId || "");
     const out = await workflowService.deleteCultivation(companyId, req.auth.userId, batchId);
@@ -584,11 +553,11 @@ legacyCpuRouter.get("/extraction", asyncHandler(async (req, res) => {
         if (!id)
             continue;
         const prev = byId.get(id);
-        byId.set(id, prev ? mergeRecord(asUiRecord(prev), row) : row);
+        byId.set(id, prev ? mergeExtractionLegacyRow(asUiRecord(prev), asUiRecord(row)) : row);
     }
     res.json([...byId.values()]);
 }));
-legacyCpuRouter.post("/extraction", requireRoleOrAppPermission(extractionWriteRoles, "page.extraction"), asyncHandler(async (req, res) => {
+legacyCpuRouter.post("/extraction", requireRole(extractionWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const body = asUiRecord(req.body);
     const customId = String(body.id ?? "").trim();
@@ -621,7 +590,7 @@ legacyCpuRouter.post("/extraction", requireRoleOrAppPermission(extractionWriteRo
     });
     res.status(201).json(mapExtractionRunToLegacy(run));
 }));
-legacyCpuRouter.put("/extraction/:runId", requireRoleOrAppPermission(extractionWriteRoles, "page.extraction"), asyncHandler(async (req, res) => {
+legacyCpuRouter.put("/extraction/:runId", requireRole(extractionWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const runId = String(req.params.runId || "");
     const body = req.body || {};
@@ -672,7 +641,7 @@ legacyCpuRouter.put("/extraction/:runId", requireRoleOrAppPermission(extractionW
     res.json(mapped);
 }));
 /** SPA `lib/extractionApi.deleteExtractionBatchRecord` — same path family as GET/POST/PUT. */
-legacyCpuRouter.delete("/extraction/:runId", requireRoleOrAppPermission(["OWNER", "ADMIN"], "workflow.delete"), asyncHandler(async (req, res) => {
+legacyCpuRouter.delete("/extraction/:runId", requireRole(extractionWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const runId = String(req.params.runId || "");
     const out = await workflowService.deleteExtractionRun(companyId, req.auth.userId, runId);
@@ -792,7 +761,7 @@ legacyCpuRouter.put("/packaging/:lotId", requireRole(packagingWriteRoles), async
     });
     res.json(mapped);
 }));
-legacyCpuRouter.delete("/packaging/:lotId", requireRoleOrAppPermission(["OWNER", "ADMIN"], "workflow.delete"), asyncHandler(async (req, res) => {
+legacyCpuRouter.delete("/packaging/:lotId", requireRole(packagingWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const lotId = String(req.params.lotId || "");
     const out = await workflowService.deletePackagingLot(companyId, req.auth.userId, lotId);
@@ -824,7 +793,7 @@ legacyCpuRouter.get("/source-batches", asyncHandler(async (req, res) => {
         byId.set(String(row?.id || ""), row);
     res.json([...byId.values()].filter((row) => Boolean(row?.id)));
 }));
-legacyCpuRouter.post("/source-batches", requireRoleOrAppPermission(sourceBatchWriteRoles, "page.cultivation"), asyncHandler(async (req, res) => {
+legacyCpuRouter.post("/source-batches", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const body = req.body || {};
     const id = String(body.id || "").trim();
@@ -835,18 +804,16 @@ legacyCpuRouter.post("/source-batches", requireRoleOrAppPermission(sourceBatchWr
     const base = snapshotForStoreSave(snap);
     const current = Array.isArray(base.sourceBatches) ? [...base.sourceBatches] : [];
     const idx = current.findIndex((b) => String(b?.id || "") === id);
-    const merged = idx >= 0 ? { ...current[idx], ...body } : body;
     if (idx >= 0)
-        current[idx] = merged;
+        current[idx] = { ...current[idx], ...body };
     else
-        current.unshift(merged);
+        current.unshift(body);
     base.sourceBatches = current;
-    upsertProductionBatchMirror(base, merged);
     await storeService.save(companyId, req.auth.userId, base);
     logInfo("[WORKFLOW_FIX] legacy_source_batch_saved", { entityType: "LegacySourceBatch", entityId: id });
-    res.status(201).json(merged);
+    res.status(201).json(body);
 }));
-legacyCpuRouter.put("/source-batches/:id", requireRoleOrAppPermission(sourceBatchWriteRoles, "page.cultivation"), asyncHandler(async (req, res) => {
+legacyCpuRouter.put("/source-batches/:id", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const id = String(req.params.id || "").trim();
     const body = req.body || {};
@@ -857,20 +824,17 @@ legacyCpuRouter.put("/source-batches/:id", requireRoleOrAppPermission(sourceBatc
     if (idx < 0) {
         throw new AppError("Source batch not found", 404);
     }
-    const merged = { ...current[idx], ...body, id: current[idx].id };
-    current[idx] = merged;
+    current[idx] = { ...current[idx], ...body, id: current[idx].id };
     base.sourceBatches = current;
-    upsertProductionBatchMirror(base, merged);
     await storeService.save(companyId, req.auth.userId, base);
     res.json(current[idx]);
 }));
-legacyCpuRouter.delete("/source-batches/:id", requireRoleOrAppPermission(["OWNER", "ADMIN"], "workflow.delete"), asyncHandler(async (req, res) => {
+legacyCpuRouter.delete("/source-batches/:id", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const id = String(req.params.id || "").trim();
     const snap = await storeService.load(companyId);
     const base = snapshotForStoreSave(snap);
     base.sourceBatches = (base.sourceBatches || []).filter((b) => String(b?.id || "") !== id);
-    removeProductionBatchMirror(base, id);
     await storeService.save(companyId, req.auth.userId, base);
     res.json({ ok: true });
 }));

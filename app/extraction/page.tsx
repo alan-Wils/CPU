@@ -608,8 +608,26 @@ export default function Extraction() {
     return batch.completedTasks;
   }
 
+  function taskDataShowsCompleted(batch: any, task: string): boolean {
+    const td = batch?.taskData?.[task];
+    if (td === undefined || td === null) return false;
+    if (Array.isArray(td)) return td.length > 0;
+    if (typeof td === "object") return Object.keys(td).length > 0;
+    return Boolean(td);
+  }
+
   function hasCompletedTask(batch: any, task: string) {
-    return getCompletedTasks(batch).includes(task);
+    if (optionalRepeatableTasks.includes(task)) {
+      return (
+        getCompletedTasks(batch).includes(task) ||
+        getCompletedTasks(batch).some((t: string) => t.startsWith(`${task} `))
+      );
+    }
+    if (task === "Testing") {
+      return getTestingStatus(batch) === "Test Passed";
+    }
+    if (getCompletedTasks(batch).includes(task)) return true;
+    return taskDataShowsCompleted(batch, task);
   }
 
   function getTestingStatus(batch: any) {
