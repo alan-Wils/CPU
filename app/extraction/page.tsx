@@ -296,6 +296,22 @@ function getSourceAcronym(src: any) {
   return "MIX";
 }
 
+function normalizeBlendNamePart(name: any) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/\b(fresh\s*frozen|freshfrozen|dry\s*trim|drytrim|trim|flower|popcorn)\b/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function normalizeBlendTokenFromSourceRow(row: any) {
+  const acr = cleanAcronym(row?.acronym);
+  if (acr) return `acr:${acr}`;
+  const normalizedName = normalizeBlendNamePart(row?.name || row?.type || "");
+  if (normalizedName) return `name:${normalizedName}`;
+  return "";
+}
+
 type BlendNameHistoryRow = {
   id: string;
   blendKey: string;
@@ -693,16 +709,24 @@ export default function Extraction() {
   }
 
   function makeBlendSignatureFromBatch(batch: any) {
-    const parts = collectStrainNamesForExtractionBatch(batch)
-      .map((n) => String(n || "").trim())
+    const sourceRows = Array.isArray(batch?.sources) ? batch.sources : [];
+    const fromRows = sourceRows
+      .map((row: any) => normalizeBlendTokenFromSourceRow(row))
+      .filter(Boolean);
+    const fallbackFromNames = collectStrainNamesForExtractionBatch(batch)
+      .map((n) => normalizeBlendNamePart(n))
       .filter(Boolean)
-      .map((n) => n.toLowerCase())
+      .map((n) => `name:${n}`);
+    const parts = [...new Set((fromRows.length ? fromRows : fallbackFromNames).filter(Boolean))]
       .sort();
+    const prettyLabelParts = parts.map((p) =>
+      String(p)
+        .replace(/^(acr:|name:)/, "")
+        .replace(/\b\w/g, (c) => c.toUpperCase())
+    );
     return {
       blendKey: parts.join("|"),
-      blendLabel: parts
-        .map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase()))
-        .join(" · "),
+      blendLabel: prettyLabelParts.join(" · "),
     };
   }
 
