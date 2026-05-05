@@ -410,6 +410,20 @@ export default function Cultivation() {
         await hydrateTaskLogsFromApi();
         await loadConfigStrains();
 
+        /** Company store may list FF/trim only under sourceBatches (DATABASE_ONLY skips full PUT); mirror into production panel. */
+        const prodIds = new Set(
+          (s.productionBatches || []).map((b: any) => String(b?.id || ""))
+        );
+        for (const src of s.sourceBatches || []) {
+          const id = String(src?.id || "");
+          if (!id || prodIds.has(id)) continue;
+          const typ = String(src?.type || "");
+          if (typ === "Fresh Frozen" || typ === "Dry Trim") {
+            s.productionBatches.unshift({ ...src });
+            prodIds.add(id);
+          }
+        }
+
         const realCultivationBatches = await loadCultivationBatches();
 
         if (!mounted) return;
@@ -1089,15 +1103,17 @@ export default function Cultivation() {
     }
 
     if (harvestType === "Fresh Frozen") {
+      const gramsParsed = num(String(freshFrozenGrams ?? "").replace(/,/g, ""));
+      const weightLbs = +(gramsParsed / 453.592).toFixed(4);
       const freshFrozenBatch = {
         id: `FF-${selectedBatch.id}-${Date.now().toString().slice(-4)}`,
         name: `${selectedBatch.strain} Fresh Frozen`,
         type: "Fresh Frozen",
-        amount: `${freshFrozenBundles || 0} bundles / ${
-          freshFrozenGrams || 0
-        } grams`,
+        amount: `${freshFrozenBundles || 0} bundles / ${gramsParsed} grams`,
         bundles: Number(freshFrozenBundles || 0),
-        grams: Number(freshFrozenGrams || 0),
+        grams: gramsParsed,
+        /** Extraction availability uses weightLbs / grams; always set both for stable sync. */
+        weightLbs,
         plantsHarvested,
         source: selectedBatch.id,
         status: "Available for Extraction",

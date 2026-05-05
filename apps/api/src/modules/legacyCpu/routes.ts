@@ -33,6 +33,25 @@ function snapshotForStoreSave(snap) {
         logs: snap.logs ?? []
     };
 }
+/** Keep Production panel in sync when only `/api/source-batches` is written (company store PUT often skipped in DATABASE_ONLY). */
+function upsertProductionBatchMirror(base, row) {
+    const id = String(row?.id ?? "").trim();
+    if (!id)
+        return;
+    const list = Array.isArray(base.productionBatches) ? [...base.productionBatches] : [];
+    const idx = list.findIndex((b) => String(b?.id ?? "") === id);
+    if (idx >= 0)
+        list[idx] = { ...list[idx], ...row, id };
+    else
+        list.unshift(row);
+    base.productionBatches = list;
+}
+function removeProductionBatchMirror(base, id) {
+    const idStr = String(id ?? "").trim();
+    if (!idStr)
+        return;
+    base.productionBatches = (Array.isArray(base.productionBatches) ? base.productionBatches : []).filter((b) => String(b?.id ?? "") !== idStr);
+}
 function mapSourcePackageToLegacyBatch(p) {
     const batch = p.sourceChain?.cultivationBatch;
     const typeMap = {
@@ -805,7 +824,7 @@ legacyCpuRouter.get("/source-batches", asyncHandler(async (req, res) => {
         byId.set(String(row?.id || ""), row);
     res.json([...byId.values()].filter((row) => Boolean(row?.id)));
 }));
-legacyCpuRouter.post("/source-batches", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
+legacyCpuRouter.post("/source-batches", requireRoleOrAppPermission(sourceBatchWriteRoles, "page.cultivation"), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const body = req.body || {};
     const id = String(body.id || "").trim();
@@ -816,16 +835,18 @@ legacyCpuRouter.post("/source-batches", requireRole(sourceBatchWriteRoles), asyn
     const base = snapshotForStoreSave(snap);
     const current = Array.isArray(base.sourceBatches) ? [...base.sourceBatches] : [];
     const idx = current.findIndex((b) => String(b?.id || "") === id);
+    const merged = idx >= 0 ? { ...current[idx], ...body } : body;
     if (idx >= 0)
-        current[idx] = { ...current[idx], ...body };
+        current[idx] = merged;
     else
-        current.unshift(body);
+        current.unshift(merged);
     base.sourceBatches = current;
+    upsertProductionBatchMirror(base, merged);
     await storeService.save(companyId, req.auth.userId, base);
     logInfo("[WORKFLOW_FIX] legacy_source_batch_saved", { entityType: "LegacySourceBatch", entityId: id });
-    res.status(201).json(body);
+    res.status(201).json(merged);
 }));
-legacyCpuRouter.put("/source-batches/:id", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
+legacyCpuRouter.put("/source-batches/:id", requireRoleOrAppPermission(sourceBatchWriteRoles, "page.cultivation"), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const id = String(req.params.id || "").trim();
     const body = req.body || {};
@@ -836,8 +857,10 @@ legacyCpuRouter.put("/source-batches/:id", requireRole(sourceBatchWriteRoles), a
     if (idx < 0) {
         throw new AppError("Source batch not found", 404);
     }
-    current[idx] = { ...current[idx], ...body, id: current[idx].id };
+    const merged = { ...current[idx], ...body, id: current[idx].id };
+    current[idx] = merged;
     base.sourceBatches = current;
+    upsertProductionBatchMirror(base, merged);
     await storeService.save(companyId, req.auth.userId, base);
     res.json(current[idx]);
 }));
@@ -847,6 +870,7 @@ legacyCpuRouter.delete("/source-batches/:id", requireRoleOrAppPermission(["OWNER
     const snap = await storeService.load(companyId);
     const base = snapshotForStoreSave(snap);
     base.sourceBatches = (base.sourceBatches || []).filter((b) => String(b?.id || "") !== id);
+    removeProductionBatchMirror(base, id);
     await storeService.save(companyId, req.auth.userId, base);
     res.json({ ok: true });
 }));
