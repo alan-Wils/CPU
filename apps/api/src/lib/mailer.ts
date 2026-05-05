@@ -272,14 +272,14 @@ export async function sendHtmlEmail(opts: {
             "[mail] SMTP fallback disabled (RESEND_FALLBACK_SMTP=false); fix Resend/domain or unset this. Context:",
             ref,
           );
-          return;
+          throw new Error("Resend failed and SMTP fallback is disabled.");
         }
         if (!shouldRetrySmtpAfterResendError(err)) {
           console.warn(
             "[mail] Skipping SMTP after Resend 4xx — fix domain/key/from in Resend (set RESEND_SMTP_AFTER_RESEND_4XX=true to force SMTP). Context:",
             ref,
           );
-          return;
+          throw err instanceof Error ? err : new Error(String(err));
         }
       }
     }
@@ -292,7 +292,7 @@ export async function sendHtmlEmail(opts: {
       "[mail] No email transport: set RESEND_API_KEY + RESEND_FROM, or SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS. Context:",
       ref,
     );
-    return;
+    throw new Error("No email transport configured.");
   }
 
   if (!from) {
@@ -300,7 +300,7 @@ export async function sendHtmlEmail(opts: {
       "[mail] Set EMAIL_FROM or SMTP_FROM (or SMTP_USER). Context:",
       ref,
     );
-    return;
+    throw new Error("Email sender address is not configured.");
   }
 
   const secure = process.env.SMTP_SECURE?.toLowerCase() === "true";

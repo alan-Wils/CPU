@@ -120,7 +120,27 @@ const envSchema = z
             return undefined;
         const t = v.trim();
         return t === "" ? undefined : t;
-    }, z.string().min(16).optional())
+    }, z.string().min(16).optional()),
+    /** Optional in-process fallback for cash-log digest job when external cron is missing. */
+    CASH_LOG_EOD_INTERNAL_SCHEDULER: z.preprocess((v) => {
+        if (v === undefined || v === null || v === "")
+            return true;
+        if (typeof v === "boolean")
+            return v;
+        const s = String(v).trim().toLowerCase();
+        if (s === "true" || s === "1" || s === "yes")
+            return true;
+        if (s === "false" || s === "0" || s === "no")
+            return false;
+        return true;
+    }, z.boolean().default(true)),
+    /** Poll cadence for the in-process cash-log digest scheduler (minutes). */
+    CASH_LOG_EOD_INTERNAL_EVERY_MINUTES: z.preprocess((v) => {
+        if (v === undefined || v === null || v === "")
+            return 5;
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.max(1, Math.floor(n)) : 5;
+    }, z.number().int().min(1).max(60).default(5))
 })
     .superRefine((data, ctx) => {
     if (data.NODE_ENV !== "production")

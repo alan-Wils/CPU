@@ -14,6 +14,7 @@ import { errorMiddleware } from "./middleware/error.js";
 import { prisma } from "./config/prisma.js";
 import { logInfo, logError, logWarn } from "./lib/logger.js";
 import { registerUploadStreamRoutes, uploadsUseS3 } from "./lib/uploadStorage.js";
+import { runCashLogEodJob } from "./services/cashLogEodJobService.js";
 const app = express();
 app.use(helmet());
 app.use(cors({
@@ -121,6 +122,39 @@ app.get("/accept-invite", (req, res) => {
 });
 app.use("/api", appRouter);
 app.use(errorMiddleware);
+
+let cashLogEodSchedulerRunning = false;
+function startInternalCashLogEodSchedulerIfEnabled() {
+    if (!env.CASH_LOG_EOD_INTERNAL_SCHEDULER)
+        return;
+    const everyMs = env.CASH_LOG_EOD_INTERNAL_EVERY_MINUTES * 60 * 1000;
+    const runOnce = async () => {
+        if (cashLogEodSchedulerRunning)
+            return;
+        cashLogEodSchedulerRunning = true;
+        try {
+            const out = await runCashLogEodJob();
+            logInfo("cash_log_eod_internal_tick", out);
+        }
+        catch (error) {
+            logWarn("cash_log_eod_internal_tick_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+        finally {
+            cashLogEodSchedulerRunning = false;
+        }
+    };
+    setTimeout(() => {
+        void runOnce();
+    }, 30_000);
+    setInterval(() => {
+        void runOnce();
+    }, everyMs);
+    logInfo("cash_log_eod_internal_scheduler_started", {
+        everyMinutes: env.CASH_LOG_EOD_INTERNAL_EVERY_MINUTES,
+    });
+}
 async function start() {
     try {
         await prisma.$connect();
@@ -138,6 +172,7 @@ async function start() {
                 mail_smtp: Boolean(env.SMTP_HOST && env.SMTP_PORT && env.SMTP_USER && env.SMTP_PASS),
                 cors_allowlist: describeCorsAllowlist(env.CORS_ORIGIN),
             });
+            startInternalCashLogEodSchedulerIfEnabled();
         });
     }
     catch (error) {
