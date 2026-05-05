@@ -89,6 +89,15 @@ function isCompletedSourceBatch(batch: any) {
   );
 }
 
+/** True when `id` is a Prisma `SourcePackage` cuid (merged from the real DB), not a legacy `FF-…` / `TRIM-…` tag. */
+function isLikelyDatabaseSourcePackageId(id: unknown): boolean {
+  const s = String(id ?? "").trim();
+  if (!s) return false;
+  if (/^(FF|TRIM)-/i.test(s)) return false;
+  if (/^[A-Z]{2,4}-[A-Z0-9.-]+\d{6}/i.test(s) && s.length < 36) return false;
+  return /^c[a-z0-9]{20,}$/i.test(s) || (!s.includes("-") && s.length >= 22);
+}
+
 const ROLE_LEVELS: Record<string, number> = {
   VIEW_ONLY: 1,
   CULTIVATION: 2,
@@ -2451,7 +2460,20 @@ export default function Extraction() {
                     }}
                   >
                     <div style={{ flex: 1 }}>
-                      <b>{b.id}</b> | {b.name || b.type} | Material:{" "}
+                      {isLikelyDatabaseSourcePackageId(b.id) ? (
+                        <>
+                          <b>{b.name || b.type || "Source package"}</b>
+                          <span style={{ color: "#94a3b8", fontSize: 13 }}>
+                            {" "}
+                            · {b.id}
+                          </span>
+                          {" | Material: "}
+                        </>
+                      ) : (
+                        <>
+                          <b>{b.id}</b> | {b.name || b.type} | Material:{" "}
+                        </>
+                      )}
                       {materialType === "freshFrozen"
                         ? "Fresh Frozen"
                         : materialType === "dryTrim"
@@ -2488,8 +2510,22 @@ export default function Extraction() {
               s.completedSourceBatches.map((b: any) => (
                 <div key={b.id} style={{ ...rowStyle, background: "#111827" }}>
                   <div style={{ flex: 1 }}>
-                    <b>{b.id}</b> | {b.name || b.type} | Status: Complete |
-                    Completed: {b.completedAt}
+                    {isLikelyDatabaseSourcePackageId(b.id) ? (
+                      <>
+                        <b>{b.name || b.type || "Source package"}</b>
+                        <span style={{ color: "#94a3b8", fontSize: 13 }}>
+                          {" "}
+                          · {b.id}
+                        </span>
+                        {" | Status: Complete | Completed: "}
+                      </>
+                    ) : (
+                      <>
+                        <b>{b.id}</b> | {b.name || b.type} | Status: Complete |
+                        Completed:{" "}
+                      </>
+                    )}
+                    {b.completedAt}
                   </div>
 
                   {userCanDelete ? (

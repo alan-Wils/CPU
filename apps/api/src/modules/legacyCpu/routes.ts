@@ -900,9 +900,24 @@ legacyCpuRouter.put("/source-batches/:id", requireRole(sourceBatchWriteRoles), a
 legacyCpuRouter.delete("/source-batches/:id", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const id = String(req.params.id || "").trim();
+    if (!id) {
+        throw new AppError("Source batch id is required", 400);
+    }
     const snap = await storeService.load(companyId);
     const base = snapshotForStoreSave(snap);
     base.sourceBatches = (base.sourceBatches || []).filter((b) => String(b?.id || "") !== id);
+    base.completedSourceBatches = (base.completedSourceBatches || []).filter((b) => String(b?.id || "") !== id);
+    base.productionBatches = (base.productionBatches || []).filter((b) => String(b?.id || "") !== id);
+    try {
+        await workflowService.deleteSourcePackage(companyId, req.auth.userId, id);
+        logInfo("[WORKFLOW_FIX] prisma_source_package_deleted", { entityType: "SourcePackage", entityId: id });
+    }
+    catch (error) {
+        const is404 = error instanceof AppError && error.statusCode === 404;
+        if (!is404)
+            throw error;
+    }
     await storeService.save(companyId, req.auth.userId, base);
+    logInfo("[WORKFLOW_FIX] legacy_source_batch_deleted", { entityType: "LegacySourceBatch", entityId: id });
     res.json({ ok: true });
 }));
