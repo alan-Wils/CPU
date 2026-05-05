@@ -479,6 +479,7 @@ export default function Extraction() {
   const [aiNameSuggestions, setAiNameSuggestions] = useState<string[]>([]);
   const [draftFinishBatchName, setDraftFinishBatchName] = useState("");
   const [draftFinishBatchCode, setDraftFinishBatchCode] = useState("");
+  const [finishBatchManualName, setFinishBatchManualName] = useState("");
 
   const [type, setType] = useState(productTypes[0]);
   const [sourceInputs, setSourceInputs] = useState<any[]>([
@@ -1283,6 +1284,7 @@ export default function Extraction() {
     setAiNameSuggestions([]);
     setDraftFinishBatchName("");
     setDraftFinishBatchCode("");
+    setFinishBatchManualName("");
   }
 
   async function generateAiProductNames() {
@@ -1325,6 +1327,7 @@ export default function Extraction() {
     setFinalProduct(allowedProducts[0] || b.productType || productTypes[0]);
     setDraftFinishBatchName("");
     setDraftFinishBatchCode("");
+    setFinishBatchManualName("");
     setSelectedTask(getDefaultTaskForBatch(b));
     setShowTaskModal(true);
   }
@@ -2122,11 +2125,26 @@ export default function Extraction() {
     }
 
     if (selectedTask === "Finish Batch") {
-      if (!isBlank(draftFinishBatchName)) {
-        selectedExt.name = draftFinishBatchName.trim();
+      const sourceNames = collectStrainNamesForExtractionBatch(selectedExt);
+      const singleSourceName = sourceNames.length === 1 ? sourceNames[0] : "";
+      const chosenName =
+        finishBatchManualName.trim() || draftFinishBatchName.trim() || singleSourceName;
+
+      if (sourceNames.length > 1 && isBlank(chosenName)) {
+        showNotice(
+          "Batch Name Required",
+          "This extraction uses multiple source packages, so the finished batch must be named.",
+          "Enter a manual name or use AI to generate one."
+        );
+        setIsSavingTask(false);
+        return;
       }
-      if (!isBlank(draftFinishBatchCode)) {
-        selectedExt.marketBatchCode = draftFinishBatchCode.trim();
+
+      if (!isBlank(chosenName)) {
+        selectedExt.name = chosenName.trim();
+        selectedExt.marketBatchCode = !isBlank(draftFinishBatchCode)
+          ? draftFinishBatchCode.trim()
+          : makeMarketBatchCode(chosenName.trim(), selectedExt.id);
       }
       selectedExt.status = "Finished - Sent To Packaging";
       selectedExt.finalOilGrams = finalOilGrams;
@@ -3364,6 +3382,18 @@ export default function Extraction() {
                   <>
                     <input
                       style={inputStyle}
+                      placeholder="Batch name (required for multi-source; optional for single source)"
+                      value={finishBatchManualName}
+                      onChange={(e) => {
+                        setFinishBatchManualName(e.target.value);
+                        if (!isBlank(e.target.value)) {
+                          setDraftFinishBatchCode("");
+                        }
+                      }}
+                    />
+
+                    <input
+                      style={inputStyle}
                       placeholder="Total Weight Final Oil (grams)"
                       value={finalOilGrams}
                       onChange={(e) => setFinalOilGrams(e.target.value)}
@@ -3397,7 +3427,13 @@ export default function Extraction() {
                     <p style={{ color: "#cbd5e1", fontSize: 14 }}>
                       Product title:{" "}
                       <b style={{ color: "#e2e8f0" }}>
-                        {draftFinishBatchName || selectedExt?.name || "—"}
+                        {finishBatchManualName ||
+                          draftFinishBatchName ||
+                          (collectStrainNamesForExtractionBatch(selectedExt).length === 1
+                            ? collectStrainNamesForExtractionBatch(selectedExt)[0]
+                            : "") ||
+                          selectedExt?.name ||
+                          "—"}
                       </b>
                       {(draftFinishBatchCode || selectedExt?.marketBatchCode) ? (
                         <>
@@ -3528,6 +3564,7 @@ export default function Extraction() {
                           const marketBatchCode = makeMarketBatchCode(sug, selectedExt.id);
                           setDraftFinishBatchName(sug);
                           setDraftFinishBatchCode(marketBatchCode);
+                          setFinishBatchManualName("");
                           setShowAiNameModal(false);
                         }}
                       >
