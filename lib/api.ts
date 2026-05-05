@@ -173,11 +173,23 @@ export async function apiRequest<T = any>(
     headers["X-Company-Id"] = selectedCompanyId;
   }
 
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    method: options.method || "GET",
-    headers,
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-  });
+  const requestUrl = `${API_BASE_URL}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(requestUrl, {
+      method: options.method || "GET",
+      headers,
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    });
+  } catch (error) {
+    const msg =
+      error instanceof Error
+        ? error.message
+        : "Network request failed";
+    throw new Error(
+      `Could not reach API (${requestUrl}). ${msg}. Check API deployment, NEXT_PUBLIC_API_URL, CORS, and network.`,
+    );
+  }
 
   const text = await res.text();
 

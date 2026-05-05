@@ -1084,6 +1084,18 @@ export default function Packaging() {
       null;
     const loggedBy = getLoggedBy();
 
+    try {
+      await deletePackagingBatchRecord(batchId);
+    } catch (error) {
+      console.error("Could not delete packaging batch from real table:", error);
+      const msg =
+        error instanceof Error
+          ? error.message
+          : "The server rejected the delete.";
+      showNotice("Backend delete failed", msg);
+      return;
+    }
+
     await addBackendLog({
       area: "Audit",
       batch: batchId,
@@ -1131,17 +1143,6 @@ export default function Packaging() {
       setTaskPeople("");
       setTaskTime("");
       setTaskNotes("");
-    }
-
-    try {
-      await deletePackagingBatchRecord(batchId);
-    } catch (error) {
-      console.error("Could not delete packaging batch from real table:", error);
-      showNotice(
-        "Backend Delete Warning",
-        "Packaging was removed locally, but the real PackagingBatch table delete failed.",
-        "Check the backend terminal for errors."
-      );
     }
 
     forceRefresh();
