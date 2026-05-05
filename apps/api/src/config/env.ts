@@ -113,7 +113,14 @@ const envSchema = z
             return undefined;
         const t = v.trim().replace(/\/+$/, "");
         return t === "" ? undefined : t;
-    }, z.string().url().optional())
+    }, z.string().url().optional()),
+    /** Bearer secret for POST /api/internal/jobs/* (e.g. cash-log EOD digest). Optional. */
+    CRON_SECRET: z.preprocess((v) => {
+        if (typeof v !== "string")
+            return undefined;
+        const t = v.trim();
+        return t === "" ? undefined : t;
+    }, z.string().min(16).optional())
 })
     .superRefine((data, ctx) => {
     if (data.NODE_ENV !== "production")

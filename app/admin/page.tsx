@@ -15,10 +15,13 @@ import PageAccessGate from "@/components/PageAccessGate";
 import {
   API_BASE_URL,
   apiRequest,
+  CashLogEodPrefsDto,
   deletePendingInvite,
+  fetchCashLogEodPrefs,
   getMe,
   getSelectedCompanyId,
   inviteUser,
+  saveCashLogEodPrefs,
   setSelectedCompanyId,
 } from "@/lib/api";
 import { getAuthCompany, getAuthToken, getAuthUser } from "@/lib/auth";
@@ -89,6 +92,17 @@ function normalizePendingInvites(raw: unknown): PendingInvite[] {
 }
 
 const PENDING_INVITE_ROW_PREFIX = "pending-invite:";
+
+const CASH_EOD_WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const CASH_EOD_TIMEZONE_OPTIONS = [
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "America/Phoenix",
+  "Pacific/Honolulu",
+  "UTC",
+] as const;
 
 /**
  * `InviteToken` rows are not `User` rows until accept-invite. Merge them into the
@@ -265,6 +279,17 @@ function canCreateUsers(role: string) {
 function canManageUsers(role: string) {
   const r = normalizePlatformRole(role);
   return r === "OWNER" || r === "ADMIN";
+}
+
+/** Financial logs panel, digest email, and read-only cash/check views. */
+function canAccessFinancialAdminTools(role: string) {
+  const r = normalizePlatformRole(role);
+  return (
+    r === "OWNER" ||
+    r === "ADMIN" ||
+    r === "OPERATIONS_MANAGER" ||
+    r === "FINANCIAL_ANALYST"
+  );
 }
 
 type CheckMime = "image/jpeg" | "image/jpg" | "image/png" | "image/webp";
@@ -453,6 +478,18 @@ export default function AdminPage() {
   const [editCashReceiptUploading, setEditCashReceiptUploading] = useState(false);
   const [editCashSaving, setEditCashSaving] = useState(false);
   const [editCashError, setEditCashError] = useState("");
+
+  const [cashEodModalOpen, setCashEodModalOpen] = useState(false);
+  const [cashEodLoading, setCashEodLoading] = useState(false);
+  const [cashEodSaving, setCashEodSaving] = useState(false);
+  const [cashEodError, setCashEodError] = useState("");
+  const [cashEodPrefs, setCashEodPrefs] = useState<CashLogEodPrefsDto>({
+    enabled: false,
+    weekdays: [1, 2, 3, 4, 5],
+    sendTime: "17:00",
+    window: "LAST_24H",
+    timezone: "America/New_York",
+  });
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -674,8 +711,54 @@ export default function AdminPage() {
     }
   }
 
+  function toggleCashEodWeekday(day: number) {
+    setCashEodPrefs((p) => {
+      const set = new Set(p.weekdays);
+      if (set.has(day)) set.delete(day);
+      else set.add(day);
+      let weekdays = [...set].sort((a, b) => a - b);
+      if (!weekdays.length) weekdays = [day];
+      return { ...p, weekdays };
+    });
+  }
+
+  async function openCashEodSettings() {
+    const cid = checksCompanyId();
+    if (!cid) {
+      setCashEodError("Select a company before opening email settings.");
+      return;
+    }
+    setCashEodModalOpen(true);
+    setCashEodError("");
+    setCashEodLoading(true);
+    try {
+      const { prefs } = await fetchCashLogEodPrefs(cid);
+      setCashEodPrefs(prefs);
+    } catch (e: any) {
+      setCashEodError(e?.message || "Could not load email settings.");
+    } finally {
+      setCashEodLoading(false);
+    }
+  }
+
+  async function saveCashEodSettings() {
+    const cid = checksCompanyId();
+    if (!cid) return;
+    setCashEodError("");
+    setCashEodSaving(true);
+    try {
+      const { prefs } = await saveCashLogEodPrefs(cid, cashEodPrefs);
+      setCashEodPrefs(prefs);
+      setCashEodModalOpen(false);
+    } catch (e: any) {
+      setCashEodError(e?.message || "Could not save email settings.");
+    } finally {
+      setCashEodSaving(false);
+    }
+  }
+
   async function loadCashEntries() {
-    if (!canManageUsers(currentUser?.role || "")) return;
+    if (!canAccessFinancialAdminTools(currentUser?.role || "")) return;
     const cid = checksCompanyId();
     if (!cid) return;
     setCashListLoading(true);
@@ -803,8 +886,8 @@ export default function AdminPage() {
   async function exportCashLogCsv() {
     setCashFormError("");
     setCashFormSuccess("");
-    if (!canManageUsers(currentUser?.role || "")) {
-      setCashFormError("Only OWNER or ADMIN can export cash data.");
+    if (!canAccessFinancialAdminTools(currentUser?.role || "")) {
+      setCashFormError("You do not have access to export cash data.");
       return;
     }
     const cid = checksCompanyId();
@@ -2336,7 +2419,7 @@ export default function AdminPage() {
                 </section>
               </section>
 
-              {canManageUsers(currentUser?.role || "") ? (
+              {canAccessFinancialAdminTools(currentUser?.role || "") ? (
                 <section style={{ ...panelStyle, marginTop: 22 }}>
                   <h2 style={sectionTitleStyle}>Financial logs</h2>
                   <p
@@ -2388,7 +2471,35 @@ export default function AdminPage() {
                     >
                       Open cash log…
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => void openCashEodSettings()}
+                      style={{
+                        ...smallButtonStyle,
+                        background: "rgba(251, 191, 36, 0.12)",
+                        border: "1px solid rgba(251, 191, 36, 0.45)",
+                        color: "#fde68a",
+                        cursor: "pointer",
+                      }}
+                    >
+                      EOD digest email…
+                    </button>
                   </div>
+                  <p
+                    style={{
+                      color: "#64748b",
+                      fontSize: 13,
+                      marginTop: 12,
+                      marginBottom: 0,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    Schedule a digest of cash log rows (logged time). Example: weekdays 5:00 PM with “last 24 hours”, or
+                    Fridays only with “last 7 days”. Requires{" "}
+                    <code style={{ color: "#94a3b8" }}>CRON_SECRET</code> on the API and a cron job POSTing to{" "}
+                    <code style={{ color: "#94a3b8" }}>/api/internal/jobs/cash-log-eod</code> every ~15–30 minutes with{" "}
+                    <code style={{ color: "#94a3b8" }}>Authorization: Bearer …</code>.
+                  </p>
                 </section>
               ) : null}
         {checkLogOpen ? (
@@ -2792,6 +2903,20 @@ export default function AdminPage() {
                 History filter matches entry date (UTC calendar day); rows with no entry date use logged time for the
                 same range. Use Direction to show only incoming or outgoing rows.
               </p>
+              {!canManageUsers(currentUser?.role || "") ? (
+                <div
+                  style={{
+                    ...messageStyle,
+                    marginBottom: 14,
+                    background: "rgba(30, 58, 138, 0.35)",
+                    border: "1px solid rgba(96, 165, 250, 0.4)",
+                    color: "#bfdbfe",
+                  }}
+                >
+                  View only: only <strong>Owner</strong> or <strong>Admin</strong> can add, edit, or delete cash
+                  entries. You can still review history and export.
+                </div>
+              ) : null}
               {cashFormError ? (
                 <div
                   style={{
@@ -2818,6 +2943,15 @@ export default function AdminPage() {
                   {cashFormSuccess}
                 </div>
               ) : null}
+              <fieldset
+                disabled={!canManageUsers(currentUser?.role || "")}
+                style={{
+                  border: "none",
+                  margin: 0,
+                  padding: 0,
+                  minWidth: 0,
+                }}
+              >
               <div
                 style={{
                   display: "grid",
@@ -3002,6 +3136,7 @@ export default function AdminPage() {
                   {cashSaving ? "Saving…" : "Save cash entry"}
                 </button>
               </div>
+              </fieldset>
               <div
                 style={{
                   borderTop: "1px solid rgba(148, 163, 184, 0.2)",
@@ -3161,39 +3296,43 @@ export default function AdminPage() {
                               )}
                             </td>
                             <td style={checkTdStyle}>
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                                <button
-                                  type="button"
-                                  disabled={editCashSaving && cashBeingEdited?.id === row.id}
-                                  onClick={() => setCashBeingEdited(row)}
-                                  style={{
-                                    ...smallButtonStyle,
-                                    background: "rgba(30, 64, 175, 0.45)",
-                                    border: "1px solid rgba(96, 165, 250, 0.5)",
-                                    color: "#dbeafe",
-                                    cursor: editCashSaving && cashBeingEdited?.id === row.id ? "wait" : "pointer",
-                                  }}
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={deletingCashId === row.id}
-                                  onClick={() => requestDeleteCashEntry(row)}
-                                  style={{
-                                    ...smallButtonStyle,
-                                    background:
-                                      deletingCashId === row.id
-                                        ? "rgba(71, 85, 105, 0.5)"
-                                        : "rgba(127, 29, 29, 0.55)",
-                                    border: "1px solid rgba(248, 113, 113, 0.45)",
-                                    color: "#fecaca",
-                                    cursor: deletingCashId === row.id ? "wait" : "pointer",
-                                  }}
-                                >
-                                  {deletingCashId === row.id ? "…" : "Delete"}
-                                </button>
-                              </div>
+                              {canManageUsers(currentUser?.role || "") ? (
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                  <button
+                                    type="button"
+                                    disabled={editCashSaving && cashBeingEdited?.id === row.id}
+                                    onClick={() => setCashBeingEdited(row)}
+                                    style={{
+                                      ...smallButtonStyle,
+                                      background: "rgba(30, 64, 175, 0.45)",
+                                      border: "1px solid rgba(96, 165, 250, 0.5)",
+                                      color: "#dbeafe",
+                                      cursor: editCashSaving && cashBeingEdited?.id === row.id ? "wait" : "pointer",
+                                    }}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={deletingCashId === row.id}
+                                    onClick={() => requestDeleteCashEntry(row)}
+                                    style={{
+                                      ...smallButtonStyle,
+                                      background:
+                                        deletingCashId === row.id
+                                          ? "rgba(71, 85, 105, 0.5)"
+                                          : "rgba(127, 29, 29, 0.55)",
+                                      border: "1px solid rgba(248, 113, 113, 0.45)",
+                                      color: "#fecaca",
+                                      cursor: deletingCashId === row.id ? "wait" : "pointer",
+                                    }}
+                                  >
+                                    {deletingCashId === row.id ? "…" : "Delete"}
+                                  </button>
+                                </div>
+                              ) : (
+                                <span style={{ color: "#64748b" }}>—</span>
+                              )}
                             </td>
                           </tr>
                         ))
@@ -3202,6 +3341,160 @@ export default function AdminPage() {
                   </table>
                 </div>
               </div>
+            </div>
+          </div>
+        ) : null}
+
+        {cashEodModalOpen ? (
+          <div style={{ ...modalOverlayStyle, zIndex: 1120 }}>
+            <div
+              style={{
+                ...modalStyle,
+                maxWidth: 520,
+                width: "100%",
+                maxHeight: "92vh",
+                overflowY: "auto",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                  marginBottom: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                <h2 style={{ ...sectionTitleStyle, marginBottom: 0 }}>Cash log digest email</h2>
+                <button
+                  type="button"
+                  onClick={() => setCashEodModalOpen(false)}
+                  style={{ ...modalButtonStyle }}
+                >
+                  Close
+                </button>
+              </div>
+              <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.55, fontSize: 14 }}>
+                Applies to <strong>your</strong> account in the current company. Pick which weekdays to send, the local
+                time, timezone, and whether the body covers the last 24 hours or the last 7 days (rolling from send
+                time).
+              </p>
+              {cashEodError ? (
+                <div
+                  style={{
+                    ...messageStyle,
+                    marginBottom: 12,
+                    background: "rgba(127, 29, 29, 0.58)",
+                    border: "1px solid rgba(248, 113, 113, 0.5)",
+                    color: "#fecaca",
+                  }}
+                >
+                  {cashEodError}
+                </div>
+              ) : null}
+              {cashEodLoading ? (
+                <p style={{ color: "#94a3b8" }}>Loading…</p>
+              ) : (
+                <>
+                  <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={cashEodPrefs.enabled}
+                      onChange={(e) => setCashEodPrefs((p) => ({ ...p, enabled: e.target.checked }))}
+                    />
+                    <span>Send digest emails when the schedule matches</span>
+                  </label>
+                  <div style={{ marginTop: 16, marginBottom: 8, fontWeight: 800, color: "#e2e8f0" }}>Days (local)</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {CASH_EOD_WEEKDAY_LABELS.map((label, day) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => toggleCashEodWeekday(day)}
+                        style={{
+                          ...smallButtonStyle,
+                          background: cashEodPrefs.weekdays.includes(day)
+                            ? "rgba(34, 197, 94, 0.35)"
+                            : "rgba(51, 65, 85, 0.55)",
+                          border: cashEodPrefs.weekdays.includes(day)
+                            ? "1px solid rgba(34, 197, 94, 0.55)"
+                            : "1px solid rgba(148, 163, 184, 0.25)",
+                          color: cashEodPrefs.weekdays.includes(day) ? "#bbf7d0" : "#cbd5e1",
+                          cursor: "pointer",
+                          minWidth: 44,
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+                      gap: 14,
+                      marginTop: 16,
+                    }}
+                  >
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Send time (local)
+                      <input
+                        type="time"
+                        value={cashEodPrefs.sendTime}
+                        onChange={(e) => setCashEodPrefs((p) => ({ ...p, sendTime: e.target.value }))}
+                        style={{ ...inputStyle }}
+                      />
+                    </label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Timezone
+                      <select
+                        value={cashEodPrefs.timezone}
+                        onChange={(e) => setCashEodPrefs((p) => ({ ...p, timezone: e.target.value }))}
+                        style={{ ...inputStyle }}
+                      >
+                        {CASH_EOD_TIMEZONE_OPTIONS.map((tz) => (
+                          <option key={tz} value={tz}>
+                            {tz}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>
+                      Window
+                      <select
+                        value={cashEodPrefs.window}
+                        onChange={(e) =>
+                          setCashEodPrefs((p) => ({
+                            ...p,
+                            window: e.target.value as CashLogEodPrefsDto["window"],
+                          }))
+                        }
+                        style={{ ...inputStyle }}
+                      >
+                        <option value="LAST_24H">Last 24 hours (rolling)</option>
+                        <option value="LAST_7_DAYS">Last 7 days (rolling)</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 22 }}>
+                    <button
+                      type="button"
+                      disabled={cashEodSaving}
+                      onClick={() => void saveCashEodSettings()}
+                      style={{
+                        ...smallButtonStyle,
+                        background: cashEodSaving ? "rgba(71, 85, 105, 0.5)" : "#22c55e",
+                        border: "1px solid rgba(34, 197, 94, 0.7)",
+                        color: "white",
+                        cursor: cashEodSaving ? "wait" : "pointer",
+                      }}
+                    >
+                      {cashEodSaving ? "Saving…" : "Save schedule"}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         ) : null}

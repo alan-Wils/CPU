@@ -392,7 +392,7 @@ export async function saveLog(
   });
 }
 
-/** Strain-only labels; server builds the OpenAI user prompt from default file, guided plain-text settings, or full Markdown override. */
+/** Strain-only labels; server builds the OpenAI prompt from `apps/api/prompts/extraction-product-name.md`. */
 export async function suggestExtractionProductNames(
   strains: string[],
   companyId?: string
@@ -404,5 +404,35 @@ export async function suggestExtractionProductNames(
       body: { strains },
       companyId,
     }
+  );
+}
+
+/** Per-company membership: scheduled cash / financial log digest email. */
+export type CashLogEodPrefsDto = {
+  enabled: boolean;
+  weekdays: number[];
+  sendTime: string;
+  window: "LAST_24H" | "LAST_7_DAYS";
+  timezone: string;
+};
+
+function withCompanyIdQuery(path: string, companyId: string) {
+  const id = String(companyId || "").trim();
+  if (!id) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}companyId=${encodeURIComponent(id)}`;
+}
+
+export async function fetchCashLogEodPrefs(companyId: string) {
+  return apiRequest<{ prefs: CashLogEodPrefsDto }>(
+    withCompanyIdQuery("/api/cash-log/eod-prefs", companyId),
+    { companyId },
+  );
+}
+
+export async function saveCashLogEodPrefs(companyId: string, prefs: CashLogEodPrefsDto) {
+  return apiRequest<{ prefs: CashLogEodPrefsDto }>(
+    withCompanyIdQuery("/api/cash-log/eod-prefs", companyId),
+    { method: "PUT", body: prefs, companyId },
   );
 }

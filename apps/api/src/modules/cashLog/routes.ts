@@ -8,8 +8,14 @@ import { cashLogCreateSchema, cashLogUpdateSchema, checkUploadSchema } from "../
 import { CashLogService } from "../../services/cashLogService.js";
 import { AppError } from "../../errors/AppError.js";
 import { logInfo } from "../../lib/logger.js";
+import { prisma } from "../../config/prisma.js";
+import {
+    cashLogEodPrefsSchema,
+    mergeCashLogEodPrefs,
+} from "../../lib/cashLogEodPrefs.js";
 
-const adminRoles = ["OWNER", "ADMIN"];
+const cashLogWriteRoles = ["OWNER", "ADMIN"];
+const cashLogReadRoles = ["OWNER", "ADMIN", "OPERATIONS_MANAGER", "FINANCIAL_ANALYST"];
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const listQuerySchema = z.object({
     take: z.coerce.number().int().positive().max(500).optional(),
@@ -27,7 +33,7 @@ const cashLogIdParam = z.object({ id: z.string().cuid() });
 export const cashLogRouter = Router();
 const service = new CashLogService();
 
-cashLogRouter.get("/export", requireRole([...adminRoles]), validate({ query: exportQuerySchema }), asyncHandler(async (req, res) => {
+cashLogRouter.get("/export", requireRole([...cashLogReadRoles]), validate({ query: exportQuerySchema }), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     if (!companyId) {
         throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
@@ -46,7 +52,7 @@ cashLogRouter.get("/export", requireRole([...adminRoles]), validate({ query: exp
     res.send(csv);
 }));
 
-cashLogRouter.get("/", requireRole([...adminRoles]), validate({ query: listQuerySchema }), asyncHandler(async (req, res) => {
+cashLogRouter.get("/", requireRole([...cashLogReadRoles]), validate({ query: listQuerySchema }), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     if (!companyId) {
         throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
@@ -61,7 +67,7 @@ cashLogRouter.get("/", requireRole([...adminRoles]), validate({ query: listQuery
     res.json({ rows });
 }));
 
-cashLogRouter.post("/upload-receipt", requireRole([...adminRoles]), validate({ body: checkUploadSchema }), asyncHandler(async (req, res) => {
+cashLogRouter.post("/upload-receipt", requireRole([...cashLogWriteRoles]), validate({ body: checkUploadSchema }), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     if (!companyId) {
         throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
@@ -77,7 +83,7 @@ cashLogRouter.post("/upload-receipt", requireRole([...adminRoles]), validate({ b
     res.status(201).json(uploaded);
 }));
 
-cashLogRouter.post("/", requireRole([...adminRoles]), validate({ body: cashLogCreateSchema }), asyncHandler(async (req, res) => {
+cashLogRouter.post("/", requireRole([...cashLogWriteRoles]), validate({ body: cashLogCreateSchema }), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     if (!companyId) {
         throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
@@ -97,7 +103,7 @@ cashLogRouter.post("/", requireRole([...adminRoles]), validate({ body: cashLogCr
     res.status(201).json(saved);
 }));
 
-cashLogRouter.patch("/:id", requireRole([...adminRoles]), validate({ params: cashLogIdParam, body: cashLogUpdateSchema }), asyncHandler(async (req, res) => {
+cashLogRouter.patch("/:id", requireRole([...cashLogWriteRoles]), validate({ params: cashLogIdParam, body: cashLogUpdateSchema }), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     if (!companyId) {
         throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
@@ -111,7 +117,7 @@ cashLogRouter.patch("/:id", requireRole([...adminRoles]), validate({ params: cas
     res.json(updated);
 }));
 
-cashLogRouter.delete("/:id", requireRole([...adminRoles]), validate({ params: cashLogIdParam }), asyncHandler(async (req, res) => {
+cashLogRouter.delete("/:id", requireRole([...cashLogWriteRoles]), validate({ params: cashLogIdParam }), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     if (!companyId) {
         throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
@@ -124,3 +130,36 @@ cashLogRouter.delete("/:id", requireRole([...adminRoles]), validate({ params: ca
     });
     res.status(204).send();
 }));
+
+cashLogRouter.get("/eod-prefs", requireRole([...cashLogReadRoles]), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const userId = req.auth?.userId as string | undefined;
+    if (!companyId || !userId) {
+        throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
+    }
+    const m = await prisma.companyMembership.findUnique({
+        where: { userId_companyId: { userId, companyId } },
+        select: { cashLogEodPrefs: true },
+    });
+    const prefs = mergeCashLogEodPrefs(m?.cashLogEodPrefs ?? null);
+    res.json({ prefs });
+}));
+
+cashLogRouter.put(
+    "/eod-prefs",
+    requireRole([...cashLogReadRoles]),
+    validate({ body: cashLogEodPrefsSchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const userId = req.auth?.userId as string | undefined;
+        if (!companyId || !userId) {
+            throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
+        }
+        const body = req.body as z.infer<typeof cashLogEodPrefsSchema>;
+        await prisma.companyMembership.update({
+            where: { userId_companyId: { userId, companyId } },
+            data: { cashLogEodPrefs: body },
+        });
+        res.json({ prefs: body });
+    }),
+);

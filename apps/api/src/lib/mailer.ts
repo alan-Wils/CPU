@@ -232,25 +232,16 @@ async function deliverOnce(opts: {
 }
 
 /**
- * Sends invite mail via Resend (HTTPS) when configured, else SMTP when fully configured;
- * otherwise logs the invite URL for operators.
+ * Generic HTML email (digests, etc.) — same Resend / SMTP stack as invites.
  */
-export async function sendInviteEmail(opts: {
+export async function sendHtmlEmail(opts: {
   to: string;
-  inviteUrl: string;
-  companyName: string;
-  role: string;
+  subject: string;
+  html: string;
+  /** Shown in logs when transports are misconfigured (e.g. invite URL). */
+  logContext?: string;
 }): Promise<void> {
-  const subject = `You're invited to ${opts.companyName}`;
-  const html = `
-      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
-        <h2>You were invited to ${escapeHtml(opts.companyName)}</h2>
-        <p>Your role: <strong>${escapeHtml(opts.role)}</strong></p>
-        <p>Accept your invite and set your password:</p>
-        <p><a href="${opts.inviteUrl}">Accept invite</a></p>
-        <p style="font-size: 12px; color: #666;">${escapeHtml(opts.inviteUrl)}</p>
-      </div>
-    `;
+  const ref = opts.logContext || opts.to;
 
   if (resendConfigured()) {
     const resendFrom =
@@ -258,18 +249,18 @@ export async function sendInviteEmail(opts: {
       inviteFromAddress();
     if (!resendFrom) {
       console.warn(
-        "[mail] RESEND_API_KEY set but need RESEND_FROM or EMAIL_FROM / SMTP_FROM. Invite URL:",
-        opts.inviteUrl,
+        "[mail] RESEND_API_KEY set but need RESEND_FROM or EMAIL_FROM / SMTP_FROM. Context:",
+        ref,
       );
     } else {
       try {
         await sendInviteViaResend({
           from: resendFrom,
           to: opts.to,
-          subject,
-          html,
+          subject: opts.subject,
+          html: opts.html,
         });
-        console.log("[mail] Invite email sent via Resend to", opts.to);
+        console.log("[mail] HTML email sent via Resend to", opts.to);
         return;
       } catch (err) {
         console.error(
@@ -278,15 +269,15 @@ export async function sendInviteEmail(opts: {
         );
         if (!resendSmtpFallbackEnabled()) {
           console.warn(
-            "[mail] SMTP fallback disabled (RESEND_FALLBACK_SMTP=false); fix Resend/domain or unset this. Invite URL:",
-            opts.inviteUrl,
+            "[mail] SMTP fallback disabled (RESEND_FALLBACK_SMTP=false); fix Resend/domain or unset this. Context:",
+            ref,
           );
           return;
         }
         if (!shouldRetrySmtpAfterResendError(err)) {
           console.warn(
-            "[mail] Skipping SMTP after Resend 4xx — fix domain/key/from in Resend (set RESEND_SMTP_AFTER_RESEND_4XX=true to force SMTP). Invite URL:",
-            opts.inviteUrl,
+            "[mail] Skipping SMTP after Resend 4xx — fix domain/key/from in Resend (set RESEND_SMTP_AFTER_RESEND_4XX=true to force SMTP). Context:",
+            ref,
           );
           return;
         }
@@ -298,16 +289,16 @@ export async function sendInviteEmail(opts: {
 
   if (!smtpFullyConfigured()) {
     console.warn(
-      "[mail] No email transport: set RESEND_API_KEY + RESEND_FROM, or SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS. Invite URL:",
-      opts.inviteUrl,
+      "[mail] No email transport: set RESEND_API_KEY + RESEND_FROM, or SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS. Context:",
+      ref,
     );
     return;
   }
 
   if (!from) {
     console.warn(
-      "[mail] Set EMAIL_FROM or SMTP_FROM (or SMTP_USER). Invite URL:",
-      opts.inviteUrl,
+      "[mail] Set EMAIL_FROM or SMTP_FROM (or SMTP_USER). Context:",
+      ref,
     );
     return;
   }
@@ -334,8 +325,8 @@ export async function sendInviteEmail(opts: {
       await deliverOnce({
         from,
         to: opts.to,
-        html,
-        subject,
+        html: opts.html,
+        subject: opts.subject,
         connectHost,
         tlsServername,
         port: p.port,
@@ -357,6 +348,35 @@ export async function sendInviteEmail(opts: {
       throw err;
     }
   }
+}
+
+/**
+ * Sends invite mail via Resend (HTTPS) when configured, else SMTP when fully configured;
+ * otherwise logs the invite URL for operators.
+ */
+export async function sendInviteEmail(opts: {
+  to: string;
+  inviteUrl: string;
+  companyName: string;
+  role: string;
+}): Promise<void> {
+  const subject = `You're invited to ${opts.companyName}`;
+  const html = `
+      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+        <h2>You were invited to ${escapeHtml(opts.companyName)}</h2>
+        <p>Your role: <strong>${escapeHtml(opts.role)}</strong></p>
+        <p>Accept your invite and set your password:</p>
+        <p><a href="${opts.inviteUrl}">Accept invite</a></p>
+        <p style="font-size: 12px; color: #666;">${escapeHtml(opts.inviteUrl)}</p>
+      </div>
+    `;
+
+  await sendHtmlEmail({
+    to: opts.to,
+    subject,
+    html,
+    logContext: opts.inviteUrl,
+  });
 }
 
 function escapeHtml(text: string): string {

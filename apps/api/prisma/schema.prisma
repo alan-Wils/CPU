@@ -170,6 +170,10 @@ model CompanyMembership {
   role      NexBatchCompanyRole
   /// JSON string[] of `AppPermissionId` (e.g. `page.cultivation`). `null` = use role defaults.
   appPermissions Json?
+  /// Optional per-user schedule for cash / financial log digest email (see `cashLogEodPrefsSchema`).
+  cashLogEodPrefs      Json?
+  /// Last successful EOD digest send (dedupe + ops); optional.
+  cashLogEodLastSentAt DateTime?
   createdAt DateTime            @default(now())
   updatedAt DateTime            @updatedAt
 

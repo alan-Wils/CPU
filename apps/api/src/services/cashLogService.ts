@@ -275,6 +275,35 @@ export class CashLogService {
             }
         });
     }
+    /**
+     * Digest / automation: rows whose `createdAt` falls in `[from, to]` (inclusive).
+     */
+    async listByCreatedAtRange(companyId: string, from: Date, to: Date) {
+        if (!(from instanceof Date) || !(to instanceof Date) || from > to) {
+            throw new AppError("Invalid datetime range for cash log query.", 400, "CASH_LOG_RANGE_INVALID");
+        }
+        return prisma.cashLogEntry.findMany({
+            where: {
+                companyId,
+                createdAt: { gte: from, lte: to },
+            },
+            orderBy: { createdAt: "desc" },
+            take: 2000,
+            select: {
+                id: true,
+                direction: true,
+                amount: true,
+                payeeCompany: true,
+                invoiceNumber: true,
+                department: true,
+                memo: true,
+                entryDate: true,
+                receiptImageUrl: true,
+                createdAt: true,
+            },
+        });
+    }
+
     async listForExport(companyId: string, opts: { from: string; to: string; direction?: "INCOMING" | "OUTGOING" }) {
         const range = buildUtcDayRange(opts);
         if (!range) {

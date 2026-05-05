@@ -19,8 +19,11 @@ import { cashLogRouter } from "./modules/cashLog/routes.js";
 import { legacyCpuRouter } from "./modules/legacyCpu/routes.js";
 import { nexbatchRouter } from "./modules/nexbatch/routes.js";
 import { extractionAssistRouter } from "./modules/extractionAssist/routes.js";
+import { internalJobsRouter } from "./modules/internal/jobsRoutes.js";
 export const appRouter = Router();
 appRouter.use("/auth", authRouter);
+/** Cron / worker hooks (Bearer CRON_SECRET) — must not run behind JWT. */
+appRouter.use("/internal/jobs", internalJobsRouter);
 appRouter.use(authMiddleware);
 appRouter.use(asyncHandler(companyContextMiddleware));
 appRouter.use("/companies", companiesRouter);
