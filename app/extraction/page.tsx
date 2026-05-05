@@ -1748,30 +1748,22 @@ export default function Extraction() {
       }
     }
 
-    usedSources.forEach((row) => {
+    const sourceUpdatePlans = usedSources.map((row) => {
       const source = getSource(row.sourceId);
       const available = getSourceAvailable(source);
       const remaining = Math.max(available - row.amountUsed, 0);
-
-      source.remainingAmount = +remaining.toFixed(2);
-
-      if (remaining <= 0) {
-        source.status = "Used in Extraction";
-
-        const alreadyCompleted = s.completedSourceBatches.some(
-          (b: any) => b.id === source.id
-        );
-
-        if (!alreadyCompleted) {
-          s.completedSourceBatches.unshift({
-            ...source,
-            status: "Complete",
-            completedAt: new Date().toLocaleString(),
-          });
-        }
-      } else {
-        source.status = "Partially Used in Extraction";
-      }
+      const updatedSource = {
+        ...source,
+        remainingAmount: +remaining.toFixed(2),
+        status: remaining <= 0 ? "Used in Extraction" : "Partially Used in Extraction",
+      };
+      return {
+        sourceId: row.sourceId,
+        source,
+        remaining,
+        updatedSource,
+        originalSource: source ? { ...source } : null,
+      };
     });
 
     const totalAmount = usedSources.reduce(
@@ -1810,25 +1802,55 @@ export default function Extraction() {
       createdAt: new Date().toLocaleString(),
     };
 
-    s.extractionBatches.unshift(batch);
-    setSelectedExt(batch);
-
+    let sourcesPersisted = false;
     try {
-      await createExtractionBatch(batch);
       await Promise.all(
-        usedSources.map((row) => {
-          const source = getSource(row.sourceId);
-          return source ? updateSourceBatch(source.id, source) : Promise.resolve();
+        sourceUpdatePlans.map((plan) => {
+          return plan.source
+            ? updateSourceBatch(plan.source.id, plan.updatedSource)
+            : Promise.resolve();
         })
       );
+      sourcesPersisted = true;
+      await createExtractionBatch(batch);
     } catch (error) {
+      if (sourcesPersisted) {
+        await Promise.all(
+          sourceUpdatePlans.map((plan) =>
+            plan.source && plan.originalSource
+              ? updateSourceBatch(plan.source.id, plan.originalSource).catch(() => undefined)
+              : Promise.resolve()
+          )
+        );
+      }
       console.error("Could not save extraction/source real tables:", error);
       showNotice(
         "Backend Save Failed",
-        "The extraction batch changed locally, but the real database save failed.",
-        "The backup sync will still try to save the current store."
+        "Could not persist extraction and source updates together. No extraction batch was created.",
+        "Please refresh and try again."
       );
+      return;
     }
+
+    sourceUpdatePlans.forEach((plan) => {
+      if (!plan.source) return;
+      Object.assign(plan.source, plan.updatedSource);
+      if (plan.remaining <= 0) {
+        const alreadyCompleted = s.completedSourceBatches.some(
+          (b: any) => b.id === plan.source.id
+        );
+        if (!alreadyCompleted) {
+          s.completedSourceBatches.unshift({
+            ...plan.updatedSource,
+            status: "Complete",
+            completedAt: new Date().toLocaleString(),
+          });
+        }
+      }
+    });
+
+    s.extractionBatches.unshift(batch);
+    setSelectedExt(batch);
 
     const loggedBy = getLoggedBy();
     const loggedAt = new Date().toLocaleString();
