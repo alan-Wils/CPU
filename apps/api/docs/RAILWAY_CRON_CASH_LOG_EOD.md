@@ -86,4 +86,4 @@ Success (**200**) after Bearer auth:
 
 ## Operational logs
 
-Every run emits **`[cash_log_eod] membership_eval`** once per evaluated membership (`membershipId`, `timezone`, `sendTimeConfigured`, `localTime`, `windowStart` / `windowEnd`, **`alreadySentToday`**, **`outcome`**, **`skipReason`**), then **`[cash_log_eod] job_complete`** with summary counts and **`skipReasons`** (**body `job.memberships` on the cron response mirrors the diagnostics**).
+Every run emits **`[cash_log_eod] membership_eval`** once per membership with **`localDate`** (today in that TZ), **`lastSuccessDigestLocalDate`** (marker’s calendar day, if any), **`alreadySentToday`** (those two dates match — means a digest already **succeeded** earlier, not “this skipped tick burned the day”), **`evalHint`** (plain-language tie-break), **`outcome`**, and **`skipReason`**. **`outside_send_window`** only describes *this poll*; **`alreadySentToday`** can still be **true** if an earlier successful send landed today. **`[cash_log_eod] job_complete`** summarizes **`skipReasons`** and **`errors`**.

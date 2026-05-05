@@ -80,6 +80,44 @@ export function digestAlreadySentToday(
   return lastKey === todayKey;
 }
 
+/** Local `YYYY-MM-DD` for `cashLogEodLastSentAt` in `timezone`, or null. */
+export function successMarkerLocalDateKey(
+  lastSentAt: Date | null | undefined,
+  timezone: string | null | undefined,
+): string | null {
+  if (!lastSentAt || !timezone?.trim()) return null;
+  return zonedDateKeyForInstant(lastSentAt, timezone);
+}
+
+function digestMembershipEvalHint(row: CashLogEodMembershipDiag): string | undefined {
+  if (row.outcome === "error") {
+    return "Outbound mail threw — marker not updated on this membership; retries can occur on a later tick when eligible.";
+  }
+  if (row.outcome === "sent") {
+    return "Digest mailed successfully; marker timestamp persisted.";
+  }
+  if (row.outcome !== "skipped") return undefined;
+  switch (row.skipReason) {
+    case "outside_send_window":
+      if (row.alreadySentToday) {
+        return "Outside send window on this tick (no mail attempted). Stored marker indicates a digest already succeeded earlier on today's local calendar (compare localDate vs lastSuccessDigestLocalDate)—no duplicate send until the next calendar day.";
+      }
+      return "Outside send window — no mail on this tick. If no digest landed yet today, a later tick inside the window can deliver.";
+    case "already_sent_today":
+      return "Inside send window but digest already fulfilled for today's local calendar (marker matches today).";
+    case "digest_disabled":
+      return "Digest disabled for this membership.";
+    case "no_recipient":
+      return "Inactive user or missing email.";
+    case "prefs_invalid":
+      return "cashLogEodPrefs JSON did not validate.";
+    case "wrong_weekday":
+      return "Today is excluded by digest weekday schedule.";
+    default:
+      return undefined;
+  }
+}
+
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
@@ -170,12 +208,20 @@ export type CashLogEodMembershipDiag = {
   timezone: string | null;
   /** Configured HH:MM in `timezone`; null when prefs did not parse. */
   sendTimeConfigured: string | null;
+  /** Today's date in configured timezone (`YYYY-MM-DD`), when known. */
   localDate: string | null;
   currentLocalTime: string | null;
   windowStartLocal: string | null;
   windowEndLocal: string | null;
-  /** True iff `cashLogEodLastSentAt` falls on today's local calendar date in configured timezone (success marker only). */
+  /**
+   * Local calendar date (`YYYY-MM-DD`) of successful digest marker (`cashLogEodLastSentAt`), when marker exists — **orthogonal** to this tick's `skipReason`
+   * (e.g. `outside_send_window` describes this tick only; this field shows DB history).
+   */
+  lastSuccessDigestLocalDate: string | null;
+  /** True iff marker's local calendar date equals `localDate` (prior state for skips; updated after successful send). */
   alreadySentToday: boolean;
+  /** Short operator-readable explanation (also in `[cash_log_eod] membership_eval` logs). */
+  evalHint?: string;
   outcome: "sent" | "skipped" | "error";
   /** Single reason when skipped or mail failed (`email_send_failed`). */
   skipReason?: CashLogEodDigestReasonKey;
@@ -326,18 +372,29 @@ export function decideMembershipCashLogDigest(input: {
   };
 }
 
+function finalizeMembershipDiag(
+  partial: Omit<CashLogEodMembershipDiag, "evalHint">,
+): CashLogEodMembershipDiag {
+  const base: CashLogEodMembershipDiag = { ...partial };
+  base.evalHint = digestMembershipEvalHint(base);
+  return base;
+}
+
 function pushMembershipEvalLog(row: CashLogEodMembershipDiag): void {
   logInfo("[cash_log_eod] membership_eval", {
     membershipId: row.membershipId,
     companyId: row.companyId,
     timezone: row.timezone,
     sendTimeConfigured: row.sendTimeConfigured,
+    localDate: row.localDate,
     localTime: row.currentLocalTime,
     windowStart: row.windowStartLocal,
     windowEnd: row.windowEndLocal,
+    lastSuccessDigestLocalDate: row.lastSuccessDigestLocalDate,
     alreadySentToday: row.alreadySentToday,
     outcome: row.outcome,
     skipReason: row.skipReason ?? null,
+    evalHint: row.evalHint ?? null,
   });
 }
 
@@ -403,18 +460,24 @@ export async function runCashLogEodJob(options?: {
       const reason = d.skipReason!;
       skipped += 1;
       skipReasons[reason] += 1;
-      const row: CashLogEodMembershipDiag = {
+      const tzSkip = d.win?.timezone ?? null;
+      const lastSuccessDigestLocalDate = successMarkerLocalDateKey(
+        m.cashLogEodLastSentAt,
+        tzSkip,
+      );
+      const row = finalizeMembershipDiag({
         ...base,
-        timezone: d.win?.timezone ?? null,
+        timezone: tzSkip,
         sendTimeConfigured: d.win?.sendTimeConfigured ?? null,
         localDate: d.win?.localDate ?? null,
         currentLocalTime: d.win?.currentLocalTime ?? null,
         windowStartLocal: d.win?.windowStartLocal ?? null,
         windowEndLocal: d.win?.windowEndLocal ?? null,
+        lastSuccessDigestLocalDate,
         alreadySentToday: d.alreadySentToday,
         outcome: "skipped",
         skipReason: reason,
-      };
+      });
       membershipsOut.push(row);
       pushMembershipEvalLog(row);
       continue;
@@ -465,7 +528,7 @@ export async function runCashLogEodJob(options?: {
         sendTimeConfigured: win.sendTimeConfigured,
         localTime: win.currentLocalTime,
       });
-      const row: CashLogEodMembershipDiag = {
+      const row = finalizeMembershipDiag({
         ...base,
         timezone: win.timezone,
         sendTimeConfigured: win.sendTimeConfigured,
@@ -473,9 +536,10 @@ export async function runCashLogEodJob(options?: {
         currentLocalTime: win.currentLocalTime,
         windowStartLocal: win.windowStartLocal,
         windowEndLocal: win.windowEndLocal,
-        alreadySentToday: false,
+        lastSuccessDigestLocalDate: win.localDate,
+        alreadySentToday: true,
         outcome: "sent",
-      };
+      });
       membershipsOut.push(row);
       pushMembershipEvalLog(row);
     } catch (e) {
@@ -483,7 +547,12 @@ export async function runCashLogEodJob(options?: {
       errors.push(`${m.id}: ${msg}`);
       skipReasons.email_send_failed += 1;
       logWarn("[cash_log_eod] failed", { membershipId: m.id, error: msg });
-      const row: CashLogEodMembershipDiag = {
+      const failedMarker = digestAlreadySentToday(
+        m.cashLogEodLastSentAt,
+        now,
+        prefs.timezone,
+      );
+      const row = finalizeMembershipDiag({
         ...base,
         timezone: win.timezone,
         sendTimeConfigured: win.sendTimeConfigured,
@@ -491,15 +560,15 @@ export async function runCashLogEodJob(options?: {
         currentLocalTime: win.currentLocalTime,
         windowStartLocal: win.windowStartLocal,
         windowEndLocal: win.windowEndLocal,
-        alreadySentToday: digestAlreadySentToday(
+        lastSuccessDigestLocalDate: successMarkerLocalDateKey(
           m.cashLogEodLastSentAt,
-          now,
-          prefs.timezone,
+          win.timezone,
         ),
+        alreadySentToday: failedMarker,
         outcome: "error",
         skipReason: "email_send_failed",
         error: msg,
-      };
+      });
       membershipsOut.push(row);
       pushMembershipEvalLog(row);
     }
