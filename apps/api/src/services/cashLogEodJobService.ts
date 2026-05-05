@@ -51,7 +51,10 @@ function parseSendMinutes(sendTime: string): number {
   return h * 60 + m;
 }
 
-/** True if local wall time is within the cron slack window starting at the configured send time. */
+/**
+ * True if local wall time is within the slack window starting at the configured send time (inclusive end minute).
+ * Inclusive upper bound so a poll on the same clock minute as `sendTime + slack` still qualifies (matches typical 5-minute schedulers).
+ */
 export function isWithinSendWindow(
   nowUtc: Date,
   prefs: CashLogEodPrefs,
@@ -60,7 +63,7 @@ export function isWithinSendWindow(
   const { hour, minute } = zonedCalendarParts(nowUtc, prefs.timezone);
   const current = hour * 60 + minute;
   const target = parseSendMinutes(prefs.sendTime);
-  return current >= target && current < target + slackMinutes;
+  return current >= target && current <= target + slackMinutes;
 }
 
 /** True when local clock is at or after `prefs.sendTime` (same calendar day in that TZ implied by callers). Used for sporadic cron so a tick after send time still delivers. */
@@ -80,16 +83,17 @@ export type CashLogEodTrigger = "internal_scheduler" | "cron";
 export type CashLogEodSendWindowMode = "strict_slack" | "eod_local_day";
 
 /**
- * Defaults **both** in-process ticks and cron to **`eod_local_day`** (local time ≥ sendTime through end of calendar day).
- * Set `CASH_LOG_EOD_SEND_WINDOW_MODE=strict` (alias `strict_slack`) only if you want the narrow `sendTime`…`sendTime+slack` slice for **all** triggers.
+ * Defaults **both** in-process ticks and cron to **`strict_slack`**: mail only in `[sendTime … sendTime + slack]` (inclusive minutes),
+ * and at most one successful send per local day per schedule revision (see `decideMembershipCashLogDigest`).
+ * Set `CASH_LOG_EOD_SEND_WINDOW_MODE=eod_local_day` (alias `eod`) for the legacy “any time from send time through end of local day” behavior with no same-day cap.
  */
 export function resolveCashLogEodSendWindowMode(
   _trigger: CashLogEodTrigger,
 ): CashLogEodSendWindowMode {
   const raw = process.env.CASH_LOG_EOD_SEND_WINDOW_MODE?.trim().toLowerCase();
-  if (raw === "strict" || raw === "strict_slack") return "strict_slack";
   if (raw === "eod" || raw === "eod_local_day") return "eod_local_day";
-  return "eod_local_day";
+  if (raw === "strict" || raw === "strict_slack") return "strict_slack";
+  return "strict_slack";
 }
 
 function zonedDateKeyForInstant(isoUtc: Date, timeZone: string): string {
@@ -112,8 +116,8 @@ export function digestAlreadySentToday(
 }
 
 /**
- * Historical helper describing the old same-day duplicate rule (generation match).
- * **Eligibility does not use this** — digest sends on every eligible tick even if already sent today.
+ * In **strict_slack** mode: after a successful send today, suppress further sends for the same `scheduleGeneration`.
+ * If `digestSentScheduleGeneration` is null (legacy row), treat as “already satisfied today” when the marker is today.
  */
 export function duplicateDigestSuppressesSameSchedule(input: {
   lastSentAt: Date | null;
@@ -125,7 +129,7 @@ export function duplicateDigestSuppressesSameSchedule(input: {
   if (!input.lastSentAt) return false;
   if (!digestAlreadySentToday(input.lastSentAt, input.nowUtc, input.timezone)) return false;
   const sentGen = input.digestSentScheduleGeneration;
-  if (sentGen === null || sentGen === undefined) return false;
+  if (sentGen === null || sentGen === undefined) return true;
   return sentGen === input.scheduleGeneration;
 }
 
@@ -149,11 +153,16 @@ function digestMembershipEvalHint(row: CashLogEodMembershipDiag): string | undef
   switch (row.skipReason) {
     case "outside_send_window":
       if (row.alreadySentToday) {
-        return "Skipped because local clock is still before today's configured send time (compare localTime vs windowStart) - not because of alreadySentToday. alreadySentToday only records an earlier success today; it does not block another send on the next in-window tick (no same-day cap).";
+        return row.sendWindowMode === "strict_slack"
+          ? "Skipped because local clock is still before today's configured send time (compare localTime vs windowStart). alreadySentToday is informational. In strict mode, after one successful send today for this schedule, further in-window ticks use skipReason already_sent_today."
+          : "Skipped because local clock is still before today's configured send time (compare localTime vs windowStart). alreadySentToday is informational; eod_local_day allows more sends later the same day.";
       }
-      return "Before configured local send time — no mail on this tick. Next tick inside the window can send again (no daily cap). Eligibility uses eod_local_day (at/after send time through end of day) vs strict slack (narrow slice after send time).";
+      if (row.sendWindowMode === "strict_slack") {
+        return "Strict mode: local time is outside the inclusive send window (windowStart through windowEnd). Next poll inside that slice may send once per day per schedule revision.";
+      }
+      return "Before configured local send time — no mail on this tick. eod_local_day: after send time, every eligible tick can send again the same day (no cap).";
     case "already_sent_today":
-      return "Reserved skip reason — same-day duplicate cap is disabled; you should not see this.";
+      return "Strict schedule mode: a digest already succeeded today for this schedule revision. Saving new digest settings bumps the schedule generation and allows one more send in-window today.";
     case "digest_disabled":
       return "Digest disabled for this membership.";
     case "no_recipient":
@@ -201,8 +210,8 @@ export function computeLocalSendWindowSummary(
     const me = endM % 60;
     const crossesMidnight = endM >= 24 * 60;
     windowEndLocal = crossesMidnight
-      ? `${pad2(he % 24)}:${pad2(me)} (+1 local day)`
-      : `${pad2(he % 24)}:${pad2(me)}`;
+      ? `${pad2(he % 24)}:${pad2(me)} (+1 local day, inclusive)`
+      : `${pad2(he % 24)}:${pad2(me)} (inclusive)`;
   }
   return {
     timezone: prefs.timezone,
@@ -300,7 +309,7 @@ export type CashLogEodMembershipDiag = {
   digestSentScheduleGeneration: number | null;
   /** Legacy diagnostic; always **false** (same-day send cap removed). */
   suppressDuplicateSchedule: boolean;
-  /** Eligibility mode (`strict_slack` vs remainder of local day); both triggers default `eod_local_day` unless env forces strict. */
+  /** Eligibility mode (`strict_slack` default vs legacy `eod_local_day`). */
   sendWindowMode: CashLogEodSendWindowMode;
   /** Short operator-readable explanation (also in `[cash_log_eod] membership_eval` logs). */
   evalHint?: string;
@@ -361,8 +370,8 @@ export type MembershipDigestDecisionResult = {
 };
 
 /**
- * Pure eligibility after local send-window rules (`strict_slack` vs `eod_local_day`).
- * No same-day duplicate cap — every eligible tick attempts a send; `cashLogEodLastSentAt` still tracks last success.
+ * Eligibility: `strict_slack` (default) = narrow `[sendTime … sendTime+slack]` plus at most one successful send per local day
+ * per schedule revision (`duplicateDigestSuppressesSameSchedule`). `eod_local_day` = legacy all-day window, no same-day cap.
  */
 export function decideMembershipCashLogDigest(input: {
   nowUtc: Date;
@@ -458,6 +467,29 @@ export function decideMembershipCashLogDigest(input: {
     };
   }
 
+  const suppressDuplicateSchedule =
+    sendWindowMode === "strict_slack" &&
+    duplicateDigestSuppressesSameSchedule({
+      lastSentAt: input.cashLogEodLastSentAt,
+      nowUtc: input.nowUtc,
+      timezone: prefs.timezone,
+      scheduleGeneration: input.cashLogEodScheduleGeneration,
+      digestSentScheduleGeneration: input.cashLogEodDigestSentScheduleGeneration,
+    });
+
+  if (suppressDuplicateSchedule) {
+    return {
+      decision: "skip",
+      skipReason: "already_sent_today",
+      prefs,
+      win,
+      alreadySentToday,
+      suppressDuplicateSchedule: true,
+      localDateKey: dateKey,
+      sendWindowMode,
+    };
+  }
+
   return {
     decision: "send",
     prefs,
@@ -483,7 +515,10 @@ function skipPrimaryCause(row: CashLogEodMembershipDiag): string | null {
     const t = row.currentLocalTime ?? "?";
     const start = row.windowStartLocal ?? "?";
     const end = row.windowEndLocal ?? "?";
-    return `Local time ${t} is outside today's send window (${start}-${end} in ${row.timezone ?? "TZ"}). alreadySentToday=${row.alreadySentToday} is not a skip reason (see evalHint).`;
+    return `Local time ${t} is outside today's send window (${start}-${end} in ${row.timezone ?? "TZ"}). alreadySentToday=${row.alreadySentToday} is not the skip reason unless skipReason is already_sent_today (see evalHint).`;
+  }
+  if (row.skipReason === "already_sent_today") {
+    return "Strict mode: digest already sent today for this schedule revision; wait until tomorrow or save digest settings to bump schedule generation.";
   }
   return null;
 }
@@ -517,8 +552,13 @@ export async function runCashLogEodJob(options?: {
   const trigger: CashLogEodTrigger = options?.trigger ?? "internal_scheduler";
   const sendWindowMode = resolveCashLogEodSendWindowMode(trigger);
   const now = new Date();
+  const rawSlack = Number(process.env.CASH_LOG_EOD_SEND_WINDOW_MINUTES);
   const slackMinutes =
-    Number(process.env.CASH_LOG_EOD_SEND_WINDOW_MINUTES) || 25;
+    Number.isFinite(rawSlack) && rawSlack > 0
+      ? Math.min(120, Math.floor(rawSlack))
+      : sendWindowMode === "strict_slack"
+        ? 10
+        : 25;
   const errors: string[] = [];
   const skipReasons = emptyReasonCounts();
   const membershipsOut: CashLogEodMembershipDiag[] = [];

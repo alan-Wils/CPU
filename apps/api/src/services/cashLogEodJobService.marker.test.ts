@@ -153,9 +153,9 @@ describe("cashLogEodJobService DB marker", () => {
     }
   });
 
-  it("cron trigger uses eod_local_day: sends after strict slack window closed", async () => {
+  it("default strict_slack sends when local time is inside sendTime..sendTime+slack", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-05T19:00:00.000Z"));
+    vi.setSystemTime(new Date("2026-05-05T17:20:00.000Z"));
 
     try {
       const prisma = (await import("../config/prisma.js")).prisma;
@@ -180,7 +180,7 @@ describe("cashLogEodJobService DB marker", () => {
       const { runCashLogEodJob } = await import("./cashLogEodJobService.js");
       const out = await runCashLogEodJob({ trigger: "cron" });
 
-      expect(out.sendWindowMode).toBe("eod_local_day");
+      expect(out.sendWindowMode).toBe("strict_slack");
       expect(sendHtmlEmail).toHaveBeenCalledTimes(1);
       expect(prisma.companyMembership.update).toHaveBeenCalledTimes(1);
     } finally {

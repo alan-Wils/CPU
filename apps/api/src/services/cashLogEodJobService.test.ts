@@ -41,24 +41,24 @@ function baseDecisionInput(
 }
 
 describe("cashLogEodJobService", () => {
-  it("resolveCashLogEodSendWindowMode defaults to eod_local_day for cron and internal", () => {
+  it("resolveCashLogEodSendWindowMode defaults to strict_slack for cron and internal", () => {
     const prev = process.env.CASH_LOG_EOD_SEND_WINDOW_MODE;
     delete process.env.CASH_LOG_EOD_SEND_WINDOW_MODE;
     try {
-      expect(resolveCashLogEodSendWindowMode("internal_scheduler")).toBe("eod_local_day");
-      expect(resolveCashLogEodSendWindowMode("cron")).toBe("eod_local_day");
+      expect(resolveCashLogEodSendWindowMode("internal_scheduler")).toBe("strict_slack");
+      expect(resolveCashLogEodSendWindowMode("cron")).toBe("strict_slack");
     } finally {
       if (prev === undefined) delete process.env.CASH_LOG_EOD_SEND_WINDOW_MODE;
       else process.env.CASH_LOG_EOD_SEND_WINDOW_MODE = prev;
     }
   });
 
-  it("resolveCashLogEodSendWindowMode strict env forces strict_slack", () => {
+  it("resolveCashLogEodSendWindowMode eod env selects eod_local_day", () => {
     const prev = process.env.CASH_LOG_EOD_SEND_WINDOW_MODE;
-    process.env.CASH_LOG_EOD_SEND_WINDOW_MODE = "strict";
+    process.env.CASH_LOG_EOD_SEND_WINDOW_MODE = "eod_local_day";
     try {
-      expect(resolveCashLogEodSendWindowMode("internal_scheduler")).toBe("strict_slack");
-      expect(resolveCashLogEodSendWindowMode("cron")).toBe("strict_slack");
+      expect(resolveCashLogEodSendWindowMode("internal_scheduler")).toBe("eod_local_day");
+      expect(resolveCashLogEodSendWindowMode("cron")).toBe("eod_local_day");
     } finally {
       if (prev === undefined) delete process.env.CASH_LOG_EOD_SEND_WINDOW_MODE;
       else process.env.CASH_LOG_EOD_SEND_WINDOW_MODE = prev;
@@ -100,7 +100,7 @@ describe("cashLogEodJobService", () => {
     expect(h.timezone).toBe("America/Denver");
     expect(h.sendTimeConfigured).toBe("11:16");
     expect(h.windowStartLocal).toBe("11:16");
-    expect(h.windowEndLocal).toBe("11:41");
+    expect(h.windowEndLocal).toBe("11:41 (inclusive)");
     expect(h.currentLocalTime).toBe("11:17");
     expect(h.sendWindowMode).toBe("strict_slack");
     const he = computeLocalSendWindowSummary(now, prefs, 25, "eod_local_day");
@@ -149,7 +149,7 @@ describe("cashLogEodJobService", () => {
     expect(digestAlreadySentToday(yesterdaySend, thisMorningUtc, "America/Denver")).toBe(false);
   });
 
-  it("second in-window decision same day still sends (no daily duplicate cap)", () => {
+  it("second in-window tick same day skips after successful send (strict one-per-day per revision)", () => {
     const inWindowFirst = new Date("2026-05-05T17:17:00.000Z");
     let d = decideMembershipCashLogDigest(
       baseDecisionInput(null, inWindowFirst),
@@ -164,12 +164,27 @@ describe("cashLogEodJobService", () => {
         cashLogEodDigestSentScheduleGeneration: 0,
       }),
     );
-    expect(d.decision).toBe("send");
-    expect(d.suppressDuplicateSchedule).toBe(false);
+    expect(d.decision).toBe("skip");
+    expect(d.skipReason).toBe("already_sent_today");
+    expect(d.suppressDuplicateSchedule).toBe(true);
     expect(d.alreadySentToday).toBe(true);
   });
 
-  it("duplicateDigestSuppressesSameSchedule reflects legacy generation rule (unused for eligibility)", () => {
+  it("eod_local_day allows second in-window send same day (legacy, no cap)", () => {
+    const inWindowFirst = new Date("2026-05-05T17:17:00.000Z");
+    const simulatedMarker = new Date(inWindowFirst.getTime());
+    const secondTick = new Date("2026-05-05T17:21:00.000Z");
+    const d = decideMembershipCashLogDigest({
+      ...baseDecisionInput(simulatedMarker, secondTick, {
+        cashLogEodScheduleGeneration: 0,
+        cashLogEodDigestSentScheduleGeneration: 0,
+      }),
+      sendWindowMode: "eod_local_day",
+    });
+    expect(d.decision).toBe("send");
+  });
+
+  it("duplicateDigestSuppressesSameSchedule is true when sent today and generation matches", () => {
     const nowUtc = new Date("2026-05-05T17:21:00.000Z");
     const marker = new Date("2026-05-05T17:17:00.000Z");
     expect(
@@ -179,6 +194,15 @@ describe("cashLogEodJobService", () => {
         timezone: "America/Denver",
         scheduleGeneration: 1,
         digestSentScheduleGeneration: 1,
+      }),
+    ).toBe(true);
+    expect(
+      duplicateDigestSuppressesSameSchedule({
+        lastSentAt: marker,
+        nowUtc,
+        timezone: "America/Denver",
+        scheduleGeneration: 1,
+        digestSentScheduleGeneration: null,
       }),
     ).toBe(true);
   });
@@ -237,7 +261,7 @@ describe("cashLogEodJobService", () => {
     expect(d.decision).toBe("send");
   });
 
-  it("in-window sends even when digestSentScheduleGeneration matches schedule generation", () => {
+  it("strict mode skips when last send today matches schedule generation; allows after generation bump", () => {
     const inWindow = new Date("2026-05-05T17:20:00.000Z"); // 11:20 MDT
     const lastSentEarlier = new Date("2026-05-05T17:10:00.000Z"); // 11:10 MDT
     const d = decideMembershipCashLogDigest(
@@ -246,12 +270,13 @@ describe("cashLogEodJobService", () => {
         cashLogEodDigestSentScheduleGeneration: 4,
       }),
     );
-    expect(d.decision).toBe("send");
+    expect(d.decision).toBe("skip");
+    expect(d.skipReason).toBe("already_sent_today");
 
     const d2 = decideMembershipCashLogDigest(
       baseDecisionInput(lastSentEarlier, inWindow, {
         cashLogEodScheduleGeneration: 5,
-        cashLogEodDigestSentScheduleGeneration: null,
+        cashLogEodDigestSentScheduleGeneration: 4,
       }),
     );
     expect(d2.decision).toBe("send");

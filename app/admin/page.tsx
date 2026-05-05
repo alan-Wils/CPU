@@ -3383,10 +3383,14 @@ export default function AdminPage() {
                 </button>
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.55, fontSize: 14 }}>
-                Applies to <strong>your</strong> account in the current company. Pick which weekdays to send, the local
-                time, timezone, and whether the email covers the last 24 hours or the last 7 days (rolling from send
-                time). The message includes both the <strong>cash log</strong> and <strong>check log</strong> for that
-                window.
+                <strong>Schedule</strong> (days, time, timezone, 24h vs 7-day window) is saved for the{" "}
+                <strong>whole company</strong>. The <strong>Send digest…</strong> checkbox is per user. Delivery uses a{" "}
+                <strong>short window after send time</strong> (default ~10 minutes; server env can widen it)—typically{" "}
+                <strong>one successful email per local day</strong> per person. Saving here again bumps the schedule so an
+                extra send the same day is allowed if you are still inside that window. The email includes{" "}
+                <strong>cash</strong> and <strong>check</strong> logs for the chosen rolling window. For the old
+                “anytime after send time until midnight” behavior, set API{" "}
+                <code style={{ fontSize: 12 }}>CASH_LOG_EOD_SEND_WINDOW_MODE=eod_local_day</code>.
               </p>
               {cashEodError ? (
                 <div

@@ -44,8 +44,8 @@ export function buildCashLogEodCronResponse(result: CashLogEodJobResult): {
 }
 
 /**
- * Cash log EOD digest — same rules as the in-process scheduler; both default **eod_local_day** eligibility
- * unless `CASH_LOG_EOD_SEND_WINDOW_MODE=strict` (`resolveCashLogEodSendWindowMode`).
+ * Cash log EOD digest — same rules as the in-process scheduler; both default **strict_slack** (narrow send window,
+ * one success per local day per schedule revision). Set `CASH_LOG_EOD_SEND_WINDOW_MODE=eod_local_day` for legacy all-day behavior.
  *
  * Auth: `Authorization: Bearer <CRON_SECRET>` (must match `CRON_SECRET` on the API service).
  *
