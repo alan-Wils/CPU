@@ -243,17 +243,16 @@ function rowsToHtmlTable(rows: CashDigestRow[]): string {
     return "<p>No cash log entries in this period.</p>";
   }
   const head =
-    "<tr><th>Entry / logged (UTC)</th><th>Dir</th><th>Amount</th><th>Payee / Dept</th><th>Memo</th></tr>";
+    "<tr><th>Date (UTC)</th><th>Direction</th><th>Amount</th><th>Payee / Dept</th><th>Invoice #</th><th>Memo</th></tr>";
   const body = rows
     .map((r) => {
       const whenIso =
         r.entryDate != null ? r.entryDate.toISOString() : r.createdAt.toISOString();
-      const whenKind = r.entryDate != null ? "entry" : "logged";
       const extra =
         r.direction === "INCOMING"
           ? escapeHtml(String(r.payeeCompany || ""))
           : escapeHtml(String(r.department || ""));
-      return `<tr><td>${escapeHtml(whenIso)} <span style="color:#666">(${whenKind})</span></td><td>${escapeHtml(r.direction)}</td><td>${escapeHtml(String(r.amount))}</td><td>${extra}</td><td>${escapeHtml(String(r.memo || ""))}</td></tr>`;
+      return `<tr><td>${escapeHtml(whenIso)}</td><td>${escapeHtml(r.direction)}</td><td>${escapeHtml(String(r.amount))}</td><td>${extra}</td><td>${escapeHtml(String(r.invoiceNumber || ""))}</td><td>${escapeHtml(String(r.memo || ""))}</td></tr>`;
     })
     .join("");
   return `<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">${head}${body}</table>`;
@@ -707,14 +706,12 @@ export async function runCashLogEodJob(options?: {
         <div style="font-family:system-ui,sans-serif;line-height:1.5">
           <h2>Financial digest — ${escapeHtml(windowLabel)}</h2>
           <p><strong>Company:</strong> ${escapeHtml(m.company?.name || "")}</p>
-          <p><strong>Window (UTC bounds):</strong> ${escapeHtml(from.toISOString())} → ${escapeHtml(to.toISOString())}</p>
+          <p><strong>Period:</strong> ${escapeHtml(from.toISOString())} to ${escapeHtml(to.toISOString())} (UTC)</p>
           <h3 style="margin-top:1.25em">Cash log</h3>
-          <p style="font-size:13px;color:#555">Rows use <b>entry date</b> when set (same as Admin cash log / export). Legacy rows without an entry date use logged time.</p>
           ${rowsToHtmlTable(rows)}
           <h3 style="margin-top:1.25em">Check log</h3>
-          <p style="font-size:13px;color:#555">Check captures from Admin → Financial logs (included by saved time in this window). Image links use your configured <code>APP_URL</code> (or CORS origin); opening them may require signing in to NexBatch.</p>
           ${checkRowsToHtmlTable(checkRows, publicWebBase)}
-          <p style="font-size:12px;color:#666">Sent by NexBatch CPU · adjust schedule in Admin → Financial logs.</p>
+          <p style="font-size:12px;color:#666">Sent by NexBatch.</p>
         </div>`;
 
       await sendHtmlEmail({
