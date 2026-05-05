@@ -188,6 +188,31 @@ function makeMarketBatchCode(creativeName: string, extractionBatchId: string): s
   return `${core}.${datePart}`;
 }
 
+/** Public code for multi-strain extraction runs (replaces EXT id in UI until AI renames). */
+function makeBlendMarketBatchCodeFromSourceRows(
+  rows: Array<{ acronym?: string }>,
+  extractionBatchId: string
+): string {
+  const cleaned = rows.map((r) => cleanAcronym(r.acronym)).filter(Boolean);
+  const unique = [...new Set(cleaned)];
+  let core = "MIXX";
+  if (unique.length === 1) {
+    core = (unique[0] + "XXXX").slice(0, 4);
+  } else if (unique.length === 2) {
+    const a = unique[0];
+    const b = unique[1];
+    core = `${(a + "XX").slice(0, 2)}${(b + "XX").slice(0, 2)}`.toUpperCase().slice(0, 4);
+  } else if (unique.length > 2) {
+    core = unique
+      .map((u) => (u.charAt(0) || "X").toUpperCase())
+      .join("")
+      .concat("XXXX")
+      .slice(0, 4);
+  }
+  const datePart = extractDateCodeFromBatchId(extractionBatchId) || getDateCode();
+  return `${core}.${datePart}`;
+}
+
 function cleanAcronym(value: any) {
   return String(value || "")
     .replace(/[^a-zA-Z0-9]/g, "")
@@ -1617,12 +1642,25 @@ export default function Extraction() {
       makeProductionBatchId(usedSources)
     );
 
+    const sourceBlendLabel = [
+      ...new Set(
+        usedSources
+          .map((row) => String(row.name || "").trim())
+          .filter(Boolean)
+      ),
+    ].join(" · ");
+
     const batch = {
       id: productionBatchId,
       name: type,
       productType: type,
       sources: usedSources,
       source: usedSources.map((row) => row.sourceId).join(", "),
+      sourceBlendLabel,
+      marketBatchCode: makeBlendMarketBatchCodeFromSourceRows(
+        usedSources,
+        productionBatchId
+      ),
       amount: `${+totalAmount.toFixed(2)} lbs`,
       totalBiomassUsed: +totalAmount.toFixed(2),
       status: "Ready For Pack Socks Start",
@@ -1931,6 +1969,7 @@ export default function Extraction() {
           productType: selectedExt.productType,
           source: selectedExt.source,
           marketBatchCode: selectedExt.marketBatchCode,
+          sourceBlendLabel: selectedExt.sourceBlendLabel,
           extractionSources: Array.isArray(selectedExt.sources)
             ? selectedExt.sources
             : [],
@@ -3308,6 +3347,12 @@ export default function Extraction() {
                 Final: {num(viewBatch.totalFinalGrams) || "—"} g | Yield:{" "}
                 {getYieldPercentage(viewBatch) || "—"}
               </p>
+
+              {viewBatch.sourceBlendLabel ? (
+                <p style={{ color: "#cbd5e1" }}>
+                  <b>Blend:</b> {viewBatch.sourceBlendLabel}
+                </p>
+              ) : null}
 
               {hasCompletedTask(viewBatch, "Pack Socks Stop") && (
                 <div

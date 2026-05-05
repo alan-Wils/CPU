@@ -20,6 +20,7 @@ import {
   updatePackagingBatch,
   deletePackagingBatchRecord,
 } from "@/lib/packagingApi";
+import { loadExtractionBatches } from "@/lib/extractionApi";
 import { createLog } from "@/lib/logsApi";
 
 const PACKAGING_TASKS = [
@@ -112,6 +113,50 @@ function packagingSourceMaterialLabel(batch: any): string {
   const sb = batch?.sourceBatchId;
   if (sb && sb !== batch?.id) return String(sb);
   return "—";
+}
+
+function packagingBlendDescription(batch: any): string {
+  return String(batch?.sourceBlendLabel ?? "").trim();
+}
+
+/** Fill packaging view from the linked extraction run (AI title, blend label, source tags). */
+function mergePackagingRowWithExtraction(batch: any, exById: Map<string, any>) {
+  const exId = String(batch.extractionBatchId || batch.sourceBatchId || batch.id || "").trim();
+  if (!exId) return batch;
+  const ex = exById.get(exId);
+  if (!ex || typeof ex !== "object") return batch;
+  const next = { ...batch };
+  if (!String(next.marketBatchCode || "").trim() && ex.marketBatchCode) {
+    next.marketBatchCode = ex.marketBatchCode;
+  }
+  if (!String(next.sourceBlendLabel || "").trim() && ex.sourceBlendLabel) {
+    next.sourceBlendLabel = ex.sourceBlendLabel;
+  }
+  if (!String(next.sourceBlendLabel || "").trim() && Array.isArray(ex.sources)) {
+    const derived = [
+      ...new Set(
+        ex.sources
+          .map((r: any) => String(r?.name || "").trim())
+          .filter(Boolean)
+      ),
+    ].join(" · ");
+    if (derived) next.sourceBlendLabel = derived;
+  }
+  if (!String(next.source || "").trim() && ex.source) {
+    next.source = ex.source;
+  }
+  if (
+    Array.isArray(ex.sources) &&
+    (!Array.isArray(next.extractionSources) || next.extractionSources.length === 0)
+  ) {
+    next.extractionSources = ex.sources;
+  }
+  const exName = String(ex.name || "").trim();
+  const exProduct = String(ex.productType || "").trim();
+  if (exName && exProduct && exName !== exProduct) {
+    next.name = exName;
+  }
+  return next;
 }
 
 function isFlowerBatch(batch: any) {
@@ -261,13 +306,30 @@ export default function Packaging() {
         await loadBackendStore();
         await hydrateTaskLogsFromApi();
 
-        const realPackagingBatches = asArray(await loadPackagingBatches());
+        const [realPackagingBatches, extractionList] = await Promise.all([
+          loadPackagingBatches().then(asArray),
+          loadExtractionBatches()
+            .then(asArray)
+            .catch((err) => {
+              console.warn("Packaging: could not load extractions for label merge:", err);
+              return [];
+            }),
+        ]);
 
         if (!active) return;
 
-        s.packagingBatches = realPackagingBatches.filter(isReadyPackagingBatch);
-        s.inProgressPackagingBatches = realPackagingBatches.filter(isInProgressPackageSet);
-        s.completedPackagingBatches = realPackagingBatches.filter(isCompletedPackageSet);
+        const exById = new Map(
+          extractionList.map((e: any) => [String(e?.id || "").trim(), e]).filter(([k]) => k)
+        );
+        const mergeEx = (b: any) => mergePackagingRowWithExtraction(b, exById);
+
+        s.packagingBatches = realPackagingBatches.filter(isReadyPackagingBatch).map(mergeEx);
+        s.inProgressPackagingBatches = realPackagingBatches
+          .filter(isInProgressPackageSet)
+          .map(mergeEx);
+        s.completedPackagingBatches = realPackagingBatches
+          .filter(isCompletedPackageSet)
+          .map(mergeEx);
 
         setRefresh((n) => n + 1);
       } catch (error) {
@@ -1242,7 +1304,11 @@ export default function Packaging() {
                   {b.marketBatchCode ? (
                     <span style={{ fontWeight: 700 }}> ({b.id})</span>
                   ) : null}{" "}
-                  | {b.name || b.type || b.productType} | Available to
+                  | {b.name || b.type || b.productType}
+                  {packagingBlendDescription(b)
+                    ? ` | Blend: ${packagingBlendDescription(b)}`
+                    : ""}{" "}
+                  | Available to
                   Package: {getFinalGrams(b) || "—"}g | Packaged:{" "}
                   {getPackagedGrams(b) || 0}g | Remaining:{" "}
                   {getRemainingGrams(b) || "—"}g | Yield: {b.yieldPercentage || "—"} |
@@ -1305,6 +1371,14 @@ export default function Packaging() {
                 value={selected.name || selected.type || selected.productType || ""}
                 readOnly
               />
+
+              {packagingBlendDescription(selected) ? (
+                <input
+                  style={inputStyle}
+                  value={`Blend (strains): ${packagingBlendDescription(selected)}`}
+                  readOnly
+                />
+              ) : null}
 
               <input
                 style={inputStyle}
@@ -1973,6 +2047,12 @@ export default function Packaging() {
                   taskHistoryModal.batch?.productType ||
                   "—"}
               </div>
+
+              {packagingBlendDescription(taskHistoryModal.batch) ? (
+                <div style={{ marginBottom: 8 }}>
+                  <b>Blend:</b> {packagingBlendDescription(taskHistoryModal.batch)}
+                </div>
+              ) : null}
 
               <div style={{ marginBottom: 8 }}>
                 <b>Status:</b> {taskHistoryModal.batch?.status || "Ready"}
