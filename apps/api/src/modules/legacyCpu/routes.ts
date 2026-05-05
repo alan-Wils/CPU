@@ -143,12 +143,20 @@ function asUiRecord(value: unknown): Record<string, unknown> {
 function mergeRecord(base: unknown, patch: unknown): Record<string, unknown> {
     return { ...asUiRecord(base), ...asUiRecord(patch) };
 }
+/** Active + completed legacy source rows from the company JSON snapshot (used packages move to completed). */
+function allLegacySourceRowsInSnap(snap: unknown): unknown[] {
+    const s = snap as {
+        sourceBatches?: unknown[];
+        completedSourceBatches?: unknown[];
+    } | null | undefined;
+    const open = Array.isArray(s?.sourceBatches) ? s.sourceBatches : [];
+    const done = Array.isArray(s?.completedSourceBatches) ? s.completedSourceBatches : [];
+    return [...open, ...done];
+}
 /** SPA source row id → cultivation batch id from company store snapshot. */
 function cultivationIdFromSourceRowInSnap(sourceId: string, snap: unknown): string | null {
-    const list = Array.isArray((snap as { sourceBatches?: unknown })?.sourceBatches)
-        ? (snap as { sourceBatches: unknown[] }).sourceBatches
-        : [];
-    const fromStore = list.find((s) => String((s as { id?: unknown })?.id) === String(sourceId));
+    const list = allLegacySourceRowsInSnap(snap);
+    const fromStore = list.find((item) => String((item as { id?: unknown })?.id) === String(sourceId));
     if (!fromStore || typeof fromStore !== "object")
         return null;
     const row = fromStore as {
@@ -160,8 +168,9 @@ function cultivationIdFromSourceRowInSnap(sourceId: string, snap: unknown): stri
     return cid != null && String(cid).length > 0 ? String(cid) : null;
 }
 /**
- * Every extraction run ties to one cultivation batch. Resolve from each source (store or SourcePackage);
- * all must map to the same cultivation id.
+ * ExtractionRun has a single cultivationBatchId FK; legacy SPA allows multiple source packages from
+ * different cultivations. Resolve each source, then anchor the FK to the first source’s cultivation
+ * (full source list stays in extraction JSON). Prefer company-store rows (incl. completed) before Prisma id.
  */
 async function resolveCultivationBatchIdForExtractionCreate(companyId: string, body: Record<string, unknown>, snap: unknown): Promise<string> {
     const direct = String(body.cultivationBatchId ?? "").trim();
@@ -179,10 +188,22 @@ async function resolveCultivationBatchIdForExtractionCreate(companyId: string, b
     }
     const ids: string[] = [];
     for (const row of sources) {
-        const r = row && typeof row === "object" ? (row as { sourceId?: unknown }) : {};
+        const r = row && typeof row === "object"
+            ? (row as { sourceId?: unknown; source?: unknown; cultivationBatchId?: unknown })
+            : {};
         const sid = String(r.sourceId ?? "").trim();
         if (!sid) {
             throw new AppError("Each source row must have sourceId", 400);
+        }
+        const embeddedCult = String(r.source ?? r.cultivationBatchId ?? "").trim();
+        if (embeddedCult) {
+            const embeddedRow = await prisma.cultivationBatch.findFirst({
+                where: { id: embeddedCult, companyId }
+            });
+            if (embeddedRow) {
+                ids.push(embeddedCult);
+                continue;
+            }
         }
         const fromSnap = cultivationIdFromSourceRowInSnap(sid, snap);
         if (fromSnap) {
@@ -200,10 +221,22 @@ async function resolveCultivationBatchIdForExtractionCreate(companyId: string, b
         throw new AppError(`Could not resolve cultivation batch for source ${sid}`, 400);
     }
     const unique = [...new Set(ids)];
-    if (unique.length > 1) {
-        throw new AppError("All sources must belong to the same cultivation batch for one extraction run", 400);
+    if (ids.length === 0 || !unique.length) {
+        throw new AppError("Could not resolve cultivation batch for extraction sources", 400);
     }
-    const cultivationBatchId = unique[0];
+    let cultivationBatchId: string;
+    if (unique.length === 1) {
+        cultivationBatchId = unique[0];
+    }
+    else {
+        cultivationBatchId = ids[0];
+        logInfo("[WORKFLOW_FIX] extraction_run_multi_cultivation_anchor", {
+            companyId,
+            anchoredCultivationBatchId: cultivationBatchId,
+            distinctCultivationBatchIds: unique,
+            sourceCultivationOrder: ids
+        });
+    }
     const batchRow = await prisma.cultivationBatch.findFirst({
         where: { id: cultivationBatchId, companyId }
     });

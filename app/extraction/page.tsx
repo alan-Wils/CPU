@@ -1639,6 +1639,8 @@ export default function Extraction() {
         return {
           sourceId: row.sourceId,
           name: source?.name || source?.type || row.sourceId,
+          /** Linked cultivation batch id — lets API resolve materialized runs when store snapshot omits completed sources. */
+          source: String(source?.source ?? source?.cultivationBatchId ?? "").trim(),
           strainName: resolveStrainNameFromSourceRecord(s, source) || "",
           acronym: getSourceAcronym(source || row),
           materialType: getSourceMaterialType(source),
@@ -2114,6 +2116,19 @@ export default function Extraction() {
       data,
       time: loggedAt,
     });
+
+    if (Array.isArray(selectedExt.sources)) {
+      for (const row of selectedExt.sources) {
+        if (!row || typeof row !== "object") continue;
+        const r = row as { source?: string; sourceId?: string };
+        if (String(r.source ?? "").trim()) continue;
+        const sid = String(r.sourceId ?? "").trim();
+        if (!sid) continue;
+        const src = getSource(sid);
+        const cid = String(src?.source ?? src?.cultivationBatchId ?? "").trim();
+        if (cid) r.source = cid;
+      }
+    }
 
     try {
       const updated = await updateExtractionBatch(selectedExt.id, selectedExt);
