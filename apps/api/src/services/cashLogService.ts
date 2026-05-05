@@ -276,7 +276,8 @@ export class CashLogService {
         });
     }
     /**
-     * Digest / automation: rows whose `createdAt` falls in `[from, to]` (inclusive).
+     * Digest / automation: rolling window `[from, to]` (inclusive UTC instants).
+     * Uses **entry date** when set (same as export / admin list); legacy rows without `entryDate` use `createdAt`.
      */
     async listByCreatedAtRange(companyId: string, from: Date, to: Date) {
         if (!(from instanceof Date) || !(to instanceof Date) || from > to) {
@@ -285,7 +286,7 @@ export class CashLogService {
         return prisma.cashLogEntry.findMany({
             where: {
                 companyId,
-                createdAt: { gte: from, lte: to },
+                ...whereEntryDateOrLegacyCreated({ gte: from, lte: to }),
             },
             orderBy: { createdAt: "desc" },
             take: 2000,

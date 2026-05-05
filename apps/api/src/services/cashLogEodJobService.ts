@@ -228,15 +228,17 @@ function rowsToHtmlTable(rows: CashDigestRow[]): string {
     return "<p>No cash log entries in this period.</p>";
   }
   const head =
-    "<tr><th>When (UTC)</th><th>Dir</th><th>Amount</th><th>Payee / Dept</th><th>Memo</th></tr>";
+    "<tr><th>Entry / logged (UTC)</th><th>Dir</th><th>Amount</th><th>Payee / Dept</th><th>Memo</th></tr>";
   const body = rows
     .map((r) => {
-      const when = r.createdAt.toISOString();
+      const whenIso =
+        r.entryDate != null ? r.entryDate.toISOString() : r.createdAt.toISOString();
+      const whenKind = r.entryDate != null ? "entry" : "logged";
       const extra =
         r.direction === "INCOMING"
           ? escapeHtml(String(r.payeeCompany || ""))
           : escapeHtml(String(r.department || ""));
-      return `<tr><td>${escapeHtml(when)}</td><td>${escapeHtml(r.direction)}</td><td>${escapeHtml(String(r.amount))}</td><td>${extra}</td><td>${escapeHtml(String(r.memo || ""))}</td></tr>`;
+      return `<tr><td>${escapeHtml(whenIso)} <span style="color:#666">(${whenKind})</span></td><td>${escapeHtml(r.direction)}</td><td>${escapeHtml(String(r.amount))}</td><td>${extra}</td><td>${escapeHtml(String(r.memo || ""))}</td></tr>`;
     })
     .join("");
   return `<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">${head}${body}</table>`;
@@ -597,7 +599,8 @@ export async function runCashLogEodJob(options?: {
         <div style="font-family:system-ui,sans-serif;line-height:1.5">
           <h2>Financial cash log — ${escapeHtml(windowLabel)}</h2>
           <p><strong>Company:</strong> ${escapeHtml(m.company?.name || "")}</p>
-          <p><strong>Window (logged UTC):</strong> ${escapeHtml(from.toISOString())} → ${escapeHtml(to.toISOString())}</p>
+          <p><strong>Window (UTC bounds):</strong> ${escapeHtml(from.toISOString())} → ${escapeHtml(to.toISOString())}</p>
+          <p style="font-size:13px;color:#555">Rows use <b>entry date</b> when set (same as Admin cash log / export). Legacy rows without an entry date use logged time.</p>
           ${rowsToHtmlTable(rows)}
           <p style="font-size:12px;color:#666">Sent by NexBatch CPU · adjust schedule in Admin → Financial logs.</p>
         </div>`;

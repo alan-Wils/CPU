@@ -136,6 +136,23 @@ export class AdminService {
             select: { appPermissions: true },
         });
 
+        if (input.actorRole === "ADMIN" && target.role === "OWNER") {
+            const profileDirty =
+                (input.email !== undefined &&
+                    input.email.trim().toLowerCase() !== target.email.trim().toLowerCase()) ||
+                    (input.role !== undefined && input.role !== target.role) ||
+                    (input.isActive !== undefined && input.isActive !== target.isActive) ||
+                    (input.appPermissions !== undefined &&
+                        JSON.stringify(input.appPermissions ?? null) !==
+                            JSON.stringify(membershipBefore?.appPermissions ?? null));
+            if (profileDirty) {
+                throw new AppError(
+                    'Admins may only change "Receive EOD financial digest emails" for the application owner. Revert role, email, status, or permission changes—or have an owner edit those fields.',
+                    403,
+                    "ADMIN_OWNER_DIGEST_ONLY",
+                );
+            }
+        }
         if (input.targetUserId === input.actorUserId) {
             const emailViolates =
                 input.email !== undefined &&
@@ -155,9 +172,6 @@ export class AdminService {
                     "ADMIN_SELF_EDIT_LIMITED",
                 );
             }
-        }
-        else if (input.actorRole === "ADMIN" && target.role === "OWNER") {
-            throw new AppError("Admins cannot edit owner users", 403);
         }
         if (input.actorRole === "ADMIN" && input.role === "OWNER") {
             throw new AppError("Admins cannot promote users to OWNER", 403);

@@ -377,10 +377,16 @@ async function readImageFileForCheckUpload(file: File): Promise<{
 
 function canEditTargetUser(currentRole: string, targetRole: string) {
   const c = normalizePlatformRole(currentRole);
-  const t = normalizePlatformRole(targetRole);
   if (c === "OWNER") return true;
-  if (c === "ADMIN" && t !== "OWNER") return true;
+  if (c === "ADMIN") return true;
   return false;
+}
+
+function isAdminEditingApplicationOwner(actorRole: string, targetRole: string) {
+  return (
+    normalizePlatformRole(actorRole) === "ADMIN" &&
+    normalizePlatformRole(targetRole) === "OWNER"
+  );
 }
 
 function getDisplayStatus(user: AdminUser) {
@@ -524,6 +530,14 @@ export default function AdminPage() {
     if (!u || isPendingInviteGridRow(u)) return null;
     return u;
   }, [editingUserId, companyUsersDisplay]);
+
+  const adminOwnerDigestOnlyModal = useMemo(
+    () =>
+      editingTargetUser
+        ? isAdminEditingApplicationOwner(currentUser?.role || "", editingTargetUser.role)
+        : false,
+    [editingTargetUser, currentUser?.role],
+  );
 
   function checksCompanyId(): string {
     if (normalizePlatformRole(currentUser?.role) === "OWNER") {
@@ -1574,17 +1588,19 @@ export default function AdminPage() {
       return;
     }
 
+    const adminDigestOnlyOwner = isAdminEditingApplicationOwner(currentUser?.role || "", user.role);
+
     if (normalizePlatformRole(currentUser?.role) === "ADMIN" && normalizePlatformRole(editRole) === "OWNER") {
       setError("Admins cannot make users application owners.");
       return;
     }
 
-    if (!editUsername.trim()) {
+    if (!adminDigestOnlyOwner && !editUsername.trim()) {
       setError("Username is required.");
       return;
     }
 
-    if (!editRole.trim()) {
+    if (!adminDigestOnlyOwner && !editRole.trim()) {
       setError("Role is required.");
       return;
     }
@@ -1598,16 +1614,15 @@ export default function AdminPage() {
 
     try {
       const ownerOrAdminRole = isOwnerOrAdminRoleKey(editRole);
-      const body: Record<string, unknown> = {
-        email: editEmail.trim() || undefined,
-        role: editRole,
-        isActive: editActive,
-        cashLogEodEnabled: editCashLogEodEnabled,
-      };
-      if (ownerOrAdminRole)
-        body.appPermissions = null;
-      else
-        body.appPermissions = editAppPermissions;
+      const body: Record<string, unknown> = adminDigestOnlyOwner
+        ? { cashLogEodEnabled: editCashLogEodEnabled }
+        : {
+            email: editEmail.trim() || undefined,
+            role: editRole,
+            isActive: editActive,
+            cashLogEodEnabled: editCashLogEodEnabled,
+            ...(ownerOrAdminRole ? { appPermissions: null } : { appPermissions: editAppPermissions }),
+          };
 
       const updatedUser = await apiRequest<AdminUser>(`/api/admin/users/${user.id}`, {
         method: "PATCH",
@@ -3927,6 +3942,25 @@ export default function AdminPage() {
                   {editingTargetUser.email ? ` · ${editingTargetUser.email}` : ""}
                 </p>
 
+                {adminOwnerDigestOnlyModal ? (
+                  <div
+                    style={{
+                      marginBottom: 16,
+                      padding: 12,
+                      borderRadius: 12,
+                      border: "1px solid rgba(245, 158, 11, 0.5)",
+                      background: "rgba(69, 26, 3, 0.35)",
+                      color: "#fcd34d",
+                      fontSize: 13,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <b>Company admins</b> can only change{" "}
+                    <b>&quot;Receive EOD financial digest emails&quot;</b> for the application owner. Profile fields stay
+                    read-only until an owner adjusts them elsewhere.
+                  </div>
+                ) : null}
+
                 <div
                   style={{
                     padding: 14,
@@ -4041,7 +4075,12 @@ export default function AdminPage() {
                     <input
                       value={editUsername}
                       onChange={(e) => setEditUsername(e.target.value)}
-                      style={inputStyle}
+                      disabled={adminOwnerDigestOnlyModal}
+                      style={{
+                        ...inputStyle,
+                        opacity: adminOwnerDigestOnlyModal ? 0.65 : 1,
+                        cursor: adminOwnerDigestOnlyModal ? "not-allowed" : undefined,
+                      }}
                     />
                   </label>
 
@@ -4050,7 +4089,12 @@ export default function AdminPage() {
                     <input
                       value={editEmail}
                       onChange={(e) => setEditEmail(e.target.value)}
-                      style={inputStyle}
+                      disabled={adminOwnerDigestOnlyModal}
+                      style={{
+                        ...inputStyle,
+                        opacity: adminOwnerDigestOnlyModal ? 0.65 : 1,
+                        cursor: adminOwnerDigestOnlyModal ? "not-allowed" : undefined,
+                      }}
                     />
                   </label>
 
@@ -4065,7 +4109,12 @@ export default function AdminPage() {
                         if (isOwnerOrAdminRoleKey(nk)) setEditAppPermissions(fullAccessPermissionIds());
                         else setEditAppPermissions(defaultPagePermissionsForRole(nk));
                       }}
-                      style={inputStyle}
+                      disabled={adminOwnerDigestOnlyModal}
+                      style={{
+                        ...inputStyle,
+                        opacity: adminOwnerDigestOnlyModal ? 0.65 : 1,
+                        cursor: adminOwnerDigestOnlyModal ? "not-allowed" : undefined,
+                      }}
                     >
                       {allowedRoleOptions.map((option) => (
                         <option key={option.value} value={option.value}>
@@ -4080,7 +4129,12 @@ export default function AdminPage() {
                     <select
                       value={editActive ? "ACTIVE" : "INACTIVE"}
                       onChange={(e) => setEditActive(e.target.value === "ACTIVE")}
-                      style={inputStyle}
+                      disabled={adminOwnerDigestOnlyModal}
+                      style={{
+                        ...inputStyle,
+                        opacity: adminOwnerDigestOnlyModal ? 0.65 : 1,
+                        cursor: adminOwnerDigestOnlyModal ? "not-allowed" : undefined,
+                      }}
                     >
                       <option value="ACTIVE">Active</option>
                       <option value="INACTIVE">Inactive</option>
@@ -4119,8 +4173,9 @@ export default function AdminPage() {
                       <b>Receive EOD financial digest emails</b>
                       <br />
                       <span style={{ color: "#94a3b8" }}>
-                        Applies per company membership. Editing your own account here can only change this
-                        checkbox; other fields need another OWNER or ADMIN.
+                        {adminOwnerDigestOnlyModal
+                          ? "Applies per company membership. For the application owner, only this setting can be changed here by a company admin."
+                          : "Applies per company membership. Editing your own account here can only change this checkbox; other fields need another OWNER or ADMIN."}
                       </span>
                     </span>
                   </label>
