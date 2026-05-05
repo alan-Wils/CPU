@@ -747,7 +747,11 @@ legacyCpuRouter.get("/packaging", asyncHandler(async (req, res) => {
             if (!id)
                 continue;
             const prev = byId.get(id);
-            byId.set(id, prev ? mergeRecord(asUiRecord(prev), row) : row);
+            // DB is authoritative for packaging lot existence; do not rehydrate ghost rows
+            // from legacy company-store snapshots (those rows 404 on delete/update).
+            if (!prev)
+                continue;
+            byId.set(id, mergeRecord(asUiRecord(prev), row));
         }
     }
     res.json([...byId.values()]);
