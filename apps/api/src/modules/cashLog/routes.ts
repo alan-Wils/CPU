@@ -158,7 +158,11 @@ cashLogRouter.put(
         const body = req.body as z.infer<typeof cashLogEodPrefsSchema>;
         await prisma.companyMembership.update({
             where: { userId_companyId: { userId, companyId } },
-            data: { cashLogEodPrefs: body },
+            data: {
+                cashLogEodPrefs: body,
+                cashLogEodScheduleGeneration: { increment: 1 },
+                cashLogEodDigestSentScheduleGeneration: null,
+            },
         });
         res.json({ prefs: body });
     }),

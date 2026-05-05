@@ -16,12 +16,22 @@ const denverPrefs: CashLogEodPrefs = {
   timezone: "America/Denver",
 };
 
-function baseDecisionInput(lastSentAt: Date | null, nowUtc: Date) {
+function baseDecisionInput(
+  lastSentAt: Date | null,
+  nowUtc: Date,
+  gens?: {
+    cashLogEodScheduleGeneration?: number;
+    cashLogEodDigestSentScheduleGeneration?: number | null;
+  },
+) {
   return {
     nowUtc,
     slackMinutes: 25,
     prefsRaw: denverPrefs,
     cashLogEodLastSentAt: lastSentAt,
+    cashLogEodScheduleGeneration: gens?.cashLogEodScheduleGeneration ?? 0,
+    cashLogEodDigestSentScheduleGeneration:
+      gens?.cashLogEodDigestSentScheduleGeneration ?? null,
     userActive: true,
     userEmail: "finance@example.com",
   };
@@ -98,10 +108,36 @@ describe("cashLogEodJobService", () => {
     const simulatedMarker = new Date(inWindowFirst.getTime());
     const secondTick = new Date("2026-05-05T17:21:00.000Z");
     d = decideMembershipCashLogDigest(
-      baseDecisionInput(simulatedMarker, secondTick),
+      baseDecisionInput(simulatedMarker, secondTick, {
+        cashLogEodScheduleGeneration: 0,
+        cashLogEodDigestSentScheduleGeneration: 0,
+      }),
     );
     expect(d.decision).toBe("skip");
     expect(d.skipReason).toBe("already_sent_today");
+    expect(d.suppressDuplicateSchedule).toBe(true);
     expect(d.alreadySentToday).toBe(true);
+  });
+
+  it("new saved schedule revision allows another digest same calendar day after an earlier send", () => {
+    const inWindow = new Date("2026-05-05T17:20:00.000Z"); // 11:20 MDT
+    const lastSentEarlier = new Date("2026-05-05T17:10:00.000Z"); // 11:10 MDT
+    const block = decideMembershipCashLogDigest(
+      baseDecisionInput(lastSentEarlier, inWindow, {
+        cashLogEodScheduleGeneration: 4,
+        cashLogEodDigestSentScheduleGeneration: 4,
+      }),
+    );
+    expect(block.decision).toBe("skip");
+    expect(block.skipReason).toBe("already_sent_today");
+
+    const allow = decideMembershipCashLogDigest(
+      baseDecisionInput(lastSentEarlier, inWindow, {
+        cashLogEodScheduleGeneration: 5,
+        cashLogEodDigestSentScheduleGeneration: null,
+      }),
+    );
+    expect(allow.decision).toBe("send");
+    expect(allow.suppressDuplicateSchedule).toBe(false);
   });
 });

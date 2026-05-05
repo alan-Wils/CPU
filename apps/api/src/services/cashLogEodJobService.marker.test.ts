@@ -51,6 +51,8 @@ describe("cashLogEodJobService DB marker", () => {
           companyId: "c1",
           cashLogEodPrefs: denverPrefs,
           cashLogEodLastSentAt: null,
+          cashLogEodScheduleGeneration: 11,
+          cashLogEodDigestSentScheduleGeneration: null,
           company: { name: "Acme" },
           user: { email: "a@b.co", isActive: true },
         },
@@ -84,6 +86,8 @@ describe("cashLogEodJobService DB marker", () => {
           companyId: "c2",
           cashLogEodPrefs: denverPrefs,
           cashLogEodLastSentAt: null,
+          cashLogEodScheduleGeneration: 3,
+          cashLogEodDigestSentScheduleGeneration: null,
           company: { name: "Beta" },
           user: { email: "b@b.co", isActive: true },
         },
@@ -98,7 +102,10 @@ describe("cashLogEodJobService DB marker", () => {
       expect(prisma.companyMembership.update).toHaveBeenCalledTimes(1);
       expect(prisma.companyMembership.update).toHaveBeenCalledWith({
         where: { id: "mem2" },
-        data: { cashLogEodLastSentAt: expect.any(Date) },
+        data: {
+          cashLogEodLastSentAt: expect.any(Date),
+          cashLogEodDigestSentScheduleGeneration: 3,
+        },
       });
       expect(out.sent).toBe(1);
       expect(out.skipReasons.email_send_failed).toBe(0);
@@ -122,6 +129,8 @@ describe("cashLogEodJobService DB marker", () => {
           companyId: "c3",
           cashLogEodPrefs: denverPrefs,
           cashLogEodLastSentAt: null,
+          cashLogEodScheduleGeneration: 0,
+          cashLogEodDigestSentScheduleGeneration: null,
           company: { name: "Gamma" },
           user: { email: "g@b.co", isActive: true },
         },

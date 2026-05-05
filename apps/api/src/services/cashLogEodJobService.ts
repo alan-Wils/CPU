@@ -80,6 +80,25 @@ export function digestAlreadySentToday(
   return lastKey === todayKey;
 }
 
+/**
+ * Same calendar day suppression only counts when the membership's **saved digest schedule revision**
+ * matches the row that successfully sent (`cashLogEodDigestSentScheduleGeneration`).
+ * Saving prefs (PUT /cash-log/eod-prefs or admin toggle) clears that anchor so a **new send time works same day**.
+ */
+export function duplicateDigestSuppressesSameSchedule(input: {
+  lastSentAt: Date | null;
+  nowUtc: Date;
+  timezone: string;
+  scheduleGeneration: number;
+  digestSentScheduleGeneration: number | null | undefined;
+}): boolean {
+  if (!input.lastSentAt) return false;
+  if (!digestAlreadySentToday(input.lastSentAt, input.nowUtc, input.timezone)) return false;
+  const sentGen = input.digestSentScheduleGeneration;
+  if (sentGen === null || sentGen === undefined) return false;
+  return sentGen === input.scheduleGeneration;
+}
+
 /** Local `YYYY-MM-DD` for `cashLogEodLastSentAt` in `timezone`, or null. */
 export function successMarkerLocalDateKey(
   lastSentAt: Date | null | undefined,
@@ -104,7 +123,7 @@ function digestMembershipEvalHint(row: CashLogEodMembershipDiag): string | undef
       }
       return "Outside send window — no mail on this tick. If no digest landed yet today, a later tick inside the window can deliver.";
     case "already_sent_today":
-      return "Inside send window but digest already fulfilled for today's local calendar (marker matches today).";
+      return "Inside send window: digest already sent for the **current saved schedule** today. Saving new send time clears this (schedule generation bumped).";
     case "digest_disabled":
       return "Digest disabled for this membership.";
     case "no_recipient":
@@ -220,6 +239,11 @@ export type CashLogEodMembershipDiag = {
   lastSuccessDigestLocalDate: string | null;
   /** True iff marker's local calendar date equals `localDate` (prior state for skips; updated after successful send). */
   alreadySentToday: boolean;
+  /** Rev bumped when digest prefs are saved; duplicate suppression compares to `digestSentScheduleGeneration`. */
+  scheduleGeneration: number | null;
+  digestSentScheduleGeneration: number | null;
+  /** True iff we suppress as `already_sent_today` — same calendar day **and** sent-generation matches saved schedule revision. */
+  suppressDuplicateSchedule: boolean;
   /** Short operator-readable explanation (also in `[cash_log_eod] membership_eval` logs). */
   evalHint?: string;
   outcome: "sent" | "skipped" | "error";
@@ -272,18 +296,21 @@ export type MembershipDigestDecisionResult = {
   prefs: CashLogEodPrefs | null;
   win: ReturnType<typeof computeLocalSendWindowSummary> | null;
   alreadySentToday: boolean;
+  suppressDuplicateSchedule: boolean;
   localDateKey: string | null;
 };
 
 /**
- * Pure eligibility: `already_sent_today` is evaluated only after inside the send window,
- * so an outside-window cron tick never “consumes” the day and never touches DB markers.
+ * Pure eligibility: duplicate-for-schedule checks run only inside the send window.
+ * Saving new digest prefs increments `cashLogEodScheduleGeneration`, so a new send time can deliver same calendar day.
  */
 export function decideMembershipCashLogDigest(input: {
   nowUtc: Date;
   slackMinutes: number;
   prefsRaw: unknown;
   cashLogEodLastSentAt: Date | null;
+  cashLogEodScheduleGeneration: number;
+  cashLogEodDigestSentScheduleGeneration: number | null;
   userActive: boolean;
   userEmail: string | null;
 }): MembershipDigestDecisionResult {
@@ -295,6 +322,7 @@ export function decideMembershipCashLogDigest(input: {
       prefs: null,
       win: null,
       alreadySentToday: false,
+      suppressDuplicateSchedule: false,
       localDateKey: null,
     };
   }
@@ -312,6 +340,14 @@ export function decideMembershipCashLogDigest(input: {
     input.nowUtc,
     prefs.timezone,
   );
+  const suppressDuplicateSchedule = duplicateDigestSuppressesSameSchedule({
+    lastSentAt: input.cashLogEodLastSentAt,
+    nowUtc: input.nowUtc,
+    timezone: prefs.timezone,
+    scheduleGeneration: input.cashLogEodScheduleGeneration,
+    digestSentScheduleGeneration:
+      input.cashLogEodDigestSentScheduleGeneration,
+  });
 
   if (!prefs.enabled) {
     return {
@@ -320,6 +356,7 @@ export function decideMembershipCashLogDigest(input: {
       prefs,
       win,
       alreadySentToday,
+      suppressDuplicateSchedule,
       localDateKey: dateKey,
     };
   }
@@ -330,6 +367,7 @@ export function decideMembershipCashLogDigest(input: {
       prefs,
       win,
       alreadySentToday,
+      suppressDuplicateSchedule,
       localDateKey: dateKey,
     };
   }
@@ -340,6 +378,7 @@ export function decideMembershipCashLogDigest(input: {
       prefs,
       win,
       alreadySentToday,
+      suppressDuplicateSchedule,
       localDateKey: dateKey,
     };
   }
@@ -350,16 +389,18 @@ export function decideMembershipCashLogDigest(input: {
       prefs,
       win,
       alreadySentToday,
+      suppressDuplicateSchedule,
       localDateKey: dateKey,
     };
   }
-  if (alreadySentToday) {
+  if (suppressDuplicateSchedule) {
     return {
       decision: "skip",
       skipReason: "already_sent_today",
       prefs,
       win,
-      alreadySentToday: true,
+      alreadySentToday,
+      suppressDuplicateSchedule: true,
       localDateKey: dateKey,
     };
   }
@@ -367,7 +408,8 @@ export function decideMembershipCashLogDigest(input: {
     decision: "send",
     prefs,
     win,
-    alreadySentToday: false,
+    alreadySentToday,
+    suppressDuplicateSchedule: false,
     localDateKey: dateKey,
   };
 }
@@ -392,6 +434,9 @@ function pushMembershipEvalLog(row: CashLogEodMembershipDiag): void {
     windowEnd: row.windowEndLocal,
     lastSuccessDigestLocalDate: row.lastSuccessDigestLocalDate,
     alreadySentToday: row.alreadySentToday,
+    scheduleGeneration: row.scheduleGeneration,
+    digestSentScheduleGeneration: row.digestSentScheduleGeneration,
+    suppressDuplicateSchedule: row.suppressDuplicateSchedule,
     outcome: row.outcome,
     skipReason: row.skipReason ?? null,
     evalHint: row.evalHint ?? null,
@@ -438,6 +483,8 @@ export async function runCashLogEodJob(options?: {
       companyId: true,
       cashLogEodPrefs: true,
       cashLogEodLastSentAt: true,
+      cashLogEodScheduleGeneration: true,
+      cashLogEodDigestSentScheduleGeneration: true,
       company: { select: { name: true } },
       user: { select: { email: true, isActive: true } },
     },
@@ -452,6 +499,9 @@ export async function runCashLogEodJob(options?: {
       slackMinutes,
       prefsRaw: m.cashLogEodPrefs,
       cashLogEodLastSentAt: m.cashLogEodLastSentAt,
+      cashLogEodScheduleGeneration: m.cashLogEodScheduleGeneration ?? 0,
+      cashLogEodDigestSentScheduleGeneration:
+        m.cashLogEodDigestSentScheduleGeneration,
       userActive: Boolean(m.user?.isActive),
       userEmail: m.user?.email ?? null,
     });
@@ -475,6 +525,10 @@ export async function runCashLogEodJob(options?: {
         windowEndLocal: d.win?.windowEndLocal ?? null,
         lastSuccessDigestLocalDate,
         alreadySentToday: d.alreadySentToday,
+        scheduleGeneration: m.cashLogEodScheduleGeneration ?? 0,
+        digestSentScheduleGeneration:
+          m.cashLogEodDigestSentScheduleGeneration,
+        suppressDuplicateSchedule: d.suppressDuplicateSchedule,
         outcome: "skipped",
         skipReason: reason,
       });
@@ -516,7 +570,10 @@ export async function runCashLogEodJob(options?: {
       // Marker only after transport success (Resend/SMTP resolved without throw).
       await prisma.companyMembership.update({
         where: { id: m.id },
-        data: { cashLogEodLastSentAt: now },
+        data: {
+          cashLogEodLastSentAt: now,
+          cashLogEodDigestSentScheduleGeneration: m.cashLogEodScheduleGeneration,
+        },
       });
 
       sent += 1;
@@ -528,6 +585,7 @@ export async function runCashLogEodJob(options?: {
         sendTimeConfigured: win.sendTimeConfigured,
         localTime: win.currentLocalTime,
       });
+      const sg = m.cashLogEodScheduleGeneration ?? 0;
       const row = finalizeMembershipDiag({
         ...base,
         timezone: win.timezone,
@@ -538,6 +596,9 @@ export async function runCashLogEodJob(options?: {
         windowEndLocal: win.windowEndLocal,
         lastSuccessDigestLocalDate: win.localDate,
         alreadySentToday: true,
+        scheduleGeneration: sg,
+        digestSentScheduleGeneration: sg,
+        suppressDuplicateSchedule: true,
         outcome: "sent",
       });
       membershipsOut.push(row);
@@ -547,6 +608,7 @@ export async function runCashLogEodJob(options?: {
       errors.push(`${m.id}: ${msg}`);
       skipReasons.email_send_failed += 1;
       logWarn("[cash_log_eod] failed", { membershipId: m.id, error: msg });
+      const sgErr = m.cashLogEodScheduleGeneration ?? 0;
       const failedMarker = digestAlreadySentToday(
         m.cashLogEodLastSentAt,
         now,
@@ -565,6 +627,17 @@ export async function runCashLogEodJob(options?: {
           win.timezone,
         ),
         alreadySentToday: failedMarker,
+        scheduleGeneration: sgErr,
+        digestSentScheduleGeneration:
+          m.cashLogEodDigestSentScheduleGeneration,
+        suppressDuplicateSchedule: duplicateDigestSuppressesSameSchedule({
+          lastSentAt: m.cashLogEodLastSentAt,
+          nowUtc: now,
+          timezone: prefs.timezone,
+          scheduleGeneration: sgErr,
+          digestSentScheduleGeneration:
+            m.cashLogEodDigestSentScheduleGeneration,
+        }),
         outcome: "error",
         skipReason: "email_send_failed",
         error: msg,

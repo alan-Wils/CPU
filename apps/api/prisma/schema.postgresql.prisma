@@ -175,6 +175,10 @@ model CompanyMembership {
   /// Optional per-user schedule for cash / financial log digest email.
   cashLogEodPrefs      Json?
   cashLogEodLastSentAt DateTime?
+  /// Bumped whenever digest prefs are saved — changing send time resets duplicate lock for today.
+  cashLogEodScheduleGeneration           Int @default(0)
+  /// Last successful digest was for this generation; null = nothing mailed for current prefs revision yet.
+  cashLogEodDigestSentScheduleGeneration Int?
   createdAt DateTime            @default(now())
   updatedAt DateTime            @updatedAt
 

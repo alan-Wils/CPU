@@ -35,6 +35,8 @@ Digest emails only send during each member’s configured **local send window** 
 
 **Idempotency:** `CompanyMembership.cashLogEodLastSentAt` is updated **only after** Resend/SMTP reports success for that digest. Ticks outside the window, disabled digests, or failed mail sends **do not** write this field, so they never block a later in-window attempt the same calendar day.
 
+**Same-day duplicate suppression** uses `cashLogEodScheduleGeneration` and `cashLogEodDigestSentScheduleGeneration`: saving digest prefs (`PUT /api/cash-log/eod-prefs` or toggling digest in Admin) **increments the generation** and **clears** the digest success generation, so you can switch from **11:00 → 17:00** local send time **the same calendar day** and still receive the new-slot digest.
+
 **Aggregation keys** (see `job.skipReasons`): `outside_send_window`, `already_sent_today`, `digest_disabled`, `no_recipient`, `prefs_invalid`, `wrong_weekday`, and **`email_send_failed`** (attempted send that threw — not counted in `skipped`).
 
 Cron expression examples (cron syntax depends on Railway’s cron UI):

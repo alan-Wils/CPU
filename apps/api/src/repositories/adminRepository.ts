@@ -54,6 +54,8 @@ export class AdminRepository extends TenantRepository {
             const mergedPrefs = mergeCashLogEodPrefs(m.cashLogEodPrefs);
             mergedPrefs.enabled = Boolean(data.cashLogEodEnabled);
             membershipData.cashLogEodPrefs = mergedPrefs as unknown as Prisma.InputJsonValue;
+            membershipData.cashLogEodScheduleGeneration = { increment: 1 };
+            membershipData.cashLogEodDigestSentScheduleGeneration = null;
         }
         let membershipTouched = false;
         if (Object.keys(membershipData).length) {
