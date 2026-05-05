@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
+import { resolvePublicWebBaseUrl } from "../config/publicWebUrl.js";
 import { parseCashLogEodPrefs, type CashLogEodPrefs } from "../lib/cashLogEodPrefs.js";
 import { CashLogService } from "./cashLogService.js";
 import { CheckCaptureService } from "./checkCaptureService.js";
@@ -260,17 +261,45 @@ function rowsToHtmlTable(rows: CashDigestRow[]): string {
 
 type CheckDigestRow = Awaited<ReturnType<CheckCaptureService["listByCreatedAtRange"]>>[number];
 
-function checkRowsToHtmlTable(rows: CheckDigestRow[]): string {
+/** Stored URLs may be absolute (saved with origin) or root-relative (`/uploads/...`). */
+function absolutePublicUrl(stored: string | null | undefined, publicWebBase: string): string {
+  const u = String(stored || "").trim();
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u)) return u;
+  const base = publicWebBase.replace(/\/+$/, "");
+  const path = u.startsWith("/") ? u : `/${u}`;
+  return `${base}${path}`;
+}
+
+function checkImageLinksCell(r: CheckDigestRow, publicWebBase: string): string {
+  const front = absolutePublicUrl(r.imageUrl, publicWebBase);
+  const stub = absolutePublicUrl(r.stubImageUrl, publicWebBase);
+  const parts: string[] = [];
+  if (front) {
+    parts.push(
+      `<a href="${escapeHtml(front)}" target="_blank" rel="noopener noreferrer">check front</a>`,
+    );
+  }
+  if (stub) {
+    parts.push(
+      `<a href="${escapeHtml(stub)}" target="_blank" rel="noopener noreferrer">stub</a>`,
+    );
+  }
+  return parts.length ? parts.join(" · ") : "—";
+}
+
+function checkRowsToHtmlTable(rows: CheckDigestRow[], publicWebBase: string): string {
   if (!rows.length) {
     return "<p>No check captures in this period.</p>";
   }
   const head =
-    "<tr><th>Logged (UTC)</th><th>Check date</th><th>Amount</th><th>Payee</th><th>Check #</th><th>Invoice #</th><th>Memo</th></tr>";
+    "<tr><th>Logged (UTC)</th><th>Check date</th><th>Amount</th><th>Payee</th><th>Check #</th><th>Invoice #</th><th>Memo</th><th>Images</th></tr>";
   const body = rows
     .map((r) => {
       const logged = r.createdAt.toISOString();
       const checkDateIso = r.checkDate != null ? r.checkDate.toISOString() : "—";
-      return `<tr><td>${escapeHtml(logged)}</td><td>${escapeHtml(checkDateIso)}</td><td>${escapeHtml(String(r.amount ?? ""))}</td><td>${escapeHtml(String(r.payerName || ""))}</td><td>${escapeHtml(String(r.checkNumber || ""))}</td><td>${escapeHtml(String(r.invoiceNumber || ""))}</td><td>${escapeHtml(String(r.memo || ""))}</td></tr>`;
+      const imgs = checkImageLinksCell(r, publicWebBase);
+      return `<tr><td>${escapeHtml(logged)}</td><td>${escapeHtml(checkDateIso)}</td><td>${escapeHtml(String(r.amount ?? ""))}</td><td>${escapeHtml(String(r.payerName || ""))}</td><td>${escapeHtml(String(r.checkNumber || ""))}</td><td>${escapeHtml(String(r.invoiceNumber || ""))}</td><td>${escapeHtml(String(r.memo || ""))}</td><td>${imgs}</td></tr>`;
     })
     .join("");
   return `<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">${head}${body}</table>`;
@@ -670,6 +699,7 @@ export async function runCashLogEodJob(options?: {
         cashService.listByCreatedAtRange(m.companyId, from, to),
         checkService.listByCreatedAtRange(m.companyId, from, to),
       ]);
+      const publicWebBase = resolvePublicWebBaseUrl().replace(/\/+$/, "");
       const windowLabel =
         prefs.window === "LAST_7_DAYS" ? "last 7 days" : "last 24 hours";
       const subject = `[${m.company?.name || "Company"}] Financial digest — cash & checks (${windowLabel})`;
@@ -682,8 +712,8 @@ export async function runCashLogEodJob(options?: {
           <p style="font-size:13px;color:#555">Rows use <b>entry date</b> when set (same as Admin cash log / export). Legacy rows without an entry date use logged time.</p>
           ${rowsToHtmlTable(rows)}
           <h3 style="margin-top:1.25em">Check log</h3>
-          <p style="font-size:13px;color:#555">Check captures from Admin → Financial logs (included by saved time in this window).</p>
-          ${checkRowsToHtmlTable(checkRows)}
+          <p style="font-size:13px;color:#555">Check captures from Admin → Financial logs (included by saved time in this window). Image links use your configured <code>APP_URL</code> (or CORS origin); opening them may require signing in to NexBatch.</p>
+          ${checkRowsToHtmlTable(checkRows, publicWebBase)}
           <p style="font-size:12px;color:#666">Sent by NexBatch CPU · adjust schedule in Admin → Financial logs.</p>
         </div>`;
 

@@ -415,6 +415,8 @@ export class CheckCaptureService {
                 payerName: true,
                 memo: true,
                 invoiceNumber: true,
+                imageUrl: true,
+                stubImageUrl: true,
                 createdAt: true,
             },
         });
