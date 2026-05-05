@@ -4,6 +4,7 @@ import { logInfo } from "../lib/logger.js";
 import { sendInviteEmail } from "../lib/mailer.js";
 import { mergeCashLogEodPrefs } from "../lib/cashLogEodPrefs.js";
 import { AdminRepository } from "../repositories/adminRepository.js";
+import { mayAdminEnableOwnerDigestEmails } from "./adminDigestPolicy.js";
 import { AuditService } from "./auditService.js";
 export class AdminService {
     repo = new AdminRepository();
@@ -133,7 +134,7 @@ export class AdminService {
             throw new AppError("Target user not found", 404);
         const membershipBefore = await this.repo.db.companyMembership.findFirst({
             where: { companyId: input.companyId, userId: input.targetUserId },
-            select: { appPermissions: true },
+            select: { appPermissions: true, cashLogEodPrefs: true },
         });
 
         if (input.actorRole === "ADMIN" && target.role === "OWNER") {
@@ -175,6 +176,23 @@ export class AdminService {
         }
         if (input.actorRole === "ADMIN" && input.role === "OWNER") {
             throw new AppError("Admins cannot promote users to OWNER", 403);
+        }
+        const prevDigestEnabled = mergeCashLogEodPrefs(
+            membershipBefore?.cashLogEodPrefs ?? null,
+        ).enabled;
+        if (
+            !mayAdminEnableOwnerDigestEmails({
+                actorRole: input.actorRole,
+                targetRole: target.role,
+                requestedEnabled: input.cashLogEodEnabled,
+                prevEnabled: prevDigestEnabled,
+            })
+        ) {
+            throw new AppError(
+                "Only the application owner can turn on digest emails for their account (sign in as owner and enable it here, or use Financial digest settings).",
+                403,
+                "OWNER_DIGEST_SELF_ENABLE_ONLY",
+            );
         }
         const changed = await this.repo.updateUser(input.companyId, input.targetUserId, {
             email: input.email,

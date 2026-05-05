@@ -1597,6 +1597,18 @@ export default function AdminPage() {
       return;
     }
 
+    if (
+      normalizePlatformRole(currentUser?.role) === "ADMIN" &&
+      normalizePlatformRole(user.role) === "OWNER" &&
+      editCashLogEodEnabled &&
+      !user.cashLogEodEnabled
+    ) {
+      setError(
+        "Only the application owner can turn on digest emails for their account. They can sign in as owner and check this box themselves (or use Financial digest settings).",
+      );
+      return;
+    }
+
     setSavingUserId(user.id);
 
     try {
