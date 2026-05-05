@@ -149,7 +149,7 @@ function digestMembershipEvalHint(row: CashLogEodMembershipDiag): string | undef
   switch (row.skipReason) {
     case "outside_send_window":
       if (row.alreadySentToday) {
-        return "Outside send window on this tick (no mail attempted). If lastSuccessDigestLocalDate matches localDate, an earlier send succeeded today; the next tick inside the window will send again (no daily cap).";
+        return "Skipped because local clock is still before today's configured send time (compare localTime vs windowStart) - not because of alreadySentToday. alreadySentToday only records an earlier success today; it does not block another send on the next in-window tick (no same-day cap).";
       }
       return "Before configured local send time — no mail on this tick. Next tick inside the window can send again (no daily cap). Eligibility uses eod_local_day (at/after send time through end of day) vs strict slack (narrow slice after send time).";
     case "already_sent_today":
@@ -477,6 +477,17 @@ function finalizeMembershipDiag(
   return base;
 }
 
+function skipPrimaryCause(row: CashLogEodMembershipDiag): string | null {
+  if (row.outcome !== "skipped" || !row.skipReason) return null;
+  if (row.skipReason === "outside_send_window") {
+    const t = row.currentLocalTime ?? "?";
+    const start = row.windowStartLocal ?? "?";
+    const end = row.windowEndLocal ?? "?";
+    return `Local time ${t} is outside today's send window (${start}-${end} in ${row.timezone ?? "TZ"}). alreadySentToday=${row.alreadySentToday} is not a skip reason (see evalHint).`;
+  }
+  return null;
+}
+
 function pushMembershipEvalLog(row: CashLogEodMembershipDiag): void {
   logInfo("[cash_log_eod] membership_eval", {
     membershipId: row.membershipId,
@@ -495,6 +506,7 @@ function pushMembershipEvalLog(row: CashLogEodMembershipDiag): void {
     suppressDuplicateSchedule: row.suppressDuplicateSchedule,
     outcome: row.outcome,
     skipReason: row.skipReason ?? null,
+    skipPrimaryCause: skipPrimaryCause(row),
     evalHint: row.evalHint ?? null,
   });
 }
