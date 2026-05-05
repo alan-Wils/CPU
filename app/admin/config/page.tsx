@@ -136,6 +136,11 @@ function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 }
 
+type CultivationFieldModalState =
+  | { kind: "closed" }
+  | { kind: "addBay"; roomId: string }
+  | { kind: "addTable"; roomId: string; bayId: string };
+
 function extractionAiNamingStatusLine(extraction: AppConfig["extraction"]): string {
   const md = String(extraction.productNameAiPromptMarkdown || "").trim();
   const intro = String(extraction.productNameAiGuidedIntro || "").trim();
@@ -162,6 +167,14 @@ export default function ConfigPage() {
   const [aiPromptShippedDefault, setAiPromptShippedDefault] = useState("");
   const [aiPromptModalLoading, setAiPromptModalLoading] = useState(false);
   const [aiPromptModalError, setAiPromptModalError] = useState("");
+
+  const [cultivationFieldModal, setCultivationFieldModal] = useState<CultivationFieldModalState>({
+    kind: "closed",
+  });
+  const [fieldModalBayName, setFieldModalBayName] = useState("");
+  const [fieldModalTableName, setFieldModalTableName] = useState("");
+  const [fieldModalSquareFeet, setFieldModalSquareFeet] = useState("");
+  const [fieldModalError, setFieldModalError] = useState("");
 
   const [strainForm, setStrainForm] = useState({
     name: "",
@@ -525,10 +538,60 @@ export default function ConfigPage() {
     }));
   }
 
-  function addBay(roomId: string) {
-    const bayName = prompt("Bay name, like A, B, or C");
-    if (!bayName) return;
+  function openAddBayModal(roomId: string) {
+    setFieldModalError("");
+    setFieldModalBayName("");
+    setCultivationFieldModal({ kind: "addBay", roomId });
+  }
 
+  function confirmCultivationFieldModal() {
+    if (cultivationFieldModal.kind === "closed") return;
+
+    if (cultivationFieldModal.kind === "addBay") {
+      const bayName = fieldModalBayName.trim();
+      if (!bayName) {
+        setFieldModalError("Enter a bay name (e.g. A, B, or C).");
+        return;
+      }
+      const roomId = cultivationFieldModal.roomId;
+      setConfig((prev) => ({
+        ...prev,
+        cultivation: {
+          ...prev.cultivation,
+          rooms: {
+            ...prev.cultivation.rooms,
+            flowerRooms: prev.cultivation.rooms.flowerRooms.map((room) =>
+              room.id === roomId
+                ? {
+                    ...room,
+                    bays: [
+                      ...room.bays,
+                      {
+                        id: makeId("bay"),
+                        name: bayName,
+                        tables: [],
+                      },
+                    ],
+                  }
+                : room
+            ),
+          },
+        },
+      }));
+      setCultivationFieldModal({ kind: "closed" });
+      setFieldModalError("");
+      return;
+    }
+
+    if (cultivationFieldModal.kind !== "addTable") return;
+
+    const tableName = fieldModalTableName.trim();
+    const squareFeet = fieldModalSquareFeet.trim();
+    if (!tableName) {
+      setFieldModalError("Enter a table name or number.");
+      return;
+    }
+    const { roomId, bayId } = cultivationFieldModal;
     setConfig((prev) => ({
       ...prev,
       cultivation: {
@@ -539,20 +602,39 @@ export default function ConfigPage() {
             room.id === roomId
               ? {
                   ...room,
-                  bays: [
-                    ...room.bays,
-                    {
-                      id: makeId("bay"),
-                      name: bayName.trim(),
-                      tables: [],
-                    },
-                  ],
+                  bays: room.bays.map((bay) =>
+                    bay.id === bayId
+                      ? {
+                          ...bay,
+                          tables: [
+                            ...bay.tables,
+                            {
+                              id: makeId("table"),
+                              name: tableName,
+                              squareFeet,
+                            },
+                          ],
+                        }
+                      : bay
+                  ),
                 }
               : room
           ),
         },
       },
     }));
+    setCultivationFieldModal({ kind: "closed" });
+    setFieldModalError("");
+    setFieldModalTableName("");
+    setFieldModalSquareFeet("");
+  }
+
+  function closeCultivationFieldModal() {
+    setCultivationFieldModal({ kind: "closed" });
+    setFieldModalError("");
+    setFieldModalBayName("");
+    setFieldModalTableName("");
+    setFieldModalSquareFeet("");
   }
 
   function removeBay(roomId: string, bayId: string) {
@@ -575,44 +657,11 @@ export default function ConfigPage() {
     }));
   }
 
-  function addTable(roomId: string, bayId: string) {
-    const tableName = prompt("Table name or number");
-    if (!tableName) return;
-
-    const squareFeet = prompt("Square footage over this table");
-    if (!squareFeet) return;
-
-    setConfig((prev) => ({
-      ...prev,
-      cultivation: {
-        ...prev.cultivation,
-        rooms: {
-          ...prev.cultivation.rooms,
-          flowerRooms: prev.cultivation.rooms.flowerRooms.map((room) =>
-            room.id === roomId
-              ? {
-                  ...room,
-                  bays: room.bays.map((bay) =>
-                    bay.id === bayId
-                      ? {
-                          ...bay,
-                          tables: [
-                            ...bay.tables,
-                            {
-                              id: makeId("table"),
-                              name: tableName.trim(),
-                              squareFeet: squareFeet.trim(),
-                            },
-                          ],
-                        }
-                      : bay
-                  ),
-                }
-              : room
-          ),
-        },
-      },
-    }));
+  function openAddTableModal(roomId: string, bayId: string) {
+    setFieldModalError("");
+    setFieldModalTableName("");
+    setFieldModalSquareFeet("");
+    setCultivationFieldModal({ kind: "addTable", roomId, bayId });
   }
 
   function removeTable(roomId: string, bayId: string, tableId: string) {
@@ -1034,7 +1083,7 @@ export default function ConfigPage() {
               <div style={styles.row}>
                 <strong>{room.name}</strong>
                 <div style={styles.inlineSmall}>
-                  <button style={styles.addButton} onClick={() => addBay(room.id)}>
+                  <button style={styles.addButton} onClick={() => openAddBayModal(room.id)}>
                     Add Bay
                   </button>
                   <button
@@ -1053,7 +1102,7 @@ export default function ConfigPage() {
                     <div style={styles.inlineSmall}>
                       <button
                         style={styles.addButton}
-                        onClick={() => addTable(room.id, bay.id)}
+                        onClick={() => openAddTableModal(room.id, bay.id)}
                       >
                         Add Table
                       </button>
@@ -1219,6 +1268,111 @@ export default function ConfigPage() {
           onRemove={(id) => removeSupply("packaging", id)}
         />
       </section>
+
+      {cultivationFieldModal.kind !== "closed" ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cultivation-field-modal-title"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 20001,
+            background: "rgba(2,6,23,0.88)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeCultivationFieldModal();
+          }}
+        >
+          <div
+            style={{
+              ...styles.card,
+              maxWidth: 440,
+              width: "100%",
+              margin: 0,
+              border: "1px solid #334155",
+              boxShadow: "0 24px 48px rgba(0,0,0,0.45)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              id="cultivation-field-modal-title"
+              style={{ ...styles.sectionTitle, marginBottom: 8, marginTop: 0 }}
+            >
+              {cultivationFieldModal.kind === "addBay" ? "Add bay" : "Add table"}
+            </h3>
+            <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
+              {cultivationFieldModal.kind === "addBay"
+                ? "Enter a label for this bay (often a letter). It appears when staff assign plants to flower locations."
+                : "Name or number this table, then optional square footage over the table (use 0 if not tracking)."}
+            </p>
+
+            {fieldModalError ? (
+              <p style={{ color: "#fca5a5", fontSize: 14, marginTop: 0 }}>{fieldModalError}</p>
+            ) : null}
+
+            {cultivationFieldModal.kind === "addBay" ? (
+              <label style={{ ...styles.label, display: "block", marginTop: 8 }}>
+                Bay name
+                <input
+                  style={styles.input}
+                  autoFocus
+                  placeholder="e.g. A, B, or C"
+                  value={fieldModalBayName}
+                  onChange={(e) => setFieldModalBayName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      confirmCultivationFieldModal();
+                    }
+                  }}
+                />
+              </label>
+            ) : (
+              <>
+                <label style={{ ...styles.label, display: "block", marginTop: 8 }}>
+                  Table name or number
+                  <input
+                    style={styles.input}
+                    autoFocus
+                    placeholder="e.g. 1 or Table North"
+                    value={fieldModalTableName}
+                    onChange={(e) => setFieldModalTableName(e.target.value)}
+                  />
+                </label>
+                <label style={{ ...styles.label, display: "block", marginTop: 12 }}>
+                  Square footage over this table
+                  <input
+                    style={styles.input}
+                    placeholder="Optional — e.g. 48 or 0"
+                    value={fieldModalSquareFeet}
+                    onChange={(e) => setFieldModalSquareFeet(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        confirmCultivationFieldModal();
+                      }
+                    }}
+                  />
+                </label>
+              </>
+            )}
+
+            <div style={{ ...styles.inline, marginTop: 20, flexWrap: "wrap", gap: 10 }}>
+              <button type="button" style={styles.deleteButton} onClick={closeCultivationFieldModal}>
+                Cancel
+              </button>
+              <button type="button" style={styles.saveButton} onClick={confirmCultivationFieldModal}>
+                {cultivationFieldModal.kind === "addBay" ? "Add bay" : "Add table"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {aiPromptModalOpen ? (
         <div
