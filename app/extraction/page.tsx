@@ -2048,12 +2048,18 @@ export default function Extraction() {
       );
 
       if (!alreadyInPackaging) {
+        const sourcePackageLine = Array.isArray(selectedExt.sources)
+          ? selectedExt.sources
+              .map((r: any) => String(r?.sourceId ?? "").trim())
+              .filter(Boolean)
+              .join(", ")
+          : "";
         const packagingBatch = {
           id: selectedExt.id,
           name: selectedExt.name,
           type: selectedExt.productType,
           productType: selectedExt.productType,
-          source: selectedExt.source,
+          source: sourcePackageLine || String(selectedExt.source || "").trim(),
           marketBatchCode: selectedExt.marketBatchCode,
           sourceBlendLabel: selectedExt.sourceBlendLabel,
           extractionSources: Array.isArray(selectedExt.sources)
