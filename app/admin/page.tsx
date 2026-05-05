@@ -25,7 +25,6 @@ import {
   setSelectedCompanyId,
 } from "@/lib/api";
 import { getAuthCompany, getAuthToken, getAuthUser } from "@/lib/auth";
-import { defaultCashLogEodPrefsUi } from "@/lib/cashLogEodDefaults";
 
 type AdminUser = {
   id: string;
@@ -98,9 +97,9 @@ const PENDING_INVITE_ROW_PREFIX = "pending-invite:";
 
 const CASH_EOD_WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const CASH_EOD_TIMEZONE_OPTIONS = [
-  "America/Denver",
   "America/New_York",
   "America/Chicago",
+  "America/Denver",
   "America/Los_Angeles",
   "America/Phoenix",
   "Pacific/Honolulu",
@@ -377,16 +376,10 @@ async function readImageFileForCheckUpload(file: File): Promise<{
 
 function canEditTargetUser(currentRole: string, targetRole: string) {
   const c = normalizePlatformRole(currentRole);
+  const t = normalizePlatformRole(targetRole);
   if (c === "OWNER") return true;
-  if (c === "ADMIN") return true;
+  if (c === "ADMIN" && t !== "OWNER") return true;
   return false;
-}
-
-function isAdminEditingApplicationOwner(actorRole: string, targetRole: string) {
-  return (
-    normalizePlatformRole(actorRole) === "ADMIN" &&
-    normalizePlatformRole(targetRole) === "OWNER"
-  );
 }
 
 function getDisplayStatus(user: AdminUser) {
@@ -493,9 +486,13 @@ export default function AdminPage() {
   const [cashEodLoading, setCashEodLoading] = useState(false);
   const [cashEodSaving, setCashEodSaving] = useState(false);
   const [cashEodError, setCashEodError] = useState("");
-  const [cashEodPrefs, setCashEodPrefs] = useState<CashLogEodPrefsDto>(() =>
-    defaultCashLogEodPrefsUi(),
-  );
+  const [cashEodPrefs, setCashEodPrefs] = useState<CashLogEodPrefsDto>({
+    enabled: false,
+    weekdays: [1, 2, 3, 4, 5],
+    sendTime: "17:00",
+    window: "LAST_24H",
+    timezone: "America/New_York",
+  });
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -530,14 +527,6 @@ export default function AdminPage() {
     if (!u || isPendingInviteGridRow(u)) return null;
     return u;
   }, [editingUserId, companyUsersDisplay]);
-
-  const adminOwnerDigestOnlyModal = useMemo(
-    () =>
-      editingTargetUser
-        ? isAdminEditingApplicationOwner(currentUser?.role || "", editingTargetUser.role)
-        : false,
-    [editingTargetUser, currentUser?.role],
-  );
 
   function checksCompanyId(): string {
     if (normalizePlatformRole(currentUser?.role) === "OWNER") {
@@ -1588,19 +1577,17 @@ export default function AdminPage() {
       return;
     }
 
-    const adminDigestOnlyOwner = isAdminEditingApplicationOwner(currentUser?.role || "", user.role);
-
     if (normalizePlatformRole(currentUser?.role) === "ADMIN" && normalizePlatformRole(editRole) === "OWNER") {
       setError("Admins cannot make users application owners.");
       return;
     }
 
-    if (!adminDigestOnlyOwner && !editUsername.trim()) {
+    if (!editUsername.trim()) {
       setError("Username is required.");
       return;
     }
 
-    if (!adminDigestOnlyOwner && !editRole.trim()) {
+    if (!editRole.trim()) {
       setError("Role is required.");
       return;
     }
@@ -1614,15 +1601,16 @@ export default function AdminPage() {
 
     try {
       const ownerOrAdminRole = isOwnerOrAdminRoleKey(editRole);
-      const body: Record<string, unknown> = adminDigestOnlyOwner
-        ? { cashLogEodEnabled: editCashLogEodEnabled }
-        : {
-            email: editEmail.trim() || undefined,
-            role: editRole,
-            isActive: editActive,
-            cashLogEodEnabled: editCashLogEodEnabled,
-            ...(ownerOrAdminRole ? { appPermissions: null } : { appPermissions: editAppPermissions }),
-          };
+      const body: Record<string, unknown> = {
+        email: editEmail.trim() || undefined,
+        role: editRole,
+        isActive: editActive,
+        cashLogEodEnabled: editCashLogEodEnabled,
+      };
+      if (ownerOrAdminRole)
+        body.appPermissions = null;
+      else
+        body.appPermissions = editAppPermissions;
 
       const updatedUser = await apiRequest<AdminUser>(`/api/admin/users/${user.id}`, {
         method: "PATCH",
@@ -2512,7 +2500,8 @@ export default function AdminPage() {
                       lineHeight: 1.5,
                     }}
                   >
-                    Schedule a digest of cash log rows (logged time). Example: weekdays 5:00 PM with “last 24 hours”, or
+                    Schedule a digest email with <strong>cash log</strong> and <strong>check log</strong> tables (rows
+                    included by saved / created time in the window). Example: weekdays 5:00 PM with “last 24 hours”, or
                     Fridays only with “last 7 days”. Requires{" "}
                     <code style={{ color: "#94a3b8" }}>CRON_SECRET</code> on the API and a cron job POSTing to{" "}
                     <code style={{ color: "#94a3b8" }}>/api/internal/jobs/cash-log-eod</code> every ~15–30 minutes with{" "}
@@ -3384,7 +3373,7 @@ export default function AdminPage() {
                   flexWrap: "wrap",
                 }}
               >
-                <h2 style={{ ...sectionTitleStyle, marginBottom: 0 }}>Cash log digest email</h2>
+                <h2 style={{ ...sectionTitleStyle, marginBottom: 0 }}>Financial digest email (cash & checks)</h2>
                 <button
                   type="button"
                   onClick={() => setCashEodModalOpen(false)}
@@ -3394,10 +3383,10 @@ export default function AdminPage() {
                 </button>
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.55, fontSize: 14 }}>
-                <strong>Schedule</strong> (days, time, timezone, 24h vs 7-day window) is saved for the{" "}
-                <strong>whole company</strong>—everyone who has digest email enabled gets the same timing and report
-                window. The <strong>Send digest…</strong> checkbox below applies only to <strong>your</strong> account
-                (whether you receive the email).
+                Applies to <strong>your</strong> account in the current company. Pick which weekdays to send, the local
+                time, timezone, and whether the email covers the last 24 hours or the last 7 days (rolling from send
+                time). The message includes both the <strong>cash log</strong> and <strong>check log</strong> for that
+                window.
               </p>
               {cashEodError ? (
                 <div
@@ -3943,25 +3932,6 @@ export default function AdminPage() {
                   {editingTargetUser.email ? ` · ${editingTargetUser.email}` : ""}
                 </p>
 
-                {adminOwnerDigestOnlyModal ? (
-                  <div
-                    style={{
-                      marginBottom: 16,
-                      padding: 12,
-                      borderRadius: 12,
-                      border: "1px solid rgba(245, 158, 11, 0.5)",
-                      background: "rgba(69, 26, 3, 0.35)",
-                      color: "#fcd34d",
-                      fontSize: 13,
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    <b>Company admins</b> can only change{" "}
-                    <b>&quot;Receive EOD financial digest emails&quot;</b> for the application owner. Profile fields stay
-                    read-only until an owner adjusts them elsewhere.
-                  </div>
-                ) : null}
-
                 <div
                   style={{
                     padding: 14,
@@ -4076,12 +4046,7 @@ export default function AdminPage() {
                     <input
                       value={editUsername}
                       onChange={(e) => setEditUsername(e.target.value)}
-                      disabled={adminOwnerDigestOnlyModal}
-                      style={{
-                        ...inputStyle,
-                        opacity: adminOwnerDigestOnlyModal ? 0.65 : 1,
-                        cursor: adminOwnerDigestOnlyModal ? "not-allowed" : undefined,
-                      }}
+                      style={inputStyle}
                     />
                   </label>
 
@@ -4090,12 +4055,7 @@ export default function AdminPage() {
                     <input
                       value={editEmail}
                       onChange={(e) => setEditEmail(e.target.value)}
-                      disabled={adminOwnerDigestOnlyModal}
-                      style={{
-                        ...inputStyle,
-                        opacity: adminOwnerDigestOnlyModal ? 0.65 : 1,
-                        cursor: adminOwnerDigestOnlyModal ? "not-allowed" : undefined,
-                      }}
+                      style={inputStyle}
                     />
                   </label>
 
@@ -4110,12 +4070,7 @@ export default function AdminPage() {
                         if (isOwnerOrAdminRoleKey(nk)) setEditAppPermissions(fullAccessPermissionIds());
                         else setEditAppPermissions(defaultPagePermissionsForRole(nk));
                       }}
-                      disabled={adminOwnerDigestOnlyModal}
-                      style={{
-                        ...inputStyle,
-                        opacity: adminOwnerDigestOnlyModal ? 0.65 : 1,
-                        cursor: adminOwnerDigestOnlyModal ? "not-allowed" : undefined,
-                      }}
+                      style={inputStyle}
                     >
                       {allowedRoleOptions.map((option) => (
                         <option key={option.value} value={option.value}>
@@ -4130,12 +4085,7 @@ export default function AdminPage() {
                     <select
                       value={editActive ? "ACTIVE" : "INACTIVE"}
                       onChange={(e) => setEditActive(e.target.value === "ACTIVE")}
-                      disabled={adminOwnerDigestOnlyModal}
-                      style={{
-                        ...inputStyle,
-                        opacity: adminOwnerDigestOnlyModal ? 0.65 : 1,
-                        cursor: adminOwnerDigestOnlyModal ? "not-allowed" : undefined,
-                      }}
+                      style={inputStyle}
                     >
                       <option value="ACTIVE">Active</option>
                       <option value="INACTIVE">Inactive</option>
@@ -4174,9 +4124,7 @@ export default function AdminPage() {
                       <b>Receive EOD financial digest emails</b>
                       <br />
                       <span style={{ color: "#94a3b8" }}>
-                        {adminOwnerDigestOnlyModal
-                          ? "Applies per company membership. For the application owner, only this setting can be changed here by a company admin."
-                          : "Applies per company membership. Editing your own account here can only change this checkbox; other fields need another OWNER or ADMIN."}
+                        Unchecked by default until saved for this employee.
                       </span>
                     </span>
                   </label>

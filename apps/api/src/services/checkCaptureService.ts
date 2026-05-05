@@ -393,6 +393,32 @@ export class CheckCaptureService {
             ...(to ? { lte: to } : {})
         };
     }
+    /**
+     * Digest / automation: rows whose `createdAt` falls in `[from, to]` (inclusive UTC instants).
+     */
+    async listByCreatedAtRange(companyId: string, from: Date, to: Date) {
+        if (!(from instanceof Date) || !(to instanceof Date) || from > to) {
+            throw new AppError("Invalid datetime range for check capture query.", 400, "CHECK_CAPTURE_RANGE_INVALID");
+        }
+        return prisma.checkCapture.findMany({
+            where: {
+                companyId,
+                createdAt: { gte: from, lte: to },
+            },
+            orderBy: { createdAt: "desc" },
+            take: 2000,
+            select: {
+                id: true,
+                checkDate: true,
+                amount: true,
+                checkNumber: true,
+                payerName: true,
+                memo: true,
+                invoiceNumber: true,
+                createdAt: true,
+            },
+        });
+    }
     async listChecks(companyId, take = 50, opts) {
         const createdAt = this.buildDateFilter(opts);
         return prisma.checkCapture.findMany({

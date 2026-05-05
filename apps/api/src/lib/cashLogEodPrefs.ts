@@ -98,3 +98,25 @@ export function mergeScheduleIntoExistingMembershipPrefs(
   };
   return cashLogEodPrefsSchema.parse(merged);
 }
+export type CashLogEodScheduleFields = Pick<
+  CashLogEodPrefs,
+  "weekdays" | "sendTime" | "timezone" | "window"
+>;
+
+/** First valid digest schedule from peer `CompanyMembership.cashLogEodPrefs` JSON values. */
+export function firstValidCashLogEodScheduleFromDonors(
+  donorPrefsRaws: unknown[],
+): CashLogEodScheduleFields | null {
+  for (const raw of donorPrefsRaws) {
+    const p = parseCashLogEodPrefs(raw);
+    if (p) {
+      return {
+        weekdays: p.weekdays,
+        sendTime: p.sendTime,
+        timezone: p.timezone,
+        window: p.window,
+      };
+    }
+  }
+  return null;
+}

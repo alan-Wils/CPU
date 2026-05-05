@@ -2,10 +2,12 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { parseCashLogEodPrefs, type CashLogEodPrefs } from "../lib/cashLogEodPrefs.js";
 import { CashLogService } from "./cashLogService.js";
+import { CheckCaptureService } from "./checkCaptureService.js";
 import { sendHtmlEmail } from "../lib/mailer.js";
 import { logInfo, logWarn } from "../lib/logger.js";
 
 const cashService = new CashLogService();
+const checkService = new CheckCaptureService();
 
 const WEEKDAY_MAP: Record<string, number> = {
   Sun: 0,
@@ -239,6 +241,24 @@ function rowsToHtmlTable(rows: CashDigestRow[]): string {
           ? escapeHtml(String(r.payeeCompany || ""))
           : escapeHtml(String(r.department || ""));
       return `<tr><td>${escapeHtml(whenIso)} <span style="color:#666">(${whenKind})</span></td><td>${escapeHtml(r.direction)}</td><td>${escapeHtml(String(r.amount))}</td><td>${extra}</td><td>${escapeHtml(String(r.memo || ""))}</td></tr>`;
+    })
+    .join("");
+  return `<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">${head}${body}</table>`;
+}
+
+type CheckDigestRow = Awaited<ReturnType<CheckCaptureService["listByCreatedAtRange"]>>[number];
+
+function checkRowsToHtmlTable(rows: CheckDigestRow[]): string {
+  if (!rows.length) {
+    return "<p>No check captures in this period.</p>";
+  }
+  const head =
+    "<tr><th>Logged (UTC)</th><th>Check date</th><th>Amount</th><th>Payee</th><th>Check #</th><th>Invoice #</th><th>Memo</th></tr>";
+  const body = rows
+    .map((r) => {
+      const logged = r.createdAt.toISOString();
+      const checkDateIso = r.checkDate != null ? r.checkDate.toISOString() : "—";
+      return `<tr><td>${escapeHtml(logged)}</td><td>${escapeHtml(checkDateIso)}</td><td>${escapeHtml(String(r.amount ?? ""))}</td><td>${escapeHtml(String(r.payerName || ""))}</td><td>${escapeHtml(String(r.checkNumber || ""))}</td><td>${escapeHtml(String(r.invoiceNumber || ""))}</td><td>${escapeHtml(String(r.memo || ""))}</td></tr>`;
     })
     .join("");
   return `<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">${head}${body}</table>`;
@@ -591,17 +611,24 @@ export async function runCashLogEodJob(options?: {
         : new Date(to.getTime() - 24 * 60 * 60 * 1000);
 
     try {
-      const rows = await cashService.listByCreatedAtRange(m.companyId, from, to);
+      const [rows, checkRows] = await Promise.all([
+        cashService.listByCreatedAtRange(m.companyId, from, to),
+        checkService.listByCreatedAtRange(m.companyId, from, to),
+      ]);
       const windowLabel =
         prefs.window === "LAST_7_DAYS" ? "last 7 days" : "last 24 hours";
-      const subject = `[${m.company?.name || "Company"}] Cash log digest (${windowLabel})`;
+      const subject = `[${m.company?.name || "Company"}] Financial digest — cash & checks (${windowLabel})`;
       const html = `
         <div style="font-family:system-ui,sans-serif;line-height:1.5">
-          <h2>Financial cash log — ${escapeHtml(windowLabel)}</h2>
+          <h2>Financial digest — ${escapeHtml(windowLabel)}</h2>
           <p><strong>Company:</strong> ${escapeHtml(m.company?.name || "")}</p>
           <p><strong>Window (UTC bounds):</strong> ${escapeHtml(from.toISOString())} → ${escapeHtml(to.toISOString())}</p>
+          <h3 style="margin-top:1.25em">Cash log</h3>
           <p style="font-size:13px;color:#555">Rows use <b>entry date</b> when set (same as Admin cash log / export). Legacy rows without an entry date use logged time.</p>
           ${rowsToHtmlTable(rows)}
+          <h3 style="margin-top:1.25em">Check log</h3>
+          <p style="font-size:13px;color:#555">Check captures from Admin → Financial logs (included by saved time in this window).</p>
+          ${checkRowsToHtmlTable(checkRows)}
           <p style="font-size:12px;color:#666">Sent by NexBatch CPU · adjust schedule in Admin → Financial logs.</p>
         </div>`;
 

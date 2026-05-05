@@ -2,7 +2,10 @@ import crypto from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { TenantRepository } from "./TenantRepository.js";
 import { legacyUserRoleToCompanyRole } from "../lib/nexbatchRoles.js";
-import { mergeCashLogEodPrefs } from "../lib/cashLogEodPrefs.js";
+import {
+    firstValidCashLogEodScheduleFromDonors,
+    mergeCashLogEodPrefs,
+} from "../lib/cashLogEodPrefs.js";
 export class AdminRepository extends TenantRepository {
     async listUsers(companyId) {
         const rows = await this.db.companyMembership.findMany({
@@ -51,11 +54,23 @@ export class AdminRepository extends TenantRepository {
                 data.appPermissions === null ? null : (data.appPermissions as Prisma.InputJsonValue);
         }
         if (data.cashLogEodEnabled !== undefined) {
-            const mergedPrefs = mergeCashLogEodPrefs(m.cashLogEodPrefs);
+            let mergedPrefs = mergeCashLogEodPrefs(m.cashLogEodPrefs);
             mergedPrefs.enabled = Boolean(data.cashLogEodEnabled);
+            // Opt-in from Admin with no JSON yet used to default to LAST_24H even when the company
+            // schedule was already saved as 7-day (PUT /eod-prefs skips null `cashLogEodPrefs` peers).
+            if (m.cashLogEodPrefs == null && mergedPrefs.enabled) {
+                const donorRows = await this.db.companyMembership.findMany({
+                    where: { companyId, id: { not: m.id } },
+                    select: { cashLogEodPrefs: true },
+                });
+                const donorSchedule = firstValidCashLogEodScheduleFromDonors(
+                    donorRows.map((r) => r.cashLogEodPrefs),
+                );
+                if (donorSchedule) {
+                    mergedPrefs = { ...mergedPrefs, ...donorSchedule };
+                }
+            }
             membershipData.cashLogEodPrefs = mergedPrefs as unknown as Prisma.InputJsonValue;
-            membershipData.cashLogEodScheduleGeneration = { increment: 1 };
-            membershipData.cashLogEodDigestSentScheduleGeneration = null;
         }
         let membershipTouched = false;
         if (Object.keys(membershipData).length) {

@@ -22,6 +22,12 @@ vi.mock("./cashLogService.js", () => ({
   },
 }));
 
+vi.mock("./checkCaptureService.js", () => ({
+  CheckCaptureService: class {
+    listByCreatedAtRange = vi.fn().mockResolvedValue([]);
+  },
+}));
+
 const denverPrefs = {
   enabled: true,
   weekdays: [1, 2, 3, 4, 5],
