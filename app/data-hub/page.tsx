@@ -456,8 +456,10 @@ function getLogMinutes(log: any) {
 }
 
 function getLogTotalLaborMinutes(log: any) {
+  const fromData = log?.data && typeof log.data === "object" ? (log.data as any).totalLaborMinutes : undefined;
   const directLaborMinutes =
     num(log?.totalLaborMinutes) ||
+    num(fromData) ||
     num(log?.laborMinutes) ||
     parseOutputNumber(log?.output, [
       "Labor Time",

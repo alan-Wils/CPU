@@ -88,6 +88,8 @@ type AppConfig = {
       companyWideNotes: string;
       /** IANA time zone for every facility-facing timestamp. Empty = browser default. */
       displayTimezone?: string;
+      /** Facility-day wall times (24h HH:mm). Subtracts from start→end cultivation labor when overlap applies. */
+      laborBreaks?: { id: string; label: string; start: string; end: string }[];
     };
   };
   cultivation: {
@@ -126,6 +128,7 @@ const emptyConfig: AppConfig = {
     settings: {
       companyWideNotes: "",
       displayTimezone: "",
+      laborBreaks: [],
     },
   },
   cultivation: {
@@ -1177,6 +1180,130 @@ export default function ConfigPage() {
             }
           />
         </label>
+
+        <h3 style={styles.subTitle}>Labor — breaks & lunch (facility clock)</h3>
+        <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+          When operators log cultivation tasks using <b>start / end time</b>, overlaps with these windows are subtracted
+          from net labor (person-minutes). Use 24-hour times (e.g. lunch <code>12:00</code>–<code>13:00</code>). Same
+          calendar day only; overnight breaks should be split into two rows.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {(config.company.settings.laborBreaks || []).map((row, idx) => (
+            <div
+              key={row.id || `lb-${idx}`}
+              style={{
+                ...styles.grid,
+                border: "1px solid #334155",
+                borderRadius: 10,
+                padding: 10,
+                margin: 0,
+              }}
+            >
+              <input
+                style={styles.input}
+                placeholder="Label (e.g. Lunch)"
+                value={row.label}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setConfig((prev) => {
+                    const list = [...(prev.company.settings.laborBreaks || [])];
+                    list[idx] = { ...list[idx], label: v };
+                    return {
+                      ...prev,
+                      company: {
+                        ...prev.company,
+                        settings: { ...prev.company.settings, laborBreaks: list },
+                      },
+                    };
+                  });
+                }}
+              />
+              <label style={styles.label}>
+                Start (HH:mm)
+                <input
+                  style={styles.input}
+                  type="time"
+                  value={row.start}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setConfig((prev) => {
+                      const list = [...(prev.company.settings.laborBreaks || [])];
+                      list[idx] = { ...list[idx], start: v };
+                      return {
+                        ...prev,
+                        company: {
+                          ...prev.company,
+                          settings: { ...prev.company.settings, laborBreaks: list },
+                        },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <label style={styles.label}>
+                End (HH:mm)
+                <input
+                  style={styles.input}
+                  type="time"
+                  value={row.end}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setConfig((prev) => {
+                      const list = [...(prev.company.settings.laborBreaks || [])];
+                      list[idx] = { ...list[idx], end: v };
+                      return {
+                        ...prev,
+                        company: {
+                          ...prev.company,
+                          settings: { ...prev.company.settings, laborBreaks: list },
+                        },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                style={{ ...styles.deleteButton, alignSelf: "end" }}
+                onClick={() => {
+                  setConfig((prev) => ({
+                    ...prev,
+                    company: {
+                      ...prev.company,
+                      settings: {
+                        ...prev.company.settings,
+                        laborBreaks: (prev.company.settings.laborBreaks || []).filter((_, i) => i !== idx),
+                      },
+                    },
+                  }));
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            style={{ ...styles.saveButton, alignSelf: "flex-start" }}
+            onClick={() =>
+              setConfig((prev) => ({
+                ...prev,
+                company: {
+                  ...prev.company,
+                  settings: {
+                    ...prev.company.settings,
+                    laborBreaks: [
+                      ...(prev.company.settings.laborBreaks || []),
+                      { id: makeId("lb"), label: "Break", start: "10:00", end: "10:15" },
+                    ],
+                  },
+                },
+              }))
+            }
+          >
+            + Add break / lunch window
+          </button>
+        </div>
       </section>
 
       <section style={styles.card}>

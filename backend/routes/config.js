@@ -46,6 +46,8 @@ const defaultConfig = {
       companyWideNotes: "",
       /** IANA zone for displaying timestamps app-wide (empty = browser default). */
       displayTimezone: "",
+      /** `{ id, label, start, end }[]` wall-clock `HH:mm` breaks/lunch (same facility day) excluded from range labor. */
+      laborBreaks: [],
     },
   },
 

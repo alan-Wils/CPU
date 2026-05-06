@@ -6,6 +6,7 @@ import PageAccessGate from "@/components/PageAccessGate";
 import {
   canDeleteRecords as userCanDeleteWorkflow,
   canManageCultivationBatchPlacement,
+  hasMinimumRole,
 } from "@/lib/permissions";
 import { store } from "@/lib/store";
 import {
@@ -45,6 +46,11 @@ import {
   computeDryYieldGPerSqFt,
   sumTableSquareFeetFromIds,
 } from "@cpu/shared";
+import {
+  type LaborBreakWindow,
+  computeLaborRangeDeduction,
+  normalizeLaborBreaksFromConfig,
+} from "@/lib/laborBreaks";
 import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
 
 type ConfigStrain = {
@@ -720,6 +726,12 @@ export default function Cultivation() {
   const [selectedTask, setSelectedTask] = useState("Maintenance");
   const [people, setPeople] = useState("");
   const [minutes, setMinutes] = useState("");
+  /** Cultivation task modal: `range` = start/end clock (minus company breaks); `total` = minutes per person (manager-only). */
+  const [laborTimeMode, setLaborTimeMode] = useState<"range" | "total">("range");
+  const [taskLaborDate, setTaskLaborDate] = useState("");
+  const [taskStartTime, setTaskStartTime] = useState("");
+  const [taskEndTime, setTaskEndTime] = useState("");
+  const [laborBreakSchedule, setLaborBreakSchedule] = useState<LaborBreakWindow[]>([]);
   const [output, setOutput] = useState("");
   /** Cultivation batch id to merge into the currently selected batch (same stage grouping as Clones / Veg / Flower). */
   const [combinePartnerBatchId, setCombinePartnerBatchId] = useState("");
@@ -839,6 +851,7 @@ export default function Cultivation() {
         const data = await apiRequest<{
           cultivation?: { strains?: ConfigStrain[]; rooms?: unknown };
           strains?: ConfigStrain[] | string[];
+          company?: { settings?: { laborBreaks?: unknown } };
         }>("/api/config");
         syncCompanyTimezoneFromConfigPayload(data);
         const strains = normalizeStrainConfigList(pickStrainsFromConfigPayload(data));
@@ -846,6 +859,7 @@ export default function Cultivation() {
 
         if (!mounted) return;
 
+        setLaborBreakSchedule(normalizeLaborBreaksFromConfig(data.company?.settings?.laborBreaks));
         setConfigStrains(
           sortStrainsAlphabetically(
             strains.filter((item: ConfigStrain) => {
@@ -1791,7 +1805,16 @@ export default function Cultivation() {
     }
   }
 
-  async function saveHarvest() {
+  async function saveHarvest(
+    lab: {
+      ok: true;
+      peopleStr: string;
+      minutesStr: string;
+      totalLaborMinutes: number;
+      laborDetail: Record<string, unknown>;
+      outputSuffix: string;
+    },
+  ) {
     if (!canWriteRecords) {
       showReadOnlyNotice();
       return;
@@ -1802,8 +1825,6 @@ export default function Cultivation() {
     const requiredHarvestFields: { label: string; value: any; positive?: boolean; zeroOrPositive?: boolean }[] = [
       { label: "Harvest Type", value: harvestType },
       { label: "Plants Harvested", value: harvestPlants, positive: true },
-      { label: "People", value: people },
-      { label: "Minutes", value: minutes, positive: true },
     ];
 
     if (harvestType === "Fresh Frozen") {
@@ -1863,10 +1884,12 @@ export default function Cultivation() {
             area: "Cultivation",
             batch: selectedBatch.id,
             task: "Harvest - A Grade Flower",
-            people,
-            minutes,
-            output: `${plantsHarvested} plants harvested for A Grade Flower. No weight recorded until bucking.`,
+            people: lab.peopleStr,
+            minutes: lab.minutesStr,
+            totalLaborMinutes: lab.totalLaborMinutes,
+            output: `${plantsHarvested} plants harvested for A Grade Flower. No weight recorded until bucking.${lab.outputSuffix}`,
             linkedBatch: dryBatch.id,
+            data: { ...lab.laborDetail, totalLaborMinutes: lab.totalLaborMinutes },
             time: nowIsoForLog(),
           },
           dryBatch,
@@ -1914,12 +1937,14 @@ export default function Cultivation() {
         area: "Cultivation",
         batch: selectedBatch.id,
         task: "Harvest - Fresh Frozen",
-        people,
-        minutes,
+        people: lab.peopleStr,
+        minutes: lab.minutesStr,
+        totalLaborMinutes: lab.totalLaborMinutes,
         output: `${plantsHarvested} plants harvested for Fresh Frozen | ${
           freshFrozenBundles || 0
-        } bundles / ${freshFrozenGrams || 0} grams`,
+        } bundles / ${freshFrozenGrams || 0} grams${lab.outputSuffix}`,
         linkedBatch: freshFrozenBatch.id,
+        data: { ...lab.laborDetail, totalLaborMinutes: lab.totalLaborMinutes },
         time: nowIsoForLog(),
       }))
     }
@@ -1930,6 +1955,10 @@ export default function Cultivation() {
 
     setPeople("");
     setMinutes("");
+    setLaborTimeMode("range");
+    setTaskLaborDate(getTodayYmdInCompanyTimezone());
+    setTaskStartTime("");
+    setTaskEndTime("");
     setOutput("");
     setHarvestPlants("");
     setFreshFrozenBundles("");
@@ -2659,11 +2688,24 @@ export default function Cultivation() {
       if (batch.flowerBayId) setFlowerBayId(String(batch.flowerBayId));
       if (Array.isArray(batch.flowerTableIds)) setFlowerTableIds([...batch.flowerTableIds]);
     }
+
+    setLaborTimeMode("range");
+    setTaskLaborDate(getTodayYmdInCompanyTimezone());
+    setTaskStartTime("");
+    setTaskEndTime("");
+    setPeople("");
+    setMinutes("");
   }
 
   function closeCultivationTaskWindow() {
     setCombinePartnerBatchId("");
     moveDateBypassRef.current = null;
+    setLaborTimeMode("range");
+    setTaskLaborDate(getTodayYmdInCompanyTimezone());
+    setTaskStartTime("");
+    setTaskEndTime("");
+    setPeople("");
+    setMinutes("");
     setShowTaskWindow(false);
   }
 
@@ -3399,6 +3441,120 @@ export default function Cultivation() {
     }
   }
 
+  function computeCultivationLaborFields():
+    | {
+        ok: true;
+        people: number;
+        netMinutesPerPerson: number;
+        totalLaborMinutes: number;
+        laborDetail: Record<string, unknown>;
+        outputSuffix: string;
+        peopleStr: string;
+        minutesStr: string;
+      }
+    | { ok: false; title: string; message: string } {
+    const p = num(people);
+    if (!(p > 0)) {
+      return { ok: false, title: "People required", message: "Enter how many people worked on this task." };
+    }
+
+    if (laborTimeMode === "total") {
+      if (!hasMinimumRole("MANAGER")) {
+        return {
+          ok: false,
+          title: "Manager access",
+          message:
+            "Only Managers (and above) can enter a quick total-minute labor entry. Use start/end time, or ask a manager.",
+        };
+      }
+      const m = num(minutes);
+      if (!(m > 0)) {
+        return { ok: false, title: "Minutes required", message: "Enter minutes per person for this task." };
+      }
+      const total = p * m;
+      return {
+        ok: true,
+        people: p,
+        netMinutesPerPerson: m,
+        totalLaborMinutes: total,
+        laborDetail: {
+          laborTimeMode: "total",
+          totalLaborMinutes: total,
+        },
+        outputSuffix: ` | Labor: ${p} people × ${m} min = ${total} person-min (manager quick entry)`,
+        peopleStr: String(p),
+        minutesStr: String(m),
+      };
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(taskLaborDate.trim())) {
+      return { ok: false, title: "Labor date", message: "Pick the calendar day this work occurred (facility clock day)." };
+    }
+    const st = taskStartTime.trim();
+    const en = taskEndTime.trim();
+    if (!st || !en) {
+      return { ok: false, title: "Start / end time", message: "Enter task start and end clock times (24h). If end is “earlier” than start, it counts as the next morning (overnight shift)." };
+    }
+
+    const r = computeLaborRangeDeduction({
+      startHm: st,
+      endHm: en,
+      breaks: laborBreakSchedule,
+    });
+
+    if (!(r.netMinutes > 0)) {
+      return {
+        ok: false,
+        title: "No net labor time",
+        message:
+          "After subtracting configured breaks/lunch overlap, net time is zero. Adjust times or company break windows under Admin → Company Config.",
+      };
+    }
+
+    const total = p * r.netMinutes;
+    const bnote =
+      r.breakDeductionMinutes > 0
+        ? `; breaks/lunch overlap removed ${r.breakDeductionMinutes} min from span`
+        : "";
+    return {
+      ok: true,
+      people: p,
+      netMinutesPerPerson: r.netMinutes,
+      totalLaborMinutes: total,
+      laborDetail: {
+        laborTimeMode: "range",
+        laborDate: taskLaborDate.trim(),
+        taskStartTime: st,
+        taskEndTime: en,
+        grossLaborMinutes: r.grossMinutes,
+        breakDeductionMinutes: r.breakDeductionMinutes,
+        totalLaborMinutes: total,
+      },
+      outputSuffix: ` | Labor: ${p} people × ${r.netMinutes} min net (${r.grossMinutes} min span${bnote}) = ${total} person-min`,
+      peopleStr: String(p),
+      minutesStr: String(r.netMinutes),
+    };
+  }
+
+  const cultivationLaborRangePreview = useMemo(() => {
+    if (laborTimeMode !== "range") return null;
+    const st = taskStartTime.trim();
+    const en = taskEndTime.trim();
+    if (!st || !en) return null;
+    const r = computeLaborRangeDeduction({
+      startHm: st,
+      endHm: en,
+      breaks: laborBreakSchedule,
+    });
+    const p = num(people);
+    return {
+      gross: r.grossMinutes,
+      breakDeduction: r.breakDeductionMinutes,
+      netPerPerson: r.netMinutes,
+      totalPersonMin: p > 0 ? p * r.netMinutes : null,
+    };
+  }, [laborTimeMode, taskStartTime, taskEndTime, laborBreakSchedule, people]);
+
   async function save() {
     if (isSavingTask) return;
     if (!canWriteRecords) {
@@ -3409,10 +3565,7 @@ export default function Cultivation() {
     if (!selectedBatch) return;
     setIsSavingTask(true);
 
-    const taskRequiredFields: { label: string; value: any; positive?: boolean; zeroOrPositive?: boolean }[] = [
-      { label: "People", value: people },
-      { label: "Minutes", value: minutes, positive: true },
-    ];
+    const taskRequiredFields: { label: string; value: any; positive?: boolean; zeroOrPositive?: boolean }[] = [];
 
     if (selectedTask === "Combine Batches") {
       taskRequiredFields.push({
@@ -3475,6 +3628,13 @@ export default function Cultivation() {
       return;
     }
 
+    const lab = computeCultivationLaborFields();
+    if (!lab.ok) {
+      showNotice(lab.title, lab.message);
+      setIsSavingTask(false);
+      return;
+    }
+
     if (!confirmRepeatTask(selectedBatch.id, selectedTask, save)) {
       setIsSavingTask(false);
       return;
@@ -3486,7 +3646,7 @@ export default function Cultivation() {
     }
 
     if (selectedTask === "Harvest") {
-      saveHarvest();
+      void saveHarvest(lab);
       setIsSavingTask(false);
       return;
     }
@@ -3568,11 +3728,12 @@ export default function Cultivation() {
           area: "Cultivation",
           batch: partnerId,
           task: "Combine Batches",
-          people,
-          minutes,
-          output: partnerOutput,
+          people: lab.peopleStr,
+          minutes: lab.minutesStr,
+          totalLaborMinutes: lab.totalLaborMinutes,
+          output: partnerOutput + lab.outputSuffix,
           linkedBatch: survivorId,
-          data: mergeData,
+          data: { ...mergeData, ...lab.laborDetail, totalLaborMinutes: lab.totalLaborMinutes },
           time: nowIsoForLog(),
         }),
       );
@@ -3582,11 +3743,12 @@ export default function Cultivation() {
           area: "Cultivation",
           batch: survivorId,
           task: "Combine Batches",
-          people,
-          minutes,
-          output: survivorOutput,
+          people: lab.peopleStr,
+          minutes: lab.minutesStr,
+          totalLaborMinutes: lab.totalLaborMinutes,
+          output: survivorOutput + lab.outputSuffix,
           linkedBatch: partnerId,
-          data: mergeData,
+          data: { ...mergeData, ...lab.laborDetail, totalLaborMinutes: lab.totalLaborMinutes },
           time: nowIsoForLog(),
         }),
       );
@@ -3599,6 +3761,10 @@ export default function Cultivation() {
 
       setPeople("");
       setMinutes("");
+      setLaborTimeMode("range");
+      setTaskLaborDate(getTodayYmdInCompanyTimezone());
+      setTaskStartTime("");
+      setTaskEndTime("");
       setOutput("");
       setCombinePartnerBatchId("");
       closeCultivationTaskWindow();
@@ -3651,14 +3817,19 @@ export default function Cultivation() {
         area: "Cultivation",
         batch: selectedBatch.id,
         task: selectedTask,
-        people,
-        minutes,
-        output: taskOutput,
+        people: lab.peopleStr,
+        minutes: lab.minutesStr,
+        totalLaborMinutes: lab.totalLaborMinutes,
+        output: taskOutput + lab.outputSuffix,
         room: logRoom,
         bay: logBay,
         tables: logTables,
         time: logEventTimeIso,
-        ...(isStageMoveTask ? { data: { stageMoveDate: moveDateCanonical } } : {}),
+        data: {
+          ...(isStageMoveTask ? { stageMoveDate: moveDateCanonical } : {}),
+          ...lab.laborDetail,
+          totalLaborMinutes: lab.totalLaborMinutes,
+        },
       }),
     )
 
@@ -3702,6 +3873,10 @@ export default function Cultivation() {
 
     setPeople("");
     setMinutes("");
+    setLaborTimeMode("range");
+    setTaskLaborDate(getTodayYmdInCompanyTimezone());
+    setTaskStartTime("");
+    setTaskEndTime("");
     setOutput("");
     setCombinePartnerBatchId("");
     primeTaskModalLocationFields(cultivationRooms);
@@ -5327,8 +5502,158 @@ export default function Cultivation() {
                 </>
               )}
 
-              <input style={inputStyle} placeholder="People" value={people} onChange={(e) => setPeople(e.target.value)} />
-              <input style={inputStyle} placeholder="Minutes" value={minutes} onChange={(e) => setMinutes(e.target.value)} />
+              <div
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  padding: "12px 0 4px",
+                  borderTop: "1px solid #334155",
+                  marginTop: 4,
+                }}
+              >
+                <p style={{ color: "#94a3b8", fontSize: 13, margin: 0, lineHeight: 1.45 }}>
+                  Labor (person-minutes): use clock start and end to subtract configured breaks and lunch, or — if you are
+                  a manager — enter total minutes per person. Break windows are set in{" "}
+                  <strong style={{ color: "#e2e8f0" }}>Admin → Company Config → Labor — breaks &amp; lunch</strong>.
+                </p>
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                  <span style={{ color: "#e2e8f0", fontSize: 14 }}>Labor entry</span>
+                  <button
+                    type="button"
+                    style={{
+                      ...buttonStyle,
+                      border:
+                        laborTimeMode === "range" ? "1px solid #22d3ee" : "1px solid #475569",
+                      background: laborTimeMode === "range" ? "#22d3ee" : "#1e293b",
+                      color: laborTimeMode === "range" ? "#0f172a" : "white",
+                      fontWeight: laborTimeMode === "range" ? 700 : 400,
+                    }}
+                    onClick={() => setLaborTimeMode("range")}
+                  >
+                    Start &amp; end time
+                  </button>
+                  {hasMinimumRole("MANAGER") ? (
+                    <button
+                      type="button"
+                      style={{
+                        ...buttonStyle,
+                        border:
+                          laborTimeMode === "total" ? "1px solid #22d3ee" : "1px solid #475569",
+                        background: laborTimeMode === "total" ? "#22d3ee" : "#1e293b",
+                        color: laborTimeMode === "total" ? "#0f172a" : "white",
+                        fontWeight: laborTimeMode === "total" ? 700 : 400,
+                      }}
+                      onClick={() => setLaborTimeMode("total")}
+                    >
+                      Quick minutes (manager)
+                    </button>
+                  ) : null}
+                </div>
+
+                <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                  People on this task
+                  <input
+                    style={inputStyle}
+                    placeholder="How many people"
+                    value={people}
+                    onChange={(e) => setPeople(e.target.value)}
+                  />
+                </label>
+
+                {laborTimeMode === "total" ? (
+                  <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                    Minutes per person (manager quick entry)
+                    <input
+                      style={inputStyle}
+                      placeholder="Minutes per person"
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={minutes}
+                      onChange={(e) => setMinutes(e.target.value)}
+                    />
+                  </label>
+                ) : (
+                  <>
+                    <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                      Work date (facility calendar day)
+                      <input
+                        style={inputStyle}
+                        type="date"
+                        value={taskLaborDate}
+                        onChange={(e) => setTaskLaborDate(e.target.value)}
+                      />
+                    </label>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                        gap: 10,
+                      }}
+                    >
+                      <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                        Task on / start
+                        <input
+                          style={inputStyle}
+                          type="time"
+                          step={60}
+                          value={taskStartTime}
+                          onChange={(e) => setTaskStartTime(e.target.value)}
+                        />
+                      </label>
+                      <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                        Task off / end
+                        <input
+                          style={inputStyle}
+                          type="time"
+                          step={60}
+                          value={taskEndTime}
+                          onChange={(e) => setTaskEndTime(e.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <p style={{ color: "#94a3b8", fontSize: 12, margin: 0 }}>
+                      If end clock time is before start on the same calendar row, the span continues into the next morning
+                      (overnight / long shift).
+                    </p>
+                    {laborBreakSchedule.length === 0 ? (
+                      <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                        No break windows configured yet — net time equals clock span. Admins can add lunch and breaks in
+                        Company Config.
+                      </p>
+                    ) : null}
+                    {cultivationLaborRangePreview ? (
+                      <p
+                        style={{
+                          color:
+                            cultivationLaborRangePreview.netPerPerson <= 0 ? "#fbbf24" : "#a5f3fc",
+                          fontSize: 13,
+                          margin: 0,
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        <strong>Preview (per person):</strong> {cultivationLaborRangePreview.gross} min clock span
+                        {cultivationLaborRangePreview.breakDeduction > 0
+                          ? ` − ${cultivationLaborRangePreview.breakDeduction} min overlapping breaks/lunch`
+                          : ""}{" "}
+                        = <strong>{cultivationLaborRangePreview.netPerPerson} min</strong> net.
+                        {cultivationLaborRangePreview.totalPersonMin != null ? (
+                          <>
+                            {" "}
+                            Total: <strong>{cultivationLaborRangePreview.totalPersonMin} person-min</strong>.
+                          </>
+                        ) : (
+                          " Enter people above for a total."
+                        )}
+                        {cultivationLaborRangePreview.netPerPerson <= 0
+                          ? " Net time is zero — adjust times or break config."
+                          : ""}
+                      </p>
+                    ) : null}
+                  </>
+                )}
+              </div>
             </div>
 
             <div style={modalButtonRowStyle}>
