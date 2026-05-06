@@ -891,9 +891,9 @@ export default function Cultivation() {
     Flower: activeBatches.filter((b: any) => stageBucketFromBatchStage(b?.stage) === "Flower"),
   } as const;
   const stagePlantTotals = {
-    Clones: activeBatchesByStage.Clones.reduce((sum, b: any) => sum + num(b?.plants), 0),
-    Veg: activeBatchesByStage.Veg.reduce((sum, b: any) => sum + num(b?.plants), 0),
-    Flower: activeBatchesByStage.Flower.reduce((sum, b: any) => sum + num(b?.plants), 0),
+    Clones: activeBatchesByStage.Clones.reduce((sum: number, b: any) => sum + num(b?.plants), 0),
+    Veg: activeBatchesByStage.Veg.reduce((sum: number, b: any) => sum + num(b?.plants), 0),
+    Flower: activeBatchesByStage.Flower.reduce((sum: number, b: any) => sum + num(b?.plants), 0),
   } as const;
 
   const selectedStageBatches = selectedStage ? activeBatchesByStage[selectedStage] : [];
