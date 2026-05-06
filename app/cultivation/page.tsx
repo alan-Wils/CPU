@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import {
@@ -84,6 +84,163 @@ type CultivationRoomsConfig = {
 };
 
 type StageModalKey = null | "Clones" | "Veg" | "Flower";
+
+function stageBucketFromBatchStage(stage: unknown): Exclude<StageModalKey, null> {
+  const value = String(stage || "").trim().toLowerCase();
+  if (value === "clone" || value === "clones") return "Clones";
+  if (value === "veg") return "Veg";
+  return "Flower";
+}
+
+const STAGE_MODAL_UNASSIGNED_ROOM_ID = "__unassigned_room__";
+const STAGE_MODAL_UNASSIGNED_BAY_ID = "__unassigned_bay__";
+const STAGE_MODAL_UNASSIGNED_TABLE_KEY = "__unassigned_table__";
+
+function resolveVegRoomIdForBatch(batch: any, vegRooms: CultivationVegRoom[]): string {
+  const id = String(batch?.vegRoomId || "").trim();
+  if (id && vegRooms.some((r) => r.id === id)) return id;
+  const name = String(batch?.vegRoom || "").trim();
+  if (name) {
+    const byName = vegRooms.find((r) => r.name === name);
+    if (byName?.id) return byName.id;
+  }
+  return STAGE_MODAL_UNASSIGNED_ROOM_ID;
+}
+
+function resolveFlowerRoomIdForBatch(batch: any, flowerRooms: CultivationFlowerRoom[]): string {
+  const id = String(batch?.flowerRoomId || "").trim();
+  if (id && flowerRooms.some((r) => r.id === id)) return id;
+  const name = String(batch?.flowerRoom || "").trim();
+  if (name) {
+    const byName = flowerRooms.find((r) => r.name === name);
+    if (byName?.id) return byName.id;
+  }
+  return STAGE_MODAL_UNASSIGNED_ROOM_ID;
+}
+
+function resolveVegBayIdForBatch(batch: any, room: CultivationVegRoom | undefined): string {
+  const id = String(batch?.vegBayId || "").trim();
+  if (id && room?.bays?.some((b) => b.id === id)) return id;
+  const name = String(batch?.vegBay || "").trim();
+  if (name && room?.bays?.length) {
+    const byName = room.bays.find((b) => b.name === name);
+    if (byName?.id) return byName.id;
+  }
+  return STAGE_MODAL_UNASSIGNED_BAY_ID;
+}
+
+function resolveFlowerBayIdForBatch(batch: any, room: CultivationFlowerRoom | undefined): string {
+  const id = String(batch?.flowerBayId || "").trim();
+  if (id && room?.bays?.some((b) => b.id === id)) return id;
+  const name = String(batch?.flowerBay || "").trim();
+  if (name && room?.bays?.length) {
+    const byName = room.bays.find((b) => b.name === name);
+    if (byName?.id) return byName.id;
+  }
+  return STAGE_MODAL_UNASSIGNED_BAY_ID;
+}
+
+function vegTableGroupKey(batch: any): string {
+  const fromIds = Array.isArray(batch?.vegTableIds)
+    ? batch.vegTableIds.map((x: unknown) => String(x || "").trim()).filter(Boolean)
+    : [];
+  if (fromIds.length > 0) return [...fromIds].sort().join("\u0001");
+  const fromArr = Array.isArray(batch?.vegTables)
+    ? batch.vegTables.map((x: unknown) => String(x || "").trim()).filter(Boolean)
+    : [];
+  if (fromArr.length > 0) return [...fromArr].sort().join("\u0001");
+  const single = String(batch?.vegTable || "").trim();
+  return single ? single : STAGE_MODAL_UNASSIGNED_TABLE_KEY;
+}
+
+function flowerTableGroupKey(batch: any): string {
+  const fromIds = Array.isArray(batch?.flowerTableIds)
+    ? batch.flowerTableIds.map((x: unknown) => String(x || "").trim()).filter(Boolean)
+    : [];
+  if (fromIds.length > 0) return [...fromIds].sort().join("\u0001");
+  const fromArr = Array.isArray(batch?.flowerTables)
+    ? batch.flowerTables.map((x: unknown) => String(x || "").trim()).filter(Boolean)
+    : [];
+  if (fromArr.length > 0) return [...fromArr].sort().join("\u0001");
+  const single = String(batch?.flowerTable || "").trim();
+  return single ? single : STAGE_MODAL_UNASSIGNED_TABLE_KEY;
+}
+
+function tableGroupLabelFromKey(
+  bay: CultivationBayConfig | undefined,
+  tableKey: string,
+): string {
+  if (tableKey === STAGE_MODAL_UNASSIGNED_TABLE_KEY) return "Unassigned table";
+  const parts = tableKey.split("\u0001");
+  if (!bay?.tables?.length) return parts.join(", ");
+  return parts
+    .map((id) => bay.tables.find((t) => t.id === id)?.name || id)
+    .join(", ");
+}
+
+type StageModalBayTableGroup = {
+  bayId: string;
+  bayLabel: string;
+  tableKey: string;
+  tableLabel: string;
+  batches: any[];
+};
+
+function buildCultivationStageModalBayTableGroups(
+  batches: any[],
+  selectedStage: "Veg" | "Flower",
+  room: CultivationFlowerRoom | undefined,
+): StageModalBayTableGroup[] {
+  const kind = selectedStage === "Veg" ? "veg" : "flower";
+  const nested = new Map<string, Map<string, any[]>>();
+  for (const b of batches) {
+    const bayId =
+      kind === "veg" ? resolveVegBayIdForBatch(b, room) : resolveFlowerBayIdForBatch(b, room);
+    const tableKey =
+      kind === "veg" ? vegTableGroupKey(b) : flowerTableGroupKey(b);
+    if (!nested.has(bayId)) nested.set(bayId, new Map());
+    const tm = nested.get(bayId)!;
+    if (!tm.has(tableKey)) tm.set(tableKey, []);
+    tm.get(tableKey)!.push(b);
+  }
+  const bayOrder = (room?.bays || []).map((bay) => bay.id);
+  const sortedBayIds = [...nested.keys()].sort((a, b) => {
+    const ua = a === STAGE_MODAL_UNASSIGNED_BAY_ID ? 1 : 0;
+    const ub = b === STAGE_MODAL_UNASSIGNED_BAY_ID ? 1 : 0;
+    if (ua !== ub) return ua - ub;
+    const ia = bayOrder.indexOf(a);
+    const ib = bayOrder.indexOf(b);
+    if (ia !== -1 || ib !== -1) return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    return a.localeCompare(b, undefined, { sensitivity: "base" });
+  });
+  const out: StageModalBayTableGroup[] = [];
+  for (const bayId of sortedBayIds) {
+    const bayObj =
+      bayId === STAGE_MODAL_UNASSIGNED_BAY_ID
+        ? undefined
+        : room?.bays?.find((x) => x.id === bayId);
+    const bayLabel =
+      bayId === STAGE_MODAL_UNASSIGNED_BAY_ID ? "Unassigned bay" : bayObj?.name || bayId || "Bay";
+    const tableMap = nested.get(bayId)!;
+    const tableKeys = [...tableMap.keys()].sort((tkA, tkB) =>
+      tableGroupLabelFromKey(bayObj, tkA).localeCompare(
+        tableGroupLabelFromKey(bayObj, tkB),
+        undefined,
+        { sensitivity: "base" },
+      ),
+    );
+    for (const tableKey of tableKeys) {
+      out.push({
+        bayId,
+        bayLabel,
+        tableKey,
+        tableLabel: tableGroupLabelFromKey(bayObj, tableKey),
+        batches: tableMap.get(tableKey) || [],
+      });
+    }
+  }
+  return out;
+}
 
 const emptyCultivationRooms: CultivationRoomsConfig = { vegRooms: [], flowerRooms: [] };
 
@@ -539,6 +696,8 @@ export default function Cultivation() {
   const [showDryTaskWindow, setShowDryTaskWindow] = useState(false);
   const [showAddTaskWindow, setShowAddTaskWindow] = useState(false);
   const [selectedStage, setSelectedStage] = useState<StageModalKey>(null);
+  /** Veg/Flower stage modal: null = room picker when multiple rooms; otherwise selected room id or unassigned sentinel. */
+  const [stageModalRoomId, setStageModalRoomId] = useState<string | null>(null);
 
   const [cloneTasks, setCloneTasks] = useState(defaultCloneTasks);
   const [vegTasks, setVegTasks] = useState(defaultVegTasks);
@@ -1017,13 +1176,6 @@ export default function Cultivation() {
     (batch: any) => batch.status !== "Complete"
   );
 
-  function stageBucketFromBatchStage(stage: unknown): Exclude<StageModalKey, null> {
-    const value = String(stage || "").trim().toLowerCase();
-    if (value === "clone" || value === "clones") return "Clones";
-    if (value === "veg") return "Veg";
-    return "Flower";
-  }
-
   const stageOrder: Exclude<StageModalKey, null>[] = ["Clones", "Veg", "Flower"];
   const activeBatchesByStage = {
     Clones: activeBatches.filter((b: any) => stageBucketFromBatchStage(b?.stage) === "Clones"),
@@ -1049,6 +1201,103 @@ export default function Cultivation() {
   const selectedStageBatchesOldestFirst = [...selectedStageBatches].sort(
     compareBatchesByCloneDateOldestFirst
   );
+
+  const stageModalRoomSignature = useMemo(() => {
+    if (selectedStage !== "Veg" && selectedStage !== "Flower") return "";
+    const batches = (s.cultivationBatches || []).filter(
+      (b: any) => b.status !== "Complete" && stageBucketFromBatchStage(b?.stage) === selectedStage
+    );
+    const resolve =
+      selectedStage === "Veg"
+        ? (b: any) => resolveVegRoomIdForBatch(b, cultivationRooms.vegRooms)
+        : (b: any) => resolveFlowerRoomIdForBatch(b, cultivationRooms.flowerRooms);
+    return batches.map(resolve).sort().join("|");
+    /* `refresh` bumps when store is persisted; cultivation batches are mutated in place on the store snapshot. */
+  }, [selectedStage, cultivationRooms.vegRooms, cultivationRooms.flowerRooms, refresh]);
+
+  useEffect(() => {
+    if (selectedStage !== "Veg" && selectedStage !== "Flower") {
+      setStageModalRoomId(null);
+      return;
+    }
+    const batches = (s.cultivationBatches || []).filter(
+      (b: any) => b.status !== "Complete" && stageBucketFromBatchStage(b?.stage) === selectedStage
+    );
+    const resolve =
+      selectedStage === "Veg"
+        ? (b: any) => resolveVegRoomIdForBatch(b, cultivationRooms.vegRooms)
+        : (b: any) => resolveFlowerRoomIdForBatch(b, cultivationRooms.flowerRooms);
+    const ids = Array.from(
+      new Set<string>(batches.map((batch: any) => resolve(batch))),
+    );
+    if (ids.length <= 1) {
+      setStageModalRoomId(ids[0] ?? STAGE_MODAL_UNASSIGNED_ROOM_ID);
+    } else {
+      setStageModalRoomId(null);
+    }
+  }, [selectedStage, stageModalRoomSignature]);
+
+  const stageModalUsesRoomHierarchy = selectedStage === "Veg" || selectedStage === "Flower";
+
+  const stageModalRoomSummaries =
+    stageModalUsesRoomHierarchy && selectedStage
+      ? (() => {
+          const rooms =
+            selectedStage === "Veg" ? cultivationRooms.vegRooms : cultivationRooms.flowerRooms;
+          const counts = new Map<string, number>();
+          for (const b of selectedStageBatchesOldestFirst) {
+            const id =
+              selectedStage === "Veg"
+                ? resolveVegRoomIdForBatch(b, cultivationRooms.vegRooms)
+                : resolveFlowerRoomIdForBatch(b, cultivationRooms.flowerRooms);
+            counts.set(id, (counts.get(id) || 0) + 1);
+          }
+          return [...counts.entries()]
+            .map(([id, count]) => ({
+              id,
+              count,
+              name:
+                id === STAGE_MODAL_UNASSIGNED_ROOM_ID
+                  ? "Unassigned"
+                  : rooms.find((r) => r.id === id)?.name || id || "Room",
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+        })()
+      : [];
+
+  const showStageModalRoomPicker =
+    stageModalUsesRoomHierarchy && stageModalRoomSummaries.length > 1 && stageModalRoomId === null;
+
+  const stageModalEffectiveRoomId =
+    stageModalUsesRoomHierarchy && !showStageModalRoomPicker ? stageModalRoomId : null;
+
+  const cultivationStageModalRoomConfig =
+    selectedStage === "Veg"
+      ? cultivationRooms.vegRooms.find((r) => r.id === stageModalEffectiveRoomId)
+      : selectedStage === "Flower"
+        ? cultivationRooms.flowerRooms.find((r) => r.id === stageModalEffectiveRoomId)
+        : undefined;
+
+  const batchesForCultivationStageModal =
+    stageModalUsesRoomHierarchy && stageModalEffectiveRoomId
+      ? selectedStageBatchesOldestFirst.filter((b: any) =>
+          selectedStage === "Veg"
+            ? resolveVegRoomIdForBatch(b, cultivationRooms.vegRooms) === stageModalEffectiveRoomId
+            : resolveFlowerRoomIdForBatch(b, cultivationRooms.flowerRooms) ===
+              stageModalEffectiveRoomId
+        )
+      : selectedStageBatchesOldestFirst;
+
+  const cultivationStageModalBayTableGroups =
+    stageModalUsesRoomHierarchy &&
+    (selectedStage === "Veg" || selectedStage === "Flower") &&
+    !showStageModalRoomPicker
+      ? buildCultivationStageModalBayTableGroups(
+          batchesForCultivationStageModal,
+          selectedStage,
+          cultivationStageModalRoomConfig,
+        )
+      : [];
 
   const activeDryFlowerBatches = s.dryFlowerBatches.filter(
     (batch: any) => batch.status !== "Complete"
@@ -3604,6 +3853,139 @@ export default function Cultivation() {
     marginTop: 10,
   } as const;
 
+  const cultivationStageModalTitle =
+    selectedStage === "Clones"
+      ? `Clones Batches (${selectedStageBatches.length})`
+      : showStageModalRoomPicker
+        ? `${selectedStage} — Select a room (${selectedStageBatches.length} batches)`
+        : `${selectedStage} — ${
+            stageModalEffectiveRoomId === STAGE_MODAL_UNASSIGNED_ROOM_ID
+              ? "Unassigned"
+              : cultivationStageModalRoomConfig?.name || "Room"
+          } (${batchesForCultivationStageModal.length} batches)`;
+
+  function cultivationStageModalBatchCard(b: any) {
+    return (
+      <div
+        key={b.id}
+        style={{
+          ...rowStyle,
+          background: selectedBatch?.id === b.id ? "#22c55e" : "#0f172a",
+          color: selectedBatch?.id === b.id ? "black" : "white",
+          border: selectedBatch?.id === b.id ? "1px solid #22c55e" : "1px solid #334155",
+        }}
+      >
+        <div
+          onClick={() => selectBatch(b)}
+          style={{ cursor: "pointer", flex: 1, lineHeight: 1.5 }}
+        >
+          <b>{b.id}</b>
+          <br />
+          {b.strain} | Stage: {b.stage} | Plants Left: {b.plants}
+          {b.stage === "Veg" && (b.vegRoom || b.vegBay || b.vegTable || b.vegTables) && (
+            <>
+              <br />
+              Room: {b.vegRoom || "—"} | Bay: {b.vegBay || "—"} | Tables: {formatVegTables(b)}
+            </>
+          )}
+          {b.stage === "Veg" && String(b.batchNotes ?? "").trim() !== "" && (
+            <>
+              <br />
+              <span style={{ color: selectedBatch?.id === b.id ? "#0f172a" : "#cbd5e1" }}>
+                Notes: {String(b.batchNotes)}
+              </span>
+            </>
+          )}
+          {(b.stage === "Flower" || b.stage === "Partially Harvested") &&
+            (b.flowerRoom || b.flowerBay || b.flowerTable || b.flowerTables) && (
+              <>
+                <br />
+                Room: {b.flowerRoom || "—"} | Bay: {b.flowerBay || "—"} | Tables:{" "}
+                {formatFlowerTables(b)}
+              </>
+            )}
+          {(b.stage === "Flower" || b.stage === "Partially Harvested") &&
+            String(b.batchNotes ?? "").trim() !== "" && (
+              <>
+                <br />
+                <span style={{ color: selectedBatch?.id === b.id ? "#0f172a" : "#cbd5e1" }}>
+                  Notes: {String(b.batchNotes)}
+                </span>
+              </>
+            )}
+        </div>
+
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {canWriteRecords ? (
+            <button
+              type="button"
+              style={{
+                ...buttonStyle,
+                background: "#2563eb",
+                border: "1px solid #3b82f6",
+                color: "white",
+              }}
+              onClick={() => openTaskWindowForBatch(b)}
+            >
+              Tasks
+            </button>
+          ) : null}
+          {canManageCultivationBatchPlacement() &&
+          selectedStage === "Clones" &&
+          String(b.stage || "") === "Clone" ? (
+            <button
+              type="button"
+              style={{
+                ...buttonStyle,
+                background: "#0f766e",
+                border: "1px solid #14b8a6",
+                color: "white",
+              }}
+              onClick={() => openEditCloneBatchModal(b)}
+            >
+              Edit
+            </button>
+          ) : null}
+          {canManageCultivationBatchPlacement() && selectedStage === "Veg" && b.stage === "Veg" ? (
+            <button
+              type="button"
+              style={{
+                ...buttonStyle,
+                background: "#92400e",
+                border: "1px solid #ea580c",
+                color: "white",
+              }}
+              onClick={() => openEditVegBatchModal(b)}
+            >
+              Edit
+            </button>
+          ) : null}
+          {canManageCultivationBatchPlacement() && selectedStage === "Flower" ? (
+            <button
+              type="button"
+              style={{
+                ...buttonStyle,
+                background: "#5b21b6",
+                border: "1px solid #a855f7",
+                color: "white",
+              }}
+              onClick={() => openEditFlowerBatchModal(b)}
+            >
+              Edit
+            </button>
+          ) : null}
+          <button type="button" style={buttonStyle} onClick={() => setViewBatch(b)}>
+            View
+          </button>
+          {canDeleteRecords && (
+            <button type="button" style={dangerButtonStyle} onClick={() => deleteBatch(b.id)}>
+              Delete
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <PageAccessGate permission="page.cultivation">
@@ -3901,141 +4283,109 @@ export default function Cultivation() {
 
       {selectedStage && (
         <div style={modalOverlayStyle}>
-          <div style={modalStyle}>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-              <button style={buttonStyle} onClick={() => setSelectedStage(null)}>
+          <div
+            style={{
+              ...modalStyle,
+              maxWidth:
+                selectedStage !== "Clones" && stageModalUsesRoomHierarchy ? Math.max(560, 660) : modalStyle.maxWidth,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 10,
+                marginBottom: 8,
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                {stageModalUsesRoomHierarchy &&
+                stageModalRoomSummaries.length > 1 &&
+                stageModalRoomId !== null ? (
+                  <button type="button" style={buttonStyle} onClick={() => setStageModalRoomId(null)}>
+                    ← Rooms
+                  </button>
+                ) : null}
+              </div>
+              <button type="button" style={buttonStyle} onClick={() => setSelectedStage(null)}>
                 Close
               </button>
             </div>
-            <h2 style={{ textAlign: "center", marginTop: 0 }}>
-              {selectedStage} Batches ({selectedStageBatches.length})
-            </h2>
+            <h2 style={{ textAlign: "center", marginTop: 0 }}>{cultivationStageModalTitle}</h2>
 
             {selectedStageBatches.length === 0 ? (
               <p style={{ textAlign: "center", color: "#cbd5e1" }}>No batches in this stage.</p>
-            ) : (
-              selectedStageBatchesOldestFirst.map((b: any) => (
-                <div
-                  key={b.id}
-                  style={{
-                    ...rowStyle,
-                    background: selectedBatch?.id === b.id ? "#22c55e" : "#0f172a",
-                    color: selectedBatch?.id === b.id ? "black" : "white",
-                    border: selectedBatch?.id === b.id ? "1px solid #22c55e" : "1px solid #334155",
-                  }}
-                >
-                  <div
-                    onClick={() => selectBatch(b)}
-                    style={{ cursor: "pointer", flex: 1, lineHeight: 1.5 }}
+            ) : selectedStage !== "Clones" && stageModalUsesRoomHierarchy && showStageModalRoomPicker ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                {stageModalRoomSummaries.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    style={{
+                      ...rowStyle,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      justifyContent: "flex-start",
+                    }}
+                    onClick={() => setStageModalRoomId(r.id)}
                   >
-                    <b>{b.id}</b>
-                    <br />
-                    {b.strain} | Stage: {b.stage} | Plants Left: {b.plants}
-                    {b.stage === "Veg" && (b.vegRoom || b.vegBay || b.vegTable || b.vegTables) && (
-                      <>
-                        <br />
-                        Room: {b.vegRoom || "—"} | Bay: {b.vegBay || "—"} | Tables: {formatVegTables(b)}
-                      </>
-                    )}
-                    {b.stage === "Veg" && String(b.batchNotes ?? "").trim() !== "" && (
-                      <>
-                        <br />
-                        <span style={{ color: selectedBatch?.id === b.id ? "#0f172a" : "#cbd5e1" }}>
-                          Notes: {String(b.batchNotes)}
-                        </span>
-                      </>
-                    )}
-                    {(b.stage === "Flower" || b.stage === "Partially Harvested") &&
-                      (b.flowerRoom || b.flowerBay || b.flowerTable || b.flowerTables) && (
-                        <>
-                          <br />
-                          Room: {b.flowerRoom || "—"} | Bay: {b.flowerBay || "—"} | Tables: {formatFlowerTables(b)}
-                        </>
-                      )}
-                    {(b.stage === "Flower" || b.stage === "Partially Harvested") &&
-                      String(b.batchNotes ?? "").trim() !== "" && (
-                        <>
-                          <br />
-                          <span style={{ color: selectedBatch?.id === b.id ? "#0f172a" : "#cbd5e1" }}>
-                            Notes: {String(b.batchNotes)}
-                          </span>
-                        </>
-                      )}
-                  </div>
-
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    {canWriteRecords ? (
-                      <button
+                    <div style={{ flex: 1, lineHeight: 1.5 }}>
+                      <b>{r.name}</b>
+                      <span style={{ color: "#cbd5e1", marginLeft: 8 }}>
+                        ({r.count} batch{r.count === 1 ? "" : "es"})
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : selectedStage !== "Clones" && stageModalUsesRoomHierarchy ? (
+              <div>
+                {cultivationStageModalBayTableGroups.map((grp, gi) => {
+                  const prev = cultivationStageModalBayTableGroups[gi - 1];
+                  const showBayHeading = !prev || prev.bayId !== grp.bayId;
+                  return (
+                    <div
+                      key={`${grp.bayId}:${grp.tableKey}:${gi}`}
+                      style={{
+                        marginBottom: 14,
+                        paddingBottom: gi === cultivationStageModalBayTableGroups.length - 1 ? 0 : 4,
+                      }}
+                    >
+                      {showBayHeading ? (
+                        <div
+                          style={{
+                            fontWeight: 800,
+                            fontSize: 15,
+                            marginBottom: 8,
+                            color: "#93c5fd",
+                            letterSpacing: 0.3,
+                          }}
+                        >
+                          {grp.bayLabel}
+                        </div>
+                      ) : null}
+                      <div
                         style={{
-                          ...buttonStyle,
-                          background: "#2563eb",
-                          border: "1px solid #3b82f6",
-                          color: "white",
+                          fontWeight: 600,
+                          color: "#e2e8f0",
+                          marginBottom: 8,
+                          fontSize: 13,
                         }}
-                        onClick={() => openTaskWindowForBatch(b)}
                       >
-                        Tasks
-                      </button>
-                    ) : null}
-                    {canManageCultivationBatchPlacement() &&
-                    selectedStage === "Clones" &&
-                    String(b.stage || "") === "Clone" ? (
-                      <button
-                        type="button"
-                        style={{
-                          ...buttonStyle,
-                          background: "#0f766e",
-                          border: "1px solid #14b8a6",
-                          color: "white",
-                        }}
-                        onClick={() => openEditCloneBatchModal(b)}
-                      >
-                        Edit
-                      </button>
-                    ) : null}
-                    {canManageCultivationBatchPlacement() && selectedStage === "Veg" && b.stage === "Veg" ? (
-                      <button
-                        type="button"
-                        style={{
-                          ...buttonStyle,
-                          background: "#92400e",
-                          border: "1px solid #ea580c",
-                          color: "white",
-                        }}
-                        onClick={() => openEditVegBatchModal(b)}
-                      >
-                        Edit
-                      </button>
-                    ) : null}
-                    {canManageCultivationBatchPlacement() && selectedStage === "Flower" ? (
-                      <button
-                        type="button"
-                        style={{
-                          ...buttonStyle,
-                          background: "#5b21b6",
-                          border: "1px solid #a855f7",
-                          color: "white",
-                        }}
-                        onClick={() => openEditFlowerBatchModal(b)}
-                      >
-                        Edit
-                      </button>
-                    ) : null}
-                    <button style={buttonStyle} onClick={() => setViewBatch(b)}>
-                      View
-                    </button>
-                    {canDeleteRecords && (
-                      <button style={dangerButtonStyle} onClick={() => deleteBatch(b.id)}>
-                        Delete
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))
+                        Tables: {grp.tableLabel}
+                      </div>
+                      {grp.batches.map((b: any) => cultivationStageModalBatchCard(b))}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              selectedStageBatchesOldestFirst.map((b: any) => cultivationStageModalBatchCard(b))
             )}
 
             <div style={modalButtonRowStyle}>
-              <button style={buttonStyle} onClick={() => setSelectedStage(null)}>
+              <button type="button" style={buttonStyle} onClick={() => setSelectedStage(null)}>
                 Close
               </button>
             </div>
