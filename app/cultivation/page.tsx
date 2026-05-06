@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
-import { canDeleteRecords as userCanDeleteWorkflow } from "@/lib/permissions";
+import {
+  canDeleteRecords as userCanDeleteWorkflow,
+  hasMinimumRole,
+} from "@/lib/permissions";
 import { store } from "@/lib/store";
 import { displayNameFromLogActor, getAuthDisplayName, getAuthUser } from "@/lib/auth";
 import {
@@ -516,6 +519,8 @@ export default function Cultivation() {
   const [refresh, setRefresh] = useState(0);
   const [canDeleteRecords, setCanDeleteRecords] = useState(false);
   const [canWriteRecords, setCanWriteRecords] = useState(false);
+  /** Room/bay/table + identity edits (Veg/Flower batch editor) — Manager, Ops Manager, Admin, Owner only. */
+  const [canManagerEditBatchDetails, setCanManagerEditBatchDetails] = useState(false);
   const [selectedBatch, setSelectedBatch] = useState<any>(
     s.cultivationBatches[0] || null
   );
@@ -566,6 +571,17 @@ export default function Cultivation() {
   const [editVegTableIds, setEditVegTableIds] = useState<string[]>([]);
   const [editVegBatchNotes, setEditVegBatchNotes] = useState("");
   const [isSavingEditVegModal, setIsSavingEditVegModal] = useState(false);
+  /** Edit flower / partial-harvest batches (same fields as veg editor + canopy recompute). */
+  const [editFlowerModalBatch, setEditFlowerModalBatch] = useState<any>(null);
+  const [editFlowerPlants, setEditFlowerPlants] = useState("");
+  const [editFlowerStrain, setEditFlowerStrain] = useState("");
+  const [editFlowerAcronym, setEditFlowerAcronym] = useState("");
+  const [editFlowerCloneDate, setEditFlowerCloneDate] = useState("");
+  const [editFlowerRoomId, setEditFlowerRoomId] = useState("");
+  const [editFlowerBayId, setEditFlowerBayId] = useState("");
+  const [editFlowerTableIds, setEditFlowerTableIds] = useState<string[]>([]);
+  const [editFlowerBatchNotes, setEditFlowerBatchNotes] = useState("");
+  const [isSavingEditFlowerModal, setIsSavingEditFlowerModal] = useState(false);
   /** Flower layout from config — store ids in modal, persist names on batch/log. */
   const [flowerRoomId, setFlowerRoomId] = useState("");
   const [flowerBayId, setFlowerBayId] = useState("");
@@ -630,6 +646,7 @@ export default function Cultivation() {
   useEffect(() => {
     setCanDeleteRecords(userCanDeleteWorkflow());
     setCanWriteRecords(hasCultivationWriteAccess());
+    setCanManagerEditBatchDetails(hasMinimumRole("MANAGER"));
 
     let mounted = true;
 
@@ -751,6 +768,13 @@ export default function Cultivation() {
     showNotice(
       "Read Only Access",
       "Your account can view cultivation data, but it cannot create, edit, or save records."
+    );
+  }
+
+  function showManagerBatchEditNotice() {
+    showNotice(
+      "Manager access required",
+      "Only Managers, Operations Managers, Admins, and Owners can edit batch placement and core fields from here."
     );
   }
 
@@ -1330,6 +1354,7 @@ export default function Cultivation() {
     if (selectedDryFlowerBatch?.id === batchId) setSelectedDryFlowerBatch(null);
     if (viewBatch?.id === batchId) setViewBatch(null);
     if (editVegModalBatch?.id === batchId) setEditVegModalBatch(null);
+    if (editFlowerModalBatch?.id === batchId) setEditFlowerModalBatch(null);
     if (failBatch?.id === batchId) setFailBatch(null);
 
     await purgeBackendLogsForBatch(batchId);
@@ -2351,8 +2376,8 @@ export default function Cultivation() {
   }
 
   function openEditVegBatchModal(b: any) {
-    if (!canWriteRecords) {
-      showReadOnlyNotice();
+    if (!canManagerEditBatchDetails) {
+      showManagerBatchEditNotice();
       return;
     }
     if (!b || String(b.stage || "") !== "Veg") return;
@@ -2410,7 +2435,7 @@ export default function Cultivation() {
   }
 
   async function saveEditVegBatchModal() {
-    if (!editVegModalBatch || !canWriteRecords) return;
+    if (!editVegModalBatch || !canManagerEditBatchDetails) return;
 
     const vr = cultivationRooms.vegRooms || [];
     const taskRequiredFields: { label: string; value: unknown; positive?: boolean }[] = [
@@ -2525,6 +2550,209 @@ export default function Cultivation() {
     } finally {
       setEditVegModalBatch(null);
       setIsSavingEditVegModal(false);
+    }
+  }
+
+  function resolveEditFlowerSelectionLabels() {
+    const room = cultivationRooms.flowerRooms.find((r) => r.id === editFlowerRoomId);
+    const bay = room?.bays?.find((b) => b.id === editFlowerBayId);
+    const tableNames =
+      bay?.tables.filter((t) => editFlowerTableIds.includes(t.id)).map((t) => t.name) || [];
+    return {
+      roomName: room?.name || "",
+      bayName: bay?.name || "",
+      tableNames,
+    };
+  }
+
+  function toggleEditFlowerTableId(tableId: string) {
+    setEditFlowerTableIds((current) =>
+      current.includes(tableId) ? current.filter((id) => id !== tableId) : [...current, tableId],
+    );
+  }
+
+  function openEditFlowerBatchModal(b: any) {
+    if (!canManagerEditBatchDetails) {
+      showManagerBatchEditNotice();
+      return;
+    }
+    if (!b || stageBucketFromBatchStage(b.stage) !== "Flower") return;
+
+    setEditFlowerModalBatch(b);
+    setEditFlowerPlants(String(Math.max(0, num(b.plants))));
+    setEditFlowerStrain(String(b.strain ?? "").trim());
+    setEditFlowerAcronym(String(b.acronym ?? "").trim().toUpperCase());
+    const cd = b.cloneDate ? String(b.cloneDate).slice(0, 10) : "";
+    setEditFlowerCloneDate(cd);
+    setEditFlowerBatchNotes(String(b.batchNotes ?? "").trim());
+
+    const fr = cultivationRooms.flowerRooms || [];
+    let roomId = "";
+    let bayId = "";
+    let tableIds: string[] = [];
+
+    if (b.flowerRoomId && fr.some((r) => r.id === b.flowerRoomId)) {
+      roomId = String(b.flowerRoomId);
+      const r0 = fr.find((x) => x.id === roomId);
+      if (b.flowerBayId && r0?.bays?.some((bb) => bb.id === b.flowerBayId)) {
+        bayId = String(b.flowerBayId);
+      } else if (r0?.bays?.[0]) {
+        bayId = r0.bays[0].id;
+      }
+      if (Array.isArray(b.flowerTableIds) && b.flowerTableIds.length > 0 && bayId) {
+        const bayObj = r0?.bays?.find((bb) => bb.id === bayId);
+        const allowed = new Set((bayObj?.tables || []).map((t) => t.id));
+        tableIds = (b.flowerTableIds as unknown[]).filter((id) => allowed.has(String(id))).map(String);
+      }
+    } else if (typeof b.flowerRoom === "string" && b.flowerRoom.trim()) {
+      const byName = fr.find((r) => r.name === b.flowerRoom.trim());
+      if (byName) {
+        roomId = byName.id;
+        const b0 = byName.bays?.[0];
+        bayId = b0?.id || "";
+        tableIds = [];
+      }
+    }
+
+    if (!roomId && fr.length > 0) {
+      roomId = fr[0].id;
+      bayId = fr[0].bays?.[0]?.id || "";
+      tableIds = [];
+    }
+
+    setEditFlowerRoomId(roomId);
+    setEditFlowerBayId(bayId);
+    setEditFlowerTableIds(tableIds);
+  }
+
+  function closeEditFlowerModal() {
+    if (isSavingEditFlowerModal) return;
+    setEditFlowerModalBatch(null);
+  }
+
+  async function saveEditFlowerBatchModal() {
+    if (!editFlowerModalBatch || !canManagerEditBatchDetails) return;
+
+    const fr = cultivationRooms.flowerRooms || [];
+    const taskRequiredFields: { label: string; value: unknown; positive?: boolean }[] = [
+      { label: "Strain", value: editFlowerStrain.trim() },
+      { label: "Strain acronym", value: editFlowerAcronym.trim() },
+      { label: "Plants", value: editFlowerPlants, positive: true },
+    ];
+
+    if (fr.length > 0) {
+      taskRequiredFields.push({ label: "Flower room", value: editFlowerRoomId.trim() });
+      const flowerRoomObj = fr.find((r) => r.id === editFlowerRoomId);
+      if (flowerRoomObj && flowerRoomObj.bays.length > 0) {
+        taskRequiredFields.push({ label: "Flower bay", value: editFlowerBayId.trim() });
+        const bayObj = flowerRoomObj.bays.find((bb) => bb.id === editFlowerBayId);
+        if (bayObj && bayObj.tables.length > 0) {
+          taskRequiredFields.push({
+            label: "Flower table(s)",
+            value: editFlowerTableIds.length > 0 ? editFlowerTableIds.join(",") : "",
+          });
+        }
+      }
+    }
+
+    if (!requireFieldsStyled(taskRequiredFields)) return;
+
+    setIsSavingEditFlowerModal(true);
+    const b = editFlowerModalBatch;
+    const before = {
+      strain: b.strain,
+      acronym: b.acronym,
+      cloneDate: b.cloneDate,
+      plants: b.plants,
+      plantsAtFlower: b.plantsAtFlower,
+      flowerRoomId: b.flowerRoomId,
+      flowerBayId: b.flowerBayId,
+      flowerTableIds: Array.isArray(b.flowerTableIds) ? [...b.flowerTableIds] : [],
+      flowerRoom: b.flowerRoom,
+      flowerBay: b.flowerBay,
+      flowerTables: Array.isArray(b.flowerTables) ? [...b.flowerTables] : undefined,
+      batchNotes: b.batchNotes,
+    };
+
+    b.strain = editFlowerStrain.trim();
+    b.acronym = editFlowerAcronym.trim().toUpperCase();
+    b.cloneDate = editFlowerCloneDate.trim();
+    b.plants = num(editFlowerPlants);
+    if (String(b.stage || "").trim() === "Flower") {
+      b.plantsAtFlower = num(editFlowerPlants);
+    }
+    b.batchNotes = editFlowerBatchNotes.trim();
+
+    if (fr.length > 0 && editFlowerRoomId.trim()) {
+      const fl = resolveEditFlowerSelectionLabels();
+      b.flowerRoomId = editFlowerRoomId.trim();
+      b.flowerBayId = editFlowerBayId.trim();
+      b.flowerTableIds = [...editFlowerTableIds];
+      b.flowerRoom = fl.roomName;
+      b.flowerBay = fl.bayName;
+      b.flowerTables = [...fl.tableNames];
+      recomputeDryCanopyForCultivationBatch(b, cultivationRooms);
+    }
+
+    const after = {
+      strain: b.strain,
+      acronym: b.acronym,
+      cloneDate: b.cloneDate,
+      plants: b.plants,
+      plantsAtFlower: b.plantsAtFlower,
+      flowerRoomId: b.flowerRoomId,
+      flowerBayId: b.flowerBayId,
+      flowerTableIds: b.flowerTableIds,
+      flowerRoom: b.flowerRoom,
+      flowerBay: b.flowerBay,
+      flowerTables: b.flowerTables,
+      batchNotes: b.batchNotes,
+    };
+
+    const output =
+      `Updated flower batch details | Room: ${after.flowerRoom || "—"} | Bay: ${after.flowerBay || "—"} | Tables: ` +
+      `${Array.isArray(after.flowerTables) && after.flowerTables.length ? after.flowerTables.join(", ") : "—"}`;
+    const loggedAtIso = new Date().toISOString();
+    const auditBase = {
+      area: "Audit",
+      batch: b.id,
+      task: "Batch Details Updated",
+      output: `Edited Flower batch fields (${b.id})`,
+      data: {
+        stageBucket: "Flower",
+        batchStage: b.stage,
+        before,
+        after,
+        editedAtIso: loggedAtIso,
+      },
+      time: nowIsoForLog(),
+    };
+    s.logs.unshift(withLoggedBy(auditBase));
+
+    forceRefresh();
+    try {
+      await createLog({
+        area: auditBase.area,
+        batch: auditBase.batch,
+        task: auditBase.task,
+        output,
+        data: auditBase.data,
+      });
+    } catch (e) {
+      console.error("Could not persist batch edit audit log:", e);
+      showNotice(
+        "Log sync warning",
+        "Batch was updated locally, but the audit line may not have saved to the server.",
+        "Refresh and check task history if needed.",
+      );
+    }
+    try {
+      showSyncMessageNotice("Saving batch to server…");
+      const ok = await saveRealCultivationBatch(b);
+      showSyncMessageNotice(ok ? "Batch saved to server." : "Saved locally — server sync failed.");
+    } finally {
+      setEditFlowerModalBatch(null);
+      setIsSavingEditFlowerModal(false);
     }
   }
 
@@ -3292,12 +3520,22 @@ export default function Cultivation() {
                         </span>
                       </>
                     )}
-                    {b.stage === "Flower" && (b.flowerRoom || b.flowerBay || b.flowerTable || b.flowerTables) && (
-                      <>
-                        <br />
-                        Room: {b.flowerRoom || "—"} | Bay: {b.flowerBay || "—"} | Tables: {formatFlowerTables(b)}
-                      </>
-                    )}
+                    {(b.stage === "Flower" || b.stage === "Partially Harvested") &&
+                      (b.flowerRoom || b.flowerBay || b.flowerTable || b.flowerTables) && (
+                        <>
+                          <br />
+                          Room: {b.flowerRoom || "—"} | Bay: {b.flowerBay || "—"} | Tables: {formatFlowerTables(b)}
+                        </>
+                      )}
+                    {(b.stage === "Flower" || b.stage === "Partially Harvested") &&
+                      String(b.batchNotes ?? "").trim() !== "" && (
+                        <>
+                          <br />
+                          <span style={{ color: selectedBatch?.id === b.id ? "#0f172a" : "#cbd5e1" }}>
+                            Notes: {String(b.batchNotes)}
+                          </span>
+                        </>
+                      )}
                   </div>
 
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -3314,7 +3552,7 @@ export default function Cultivation() {
                         Tasks
                       </button>
                     ) : null}
-                    {canWriteRecords && selectedStage === "Veg" && b.stage === "Veg" ? (
+                    {canManagerEditBatchDetails && selectedStage === "Veg" && b.stage === "Veg" ? (
                       <button
                         type="button"
                         style={{
@@ -3324,6 +3562,20 @@ export default function Cultivation() {
                           color: "white",
                         }}
                         onClick={() => openEditVegBatchModal(b)}
+                      >
+                        Edit
+                      </button>
+                    ) : null}
+                    {canManagerEditBatchDetails && selectedStage === "Flower" ? (
+                      <button
+                        type="button"
+                        style={{
+                          ...buttonStyle,
+                          background: "#5b21b6",
+                          border: "1px solid #a855f7",
+                          color: "white",
+                        }}
+                        onClick={() => openEditFlowerBatchModal(b)}
                       >
                         Edit
                       </button>
@@ -3536,6 +3788,206 @@ export default function Cultivation() {
                 disabled={isSavingEditVegModal}
               >
                 {isSavingEditVegModal ? "Saving..." : "Save changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editFlowerModalBatch ? (
+        <div style={modalOverlayStyle}>
+          <div style={{ ...modalStyle, maxWidth: 640 }}>
+            <h2 style={{ textAlign: "center", marginTop: 0 }}>Edit flower batch</h2>
+            <p style={{ textAlign: "center", color: "#cbd5e1", marginTop: 0 }}>
+              <b>{editFlowerModalBatch.id}</b> — update room/bay/tables, plant count, strain, clone date, and notes.
+              {cultivationRooms.flowerRooms.length > 0 ? (
+                <>
+                  {" "}
+                  <span style={{ color: "#94a3b8" }}>
+                    Dry canopy is recalculated from selected table square footage.
+                  </span>
+                </>
+              ) : null}
+            </p>
+
+            <div style={formStyle}>
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Plants remaining
+                <input
+                  style={inputStyle}
+                  inputMode="numeric"
+                  value={editFlowerPlants}
+                  onChange={(e) => setEditFlowerPlants(e.target.value)}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Quick fill strain (optional)
+                <select
+                  style={inputStyle}
+                  value=""
+                  onChange={(e) => {
+                    const name = e.target.value;
+                    if (!name) return;
+                    const selectedCloneStrain = getCloneStrainByName(name, configStrains);
+                    setEditFlowerStrain(getConfigStrainName(selectedCloneStrain || {}));
+                    setEditFlowerAcronym(getConfigStrainAcronym(selectedCloneStrain || {}).toUpperCase());
+                  }}
+                >
+                  <option value="">Pick from configured strains…</option>
+                  {sortStrainsAlphabetically(configStrains).map((item) => (
+                    <option key={item.id || getConfigStrainAcronym(item) || getConfigStrainName(item)} value={getConfigStrainName(item)}>
+                      {getConfigStrainName(item)} ({getConfigStrainAcronym(item)})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Strain name
+                <input style={inputStyle} value={editFlowerStrain} onChange={(e) => setEditFlowerStrain(e.target.value)} />
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Strain acronym
+                <input
+                  style={inputStyle}
+                  value={editFlowerAcronym}
+                  onChange={(e) => setEditFlowerAcronym(e.target.value.toUpperCase())}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Clone date (optional)
+                <input
+                  style={inputStyle}
+                  type="date"
+                  value={editFlowerCloneDate}
+                  onChange={(e) => setEditFlowerCloneDate(e.target.value)}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Batch notes (optional — racks, labels, IPM markers, …)
+                <textarea
+                  style={{ ...inputStyle, minHeight: 72, resize: "vertical" as const }}
+                  value={editFlowerBatchNotes}
+                  onChange={(e) => setEditFlowerBatchNotes(e.target.value)}
+                />
+              </label>
+
+              <>
+                {cultivationRooms.flowerRooms.length === 0 ? (
+                  <p style={{ color: "#fbbf24", fontSize: 14, margin: 0, lineHeight: 1.5 }}>
+                    No flower rooms are configured yet. Placement fields are skipped until an Admin adds rooms under{" "}
+                    <strong style={{ color: "#fef08a" }}>Admin → Company Config</strong>.
+                  </p>
+                ) : (
+                  <>
+                    <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                      Flower room
+                      <select
+                        style={inputStyle}
+                        value={editFlowerRoomId}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          setEditFlowerRoomId(id);
+                          const room = cultivationRooms.flowerRooms.find((r) => r.id === id);
+                          const b0 = room?.bays?.[0];
+                          setEditFlowerBayId(b0?.id || "");
+                          setEditFlowerTableIds([]);
+                        }}
+                      >
+                        {cultivationRooms.flowerRooms.map((room) => (
+                          <option key={room.id} value={room.id}>
+                            {room.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    {(() => {
+                      const flowerRoomObj = cultivationRooms.flowerRooms.find((r) => r.id === editFlowerRoomId);
+                      const bayObj = flowerRoomObj?.bays?.find((bay) => bay.id === editFlowerBayId);
+                      return (
+                        <>
+                          {flowerRoomObj && flowerRoomObj.bays.length > 0 ? (
+                            <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                              Bay
+                              <select
+                                style={inputStyle}
+                                value={editFlowerBayId}
+                                onChange={(e) => {
+                                  setEditFlowerBayId(e.target.value);
+                                  setEditFlowerTableIds([]);
+                                }}
+                              >
+                                {flowerRoomObj.bays.map((bay) => (
+                                  <option key={bay.id} value={bay.id}>
+                                    Bay {bay.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : (
+                            <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                              This flower room has no bays yet—add bays in Company Config.
+                            </p>
+                          )}
+
+                          {bayObj && bayObj.tables.length > 0 ? (
+                            <div style={{ ...inputStyle, display: "grid", gap: 8 }}>
+                              <b>Tables</b>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                {bayObj.tables.map((table) => (
+                                  <label
+                                    key={table.id}
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 6,
+                                      border: "1px solid #334155",
+                                      borderRadius: 10,
+                                      padding: "8px 10px",
+                                      background: editFlowerTableIds.includes(table.id) ? "#22c55e" : "#1e293b",
+                                      color: editFlowerTableIds.includes(table.id) ? "black" : "white",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={editFlowerTableIds.includes(table.id)}
+                                      onChange={() => toggleEditFlowerTableId(table.id)}
+                                    />
+                                    Table {table.name}
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          ) : flowerRoomObj && flowerRoomObj.bays.length > 0 ? (
+                            <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                              No tables in this bay—add tables in Company Config.
+                            </p>
+                          ) : null}
+                        </>
+                      );
+                    })()}
+                  </>
+                )}
+              </>
+            </div>
+
+            <div style={modalButtonRowStyle}>
+              <button style={buttonStyle} type="button" onClick={closeEditFlowerModal} disabled={isSavingEditFlowerModal}>
+                Cancel
+              </button>
+              <button
+                style={primaryButtonStyle}
+                type="button"
+                onClick={() => void saveEditFlowerBatchModal()}
+                disabled={isSavingEditFlowerModal}
+              >
+                {isSavingEditFlowerModal ? "Saving..." : "Save changes"}
               </button>
             </div>
           </div>
@@ -4245,7 +4697,7 @@ export default function Cultivation() {
               <button type="button" style={buttonStyle} onClick={() => setViewBatch(null)}>
                 Close
               </button>
-              {canWriteRecords && String(viewBatch.stage || "") === "Veg" ? (
+              {canManagerEditBatchDetails && String(viewBatch.stage || "") === "Veg" ? (
                 <button
                   type="button"
                   style={{
@@ -4256,6 +4708,24 @@ export default function Cultivation() {
                   }}
                   onClick={() => {
                     openEditVegBatchModal(viewBatch);
+                    setViewBatch(null);
+                  }}
+                >
+                  Edit batch
+                </button>
+              ) : null}
+              {canManagerEditBatchDetails &&
+              (viewBatch.stage === "Flower" || viewBatch.stage === "Partially Harvested") ? (
+                <button
+                  type="button"
+                  style={{
+                    ...buttonStyle,
+                    background: "#5b21b6",
+                    border: "1px solid #a855f7",
+                    color: "white",
+                  }}
+                  onClick={() => {
+                    openEditFlowerBatchModal(viewBatch);
                     setViewBatch(null);
                   }}
                 >
