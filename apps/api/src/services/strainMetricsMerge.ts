@@ -1,6 +1,9 @@
 /**
  * Pure merge: patch strain auto-metric fields from batch rollups; leaves other strains and top-level cultivation keys intact.
+ * When numeric averages exist, also updates `potency` and `averageYield` to match Admin config dropdown values.
  */
+
+import { potencyCategoryFromAvgThcPct, yieldCategoryFromAvgGPerSqFt } from "./strainMetricCategoryMaps.js";
 
 export type StrainMetricBucket = { potencies: number[]; yields: number[] };
 
@@ -39,10 +42,14 @@ export function mergeStrainAutoMetricsIntoCultivation(
         const avgY = meanFinite(bucket.yields);
         const nP = bucket.potencies.length;
         const nY = bucket.yields.length;
-        if (avgP != null)
+        if (avgP != null) {
             strain.autoAvgPotencyPct = +avgP.toFixed(4);
-        if (avgY != null)
+            strain.potency = potencyCategoryFromAvgThcPct(avgP);
+        }
+        if (avgY != null) {
             strain.autoAvgDryYieldGPerSqFt = +avgY.toFixed(4);
+            strain.averageYield = yieldCategoryFromAvgGPerSqFt(avgY);
+        }
         strain.autoMetricsSampleCount = Math.max(nP, nY);
         strain.autoMetricsUpdatedAt = nowIso;
         strains[i] = strain;

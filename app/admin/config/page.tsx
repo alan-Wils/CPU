@@ -927,9 +927,10 @@ export default function ConfigPage() {
 
         <h3 style={styles.subTitle}>Strain List</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14 }}>
-          Auto averages below are read-only: updated from cultivation batches after <b>Test Passed</b> with lab THC % and
-          dry yield math (A-grade + popcorn mass vs allocated dry canopy sq ft). Manual potency / yield categories above
-          are unchanged.
+          When cultivation data is rolled up, <b>Potency</b> and <b>Average yield</b> on each strain update from lab
+          THC% and dry g/sq ft averages (defaults: THC under 16 = Low, 16–22 Medium, 22–28 High, 28+ Very High; yield
+          under 18 g/sq ft Light, 18–42 Medium, over 42 Heavy). <b>Dominance</b> is not changed. Auto numeric lines below
+          are read-only snapshots from the same rollups.
         </p>
 
         <div style={styles.grid}>

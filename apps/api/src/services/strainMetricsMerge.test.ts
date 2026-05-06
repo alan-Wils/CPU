@@ -36,6 +36,8 @@ describe("mergeStrainAutoMetricsIntoCultivation", () => {
         expect(strains[0].customField).toBe("keep-me");
         expect(strains[0].autoAvgPotencyPct).toBe(22);
         expect(strains[0].autoAvgDryYieldGPerSqFt).toBe(11);
+        expect(strains[0].potency).toBe("High");
+        expect(strains[0].averageYield).toBe("Light");
         expect(strains[0].autoMetricsSampleCount).toBe(2);
         expect(strains[1].autoAvgPotencyPct).toBeUndefined();
     });
