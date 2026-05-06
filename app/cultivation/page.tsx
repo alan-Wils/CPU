@@ -576,6 +576,107 @@ function findCultivationParentBatch(store: any, sourceId: string) {
   return lists.find((b: any) => b.id === sourceId) || null;
 }
 
+function clearVegPlacementFields(batch: any) {
+  batch.vegRoomId = "";
+  batch.vegBayId = "";
+  batch.vegTableIds = [];
+  batch.vegRoom = "";
+  batch.vegBay = "";
+  batch.vegTables = [];
+}
+
+function clearFlowerPlacementFields(batch: any) {
+  batch.flowerRoomId = "";
+  batch.flowerBayId = "";
+  batch.flowerTableIds = [];
+  batch.flowerRoom = "";
+  batch.flowerBay = "";
+  batch.flowerTables = [];
+  delete batch.plantsAtFlower;
+  delete batch.totalFlowerTableSqFt;
+  delete batch.dryCanopySqFt;
+}
+
+function clearHarvestPlantCounters(batch: any) {
+  batch.plantsHarvestedDry = 0;
+  batch.plantsHarvestedFreshFrozen = 0;
+}
+
+function inferRestoreStageFromCompletedBatch(batch: any): "Clone" | "Veg" | "Flower" | "Partially Harvested" {
+  if (num(batch.plantsHarvestedDry) > 0 || num(batch.plantsHarvestedFreshFrozen) > 0) {
+    return "Partially Harvested";
+  }
+  if (batch.flowerRoomId || batch.flowerRoom) return "Flower";
+  if (batch.vegRoomId || batch.vegRoom) return "Veg";
+  return "Clone";
+}
+
+export type CultivationRevertInfo = { targetStage: string; summary: string };
+
+function getCultivationRevertInfo(batch: any): CultivationRevertInfo | null {
+  const st = String(batch?.stage || "").trim();
+  if (st === "Clone") return null;
+  if (st === "Veg") {
+    return {
+      targetStage: "Clone",
+      summary: "Send back to Clone — veg room/bay/tables are cleared. Plant count is unchanged.",
+    };
+  }
+  if (st === "Flower") {
+    return {
+      targetStage: "Veg",
+      summary: "Send back to Veg — flower placement is cleared. Veg placement is kept.",
+    };
+  }
+  if (st === "Partially Harvested" || st === "Harvested") {
+    return {
+      targetStage: "Flower",
+      summary:
+        "Send back to Flower — harvest plant counters on this batch are reset. Confirm plant counts afterward.",
+    };
+  }
+  if (st === "Complete") {
+    const ts = inferRestoreStageFromCompletedBatch(batch);
+    return {
+      targetStage: ts,
+      summary: `Re-open as active ${ts} (removed from completed list).`,
+    };
+  }
+  return null;
+}
+
+function applyCultivationRevertMutation(batch: any, targetStage: string, fromStage: string) {
+  batch.status = "Active";
+  batch.stage = targetStage;
+  if (fromStage === "Complete") {
+    delete batch.completedAt;
+  }
+
+  if (targetStage === "Partially Harvested") {
+    return;
+  }
+  if (targetStage === "Clone") {
+    clearVegPlacementFields(batch);
+    clearFlowerPlacementFields(batch);
+    clearHarvestPlantCounters(batch);
+    delete batch.splitSourceBatchId;
+  } else if (targetStage === "Veg") {
+    clearFlowerPlacementFields(batch);
+    clearHarvestPlantCounters(batch);
+  } else if (targetStage === "Flower") {
+    clearHarvestPlantCounters(batch);
+  }
+}
+
+function promoteCompletedCultivationBatchToActive(store: any, batch: any) {
+  const list = store.completedCultivationBatches || [];
+  const ci = list.findIndex((b: any) => b?.id === batch?.id);
+  if (ci >= 0) list.splice(ci, 1);
+  if (!(store.cultivationBatches || []).some((b: any) => b?.id === batch?.id)) {
+    store.cultivationBatches.unshift(batch);
+  }
+}
+
 function recomputeDryCanopyForCultivationBatch(batch: any, rooms: CultivationRoomsConfig) {
   if (!batch || typeof batch !== "object") return;
   const total = sumTableSquareFeetFromIds(
@@ -847,6 +948,13 @@ export default function Cultivation() {
   const [partialSplitChoiceModal, setPartialSplitChoiceModal] = useState<{
     candidates: { id: string; plants: number; strain: string }[];
     mergeTargetId: string;
+  } | null>(null);
+
+  /** Delete cultivation batch: offer revert to previous stage vs permanent delete (clone-only = delete only). */
+  const [batchDeleteChoiceModal, setBatchDeleteChoiceModal] = useState<{
+    batchId: string;
+    batchStageLabel: string;
+    revertInfo: CultivationRevertInfo | null;
   } | null>(null);
 
   const [notificationModal, setNotificationModal] = useState<{
@@ -1786,18 +1894,138 @@ export default function Cultivation() {
     forceRefresh();
   }
 
+  async function confirmCultivationBatchRevert() {
+    const modal = batchDeleteChoiceModal;
+    if (!modal?.revertInfo) return;
+
+    const batchId = modal.batchId;
+    const targetStage = modal.revertInfo.targetStage;
+    setBatchDeleteChoiceModal(null);
+
+    if (!canWriteRecords) {
+      showReadOnlyNotice();
+      return;
+    }
+
+    let batch =
+      s.cultivationBatches.find((b: any) => b.id === batchId) ||
+      (s.completedCultivationBatches || []).find((b: any) => b.id === batchId);
+
+    if (!batch) {
+      showNotice("Batch not found", "Refresh the page — this batch may already have been removed.");
+      return;
+    }
+
+    const fromStage = String(batch.stage || "").trim();
+    const wasCompleted = (s.completedCultivationBatches || []).some((b: any) => b.id === batchId);
+    if (wasCompleted) {
+      promoteCompletedCultivationBatchToActive(s, batch);
+    }
+
+    applyCultivationRevertMutation(batch, targetStage, fromStage);
+
+    if (targetStage === "Flower" || targetStage === "Partially Harvested") {
+      recomputeDryCanopyForCultivationBatch(batch, cultivationRooms);
+    }
+
+    s.logs.unshift(
+      withLoggedBy({
+        area: "Cultivation",
+        batch: batchId,
+        task: "Stage Reverted",
+        people: "",
+        minutes: "",
+        output: `Reverted from ${fromStage} to ${targetStage}.`,
+        time: nowIsoForLog(),
+        data: { revertedFrom: fromStage, revertedTo: targetStage },
+      }),
+    );
+
+    if (selectedBatch?.id === batchId) {
+      selectBatch(batch);
+      const taskList = getTasksForStage(batch.stage || "Clone");
+      if (taskList.length) setSelectedTask(taskList[0]);
+    }
+    if (viewBatch?.id === batchId) setViewBatch(batch);
+    if (editVegModalBatch?.id === batchId) setEditVegModalBatch(batch);
+    if (editCloneModalBatch?.id === batchId) setEditCloneModalBatch(batch);
+    if (editFlowerModalBatch?.id === batchId) setEditFlowerModalBatch(batch);
+
+    forceRefresh();
+
+    try {
+      await createLog({
+        area: "Cultivation",
+        batch: batchId,
+        task: "Stage Reverted",
+        output: `Reverted from ${fromStage} to ${targetStage}.`,
+        data: { revertedFrom: fromStage, revertedTo: targetStage },
+      });
+    } catch (error) {
+      console.error("Could not persist revert log:", error);
+    }
+
+    try {
+      showSyncMessageNotice("Saving revert to server…");
+      const ok = await saveRealCultivationBatch(batch);
+      showSyncMessageNotice(ok ? "Revert saved to server." : "Saved locally — server sync failed.");
+    } catch (error) {
+      console.error("Could not sync revert:", error);
+      showNotice("Sync warning", "Revert applied locally but may not have saved to the server.");
+    }
+  }
+
+  function confirmPermanentBatchDeleteFromModal() {
+    const batchId = batchDeleteChoiceModal?.batchId;
+    setBatchDeleteChoiceModal(null);
+    if (!batchId) return;
+    void runDeleteBatch(batchId);
+  }
+
+  function cancelBatchDeleteChoiceModal() {
+    setBatchDeleteChoiceModal(null);
+  }
+
   function deleteBatch(batchId: string) {
     if (!canDeleteRecords) {
       showNotice("Access Denied", "Only Manager, Admin, or Owner users can delete records.");
       return;
     }
 
-    showConfirm(
-      "Delete Batch",
-      `Delete batch "${batchId}"?`,
-      () => runDeleteBatch(batchId),
-      "This removes the batch and related task history from cultivation, dry flower, production, source, and packaging lists."
-    );
+    const dry = (s.dryFlowerBatches || []).find((b: any) => b.id === batchId);
+    const prod = (s.productionBatches || []).find((b: any) => b.id === batchId);
+    if (dry || prod) {
+      showConfirm(
+        "Delete Batch",
+        `Permanently delete "${batchId}"?`,
+        () => runDeleteBatch(batchId),
+        dry
+          ? "This removes the dry flower batch and related links where applicable."
+          : "This removes the production batch record where applicable.",
+      );
+      return;
+    }
+
+    const activeCult = s.cultivationBatches.find((b: any) => b.id === batchId);
+    const completedCult = (s.completedCultivationBatches || []).find((b: any) => b.id === batchId);
+    const cult = activeCult || completedCult;
+
+    if (!cult) {
+      showConfirm(
+        "Delete Batch",
+        `Permanently delete "${batchId}"?`,
+        () => runDeleteBatch(batchId),
+        "This removes the batch and related records where applicable.",
+      );
+      return;
+    }
+
+    const revertInfo = getCultivationRevertInfo(cult);
+    setBatchDeleteChoiceModal({
+      batchId,
+      batchStageLabel: String(cult.stage || "—"),
+      revertInfo,
+    });
   }
 
   function moveBatchToCompleted(batch: any) {
@@ -6570,6 +6798,70 @@ export default function Cultivation() {
                   </div>
                 ))
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {batchDeleteChoiceModal && (
+        <div style={{ ...modalOverlayStyle, zIndex: 10003 }}>
+          <div style={{ ...modalStyle, maxWidth: 540 }}>
+            <h2 style={{ textAlign: "center", marginTop: 0, marginBottom: 10 }}>Remove cultivation batch?</h2>
+            <p style={{ color: "#cbd5e1", marginTop: 0, lineHeight: 1.55, textAlign: "center" }}>
+              <strong style={{ color: "#e2e8f0" }}>{batchDeleteChoiceModal.batchId}</strong>
+              <br />
+              Current stage:{" "}
+              <strong style={{ color: "#fef08a" }}>{batchDeleteChoiceModal.batchStageLabel}</strong>
+            </p>
+            {batchDeleteChoiceModal.revertInfo ? (
+              <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.55, marginTop: 12 }}>
+                {batchDeleteChoiceModal.revertInfo.summary}
+              </p>
+            ) : (
+              <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.55, marginTop: 12 }}>
+                This batch is still in <strong style={{ color: "#e2e8f0" }}>Clone</strong> — there is no earlier
+                cultivation stage to revert to. You can delete permanently or cancel.
+              </p>
+            )}
+            <p style={{ color: "#f87171", fontSize: 13, marginTop: 14, marginBottom: 0, lineHeight: 1.45 }}>
+              Delete permanently removes this batch from cultivation lists and strips related task logs (same as
+              before). Revert keeps the batch and moves it back one stage with fields adjusted as described above.
+            </p>
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                justifyContent: "center",
+                flexWrap: "wrap",
+                marginTop: 22,
+              }}
+            >
+              <button type="button" style={buttonStyle} onClick={cancelBatchDeleteChoiceModal}>
+                Cancel
+              </button>
+              <button type="button" style={dangerButtonStyle} onClick={confirmPermanentBatchDeleteFromModal}>
+                Delete permanently
+              </button>
+              {batchDeleteChoiceModal.revertInfo ? (
+                <button
+                  type="button"
+                  style={{
+                    ...primaryButtonStyle,
+                    background: "#38bdf8",
+                    borderColor: "#38bdf8",
+                    color: "#0f172a",
+                  }}
+                  onClick={() => void confirmCultivationBatchRevert()}
+                  disabled={!canWriteRecords}
+                  title={
+                    !canWriteRecords
+                      ? "Your role cannot edit cultivation batches — revert is disabled."
+                      : undefined
+                  }
+                >
+                  Revert to {batchDeleteChoiceModal.revertInfo.targetStage}
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
