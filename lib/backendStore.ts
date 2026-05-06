@@ -1,5 +1,11 @@
 import { apiRequest, getLogs } from "@/lib/api";
 import { store } from "@/lib/store";
+import {
+  copyDryFlowerBatchesIntoProduction,
+  hydrateDryFlowerBatchesFromLogSnapshots,
+} from "./dryFlowerLogHydrate";
+
+export { snapshotDryFlowerCardFields } from "./dryFlowerLogHydrate";
 
 /**
  * When `NEXT_PUBLIC_SERVER_DATABASE_ONLY` is `true` / `1` / `yes`, the UI does **not** send
@@ -77,19 +83,6 @@ export function mergeDryFlowerBatchesWithLocalSnapshot(snapRows: unknown[], loca
   return [...byId.values()];
 }
 
-/** Keep `productionBatches` rows in sync with canonical dry-flower rows (same id). */
-export function copyDryFlowerBatchesIntoProduction(storeObj: any) {
-  const dry = storeObj?.dryFlowerBatches;
-  const prod = storeObj?.productionBatches;
-  if (!Array.isArray(dry) || !Array.isArray(prod)) return;
-  for (const d of dry) {
-    const id = (d as any)?.id;
-    if (!id) continue;
-    const i = prod.findIndex((p: any) => p?.id === id);
-    if (i >= 0) prod[i] = { ...prod[i], ...d };
-  }
-}
-
 export function applyStoreSnapshot(snapshot: any, options?: ApplyStoreSnapshotOptions) {
   if (!snapshot || typeof snapshot !== "object") return;
 
@@ -126,6 +119,7 @@ export async function hydrateTaskLogsFromApi() {
   try {
     const rows = await getLogs();
     (store as any).logs = Array.isArray(rows) ? rows : [];
+    hydrateDryFlowerBatchesFromLogSnapshots(store);
   } catch (e) {
     console.error("[TASK_LOGS] Could not hydrate logs from API:", e);
   }

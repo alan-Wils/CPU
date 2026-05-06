@@ -11,7 +11,7 @@
     "dev:app": "next dev",
     "dev:web": "npm --workspace @cpu/web run dev",
     "dev:api": "npm --workspace @cpu/api run dev",
-    "test": "npm --workspace @cpu/shared run test",
+    "test": "npm --workspace @cpu/shared run test && vitest run",
     "build:platform": "npx tsc -p packages/shared/tsconfig.json && next build",
     "build": "npm --workspace @cpu/shared run build && npm --workspace @cpu/api run build && npm --workspace @cpu/web run build"
   },
@@ -26,6 +26,7 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "typescript": "latest"
+    "typescript": "latest",
+    "vitest": "^2.1.9"
   }
 }

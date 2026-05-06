@@ -10,6 +10,7 @@ import {
   hydrateTaskLogsFromApi,
   loadBackendStore,
   saveBackendStore,
+  snapshotDryFlowerCardFields,
 } from "@/lib/backendStore";
 import {
   loadCultivationBatches,
@@ -741,9 +742,13 @@ export default function Cultivation() {
     return `${username}${role}`;
   }
 
-  function withLoggedBy(log: any) {
+  function withLoggedBy(log: any, dryFlowerBatchForSnapshot?: unknown) {
     const loggedBy = getLoggedBy();
     const loggedAtIso = new Date().toISOString();
+
+    const dryFlowerCardSnapshot = dryFlowerBatchForSnapshot
+      ? snapshotDryFlowerCardFields(dryFlowerBatchForSnapshot as any)
+      : null;
 
     const finalLog = {
       ...log,
@@ -763,6 +768,7 @@ export default function Cultivation() {
         loggedBy,
         loggedAt: loggedAtIso,
         loggedAtIso,
+        ...(dryFlowerCardSnapshot ? { dryFlowerCardSnapshot } : {}),
       },
     };
 
@@ -1251,16 +1257,21 @@ export default function Cultivation() {
       s.productionBatches.unshift(dryBatch);
       setSelectedDryFlowerBatch(dryBatch);
 
-      s.logs.unshift(withLoggedBy({
-        area: "Cultivation",
-        batch: selectedBatch.id,
-        task: "Harvest - A Grade Flower",
-        people,
-        minutes,
-        output: `${plantsHarvested} plants harvested for A Grade Flower. No weight recorded until bucking.`,
-        linkedBatch: dryBatch.id,
-        time: nowIsoForLog(),
-      }))
+      s.logs.unshift(
+        withLoggedBy(
+          {
+            area: "Cultivation",
+            batch: selectedBatch.id,
+            task: "Harvest - A Grade Flower",
+            people,
+            minutes,
+            output: `${plantsHarvested} plants harvested for A Grade Flower. No weight recorded until bucking.`,
+            linkedBatch: dryBatch.id,
+            time: nowIsoForLog(),
+          },
+          dryBatch,
+        ),
+      )
     }
 
     if (harvestType === "Fresh Frozen") {
@@ -1450,16 +1461,21 @@ export default function Cultivation() {
       });
     }
 
-    s.logs.unshift(withLoggedBy({
-      area: "Cultivation",
-      batch: batch.id,
-      task: "Test Passed",
-      people: "",
-      minutes: "",
-      output: `Dry flower batch passed testing (lab THC ${thc}%) and is ready for packaging`,
-      source: batch.source,
-      time: nowIsoForLog(),
-    }))
+    s.logs.unshift(
+      withLoggedBy(
+        {
+          area: "Cultivation",
+          batch: batch.id,
+          task: "Test Passed",
+          people: "",
+          minutes: "",
+          output: `Dry flower batch passed testing (lab THC ${thc}%) and is ready for packaging`,
+          source: batch.source,
+          time: nowIsoForLog(),
+        },
+        batch,
+      ),
+    )
 
     setTestPassModalBatch(null);
     setTestPassThcPct("");
@@ -1492,16 +1508,21 @@ export default function Cultivation() {
     failBatch.status = "Test Failed";
     failBatch.testFailureReason = failureReason;
 
-    s.logs.unshift(withLoggedBy({
-      area: "Cultivation",
-      batch: failBatch.id,
-      task: "Test Failed",
-      people: "",
-      minutes: "",
-      output: failureReason || "No failure reason entered",
-      source: failBatch.source,
-      time: nowIsoForLog(),
-    }))
+    s.logs.unshift(
+      withLoggedBy(
+        {
+          area: "Cultivation",
+          batch: failBatch.id,
+          task: "Test Failed",
+          people: "",
+          minutes: "",
+          output: failureReason || "No failure reason entered",
+          source: failBatch.source,
+          time: nowIsoForLog(),
+        },
+        failBatch,
+      ),
+    )
 
     setFailBatch(null);
     setFailureReason("");
@@ -1622,16 +1643,21 @@ export default function Cultivation() {
       selectedDryFlowerBatch.buckedWeightLbs = +wholePlant.toFixed(4);
       selectedDryFlowerBatch.status = "Bucked";
 
-      s.logs.unshift(withLoggedBy({
-        area: "Cultivation",
-        batch: selectedDryFlowerBatch.id,
-        task: "Bucking",
-        people: dryPeople,
-        minutes: dryMinutes,
-        output: `Whole plant (to trim): ${wholePlant} lbs | Stem / waste logged: ${stemWaste} lbs`,
-        source: selectedDryFlowerBatch.source,
-        time: nowIsoForLog(),
-      }))
+      s.logs.unshift(
+        withLoggedBy(
+          {
+            area: "Cultivation",
+            batch: selectedDryFlowerBatch.id,
+            task: "Bucking",
+            people: dryPeople,
+            minutes: dryMinutes,
+            output: `Whole plant (to trim): ${wholePlant} lbs | Stem / waste logged: ${stemWaste} lbs`,
+            source: selectedDryFlowerBatch.source,
+            time: nowIsoForLog(),
+          },
+          selectedDryFlowerBatch,
+        ),
+      )
     }
 
     if (selectedDryFlowerTask === "Trimming") {
@@ -1664,16 +1690,21 @@ export default function Cultivation() {
           ? ` | Trim from trimming: ${trimFromTrimming} lbs | Trim from bucking: ${trimFromBuck} lbs | Total trim to extraction: ${totalTrimForExtraction} lbs`
           : ` | Total trim to extraction: ${totalTrimForExtraction} lbs`;
 
-      s.logs.unshift(withLoggedBy({
-        area: "Cultivation",
-        batch: selectedDryFlowerBatch.id,
-        task: "Trimming",
-        people: dryPeople,
-        minutes: dryMinutes,
-        output: `Total A Grade Flower: ${aGradeFlowerWeight} lbs | Total Popcorn: ${popcornWeight} lbs${trimLogExtra}`,
-        source: selectedDryFlowerBatch.source,
-        time: nowIsoForLog(),
-      }))
+      s.logs.unshift(
+        withLoggedBy(
+          {
+            area: "Cultivation",
+            batch: selectedDryFlowerBatch.id,
+            task: "Trimming",
+            people: dryPeople,
+            minutes: dryMinutes,
+            output: `Total A Grade Flower: ${aGradeFlowerWeight} lbs | Total Popcorn: ${popcornWeight} lbs${trimLogExtra}`,
+            source: selectedDryFlowerBatch.source,
+            time: nowIsoForLog(),
+          },
+          selectedDryFlowerBatch,
+        ),
+      )
 
       if (totalTrimForExtraction > 0) {
         const trimBatch = {
@@ -1704,17 +1735,22 @@ export default function Cultivation() {
           );
         }
 
-        s.logs.unshift(withLoggedBy({
-          area: "Cultivation",
-          batch: selectedDryFlowerBatch.id,
-          task: "Trim Available for Extraction",
-          people: "",
-          minutes: "",
-          output: `${totalTrimForExtraction} lbs dry trim is available for extraction`,
-          linkedBatch: trimBatch.id,
-          source: selectedDryFlowerBatch.source,
-          time: nowIsoForLog(),
-        }))
+        s.logs.unshift(
+          withLoggedBy(
+            {
+              area: "Cultivation",
+              batch: selectedDryFlowerBatch.id,
+              task: "Trim Available for Extraction",
+              people: "",
+              minutes: "",
+              output: `${totalTrimForExtraction} lbs dry trim is available for extraction`,
+              linkedBatch: trimBatch.id,
+              source: selectedDryFlowerBatch.source,
+              time: nowIsoForLog(),
+            },
+            selectedDryFlowerBatch,
+          ),
+        )
       }
     }
 
@@ -1735,32 +1771,42 @@ export default function Cultivation() {
       selectedDryFlowerBatch.remainingPackableLbs = enteredWeight;
       selectedDryFlowerBatch.status = "Decontaminated";
 
-      s.logs.unshift(withLoggedBy({
-        area: "Cultivation",
-        batch: selectedDryFlowerBatch.id,
-        task: "Decontamination",
-        people: dryPeople,
-        minutes: dryMinutes,
-        output: `Decon output weight: ${enteredWeight} lbs | Loss from previous stage: ${loss} lbs`,
-        source: selectedDryFlowerBatch.source,
-        time: nowIsoForLog(),
-      }))
+      s.logs.unshift(
+        withLoggedBy(
+          {
+            area: "Cultivation",
+            batch: selectedDryFlowerBatch.id,
+            task: "Decontamination",
+            people: dryPeople,
+            minutes: dryMinutes,
+            output: `Decon output weight: ${enteredWeight} lbs | Loss from previous stage: ${loss} lbs`,
+            source: selectedDryFlowerBatch.source,
+            time: nowIsoForLog(),
+          },
+          selectedDryFlowerBatch,
+        ),
+      )
     }
 
     if (selectedDryFlowerTask === "Burping") {
       selectedDryFlowerBatch.status = "Burping";
 
-      s.logs.unshift(withLoggedBy({
-        area: "Cultivation",
-        batch: selectedDryFlowerBatch.id,
-        task: "Burping",
-        people: dryPeople,
-        minutes: dryMinutes,
-        output:
-          dryOutput || "Burping jars / curing process ongoing",
-        source: selectedDryFlowerBatch.source,
-        time: nowIsoForLog(),
-      }))
+      s.logs.unshift(
+        withLoggedBy(
+          {
+            area: "Cultivation",
+            batch: selectedDryFlowerBatch.id,
+            task: "Burping",
+            people: dryPeople,
+            minutes: dryMinutes,
+            output:
+              dryOutput || "Burping jars / curing process ongoing",
+            source: selectedDryFlowerBatch.source,
+            time: nowIsoForLog(),
+          },
+          selectedDryFlowerBatch,
+        ),
+      )
     }
 
     if (selectedDryFlowerTask === "Testing") {
@@ -1769,16 +1815,21 @@ export default function Cultivation() {
       selectedDryFlowerBatch.testStatus = "Submitted to Testing";
       selectedDryFlowerBatch.status = "Submitted to Testing";
 
-      s.logs.unshift(withLoggedBy({
-        area: "Cultivation",
-        batch: selectedDryFlowerBatch.id,
-        task: "Submitted to Testing",
-        people: dryPeople,
-        minutes: dryMinutes,
-        output: `Dry flower submitted for testing | Tests: ${dryTestingSelectedTests.join(", ")} | Lab submission date: ${dryTestingDateSubmitted}`,
-        source: selectedDryFlowerBatch.source,
-        time: nowIsoForLog(),
-      }))
+      s.logs.unshift(
+        withLoggedBy(
+          {
+            area: "Cultivation",
+            batch: selectedDryFlowerBatch.id,
+            task: "Submitted to Testing",
+            people: dryPeople,
+            minutes: dryMinutes,
+            output: `Dry flower submitted for testing | Tests: ${dryTestingSelectedTests.join(", ")} | Lab submission date: ${dryTestingDateSubmitted}`,
+            source: selectedDryFlowerBatch.source,
+            time: nowIsoForLog(),
+          },
+          selectedDryFlowerBatch,
+        ),
+      )
     }
 
     if (selectedDryFlowerTask === "Packaging") {
@@ -1884,16 +1935,21 @@ export default function Cultivation() {
 
       upsertDryFlowerPackagingBatch(selectedDryFlowerBatch);
 
-      s.logs.unshift(withLoggedBy({
-        area: "Cultivation",
-        batch: selectedDryFlowerBatch.id,
-        task: "Packaging",
-        people: dryPeople,
-        minutes: dryMinutes,
-        output: `Flower type: ${dryPackageCategory} | Mode: ${dryPackagingMode} | Units: ${actualPackageUnits} | Packaged: ${packagedThisRound} lbs | Total packaged: ${selectedDryFlowerBatch.packagedWeightLbs} lbs | A Grade remaining: ${selectedDryFlowerBatch.remainingAGradeLbs} lbs | Popcorn remaining: ${selectedDryFlowerBatch.remainingPopcornLbs} lbs`,
-        source: selectedDryFlowerBatch.source,
-        time: nowIsoForLog(),
-      }))
+      s.logs.unshift(
+        withLoggedBy(
+          {
+            area: "Cultivation",
+            batch: selectedDryFlowerBatch.id,
+            task: "Packaging",
+            people: dryPeople,
+            minutes: dryMinutes,
+            output: `Flower type: ${dryPackageCategory} | Mode: ${dryPackagingMode} | Units: ${actualPackageUnits} | Packaged: ${packagedThisRound} lbs | Total packaged: ${selectedDryFlowerBatch.packagedWeightLbs} lbs | A Grade remaining: ${selectedDryFlowerBatch.remainingAGradeLbs} lbs | Popcorn remaining: ${selectedDryFlowerBatch.remainingPopcornLbs} lbs`,
+            source: selectedDryFlowerBatch.source,
+            time: nowIsoForLog(),
+          },
+          selectedDryFlowerBatch,
+        ),
+      )
 
       if (isComplete) {
         setSelectedDryFlowerBatch(null);
