@@ -46,7 +46,8 @@ analyticsRouter.get(
 
         const rows = await prisma.cultivationBatch.findMany({
             where: { companyId },
-            take: 500,
+            /** Larger window so older harvested batches still appear once lab THC is written. */
+            take: 3500,
             orderBy: { updatedAt: "desc" },
         });
 

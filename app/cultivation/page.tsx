@@ -250,6 +250,13 @@ function num(value: any) {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Cumulative packaged lbs on the dry card (`final*` fields): show a number once set, otherwise an em-dash. */
+function fmtDryFlowerCumulativePackedLbs(v: unknown): string {
+  if (v === undefined || v === null || v === "") return "—";
+  const n = num(v);
+  return (+n.toFixed(4)).toString();
+}
+
 function getConfigStrainName(item: ConfigStrain) {
   return String(item?.name || item?.strain || "").trim();
 }
@@ -853,16 +860,18 @@ export default function Cultivation() {
     setRefresh((n) => n + 1);
   }
 
-  async function saveRealCultivationBatch(batch: any) {
-    if (!batch?.id || !canWriteRecords) return;
+  async function saveRealCultivationBatch(batch: any): Promise<boolean> {
+    if (!batch?.id || !canWriteRecords) return false;
 
     try {
       const updated = await updateCultivationBatch(batch.id, batch);
       if (updated && typeof updated === "object") {
         Object.assign(batch, updated);
       }
+      return true;
     } catch (error) {
       console.error("Could not update real cultivation table:", error);
+      return false;
     }
   }
 
@@ -1481,15 +1490,25 @@ export default function Cultivation() {
     setTestPassThcPct("");
     setTestPassResultDate("");
     setTestPassPotencyNote("");
-    forceRefresh();
 
-    if (parent) {
-      try {
-        await saveRealCultivationBatch(parent);
-      } catch (e) {
-        console.error("Could not sync cultivation metrics to server:", e);
+    if (!parent) {
+      showNotice(
+        "Analytics not updated on server",
+        "No parent cultivation batch was found for this dry flower row.",
+        "Strain Analytics reads lab THC % and dry yield from the cultivation batch tied to dry batch `source`. Re-open cultivation data or refresh after the parent loads.",
+      );
+    } else {
+      const synced = await saveRealCultivationBatch(parent);
+      if (!synced) {
+        showNotice(
+          "Could not save lab metrics",
+          "The cultivation batch did not persist to the server (check network / role permissions). Reload and try Pass again, or use Data Hub cultivation sync.",
+          "",
+        );
       }
     }
+
+    forceRefresh();
   }
 
   function saveFailedTest() {
@@ -2167,8 +2186,8 @@ export default function Cultivation() {
     forceRefresh();
     try {
       showSyncMessageNotice("Task saved locally. Syncing to server...");
-      await saveRealCultivationBatch(selectedBatch);
-      showSyncMessageNotice("Task synced to server.");
+      const synced = await saveRealCultivationBatch(selectedBatch);
+      showSyncMessageNotice(synced ? "Task synced to server." : "Task saved locally — server sync failed (check connectivity).");
     } finally {
       setIsSavingTask(false);
     }
@@ -2483,7 +2502,8 @@ export default function Cultivation() {
                   {num(b.trimFromBuckLbs) > 0 ? ` (incl. ${num(b.trimFromBuckLbs)} from buck)` : ""} | Decon:{" "}
                   {b.deconWeightLbs || "—"} lbs | Packaged:{" "}
                   {b.packagedWeightLbs || 0} lbs | Remaining:{" "}
-                  {b.remainingPackableLbs === "" ? "—" : b.remainingPackableLbs} lbs | A Grade Available: {getDryFlowerPackagingAvailability(b).remainingAGradeLbs} lbs | Popcorn Available: {getDryFlowerPackagingAvailability(b).remainingPopcornLbs} lbs | Final A Grade: {b.finalAGradeFlowerLbs || "—"} lbs | Final Popcorn: {b.finalPopcornLbs || "—"} lbs
+                  {b.remainingPackableLbs === "" ? "—" : b.remainingPackableLbs} lbs | A Grade Available: {getDryFlowerPackagingAvailability(b).remainingAGradeLbs} lbs | Popcorn Available: {getDryFlowerPackagingAvailability(b).remainingPopcornLbs} lbs | Final A Grade (cum. packaged):{" "}
+                  {fmtDryFlowerCumulativePackedLbs(b.finalAGradeFlowerLbs)} lbs | Final Popcorn (cum. packaged): {fmtDryFlowerCumulativePackedLbs(b.finalPopcornLbs)} lbs
                 </div>
 
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>

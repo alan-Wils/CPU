@@ -280,9 +280,14 @@ export default function AnalyticsPage() {
           )}
 
           {!loading && !error && points.length === 0 && (
-            <p style={{ textAlign: "center", color: "#94a3b8" }}>
-              No data in this range. Metrics appear after dry flower Test Passed with lab THC % (and parent cultivation
-              batch has harvest / table data).
+            <p style={{ textAlign: "center", color: "#94a3b8", maxWidth: 720, margin: "24px auto 0", lineHeight: 1.6 }}>
+              No data in this range. Each point uses the cultivation batch lab result{" "}
+              <strong>date</strong>
+              {" "}
+              captured when dry flower <strong>Test Passed</strong> saves to the server. Extend <strong>To</strong> to
+              cover that calendar day (and <strong>From</strong> as needed), or clear strain checkboxes to include every
+              strain. If saves failed when passing testing, Cultivation analytics will stay empty until the parent batch
+              sync succeeds—check connectivity and retry.
             </p>
           )}
 
