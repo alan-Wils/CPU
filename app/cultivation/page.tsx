@@ -822,6 +822,33 @@ export default function Cultivation() {
   } | null>(null);
   const prevStageMoveTaskPickerRef = useRef<string | null>(null);
 
+  /** Pending partial Clone→Veg / Veg→Flower when merge-or-new modal may run; cleared after apply or cancel. */
+  const pendingPartialSplitRef = useRef<{
+    lab: {
+      ok: true;
+      peopleStr: string;
+      minutesStr: string;
+      totalLaborMinutes: number;
+      laborDetail: Record<string, unknown>;
+      outputSuffix: string;
+    };
+    sourceBatchId: string;
+    movedPlants: number;
+    taskKey: "Clone → Veg" | "Move to Flower";
+    stageMoveDate: string;
+    vegRoomId: string;
+    vegBayId: string;
+    vegTableIds: string[];
+    flowerRoomId: string;
+    flowerBayId: string;
+    flowerTableIds: string[];
+  } | null>(null);
+
+  const [partialSplitChoiceModal, setPartialSplitChoiceModal] = useState<{
+    candidates: { id: string; plants: number; strain: string }[];
+    mergeTargetId: string;
+  } | null>(null);
+
   const [notificationModal, setNotificationModal] = useState<{
     open: boolean;
     title: string;
@@ -2747,11 +2774,31 @@ export default function Cultivation() {
   }
 
   function resolveFlowerSelectionLabels() {
-    const room = cultivationRooms.flowerRooms.find((r) => r.id === flowerRoomId);
-    const bay = room?.bays?.find((b) => b.id === flowerBayId);
+    return resolveFlowerLayoutLabels(flowerRoomId, flowerBayId, flowerTableIds);
+  }
+
+  function resolveVegSelectionLabels() {
+    return resolveVegLayoutLabels(vegRoomId, vegBayId, vegTableIds);
+  }
+
+  function resolveVegLayoutLabels(roomId: string, bayId: string, tableIds: string[]) {
+    const room = cultivationRooms.vegRooms.find((r) => r.id === roomId);
+    const bay = room?.bays?.find((b) => b.id === bayId);
     const tableNames =
-      bay?.tables
-        .filter((t) => flowerTableIds.includes(t.id))
+      (bay?.tables || []).filter((t) => tableIds.includes(t.id)).map((t) => t.name) || [];
+    return {
+      roomName: room?.name || "",
+      bayName: bay?.name || "",
+      tableNames,
+    };
+  }
+
+  function resolveFlowerLayoutLabels(roomId: string, bayId: string, tableIds: string[]) {
+    const room = cultivationRooms.flowerRooms.find((r) => r.id === roomId);
+    const bay = room?.bays?.find((b) => b.id === bayId);
+    const tableNames =
+      (bay?.tables || [])
+        .filter((t) => tableIds.includes(t.id))
         .map((t) => t.name) || [];
     return {
       roomName: room?.name || "",
@@ -2760,16 +2807,402 @@ export default function Cultivation() {
     };
   }
 
-  function resolveVegSelectionLabels() {
-    const room = cultivationRooms.vegRooms.find((r) => r.id === vegRoomId);
-    const bay = room?.bays?.find((b) => b.id === vegBayId);
-    const tableNames =
-      bay?.tables.filter((t) => vegTableIds.includes(t.id)).map((t) => t.name) || [];
-    return {
-      roomName: room?.name || "",
-      bayName: bay?.name || "",
-      tableNames,
-    };
+  function findPartialStageMergeCandidates(sourceBatchId: string, targetStage: "Veg" | "Flower") {
+    return (s.cultivationBatches || []).filter((b: any) => {
+      if (String(b?.status || "").toLowerCase() === "complete") return false;
+      if (String(b.splitSourceBatchId || "") !== sourceBatchId) return false;
+      return targetStage === "Veg" ? b.stage === "Veg" : b.stage === "Flower";
+    });
+  }
+
+  async function applyPartialStageMove(mergeTargetId: string | null) {
+    const pending = pendingPartialSplitRef.current;
+    if (!pending) return;
+
+    const lab = pending.lab;
+    const source = s.cultivationBatches.find((b: any) => b?.id === pending.sourceBatchId);
+    if (!source) {
+      pendingPartialSplitRef.current = null;
+      setPartialSplitChoiceModal(null);
+      showNotice("Batch missing", "Source batch is no longer active — refresh and try again.");
+      return;
+    }
+
+    const moved = pending.movedPlants;
+    const current = num(source.plants);
+    if (moved <= 0 || moved >= current) {
+      pendingPartialSplitRef.current = null;
+      setPartialSplitChoiceModal(null);
+      showNotice("Invalid split", "Plant counts changed — reopen the task and try again.");
+      return;
+    }
+
+    pendingPartialSplitRef.current = null;
+    setPartialSplitChoiceModal(null);
+
+    const moveDateCanonical = pending.stageMoveDate;
+    const logEventTimeIso = logTimeIsoForStageMoveDate(moveDateCanonical);
+    const remainderAfter = current - moved;
+
+    let selectAfter: any = null;
+
+    const laborData = { ...lab.laborDetail, totalLaborMinutes: lab.totalLaborMinutes };
+
+    try {
+      if (pending.taskKey === "Clone → Veg") {
+        const vl = resolveVegLayoutLabels(pending.vegRoomId, pending.vegBayId, pending.vegTableIds);
+        const layoutTail = `Move date: ${moveDateCanonical} | Room: ${vl.roomName || "—"} | Bay: ${vl.bayName || "—"} | Tables: ${
+          vl.tableNames.length ? vl.tableNames.join(", ") : "—"
+        }`;
+
+        if (mergeTargetId) {
+          const target = s.cultivationBatches.find((b: any) => b?.id === mergeTargetId);
+          if (
+            !target ||
+            target.stage !== "Veg" ||
+            String(target.splitSourceBatchId || "") !== source.id
+          ) {
+            showNotice("Merge target invalid", "Pick a veg batch that was split from this clone line.");
+            return;
+          }
+
+          target.plants = num(target.plants) + moved;
+          source.plants = remainderAfter;
+
+          const srcOutput = `${moved} plants moved to Veg — merged into ${target.id} (${remainderAfter} remain in Clone) | ${layoutTail}`;
+          s.logs.unshift(
+            withLoggedBy({
+              area: "Cultivation",
+              batch: source.id,
+              task: "Clone → Veg",
+              people: lab.peopleStr,
+              minutes: lab.minutesStr,
+              totalLaborMinutes: lab.totalLaborMinutes,
+              output: srcOutput + lab.outputSuffix,
+              room: vl.roomName || undefined,
+              bay: vl.bayName || undefined,
+              tables: vl.tableNames.length ? [...vl.tableNames] : undefined,
+              linkedBatch: target.id,
+              time: logEventTimeIso,
+              data: {
+                stageMoveDate: moveDateCanonical,
+                partialStageMove: true,
+                mergeIntoBatchId: target.id,
+                plantsMoved: moved,
+                plantsRemainingOnSource: remainderAfter,
+                ...laborData,
+              },
+            }),
+          );
+
+          s.logs.unshift(
+            withLoggedBy({
+              area: "Cultivation",
+              batch: target.id,
+              task: "Clone → Veg",
+              people: "",
+              minutes: "",
+              output: `+${moved} plants from Clone batch ${source.id} (partial merge). Total plants: ${num(target.plants)}.`,
+              linkedBatch: source.id,
+              time: logEventTimeIso,
+              data: {
+                stageMoveDate: moveDateCanonical,
+                partialStageMove: true,
+                mergeFromBatchId: source.id,
+                plantsAdded: moved,
+              },
+            }),
+          );
+
+          selectAfter = remainderAfter > 0 ? source : target;
+          await saveRealCultivationBatch(source);
+          await saveRealCultivationBatch(target);
+        } else {
+          const newBatch: Record<string, unknown> = {
+            id: makeBatchId(String(source.acronym || "BATCH"), String(source.cloneDate || moveDateCanonical), getAllBatchLists()),
+            strain: source.strain,
+            acronym: source.acronym,
+            cloneDate: source.cloneDate,
+            cloneCount: source.cloneCount,
+            stage: "Veg",
+            plants: moved,
+            originalPlants: moved,
+            status: "Active",
+            splitSourceBatchId: source.id,
+            vegRoomId: pending.vegRoomId,
+            vegBayId: pending.vegBayId,
+            vegTableIds: [...pending.vegTableIds],
+            vegRoom: vl.roomName,
+            vegBay: vl.bayName,
+            vegTables: [...vl.tableNames],
+          };
+
+          s.cultivationBatches.unshift(newBatch as any);
+          createRealCultivationBatch(newBatch);
+          source.plants = remainderAfter;
+
+          const srcOutput = `${moved} plants moved to Veg (partial; ${remainderAfter} remain in Clone) | New veg batch ${newBatch.id} | ${layoutTail}`;
+          s.logs.unshift(
+            withLoggedBy({
+              area: "Cultivation",
+              batch: source.id,
+              task: "Clone → Veg",
+              people: lab.peopleStr,
+              minutes: lab.minutesStr,
+              totalLaborMinutes: lab.totalLaborMinutes,
+              output: srcOutput + lab.outputSuffix,
+              room: vl.roomName || undefined,
+              bay: vl.bayName || undefined,
+              tables: vl.tableNames.length ? [...vl.tableNames] : undefined,
+              linkedBatch: String(newBatch.id),
+              time: logEventTimeIso,
+              data: {
+                stageMoveDate: moveDateCanonical,
+                partialStageMove: true,
+                newBatchId: newBatch.id,
+                plantsMoved: moved,
+                plantsRemainingOnSource: remainderAfter,
+                ...laborData,
+              },
+            }),
+          );
+
+          s.logs.unshift(
+            withLoggedBy({
+              area: "Cultivation",
+              batch: String(newBatch.id),
+              task: "Clone → Veg",
+              people: "",
+              minutes: "",
+              output: `Split from Clone batch ${source.id} — ${moved} plants | ${layoutTail}`,
+              linkedBatch: source.id,
+              time: logEventTimeIso,
+              data: {
+                stageMoveDate: moveDateCanonical,
+                partialStageMove: true,
+                splitFromBatchId: source.id,
+                plantsReceived: moved,
+              },
+            }),
+          );
+
+          selectAfter = remainderAfter > 0 ? source : (newBatch as any);
+          await saveRealCultivationBatch(source);
+          await saveRealCultivationBatch(newBatch);
+        }
+      } else {
+        const fl = resolveFlowerLayoutLabels(
+          pending.flowerRoomId,
+          pending.flowerBayId,
+          pending.flowerTableIds,
+        );
+        const layoutTail = `Move date: ${moveDateCanonical} | Room: ${fl.roomName || "—"} | Bay: ${fl.bayName || "—"} | Tables: ${
+          fl.tableNames.length ? fl.tableNames.join(", ") : "—"
+        }`;
+
+        if (mergeTargetId) {
+          const target = s.cultivationBatches.find((b: any) => b?.id === mergeTargetId);
+          if (
+            !target ||
+            target.stage !== "Flower" ||
+            String(target.splitSourceBatchId || "") !== source.id
+          ) {
+            showNotice("Merge target invalid", "Pick a flower batch that was split from this veg line.");
+            return;
+          }
+
+          target.plants = num(target.plants) + moved;
+          target.plantsAtFlower = num(target.plantsAtFlower) + moved;
+          source.plants = remainderAfter;
+          recomputeDryCanopyForCultivationBatch(target, cultivationRooms);
+
+          const srcOutput = `${moved} plants moved to Flower — merged into ${target.id} (${remainderAfter} remain in Veg) | ${layoutTail}`;
+          s.logs.unshift(
+            withLoggedBy({
+              area: "Cultivation",
+              batch: source.id,
+              task: "Move to Flower",
+              people: lab.peopleStr,
+              minutes: lab.minutesStr,
+              totalLaborMinutes: lab.totalLaborMinutes,
+              output: srcOutput + lab.outputSuffix,
+              room: fl.roomName || undefined,
+              bay: fl.bayName || undefined,
+              tables: fl.tableNames.length ? [...fl.tableNames] : undefined,
+              linkedBatch: target.id,
+              time: logEventTimeIso,
+              data: {
+                stageMoveDate: moveDateCanonical,
+                partialStageMove: true,
+                mergeIntoBatchId: target.id,
+                plantsMoved: moved,
+                plantsRemainingOnSource: remainderAfter,
+                ...laborData,
+              },
+            }),
+          );
+
+          s.logs.unshift(
+            withLoggedBy({
+              area: "Cultivation",
+              batch: target.id,
+              task: "Move to Flower",
+              people: "",
+              minutes: "",
+              output: `+${moved} plants from Veg batch ${source.id} (partial merge). Total plants: ${num(target.plants)}.`,
+              linkedBatch: source.id,
+              time: logEventTimeIso,
+              data: {
+                stageMoveDate: moveDateCanonical,
+                partialStageMove: true,
+                mergeFromBatchId: source.id,
+                plantsAdded: moved,
+              },
+            }),
+          );
+
+          selectAfter = remainderAfter > 0 ? source : target;
+          await saveRealCultivationBatch(source);
+          await saveRealCultivationBatch(target);
+        } else {
+          const newBatch: Record<string, unknown> = {
+            id: makeBatchId(String(source.acronym || "BATCH"), String(source.cloneDate || moveDateCanonical), getAllBatchLists()),
+            strain: source.strain,
+            acronym: source.acronym,
+            cloneDate: source.cloneDate,
+            cloneCount: source.cloneCount,
+            stage: "Flower",
+            plants: moved,
+            originalPlants: source.originalPlants != null ? source.originalPlants : moved,
+            plantsAtFlower: moved,
+            status: "Active",
+            splitSourceBatchId: source.id,
+            flowerRoomId: pending.flowerRoomId,
+            flowerBayId: pending.flowerBayId,
+            flowerTableIds: [...pending.flowerTableIds],
+            flowerRoom: fl.roomName,
+            flowerBay: fl.bayName,
+            flowerTables: [...fl.tableNames],
+            vegRoomId: source.vegRoomId,
+            vegBayId: source.vegBayId,
+            vegTableIds: Array.isArray(source.vegTableIds) ? [...source.vegTableIds] : [],
+            vegRoom: source.vegRoom,
+            vegBay: source.vegBay,
+            vegTables: Array.isArray(source.vegTables) ? [...source.vegTables] : [],
+            plantsHarvestedDry: 0,
+            plantsHarvestedFreshFrozen: 0,
+          };
+
+          recomputeDryCanopyForCultivationBatch(newBatch, cultivationRooms);
+
+          s.cultivationBatches.unshift(newBatch as any);
+          createRealCultivationBatch(newBatch);
+          source.plants = remainderAfter;
+
+          const srcOutput = `${moved} plants moved to Flower (partial; ${remainderAfter} remain in Veg) | New flower batch ${newBatch.id} | ${layoutTail}`;
+          s.logs.unshift(
+            withLoggedBy({
+              area: "Cultivation",
+              batch: source.id,
+              task: "Move to Flower",
+              people: lab.peopleStr,
+              minutes: lab.minutesStr,
+              totalLaborMinutes: lab.totalLaborMinutes,
+              output: srcOutput + lab.outputSuffix,
+              room: fl.roomName || undefined,
+              bay: fl.bayName || undefined,
+              tables: fl.tableNames.length ? [...fl.tableNames] : undefined,
+              linkedBatch: String(newBatch.id),
+              time: logEventTimeIso,
+              data: {
+                stageMoveDate: moveDateCanonical,
+                partialStageMove: true,
+                newBatchId: newBatch.id,
+                plantsMoved: moved,
+                plantsRemainingOnSource: remainderAfter,
+                ...laborData,
+              },
+            }),
+          );
+
+          s.logs.unshift(
+            withLoggedBy({
+              area: "Cultivation",
+              batch: String(newBatch.id),
+              task: "Move to Flower",
+              people: "",
+              minutes: "",
+              output: `Split from Veg batch ${source.id} — ${moved} plants | ${layoutTail}`,
+              linkedBatch: source.id,
+              time: logEventTimeIso,
+              data: {
+                stageMoveDate: moveDateCanonical,
+                partialStageMove: true,
+                splitFromBatchId: source.id,
+                plantsReceived: moved,
+              },
+            }),
+          );
+
+          selectAfter = remainderAfter > 0 ? source : (newBatch as any);
+          await saveRealCultivationBatch(source);
+          await saveRealCultivationBatch(newBatch);
+        }
+      }
+
+      if (selectAfter && s.cultivationBatches.some((b: any) => b?.id === selectAfter.id)) {
+        selectBatch(selectAfter);
+      } else {
+        const nextActive = s.cultivationBatches.find((b: any) => b?.status !== "Complete");
+        if (nextActive) selectBatch(nextActive);
+      }
+
+      setPeople("");
+      setMinutes("");
+      setLaborTimeMode("range");
+      setTaskLaborDate(getTodayYmdInCompanyTimezone());
+      setTaskStartTime("");
+      setTaskEndTime("");
+      setOutput("");
+      setCombinePartnerBatchId("");
+      primeTaskModalLocationFields(cultivationRooms);
+      closeCultivationTaskWindow();
+      forceRefresh();
+
+      showSyncMessageNotice("Partial stage move saved locally. Syncing to server…");
+    } catch (e) {
+      console.error("Partial stage move failed:", e);
+      showNotice(
+        "Save warning",
+        "Partial move updated locally; server sync may have failed — check connectivity.",
+      );
+    }
+  }
+
+  function cancelPartialSplitChoice() {
+    pendingPartialSplitRef.current = null;
+    setPartialSplitChoiceModal(null);
+    setIsSavingTask(false);
+  }
+
+  async function confirmPartialSplitMerge() {
+    const m = partialSplitChoiceModal;
+    if (!m?.mergeTargetId) return;
+    setIsSavingTask(true);
+    try {
+      await applyPartialStageMove(m.mergeTargetId);
+    } finally {
+      setIsSavingTask(false);
+    }
+  }
+
+  async function confirmPartialSplitNewBatch() {
+    setIsSavingTask(true);
+    try {
+      await applyPartialStageMove(null);
+    } finally {
+      setIsSavingTask(false);
+    }
   }
 
   function resolveEditVegSelectionLabels() {
@@ -3783,6 +4216,51 @@ export default function Cultivation() {
         setIsSavingTask(false);
       }
       return;
+    }
+
+    if (selectedTask === "Clone → Veg" || selectedTask === "Move to Flower") {
+      const movedPlants = Number(output);
+      const currentPlants = num(selectedBatch.plants);
+      if (movedPlants > currentPlants) {
+        showNotice(
+          "Too many plants",
+          `This batch only has ${currentPlants} plants. Enter a number between 1 and ${currentPlants}.`,
+        );
+        setIsSavingTask(false);
+        return;
+      }
+      if (movedPlants > 0 && movedPlants < currentPlants) {
+        const targetStage = selectedTask === "Clone → Veg" ? "Veg" : "Flower";
+        const candidates = findPartialStageMergeCandidates(selectedBatch.id, targetStage);
+        pendingPartialSplitRef.current = {
+          lab,
+          sourceBatchId: selectedBatch.id,
+          movedPlants,
+          taskKey: selectedTask,
+          stageMoveDate: stageMoveDate.trim(),
+          vegRoomId,
+          vegBayId,
+          vegTableIds: [...vegTableIds],
+          flowerRoomId,
+          flowerBayId,
+          flowerTableIds: [...flowerTableIds],
+        };
+        if (candidates.length > 0) {
+          setPartialSplitChoiceModal({
+            candidates: candidates.map((b: any) => ({
+              id: b.id,
+              plants: num(b.plants),
+              strain: String(b.strain || "—"),
+            })),
+            mergeTargetId: String(candidates[0]?.id || ""),
+          });
+          setIsSavingTask(false);
+          return;
+        }
+        await applyPartialStageMove(null);
+        setIsSavingTask(false);
+        return;
+      }
     }
 
     let taskOutput = output;
@@ -5288,9 +5766,9 @@ export default function Cultivation() {
                   style={inputStyle}
                   placeholder={
                     selectedTask === "Clone → Veg"
-                      ? "Plants moved to Veg"
+                      ? "# plants moving now (rest stay Clone until moved)"
                       : selectedTask === "Move to Flower"
-                      ? "Plants moved to Flower"
+                      ? "# plants moving now (rest stay Veg until moved)"
                       : "Output / notes / result"
                   }
                   value={output}
@@ -6092,6 +6570,72 @@ export default function Cultivation() {
                   </div>
                 ))
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {partialSplitChoiceModal && (
+        <div style={{ ...modalOverlayStyle, zIndex: 10002 }}>
+          <div style={{ ...modalStyle, maxWidth: 520 }}>
+            <h2 style={{ textAlign: "center", marginTop: 0, marginBottom: 10 }}>
+              Partial stage move — merge or new batch?
+            </h2>
+            <p style={{ color: "#cbd5e1", marginTop: 0, lineHeight: 1.55, textAlign: "center" }}>
+              You already moved plants from this batch into another{" "}
+              {selectedTask === "Clone → Veg" ? (
+                <strong style={{ color: "#e2e8f0" }}>Veg</strong>
+              ) : (
+                <strong style={{ color: "#e2e8f0" }}>Flower</strong>
+              )}{" "}
+              batch split from the same line. Add these plants to that batch, or create a separate batch.
+            </p>
+            <label style={{ display: "grid", gap: 8, color: "#e2e8f0", fontSize: 14, marginTop: 14 }}>
+              Existing batch to add plants to
+              <select
+                style={inputStyle}
+                value={partialSplitChoiceModal.mergeTargetId}
+                onChange={(e) =>
+                  setPartialSplitChoiceModal((prev) =>
+                    prev ? { ...prev, mergeTargetId: e.target.value } : prev,
+                  )
+                }
+              >
+                {partialSplitChoiceModal.candidates.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.id} — {c.strain} ({c.plants} plants)
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                justifyContent: "center",
+                flexWrap: "wrap",
+                marginTop: 22,
+              }}
+            >
+              <button type="button" style={buttonStyle} onClick={cancelPartialSplitChoice}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                style={{ ...primaryButtonStyle, background: "#38bdf8", borderColor: "#38bdf8", color: "#0f172a" }}
+                onClick={() => void confirmPartialSplitNewBatch()}
+                disabled={isSavingTask}
+              >
+                {isSavingTask ? "Saving…" : "Create new batch"}
+              </button>
+              <button
+                type="button"
+                style={primaryButtonStyle}
+                onClick={() => void confirmPartialSplitMerge()}
+                disabled={isSavingTask}
+              >
+                {isSavingTask ? "Saving…" : "Add to selected batch"}
+              </button>
             </div>
           </div>
         </div>
