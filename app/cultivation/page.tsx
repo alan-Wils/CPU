@@ -239,6 +239,43 @@ function makeBatchId(acronym: string, date: string, existingBatches: any[] = [])
   return `${cleanAcronym}.${sameStrainSameDay.length + 1}.${dateCode}`;
 }
 
+/** Last segment of batch id is `MMDDYY` per `makeDateCode` (e.g. `ACRONYM.MMDDYY` or `ACRONYM.N.MMDDYY`). */
+function parseBatchIdDateCode(id: unknown): string | null {
+  const s = String(id || "").trim();
+  if (!s) return null;
+  const parts = s.split(".");
+  const last = parts[parts.length - 1] || "";
+  if (/^\d{6}$/.test(last)) return last;
+  return null;
+}
+
+function batchCloneSortTimeMs(batch: any): number {
+  const clone = batch?.cloneDate;
+  if (clone) {
+    const t = Date.parse(String(clone));
+    if (Number.isFinite(t)) return t;
+  }
+  const code = parseBatchIdDateCode(batch?.id);
+  if (!code) return Number.POSITIVE_INFINITY;
+  const mm = code.slice(0, 2);
+  const dd = code.slice(2, 4);
+  const yy = code.slice(4, 6);
+  const y = 2000 + Number.parseInt(yy, 10);
+  const m = Number.parseInt(mm, 10);
+  const d = Number.parseInt(dd, 10);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return Number.POSITIVE_INFINITY;
+  const dt = new Date(y, m - 1, d);
+  const ms = dt.getTime();
+  return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
+}
+
+function compareBatchesByCloneDateOldestFirst(a: any, b: any): number {
+  const ta = batchCloneSortTimeMs(a);
+  const tb = batchCloneSortTimeMs(b);
+  if (ta !== tb) return ta - tb;
+  return String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { sensitivity: "base" });
+}
+
 function getDryBatchColor(batch: any, selectedId?: string) {
   if (selectedId === batch.id) return "#22c55e";
   if (batch.status === "Complete") return "#064e3b";
@@ -855,7 +892,9 @@ export default function Cultivation() {
   } as const;
 
   const selectedStageBatches = selectedStage ? activeBatchesByStage[selectedStage] : [];
-  const selectedStageBatchesOldestFirst = [...selectedStageBatches].reverse();
+  const selectedStageBatchesOldestFirst = [...selectedStageBatches].sort(
+    compareBatchesByCloneDateOldestFirst
+  );
 
   const activeDryFlowerBatches = s.dryFlowerBatches.filter(
     (batch: any) => batch.status !== "Complete"
