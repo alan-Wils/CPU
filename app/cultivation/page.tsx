@@ -316,6 +316,7 @@ const defaultCloneTasks = [
 const defaultVegTasks = [
   "Set Irrigation Up",
   "Plant Work",
+  "Add METRC Tags",
   "IPM",
   "Combine Batches",
   "Move to Flower",
@@ -5137,9 +5138,18 @@ export default function Cultivation() {
           ...lab.laborDetail,
           totalLaborMinutes: lab.totalLaborMinutes,
           ...challengeExtra,
+          ...(selectedTask === "Add METRC Tags" && String(output || "").trim()
+            ? { metrcTagsNote: String(output).trim().slice(0, 8000) }
+            : {}),
         },
       }),
     )
+
+    if (selectedTask === "Add METRC Tags") {
+      const note = String(output || "").trim();
+      selectedBatch.metrcTagsLastLoggedAt = nowIsoForLog();
+      if (note) selectedBatch.metrcTagsLastNote = note.slice(0, 4000);
+    }
 
     if (selectedTask === "Clone → Veg") {
       selectedBatch.stage = "Veg";
@@ -5376,6 +5386,18 @@ export default function Cultivation() {
               <br />
               <span style={{ color: selectedBatch?.id === b.id ? "#0f172a" : "#cbd5e1" }}>
                 Notes: {String(b.batchNotes)}
+              </span>
+            </>
+          )}
+          {b.stage === "Veg" && b.metrcTagsLastLoggedAt && (
+            <>
+              <br />
+              <span style={{ color: selectedBatch?.id === b.id ? "#0f172a" : "#93c5fd", fontSize: 12 }}>
+                METRC tags logged
+                {b.metrcTagsLastNote
+                  ? `: ${String(b.metrcTagsLastNote).length > 90 ? `${String(b.metrcTagsLastNote).slice(0, 90)}…` : String(b.metrcTagsLastNote)}`
+                  : ""}{" "}
+                ({formatLogDisplayTime({ time: b.metrcTagsLastLoggedAt, loggedAt: b.metrcTagsLastLoggedAt })})
               </span>
             </>
           )}
@@ -6888,6 +6910,30 @@ export default function Cultivation() {
                 </>
               )}
 
+              {selectedBatch?.stage === "Veg" && selectedTask === "Add METRC Tags" && (
+                <>
+                  <p style={{ color: "#94a3b8", fontSize: 13, margin: 0, lineHeight: 1.5 }}>
+                    Log state compliance tags applied in METRC for this batch (plant tag IDs or ranges). One tag per line
+                    or freeform notes — saved on the batch and in task history with labor time below.
+                  </p>
+                  <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                    METRC tag IDs / notes
+                    <textarea
+                      style={{
+                        ...inputStyle,
+                        minHeight: 110,
+                        resize: "vertical" as const,
+                        fontFamily: "inherit",
+                      }}
+                      placeholder={`Example:\n1A4FF01...\n1A4FF02...\n(or paste harvest checklist)`}
+                      value={output}
+                      onChange={(e) => setOutput(e.target.value)}
+                      onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                    />
+                  </label>
+                </>
+              )}
+
               {selectedTask === "Finish batch" && (
                 <>
                   <p style={{ color: "#94a3b8", fontSize: 13, margin: 0, lineHeight: 1.5 }}>
@@ -6917,7 +6963,8 @@ export default function Cultivation() {
               {selectedTask !== "Harvest" &&
                 selectedTask !== "Combine Batches" &&
                 selectedTask !== "Print harvest sheet" &&
-                selectedTask !== "Finish batch" && (
+                selectedTask !== "Finish batch" &&
+                !(selectedBatch?.stage === "Veg" && selectedTask === "Add METRC Tags") && (
                 <input
                   style={inputStyle}
                   placeholder={
