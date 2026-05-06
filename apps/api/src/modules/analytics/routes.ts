@@ -4,6 +4,7 @@ import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { requireRoleOrAppPermission } from "../../middleware/rbac.js";
 import { AppError } from "../../errors/AppError.js";
+import { parseYmdEndUtc, parseYmdStartUtc } from "../../lib/analyticsDateRange.js";
 
 const analyticsReadRoles = [
     "OWNER",
@@ -18,20 +19,6 @@ function asUiRecord(value: unknown): Record<string, unknown> {
     if (typeof value !== "object" || Array.isArray(value))
         return {};
     return value as Record<string, unknown>;
-}
-
-function parseYmdStartUtc(s: string): number {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
-    if (!m)
-        return NaN;
-    return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0, 0);
-}
-
-function parseYmdEndUtc(s: string): number {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
-    if (!m)
-        return NaN;
-    return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 59, 999);
 }
 
 export const analyticsRouter = Router();

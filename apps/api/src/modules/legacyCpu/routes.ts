@@ -528,6 +528,15 @@ legacyCpuRouter.get("/cultivation", asyncHandler(async (req, res) => {
     });
     res.json(rows.map(mapCultivationRowToLegacy));
 }));
+/** Manual / cron-friendly recomputation of strain auto averages into `CompanyConfig.cultivation` (also runs after potency-changing PUTs). */
+legacyCpuRouter.post("/cultivation/strain-metrics/recompute", requireRole(cultivationWriteRoles), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    await strainMetricsService.recomputeStrainAutoMetricsForCompany({
+        companyId,
+        actorUserId: req.auth.userId
+    });
+    res.json({ ok: true });
+}));
 legacyCpuRouter.put("/cultivation/:batchId", requireRole(cultivationWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const batchId = String(req.params.batchId || "");

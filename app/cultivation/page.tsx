@@ -430,6 +430,7 @@ export default function Cultivation() {
   /** Dry flower Test Passed → lab THC % modal; metrics are written on the parent cultivation batch. */
   const [testPassModalBatch, setTestPassModalBatch] = useState<any>(null);
   const [testPassThcPct, setTestPassThcPct] = useState("");
+  const [testPassPotencyNote, setTestPassPotencyNote] = useState("");
 
   const repeatTaskBypassRef = useRef<{ batchId: string; taskName: string } | null>(null);
 
@@ -1265,6 +1266,7 @@ export default function Cultivation() {
     if (status === "Test Passed") {
       setTestPassModalBatch(batch);
       setTestPassThcPct("");
+      setTestPassPotencyNote("");
       return;
     }
 
@@ -1288,27 +1290,39 @@ export default function Cultivation() {
     forceRefresh();
   }
 
-  async function applyDryFlowerTestPassed(batch: any, labThcPct: number) {
+  async function applyDryFlowerTestPassed(batch: any, labThcPct: number, potencyNote: string) {
     if (!canWriteRecords) {
       showReadOnlyNotice();
       return;
     }
+    const LAB_THC_MAX = 50;
     if (!isPositiveNumber(labThcPct)) {
       showNotice("Lab THC % required", "Enter a positive numeric lab THC % for this batch.");
+      return;
+    }
+    const thc = Number(labThcPct);
+    if (thc > LAB_THC_MAX) {
+      showNotice("Lab THC % out of range", `Enter a lab THC % no greater than ${LAB_THC_MAX} (typical flower range).`);
       return;
     }
 
     batch.testStatus = "Test Passed";
     batch.status = "Passed / Ready for Packaging";
     batch.testFailureReason = "";
-    const thc = Number(labThcPct);
     batch.finalLabPotencyPct = thc;
     batch.finalLabPotencyAt = new Date().toISOString();
+    const noteTrim = String(potencyNote || "").trim().slice(0, 500);
+    if (noteTrim) {
+      batch.finalLabPotencyNote = noteTrim;
+    } else {
+      delete batch.finalLabPotencyNote;
+    }
 
     const parent = findCultivationParentBatch(s, batch.source);
     if (parent) {
       recomputeDryCanopyForCultivationBatch(parent, cultivationRooms);
       const weights = getDryFlowerFinalWeights(batch);
+      /** Dry yield density: A-grade + popcorn flower mass (trim tracked separately in `totalTrimLbs`, not in this total). */
       const grams =
         weights.totalFinalPackagedGrams > 0
           ? weights.totalFinalPackagedGrams
@@ -1319,6 +1333,11 @@ export default function Cultivation() {
       parent.finalLabPotencyAt = batch.finalLabPotencyAt;
       parent.dryYieldGPerSqFt = +yld.toFixed(4);
       parent.strainMetricsDryFlowerBatchId = batch.id;
+      if (noteTrim) {
+        parent.finalLabPotencyNote = noteTrim;
+      } else {
+        delete parent.finalLabPotencyNote;
+      }
     }
 
     const alreadyInPackaging = s.packagingBatches.some(
@@ -1369,6 +1388,7 @@ export default function Cultivation() {
 
     setTestPassModalBatch(null);
     setTestPassThcPct("");
+    setTestPassPotencyNote("");
     forceRefresh();
 
     if (parent) {
@@ -2913,17 +2933,28 @@ export default function Cultivation() {
               type="number"
               step="0.01"
               min={0}
-              placeholder="e.g. 24.5"
+              max={50}
+              placeholder="e.g. 24.5 (max 50)"
               value={testPassThcPct}
               onChange={(e) => setTestPassThcPct(e.target.value)}
               style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}
             />
+            <label style={{ display: "block", marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+              Optional note
+              <textarea
+                placeholder="Lab sample id, COA reference, etc."
+                value={testPassPotencyNote}
+                onChange={(e) => setTestPassPotencyNote(e.target.value)}
+                style={{ ...inputStyle, width: "100%", boxSizing: "border-box", minHeight: 72, marginTop: 6 }}
+              />
+            </label>
             <div style={modalButtonRowStyle}>
               <button
                 style={buttonStyle}
                 onClick={() => {
                   setTestPassModalBatch(null);
                   setTestPassThcPct("");
+                  setTestPassPotencyNote("");
                 }}
               >
                 Cancel
@@ -2931,7 +2962,11 @@ export default function Cultivation() {
               <button
                 style={primaryButtonStyle}
                 onClick={() => {
-                  void applyDryFlowerTestPassed(testPassModalBatch, Number(testPassThcPct));
+                  void applyDryFlowerTestPassed(
+                    testPassModalBatch,
+                    Number(testPassThcPct),
+                    testPassPotencyNote,
+                  );
                 }}
               >
                 Save and mark passed

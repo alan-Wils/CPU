@@ -926,6 +926,11 @@ export default function ConfigPage() {
         <h2 style={styles.sectionTitle}>2. Cultivation</h2>
 
         <h3 style={styles.subTitle}>Strain List</h3>
+        <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14 }}>
+          Auto averages below are read-only: updated from cultivation batches after <b>Test Passed</b> with lab THC % and
+          dry yield math (A-grade + popcorn mass vs allocated dry canopy sq ft). Manual potency / yield categories above
+          are unchanged.
+        </p>
 
         <div style={styles.grid}>
           <input
