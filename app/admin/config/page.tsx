@@ -117,6 +117,14 @@ type AppConfig = {
       vegRooms: VegRoom[];
       flowerRooms: FlowerRoom[];
     };
+    /** Extra tasks merged into Clone / Veg / Flower task lists. */
+    customTasks?: Array<{
+      id: string;
+      label: string;
+      rewardsEligible: boolean;
+      tierPointsMultiplier: number;
+      stages: ("clone" | "veg" | "flower")[];
+    }>;
   };
   extraction: {
     productNames: ProductNameRecord[];
@@ -128,9 +136,21 @@ type AppConfig = {
     productNameAiGuidedIntro?: string;
     /** Extra preferences for guided naming (simple). */
     productNameAiGuidedExtraRules?: string;
+    customTasks?: Array<{
+      id: string;
+      label: string;
+      rewardsEligible: boolean;
+      tierPointsMultiplier: number;
+    }>;
   };
   packaging: {
     supplies: Supply[];
+    customTasks?: Array<{
+      id: string;
+      label: string;
+      rewardsEligible: boolean;
+      tierPointsMultiplier: number;
+    }>;
   };
 };
 
@@ -178,14 +198,17 @@ const emptyConfig: AppConfig = {
       vegRooms: [],
       flowerRooms: [],
     },
+    customTasks: [],
   },
   extraction: {
     productNames: [],
     blendNameHistory: [],
     supplies: [],
+    customTasks: [],
   },
   packaging: {
     supplies: [],
+    customTasks: [],
   },
 };
 
@@ -407,6 +430,9 @@ export default function ConfigPage() {
         cultivation: {
           ...emptyConfig.cultivation,
           ...(data.cultivation || {}),
+          customTasks: Array.isArray((data.cultivation as { customTasks?: unknown } | undefined)?.customTasks)
+            ? ((data.cultivation as { customTasks: NonNullable<AppConfig["cultivation"]["customTasks"]> }).customTasks)
+            : [],
           rooms: {
             ...emptyConfig.cultivation.rooms,
             ...(data.cultivation?.rooms || {}),
@@ -417,10 +443,16 @@ export default function ConfigPage() {
         extraction: {
           ...emptyConfig.extraction,
           ...(data.extraction || {}),
+          customTasks: Array.isArray((data.extraction as { customTasks?: unknown } | undefined)?.customTasks)
+            ? ((data.extraction as { customTasks: NonNullable<AppConfig["extraction"]["customTasks"]> }).customTasks)
+            : [],
         },
         packaging: {
           ...emptyConfig.packaging,
           ...(data.packaging || {}),
+          customTasks: Array.isArray((data.packaging as { customTasks?: unknown } | undefined)?.customTasks)
+            ? ((data.packaging as { customTasks: NonNullable<AppConfig["packaging"]["customTasks"]> }).customTasks)
+            : [],
         },
       });
       syncCompanyTimezoneFromConfigPayload(raw);
@@ -476,6 +508,9 @@ export default function ConfigPage() {
         cultivation: {
           ...emptyConfig.cultivation,
           ...(data.cultivation || {}),
+          customTasks: Array.isArray((data.cultivation as { customTasks?: unknown } | undefined)?.customTasks)
+            ? ((data.cultivation as { customTasks: NonNullable<AppConfig["cultivation"]["customTasks"]> }).customTasks)
+            : [],
           rooms: {
             ...emptyConfig.cultivation.rooms,
             ...(data.cultivation?.rooms || {}),
@@ -488,10 +523,16 @@ export default function ConfigPage() {
         extraction: {
           ...emptyConfig.extraction,
           ...(data.extraction || {}),
+          customTasks: Array.isArray((data.extraction as { customTasks?: unknown } | undefined)?.customTasks)
+            ? ((data.extraction as { customTasks: NonNullable<AppConfig["extraction"]["customTasks"]> }).customTasks)
+            : [],
         },
         packaging: {
           ...emptyConfig.packaging,
           ...(data.packaging || {}),
+          customTasks: Array.isArray((data.packaging as { customTasks?: unknown } | undefined)?.customTasks)
+            ? ((data.packaging as { customTasks: NonNullable<AppConfig["packaging"]["customTasks"]> }).customTasks)
+            : [],
         },
       });
       syncCompanyTimezoneFromConfigPayload(data);
@@ -1639,6 +1680,375 @@ export default function ConfigPage() {
             </label>
           </div>
         ))}
+
+        <h3 style={styles.subTitle}>Workflow — extra tasks & rewards</h3>
+        <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+          Add facility-specific tasks; they appear alongside built-in tasks in Cultivation, Extraction, and Packaging. For each
+          row, choose whether staff rewards (fast-target bonus + tier challenge points) apply, and a multiplier for{" "}
+          <b>tier challenge points only</b> (tiers are configured under Staff rewards above). Built-in tasks keep default
+          reward behavior unless you add a row with the <b>exact same task name</b> to override.
+        </p>
+
+        <h4 style={{ ...styles.subTitle, fontSize: 16, marginBottom: 8 }}>Cultivation (Clone / Veg / Flower)</h4>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+          {(config.cultivation.customTasks || []).map((row, idx) => (
+            <div
+              key={row.id || `cult-ct-${idx}`}
+              style={{
+                ...styles.grid,
+                border: "1px solid #334155",
+                borderRadius: 10,
+                padding: 10,
+                alignItems: "center",
+              }}
+            >
+              <input
+                style={styles.input}
+                placeholder="Task name (shown to operators)"
+                value={row.label}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setConfig((prev) => {
+                    const list = [...(prev.cultivation.customTasks || [])];
+                    list[idx] = { ...list[idx], label: v };
+                    return {
+                      ...prev,
+                      cultivation: { ...prev.cultivation, customTasks: list },
+                    };
+                  });
+                }}
+              />
+              <span style={{ color: "#94a3b8", fontSize: 13 }}>Stages</span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                {(["clone", "veg", "flower"] as const).map((st) => (
+                  <label key={st} style={{ display: "flex", gap: 6, alignItems: "center", color: "#e2e8f0", fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={row.stages?.includes(st) ?? false}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setConfig((prev) => {
+                          const list = [...(prev.cultivation.customTasks || [])];
+                          const cur = list[idx];
+                          const nextStages = new Set(cur.stages || []);
+                          if (on) nextStages.add(st);
+                          else nextStages.delete(st);
+                          list[idx] = {
+                            ...cur,
+                            stages: [...nextStages],
+                          };
+                          return {
+                            ...prev,
+                            cultivation: { ...prev.cultivation, customTasks: list },
+                          };
+                        });
+                      }}
+                    />
+                    {st}
+                  </label>
+                ))}
+              </div>
+              <label style={{ ...styles.label, margin: 0 }}>
+                Rewards
+                <input
+                  type="checkbox"
+                  checked={row.rewardsEligible !== false}
+                  onChange={(e) => {
+                    const v = e.target.checked;
+                    setConfig((prev) => {
+                      const list = [...(prev.cultivation.customTasks || [])];
+                      list[idx] = { ...list[idx], rewardsEligible: v };
+                      return {
+                        ...prev,
+                        cultivation: { ...prev.cultivation, customTasks: list },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <label style={styles.label}>
+                Tier pts ×
+                <input
+                  style={styles.input}
+                  type="number"
+                  step={0.25}
+                  min={0}
+                  value={row.tierPointsMultiplier ?? 1}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setConfig((prev) => {
+                      const list = [...(prev.cultivation.customTasks || [])];
+                      list[idx] = { ...list[idx], tierPointsMultiplier: v };
+                      return {
+                        ...prev,
+                        cultivation: { ...prev.cultivation, customTasks: list },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                style={{ ...styles.deleteButton, justifySelf: "end" }}
+                onClick={() => {
+                  setConfig((prev) => ({
+                    ...prev,
+                    cultivation: {
+                      ...prev.cultivation,
+                      customTasks: (prev.cultivation.customTasks || []).filter((_, i) => i !== idx),
+                    },
+                  }));
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            style={{ ...styles.addButton, alignSelf: "start" }}
+            onClick={() => {
+              setConfig((prev) => ({
+                ...prev,
+                cultivation: {
+                  ...prev.cultivation,
+                  customTasks: [
+                    ...(prev.cultivation.customTasks || []),
+                    {
+                      id: makeId("cult-task"),
+                      label: "",
+                      rewardsEligible: true,
+                      tierPointsMultiplier: 1,
+                      stages: [],
+                    },
+                  ],
+                },
+              }));
+            }}
+          >
+            Add cultivation task
+          </button>
+        </div>
+
+        <h4 style={{ ...styles.subTitle, fontSize: 16, marginBottom: 8 }}>Extraction</h4>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+          {(config.extraction.customTasks || []).map((row, idx) => (
+            <div
+              key={row.id || `ext-ct-${idx}`}
+              style={{
+                ...styles.grid,
+                border: "1px solid #334155",
+                borderRadius: 10,
+                padding: 10,
+                alignItems: "center",
+              }}
+            >
+              <input
+                style={styles.input}
+                placeholder="Task name"
+                value={row.label}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setConfig((prev) => {
+                    const list = [...(prev.extraction.customTasks || [])];
+                    list[idx] = { ...list[idx], label: v };
+                    return {
+                      ...prev,
+                      extraction: { ...prev.extraction, customTasks: list },
+                    };
+                  });
+                }}
+              />
+              <label style={{ ...styles.label, margin: 0 }}>
+                Rewards
+                <input
+                  type="checkbox"
+                  checked={row.rewardsEligible !== false}
+                  onChange={(e) => {
+                    const v = e.target.checked;
+                    setConfig((prev) => {
+                      const list = [...(prev.extraction.customTasks || [])];
+                      list[idx] = { ...list[idx], rewardsEligible: v };
+                      return {
+                        ...prev,
+                        extraction: { ...prev.extraction, customTasks: list },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <label style={styles.label}>
+                Tier pts ×
+                <input
+                  style={styles.input}
+                  type="number"
+                  step={0.25}
+                  min={0}
+                  value={row.tierPointsMultiplier ?? 1}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setConfig((prev) => {
+                      const list = [...(prev.extraction.customTasks || [])];
+                      list[idx] = { ...list[idx], tierPointsMultiplier: v };
+                      return {
+                        ...prev,
+                        extraction: { ...prev.extraction, customTasks: list },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                style={{ ...styles.deleteButton, justifySelf: "end" }}
+                onClick={() => {
+                  setConfig((prev) => ({
+                    ...prev,
+                    extraction: {
+                      ...prev.extraction,
+                      customTasks: (prev.extraction.customTasks || []).filter((_, i) => i !== idx),
+                    },
+                  }));
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            style={{ ...styles.addButton, alignSelf: "start" }}
+            onClick={() => {
+              setConfig((prev) => ({
+                ...prev,
+                extraction: {
+                  ...prev.extraction,
+                  customTasks: [
+                    ...(prev.extraction.customTasks || []),
+                    {
+                      id: makeId("ext-task"),
+                      label: "",
+                      rewardsEligible: true,
+                      tierPointsMultiplier: 1,
+                    },
+                  ],
+                },
+              }));
+            }}
+          >
+            Add extraction task
+          </button>
+        </div>
+
+        <h4 style={{ ...styles.subTitle, fontSize: 16, marginBottom: 8 }}>Packaging</h4>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+          {(config.packaging.customTasks || []).map((row, idx) => (
+            <div
+              key={row.id || `pkg-ct-${idx}`}
+              style={{
+                ...styles.grid,
+                border: "1px solid #334155",
+                borderRadius: 10,
+                padding: 10,
+                alignItems: "center",
+              }}
+            >
+              <input
+                style={styles.input}
+                placeholder="Task name"
+                value={row.label}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setConfig((prev) => {
+                    const list = [...(prev.packaging.customTasks || [])];
+                    list[idx] = { ...list[idx], label: v };
+                    return {
+                      ...prev,
+                      packaging: { ...prev.packaging, customTasks: list },
+                    };
+                  });
+                }}
+              />
+              <label style={{ ...styles.label, margin: 0 }}>
+                Rewards
+                <input
+                  type="checkbox"
+                  checked={row.rewardsEligible !== false}
+                  onChange={(e) => {
+                    const v = e.target.checked;
+                    setConfig((prev) => {
+                      const list = [...(prev.packaging.customTasks || [])];
+                      list[idx] = { ...list[idx], rewardsEligible: v };
+                      return {
+                        ...prev,
+                        packaging: { ...prev.packaging, customTasks: list },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <label style={styles.label}>
+                Tier pts ×
+                <input
+                  style={styles.input}
+                  type="number"
+                  step={0.25}
+                  min={0}
+                  value={row.tierPointsMultiplier ?? 1}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setConfig((prev) => {
+                      const list = [...(prev.packaging.customTasks || [])];
+                      list[idx] = { ...list[idx], tierPointsMultiplier: v };
+                      return {
+                        ...prev,
+                        packaging: { ...prev.packaging, customTasks: list },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                style={{ ...styles.deleteButton, justifySelf: "end" }}
+                onClick={() => {
+                  setConfig((prev) => ({
+                    ...prev,
+                    packaging: {
+                      ...prev.packaging,
+                      customTasks: (prev.packaging.customTasks || []).filter((_, i) => i !== idx),
+                    },
+                  }));
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            style={{ ...styles.addButton, alignSelf: "start" }}
+            onClick={() => {
+              setConfig((prev) => ({
+                ...prev,
+                packaging: {
+                  ...prev.packaging,
+                  customTasks: [
+                    ...(prev.packaging.customTasks || []),
+                    {
+                      id: makeId("pkg-task"),
+                      label: "",
+                      rewardsEligible: true,
+                      tierPointsMultiplier: 1,
+                    },
+                  ],
+                },
+              }));
+            }}
+          >
+            Add packaging task
+          </button>
+        </div>
 
         <h3 style={styles.subTitle}>Labor — breaks & lunch (facility clock)</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>

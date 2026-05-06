@@ -105,15 +105,20 @@ const defaultConfig = {
       vegRooms: [],
       flowerRooms: [],
     },
+    /** Extra cultivation tasks merged into Clone / Veg / Flower lists (see Admin Company Config). */
+    customTasks: [],
   },
 
   extraction: {
     productNames: [],
+    blendNameHistory: [],
     supplies: [],
+    customTasks: [],
   },
 
   packaging: {
     supplies: [],
+    customTasks: [],
   },
 };
 

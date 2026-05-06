@@ -50,6 +50,12 @@ import {
   sumTableSquareFeetFromIds,
 } from "@cpu/shared";
 import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
+import {
+  extractCustomTasksRewardDefsFromCompanyConfig,
+  mergeCultivationTasksForStage,
+  resolveConfigurableTaskRewards,
+  type CustomTasksRewardDefs,
+} from "@/lib/customTasksConfig";
 import { computeAverageNormalizedMinutes, scoreChallengeByLoggedMinutes } from "@/lib/taskChallengeMath";
 import {
   type LaborBreakWindow,
@@ -807,6 +813,9 @@ export default function Cultivation() {
   const [showCreateBatch, setShowCreateBatch] = useState(false);
   const [showTaskWindow, setShowTaskWindow] = useState(false);
   const [rewardsCfg, setRewardsCfg] = useState<ReturnType<typeof extractRewardsFromCompanyConfig> | null>(null);
+  const [customTasksRewardDefs, setCustomTasksRewardDefs] = useState<CustomTasksRewardDefs>(() =>
+    extractCustomTasksRewardDefsFromCompanyConfig({}),
+  );
   const [showRewardsChallengeModal, setShowRewardsChallengeModal] = useState(false);
   /** While the task modal is open, at most one Task challenge popup per batch+task (focus-triggered). */
   const rewardsChallengeShownKeyRef = useRef<string | null>(null);
@@ -1022,7 +1031,13 @@ export default function Cultivation() {
           )
         );
         setCultivationRooms(rooms);
-        setRewardsCfg(extractRewardsFromCompanyConfig(data));
+        const rewards = extractRewardsFromCompanyConfig(data);
+        setRewardsCfg(rewards);
+        const ctDefs = extractCustomTasksRewardDefsFromCompanyConfig(data);
+        setCustomTasksRewardDefs(ctDefs);
+        setCloneTasks(mergeCultivationTasksForStage(defaultCloneTasks, ctDefs.cultivation, "clone"));
+        setVegTasks(mergeCultivationTasksForStage(defaultVegTasks, ctDefs.cultivation, "veg"));
+        setFlowerTasks(mergeCultivationTasksForStage(defaultFlowerTasks, ctDefs.cultivation, "flower"));
       } catch (error) {
         console.error("Could not load company cultivation config:", error);
 
@@ -1030,6 +1045,7 @@ export default function Cultivation() {
           setConfigStrains([]);
           setCultivationRooms(emptyCultivationRooms);
           setRewardsCfg(null);
+          setCustomTasksRewardDefs(extractCustomTasksRewardDefsFromCompanyConfig({}));
         }
       }
     }
@@ -3060,7 +3076,9 @@ export default function Cultivation() {
       const n = i + 1;
       return `<tr><td>${n}</td><td></td><td></td><td></td></tr>`;
     }).join("");
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Harvest sheet ${String(b.id)}</title>
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Harvest sheet ${String(b.id)}</title>
 <style>
   body { font-family: system-ui, sans-serif; padding: 16px; color: #111; }
   h1 { font-size: 18px; margin: 0 0 8px; }
@@ -3069,7 +3087,13 @@ export default function Cultivation() {
   th, td { border: 1px solid #333; padding: 6px 8px; text-align: left; }
   th { background: #eee; }
   .hint { font-size: 11px; color: #444; margin-top: 12px; }
-  @media print { .no-print { display: none; } }
+  @media print {
+    .no-print { display: none !important; }
+    body { padding: 8px; }
+    @page { size: portrait; margin: 12mm; }
+    table { page-break-inside: auto; }
+    tr { page-break-inside: avoid; }
+  }
 </style></head><body>
   <h1>Harvest weight log</h1>
   <div class="meta">
@@ -3087,42 +3111,95 @@ export default function Cultivation() {
   </table>
   <p class="hint">Fill one row per plant. For Fresh Frozen / dry flower harvest, total bundles or grams can be noted on the sheet footer if your process uses totals.</p>
 </body></html>`;
-    // Same-document iframe print avoids popup blockers (no window.open).
-    const iframe = document.createElement("iframe");
-    iframe.setAttribute("title", "Harvest sheet print");
-    iframe.setAttribute("sandbox", "allow-modals allow-same-origin allow-scripts");
-    iframe.style.cssText =
-      "position:fixed;inset:0;width:100%;height:100%;opacity:0;pointer-events:none;z-index:-1;border:none;";
-    document.body.appendChild(iframe);
-    const pwin = iframe.contentWindow;
-    if (!pwin) {
-      document.body.removeChild(iframe);
-      showNotice("Print failed", "Could not prepare the printable harvest sheet.");
-      return;
+
+    /** iOS / Android often print the parent SPA when using a hidden iframe — full table never appears. */
+    function prefersDedicatedPrintWindow(): boolean {
+      if (typeof navigator === "undefined" || typeof window === "undefined") return false;
+      const ua = navigator.userAgent || "";
+      if (/Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua)) return true;
+      // iPadOS may report as Macintosh + multi-touch without "Mobile" in UA
+      if (navigator.maxTouchPoints > 1 && /Macintosh/.test(ua)) return true;
+      return false;
     }
-    pwin.document.open();
-    pwin.document.write(html);
-    pwin.document.close();
-    const cleanup = () => {
+
+    function printViaHiddenIframe() {
+      const iframe = document.createElement("iframe");
+      iframe.setAttribute("title", "Harvest sheet print");
+      iframe.setAttribute("sandbox", "allow-modals allow-same-origin allow-scripts");
+      iframe.style.cssText =
+        "position:fixed;inset:0;width:100%;height:100%;opacity:0;pointer-events:none;z-index:-1;border:none;";
+      document.body.appendChild(iframe);
+      const pwin = iframe.contentWindow;
+      if (!pwin) {
+        document.body.removeChild(iframe);
+        showNotice("Print failed", "Could not prepare the printable harvest sheet.");
+        return;
+      }
+      pwin.document.open();
+      pwin.document.write(html);
+      pwin.document.close();
+      const cleanup = () => {
+        try {
+          iframe.remove();
+        } catch {
+          /* ignore */
+        }
+      };
+      const runPrint = () => {
+        try {
+          pwin.focus();
+          pwin.print();
+        } finally {
+          setTimeout(cleanup, 800);
+        }
+      };
+      setTimeout(runPrint, 50);
+    }
+
+    function printViaNewWindow() {
+      const w = window.open("about:blank", "_blank");
+      if (!w) {
+        showNotice(
+          "Pop-up blocked",
+          "Allow pop-ups for this site to print the full harvest sheet on mobile, or try Print again.",
+        );
+        printViaHiddenIframe();
+        return;
+      }
       try {
-        iframe.remove();
+        w.document.open();
+        w.document.write(html);
+        w.document.close();
+        w.focus();
+        const schedulePrint = () => {
+          try {
+            w.print();
+          } catch {
+            showNotice("Print failed", "Could not open the system print dialog.");
+          }
+        };
+        setTimeout(schedulePrint, 120);
       } catch {
-        /* ignore */
+        try {
+          w.close();
+        } catch {
+          /* ignore */
+        }
+        printViaHiddenIframe();
       }
-    };
-    const runPrint = () => {
-      try {
-        pwin.focus();
-        pwin.print();
-      } finally {
-        setTimeout(cleanup, 800);
-      }
-    };
-    setTimeout(runPrint, 50);
+    }
+
+    if (prefersDedicatedPrintWindow()) {
+      printViaNewWindow();
+    } else {
+      printViaHiddenIframe();
+    }
   }
 
   function tryShowRewardsChallengeFromTaskInputFocus() {
     if (selectedTask === "Print harvest sheet") return;
+    const rb = resolveConfigurableTaskRewards("Cultivation", selectedTask, customTasksRewardDefs);
+    if (!rb.eligible) return;
     if (!showTaskWindow || !selectedBatch || !rewardsCfg?.enabled || !rewardsCfg.taskChallenge.enabled) {
       return;
     }
@@ -4775,7 +4852,17 @@ export default function Cultivation() {
     }
 
     let challengeExtra: Record<string, unknown> = {};
-    if (rewardsCfg?.enabled && rewardsCfg.taskChallenge.enabled && lab.ok) {
+    const rewardBehavior = resolveConfigurableTaskRewards(
+      "Cultivation",
+      selectedTask,
+      customTasksRewardDefs,
+    );
+    if (
+      rewardBehavior.eligible &&
+      rewardsCfg?.enabled &&
+      rewardsCfg.taskChallenge.enabled &&
+      lab.ok
+    ) {
       const u = getAuthUser();
       if (u && (u.rewardsEnrolled || isElevatedManagerRole(String(u.role || "")))) {
         const { avg, sampleCount } = computeAverageNormalizedMinutes(s.logs as any[], "Cultivation", selectedTask, {
@@ -4791,12 +4878,14 @@ export default function Cultivation() {
           45,
         );
         if (tier) {
+          const pts = Math.max(0, Math.round(tier.points * rewardBehavior.tierMultiplier));
           challengeExtra = {
             taskChallenge: {
-              pointsEarned: tier.points,
+              pointsEarned: pts,
               tierLabel: tier.label,
               tierIndex: tier.tierIndex,
               targetMinutes: tier.targetMinutes,
+              tierPointsMultiplier: rewardBehavior.tierMultiplier,
             },
           };
         }

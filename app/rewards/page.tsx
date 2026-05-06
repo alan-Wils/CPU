@@ -7,6 +7,7 @@ import { apiRequest, getSelectedCompanyId } from "@/lib/api";
 import { getAuthUser } from "@/lib/auth";
 import { store } from "@/lib/store";
 import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
+import { extractCustomTasksRewardDefsFromCompanyConfig } from "@/lib/customTasksConfig";
 import {
   buildRewardsSnapshot,
   keysForCurrentUser,
@@ -57,6 +58,7 @@ function RewardsBody() {
           companyId: getSelectedCompanyId().trim() || undefined,
         });
         const rewards = extractRewardsFromCompanyConfig(cfg);
+        const customTaskDefs = extractCustomTasksRewardDefsFromCompanyConfig(cfg);
         if (cancelled) return;
         setEnabled(rewards.enabled);
         if (!rewards.enabled) {
@@ -70,6 +72,7 @@ function RewardsBody() {
           rewards,
           logs,
           dryFlowerBatches,
+          customTasksRewardDefs: customTaskDefs,
         });
         setRows(
           snap.individuals.map((i) => ({
@@ -92,6 +95,7 @@ function RewardsBody() {
             logs,
             userKeys: keys,
             windowDays: snap.windowDays,
+            customTasksRewardDefs: customTaskDefs,
           }),
         );
         const self = snap.individuals.find((i) => keys.some((k) => i.key === k));

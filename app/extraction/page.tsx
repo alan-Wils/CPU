@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import { store } from "@/lib/store";
@@ -28,6 +28,15 @@ import {
 import { createPackagingBatch } from "@/lib/packagingApi";
 import { createLog } from "@/lib/logsApi";
 import { apiRequest, suggestExtractionProductNames } from "@/lib/api";
+import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
+import {
+  extractCustomTasksRewardDefsFromCompanyConfig,
+  mergeWorkflowTaskList,
+  resolveConfigurableTaskRewards,
+  type CustomTasksRewardDefs,
+} from "@/lib/customTasksConfig";
+import { computeAverageNormalizedMinutes, scoreChallengeByLoggedMinutes } from "@/lib/taskChallengeMath";
+import { isElevatedManagerRole } from "@cpu/shared";
 import {
   formatLogDisplayTime,
   nowIsoForLog,
@@ -504,6 +513,18 @@ export default function Extraction() {
     { sourceId: "", amount: "" },
   ]);
 
+  const [extractionTaskList, setExtractionTaskList] = useState<string[]>(() =>
+    mergeWorkflowTaskList(extractionTasks, []),
+  );
+  const [rewardsCfg, setRewardsCfg] = useState<ReturnType<typeof extractRewardsFromCompanyConfig> | null>(null);
+  const [customTasksRewardDefs, setCustomTasksRewardDefs] = useState<CustomTasksRewardDefs>(() =>
+    extractCustomTasksRewardDefsFromCompanyConfig({}),
+  );
+  const extractionCustomTaskLabels = useMemo(
+    () => new Set(customTasksRewardDefs.extraction.map((d) => d.label.trim()).filter(Boolean)),
+    [customTasksRewardDefs],
+  );
+
   const [selectedTask, setSelectedTask] = useState(extractionTasks[0]);
 
   const [packSockTechCount, setPackSockTechCount] = useState("1");
@@ -719,6 +740,12 @@ export default function Extraction() {
         ? cfg.extraction.blendNameHistory
         : [];
       setBlendNameHistory(rows as BlendNameHistoryRow[]);
+      setRewardsCfg(extractRewardsFromCompanyConfig(cfg));
+      const defs = extractCustomTasksRewardDefsFromCompanyConfig(cfg);
+      setCustomTasksRewardDefs(defs);
+      const merged = mergeWorkflowTaskList(extractionTasks, defs.extraction);
+      setExtractionTaskList(merged);
+      setSelectedTask((prev) => (merged.includes(prev) ? prev : merged[0] || extractionTasks[0]));
     } catch (error) {
       console.error("Could not load extraction blend name history:", error);
     }
@@ -926,6 +953,12 @@ export default function Extraction() {
 
     if (task === "Finish Batch") {
       return getTestingStatus(batch) === "Test Passed" && !finished;
+    }
+
+    if (extractionCustomTaskLabels.has(task)) {
+      const hasRun = hasCompletedTask(batch, "Run Extraction");
+      const fin = hasCompletedTask(batch, "Finish Batch");
+      return hasRun && !fin;
     }
 
     return false;
@@ -1320,7 +1353,7 @@ export default function Extraction() {
 
   function resetTaskForm() {
     setSelectedTask(
-      selectedExt ? getDefaultTaskForBatch(selectedExt) : extractionTasks[0]
+      selectedExt ? getDefaultTaskForBatch(selectedExt) : extractionTaskList[0] || extractionTasks[0]
     );
 
     setPackSockTechCount("1");
@@ -1761,6 +1794,13 @@ export default function Extraction() {
       ]);
     }
 
+    if (extractionCustomTaskLabels.has(selectedTask)) {
+      return requireFields([
+        { label: "How Many People", value: whipPeople },
+        { label: "Time", value: whipTime },
+      ]);
+    }
+
     if (selectedTask === "Finish Batch") {
       return requireFields([
         { label: "Total Weight Final Oil", value: finalOilGrams },
@@ -2118,6 +2158,13 @@ export default function Extraction() {
       };
     }
 
+    if (extractionCustomTaskLabels.has(selectedTask)) {
+      return {
+        people: whipPeople,
+        time: whipTime,
+      };
+    }
+
     if (selectedTask === "Finish Batch") {
       return {
         finalOilGrams,
@@ -2325,6 +2372,52 @@ export default function Extraction() {
       }
     }
 
+    let logData: Record<string, unknown> = { ...data };
+    const peopleNum = num(logData.people);
+    const timeNum = num(logData.time);
+    if (peopleNum > 0 && timeNum > 0) {
+      logData.people = peopleNum;
+      logData.minutes = timeNum;
+    }
+
+    const rb = resolveConfigurableTaskRewards("Extraction", selectedTask, customTasksRewardDefs);
+    if (
+      rb.eligible &&
+      rewardsCfg?.enabled &&
+      rewardsCfg.taskChallenge.enabled &&
+      peopleNum > 0 &&
+      timeNum > 0
+    ) {
+      const u = getAuthUser();
+      if (u && (u.rewardsEnrolled || isElevatedManagerRole(String(u.role || "")))) {
+        const { avg, sampleCount } = computeAverageNormalizedMinutes(s.logs as any[], "Extraction", selectedTask, {
+          includeAreaInTaskKey: rewardsCfg.taskChallenge.includeAreaInTaskKey,
+          lookbackDays: rewardsCfg.primaryWindowDays * 3,
+        });
+        const minSamples = rewardsCfg.taskChallenge.minSamplesForAverage;
+        const effectiveAvg = sampleCount >= minSamples ? avg : null;
+        const tier = scoreChallengeByLoggedMinutes(
+          effectiveAvg,
+          timeNum,
+          rewardsCfg.taskChallenge.tiers,
+          45,
+        );
+        if (tier) {
+          const pts = Math.max(0, Math.round(tier.points * rb.tierMultiplier));
+          logData = {
+            ...logData,
+            taskChallenge: {
+              pointsEarned: pts,
+              tierLabel: tier.label,
+              tierIndex: tier.tierIndex,
+              targetMinutes: tier.targetMinutes,
+              tierPointsMultiplier: rb.tierMultiplier,
+            },
+          };
+        }
+      }
+    }
+
     saveLog({
       area: "Extraction",
       batch: selectedExt.id,
@@ -2332,7 +2425,7 @@ export default function Extraction() {
       output: buildOutput(data),
       source: selectedExt.source,
       loggedBy,
-      data,
+      data: logData,
       time: loggedAt,
     });
 
@@ -2992,7 +3085,7 @@ export default function Extraction() {
                   value={selectedTask}
                   onChange={(e) => setSelectedTask(e.target.value)}
                 >
-                  {extractionTasks.map((task) => (
+                  {extractionTaskList.map((task) => (
                     <option
                       key={task}
                       disabled={!isTaskAllowed(selectedExt, task)}
@@ -3189,7 +3282,7 @@ export default function Extraction() {
                   />
                 )}
 
-                {selectedTask === "Whip" && (
+                {(selectedTask === "Whip" || extractionCustomTaskLabels.has(selectedTask)) && (
                   <>
                     <input
                       style={inputStyle}

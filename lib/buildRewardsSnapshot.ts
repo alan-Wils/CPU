@@ -1,4 +1,9 @@
 import type { RewardsSettings } from "./rewardsConfig";
+import {
+  extractCustomTasksRewardDefsFromCompanyConfig,
+  resolveConfigurableTaskRewards,
+  type CustomTasksRewardDefs,
+} from "./customTasksConfig";
 
 export type LogLike = {
   area?: string;
@@ -70,6 +75,10 @@ export function buildRewardsSnapshot(input: {
   dryFlowerBatches?: unknown[];
   enrolledUserKeys?: Set<string> | null;
   currentUserKeys?: string[];
+  /** When omitted, parsed from `companyConfig` if provided; otherwise all tasks treated as reward-eligible unless absent from defaults. */
+  customTasksRewardDefs?: CustomTasksRewardDefs | null;
+  /** Raw `/api/config` payload — used only when `customTasksRewardDefs` is undefined. */
+  companyConfig?: unknown;
 }): {
   individuals: IndividualRow[];
   facilityTotalPoints: number;
@@ -80,7 +89,27 @@ export function buildRewardsSnapshot(input: {
   const windowDays = rewards.primaryWindowDays;
   const start = windowStartMs(windowDays);
 
+  const taskDefs: CustomTasksRewardDefs =
+    input.customTasksRewardDefs !== undefined && input.customTasksRewardDefs !== null
+      ? input.customTasksRewardDefs
+      : extractCustomTasksRewardDefsFromCompanyConfig(input.companyConfig ?? {});
+
   const filtered = logs.filter((l) => logTimeMs(l) >= start);
+
+  function rewardEligibleForLog(log: LogLike): boolean {
+    const area = String(log.area || "").trim();
+    const task = String(log.task || "").trim();
+    if (area === "Cultivation") {
+      return resolveConfigurableTaskRewards("Cultivation", task, taskDefs).eligible;
+    }
+    if (area === "Extraction") {
+      return resolveConfigurableTaskRewards("Extraction", task, taskDefs).eligible;
+    }
+    if (area === "Packaging") {
+      return resolveConfigurableTaskRewards("Packaging", task, taskDefs).eligible;
+    }
+    return true;
+  }
 
   const byActor = new Map<
     string,
@@ -111,7 +140,7 @@ export function buildRewardsSnapshot(input: {
 
     const nm = normMinutes(log);
     const task = String(log.task || "");
-    if (nm != null) {
+    if (rewardEligibleForLog(log) && nm != null) {
       const tgt = matchesTarget(task, targets);
       if (tgt != null && nm <= tgt + 1e-6) {
         row.breakdown.fastTask += rewards.scoring.fastTaskBonusPoints;
@@ -119,7 +148,7 @@ export function buildRewardsSnapshot(input: {
     }
 
     const tcPts = Number(log.data?.taskChallenge?.pointsEarned);
-    if (Number.isFinite(tcPts) && tcPts > 0) {
+    if (rewardEligibleForLog(log) && Number.isFinite(tcPts) && tcPts > 0) {
       row.breakdown.taskChallenge += tcPts;
     }
   }
@@ -195,6 +224,8 @@ export function listRewardEventsForUser(input: {
   logs: LogLike[];
   userKeys: string[];
   windowDays: number;
+  customTasksRewardDefs?: CustomTasksRewardDefs | null;
+  companyConfig?: unknown;
 }): RewardPointEvent[] {
   const { rewards, logs, userKeys } = input;
   const keySet = new Set(userKeys);
@@ -204,13 +235,33 @@ export function listRewardEventsForUser(input: {
   const events: RewardPointEvent[] = [];
   let n = 0;
 
+  const taskDefs: CustomTasksRewardDefs =
+    input.customTasksRewardDefs !== undefined && input.customTasksRewardDefs !== null
+      ? input.customTasksRewardDefs
+      : extractCustomTasksRewardDefsFromCompanyConfig(input.companyConfig ?? {});
+
+  function rewardEligibleForLog(log: LogLike): boolean {
+    const area = String(log.area || "").trim();
+    const task = String(log.task || "").trim();
+    if (area === "Cultivation") {
+      return resolveConfigurableTaskRewards("Cultivation", task, taskDefs).eligible;
+    }
+    if (area === "Extraction") {
+      return resolveConfigurableTaskRewards("Extraction", task, taskDefs).eligible;
+    }
+    if (area === "Packaging") {
+      return resolveConfigurableTaskRewards("Packaging", task, taskDefs).eligible;
+    }
+    return true;
+  }
+
   for (const log of filtered) {
     const k = actorKey(log);
     if (!k || !keySet.has(k)) continue;
     const task = String(log.task || "").trim() || "Task";
 
     const nm = normMinutes(log);
-    if (nm != null) {
+    if (rewardEligibleForLog(log) && nm != null) {
       const tgt = matchesTarget(task, targets);
       if (tgt != null && nm <= tgt + 1e-6) {
         events.push({
@@ -225,7 +276,7 @@ export function listRewardEventsForUser(input: {
     }
 
     const tcPts = Number(log.data?.taskChallenge?.pointsEarned);
-    if (Number.isFinite(tcPts) && tcPts > 0) {
+    if (rewardEligibleForLog(log) && Number.isFinite(tcPts) && tcPts > 0) {
       events.push({
         id: `tc-${n++}`,
         at: log.createdAt ? String(log.createdAt) : null,

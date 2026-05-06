@@ -22,9 +22,23 @@ import {
 } from "@/lib/packagingApi";
 import { loadExtractionBatches } from "@/lib/extractionApi";
 import { createLog } from "@/lib/logsApi";
-import { formatLogDisplayTime, nowIsoForLog } from "@/lib/companyTimezone";
+import {
+  formatLogDisplayTime,
+  nowIsoForLog,
+  syncCompanyTimezoneFromConfigPayload,
+} from "@/lib/companyTimezone";
+import { apiRequest } from "@/lib/api";
+import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
+import {
+  extractCustomTasksRewardDefsFromCompanyConfig,
+  mergeWorkflowTaskList,
+  resolveConfigurableTaskRewards,
+  type CustomTasksRewardDefs,
+} from "@/lib/customTasksConfig";
+import { computeAverageNormalizedMinutes, scoreChallengeByLoggedMinutes } from "@/lib/taskChallengeMath";
+import { isElevatedManagerRole } from "@cpu/shared";
 
-const PACKAGING_TASKS = [
+const BASE_PACKAGING_TASKS = [
   "Label",
   "Package",
   "Label Package",
@@ -487,7 +501,15 @@ export default function Packaging() {
   const [packagedBy, setPackagedBy] = useState("");
   const [notes, setNotes] = useState("");
 
-  const [taskType, setTaskType] = useState(PACKAGING_TASKS[0]);
+  const [packagingTaskList, setPackagingTaskList] = useState<string[]>(() =>
+    mergeWorkflowTaskList(BASE_PACKAGING_TASKS, []),
+  );
+  const [rewardsCfg, setRewardsCfg] = useState<ReturnType<typeof extractRewardsFromCompanyConfig> | null>(null);
+  const [customTasksRewardDefs, setCustomTasksRewardDefs] = useState<CustomTasksRewardDefs>(() =>
+    extractCustomTasksRewardDefsFromCompanyConfig({}),
+  );
+
+  const [taskType, setTaskType] = useState(BASE_PACKAGING_TASKS[0]);
   const [selectedTestTypes, setSelectedTestTypes] = useState<string[]>([]);
   const [taskPeople, setTaskPeople] = useState("");
   const [taskTime, setTaskTime] = useState("");
@@ -534,6 +556,28 @@ export default function Packaging() {
     open: false,
     batch: null,
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const cfg = await apiRequest<unknown>("/api/config");
+        if (cancelled) return;
+        syncCompanyTimezoneFromConfigPayload(cfg);
+        setRewardsCfg(extractRewardsFromCompanyConfig(cfg));
+        const defs = extractCustomTasksRewardDefsFromCompanyConfig(cfg);
+        setCustomTasksRewardDefs(defs);
+        const merged = mergeWorkflowTaskList(BASE_PACKAGING_TASKS, defs.packaging);
+        setPackagingTaskList(merged);
+        setTaskType((prev) => (merged.includes(prev) ? prev : merged[0] || BASE_PACKAGING_TASKS[0]));
+      } catch (e) {
+        console.error("Packaging: could not load company config for tasks/rewards:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function showNotice(title: string, message: string, details = "") {
     setNotificationModal({
@@ -633,7 +677,7 @@ export default function Packaging() {
 
   function selectInProgressBatch(batch: any) {
     setSelectedInProgress(batch);
-    setTaskType(PACKAGING_TASKS[0]);
+    setTaskType(BASE_PACKAGING_TASKS[0]);
     setSelectedTestTypes([]);
     setTaskPeople("");
     setTaskTime("");
@@ -1038,6 +1082,44 @@ export default function Packaging() {
         b.id === selectedInProgress.id ? selectedInProgress : b
       );
 
+      const rb = resolveConfigurableTaskRewards("Packaging", taskType, customTasksRewardDefs);
+      let challengeExtra: Record<string, unknown> = {};
+      if (
+        rb.eligible &&
+        rewardsCfg?.enabled &&
+        rewardsCfg.taskChallenge.enabled &&
+        taskPeopleNum > 0 &&
+        taskTimeNum > 0
+      ) {
+        const u = getAuthUser();
+        if (u && (u.rewardsEnrolled || isElevatedManagerRole(String(u.role || "")))) {
+          const { avg, sampleCount } = computeAverageNormalizedMinutes(s.logs as any[], "Packaging", taskType, {
+            includeAreaInTaskKey: rewardsCfg.taskChallenge.includeAreaInTaskKey,
+            lookbackDays: rewardsCfg.primaryWindowDays * 3,
+          });
+          const minSamples = rewardsCfg.taskChallenge.minSamplesForAverage;
+          const effectiveAvg = sampleCount >= minSamples ? avg : null;
+          const tier = scoreChallengeByLoggedMinutes(
+            effectiveAvg,
+            taskTimeNum,
+            rewardsCfg.taskChallenge.tiers,
+            45,
+          );
+          if (tier) {
+            const pts = Math.max(0, Math.round(tier.points * rb.tierMultiplier));
+            challengeExtra = {
+              taskChallenge: {
+                pointsEarned: pts,
+                tierLabel: tier.label,
+                tierIndex: tier.tierIndex,
+                targetMinutes: tier.targetMinutes,
+                tierPointsMultiplier: rb.tierMultiplier,
+              },
+            };
+          }
+        }
+      }
+
       await addBackendLog({
         area: "Packaging",
         batch: selectedInProgress.id,
@@ -1054,14 +1136,16 @@ export default function Packaging() {
           testTypes: taskType === "Test" ? selectedTestTypes : [],
           people: taskPeopleNum,
           timeMinutes: taskTimeNum,
+          minutes: taskTimeNum,
           totalLaborMinutes,
           notes: taskNotes,
+          ...challengeExtra,
         },
         time: nowIsoForLog(),
       });
     }
 
-    setTaskType(PACKAGING_TASKS[0]);
+    setTaskType(packagingTaskList[0] ?? BASE_PACKAGING_TASKS[0]);
     setSelectedTestTypes([]);
     setTaskPeople("");
     setTaskTime("");
@@ -1139,7 +1223,7 @@ export default function Packaging() {
         s.inProgressPackagingBatches.filter(isExtractionPackagingBatch)[0] || null;
 
       setSelectedInProgress(nextInProgress);
-      setTaskType(PACKAGING_TASKS[0]);
+      setTaskType(BASE_PACKAGING_TASKS[0]);
       setSelectedTestTypes([]);
       setTaskPeople("");
       setTaskTime("");
@@ -1637,7 +1721,7 @@ export default function Packaging() {
                 }}
                 disabled={!canWriteRecords}
               >
-                {PACKAGING_TASKS.map((task) => (
+                {packagingTaskList.map((task) => (
                   <option key={task}>{task}</option>
                 ))}
               </select>
