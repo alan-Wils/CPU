@@ -9,6 +9,7 @@ import { displayNameFromLogActor, getAuthDisplayName, getAuthUser } from "@/lib/
 import {
   hydrateTaskLogsFromApi,
   loadBackendStore,
+  markDryFlowerBatchDeleted,
   saveBackendStore,
   snapshotDryFlowerCardFields,
 } from "@/lib/backendStore";
@@ -20,7 +21,7 @@ import {
 } from "@/lib/cultivationApi";
 import { apiRequest } from "@/lib/api";
 import { createSourceBatch } from "@/lib/sourceBatchApi";
-import { createLog } from "@/lib/logsApi";
+import { createLog, deleteLog as deleteTaskLogRemote, getAllLogs } from "@/lib/logsApi";
 import {
   formatLogDisplayTime,
   nowIsoForLog,
@@ -69,6 +70,8 @@ type CultivationRoomsConfig = {
   vegRooms: CultivationVegRoom[];
   flowerRooms: CultivationFlowerRoom[];
 };
+
+type StageModalKey = null | "Clones" | "Veg" | "Flower";
 
 const emptyCultivationRooms: CultivationRoomsConfig = { vegRooms: [], flowerRooms: [] };
 
@@ -441,6 +444,7 @@ export default function Cultivation() {
   const [showTaskWindow, setShowTaskWindow] = useState(false);
   const [showDryTaskWindow, setShowDryTaskWindow] = useState(false);
   const [showAddTaskWindow, setShowAddTaskWindow] = useState(false);
+  const [selectedStage, setSelectedStage] = useState<StageModalKey>(null);
 
   const [cloneTasks, setCloneTasks] = useState(defaultCloneTasks);
   const [vegTasks, setVegTasks] = useState(defaultVegTasks);
@@ -836,6 +840,22 @@ export default function Cultivation() {
     (batch: any) => batch.status !== "Complete"
   );
 
+  function stageBucketFromBatchStage(stage: unknown): Exclude<StageModalKey, null> {
+    const value = String(stage || "").trim().toLowerCase();
+    if (value === "clone" || value === "clones") return "Clones";
+    if (value === "veg") return "Veg";
+    return "Flower";
+  }
+
+  const stageOrder: Exclude<StageModalKey, null>[] = ["Clones", "Veg", "Flower"];
+  const activeBatchesByStage = {
+    Clones: activeBatches.filter((b: any) => stageBucketFromBatchStage(b?.stage) === "Clones"),
+    Veg: activeBatches.filter((b: any) => stageBucketFromBatchStage(b?.stage) === "Veg"),
+    Flower: activeBatches.filter((b: any) => stageBucketFromBatchStage(b?.stage) === "Flower"),
+  } as const;
+
+  const selectedStageBatches = selectedStage ? activeBatchesByStage[selectedStage] : [];
+
   const activeDryFlowerBatches = s.dryFlowerBatches.filter(
     (batch: any) => batch.status !== "Complete"
   );
@@ -883,12 +903,46 @@ export default function Cultivation() {
     });
   }
 
-  function deleteRealCultivationBatchIfNeeded(batchId: string, wasCultivationBatch: boolean) {
-    if (!batchId || !wasCultivationBatch) return;
-
-    deleteCultivationBatch(batchId).catch((error) => {
+  async function deleteRealCultivationBatchIfNeeded(batchId: string, wasCultivationBatch: boolean) {
+    if (!batchId || !wasCultivationBatch) return true;
+    try {
+      await deleteCultivationBatch(batchId);
+      return true;
+    } catch (error) {
       console.error("Could not delete real cultivation batch:", error);
-    });
+      return false;
+    }
+  }
+
+  async function purgeBackendLogsForBatch(batchId: string) {
+    if (!batchId) return;
+    try {
+      const logs = await getAllLogs();
+      const rows = Array.isArray(logs) ? logs : [];
+      const targets = rows.filter((log: any) => {
+        if (!log || typeof log !== "object") return false;
+        const data = log.data && typeof log.data === "object" ? log.data : {};
+        const snap = (data as any).dryFlowerCardSnapshot;
+        const snapId = String(snap?.id || "");
+        return (
+          log.batch === batchId ||
+          log.source === batchId ||
+          log.linkedBatch === batchId ||
+          snapId === batchId
+        );
+      });
+      await Promise.all(
+        targets.map((log: any) => {
+          const id = log?.id != null ? String(log.id).trim() : "";
+          if (!id) return Promise.resolve();
+          return deleteTaskLogRemote(id).catch((error) => {
+            console.error("Could not delete backend log row:", error);
+          });
+        })
+      );
+    } catch (error) {
+      console.error("Could not purge backend logs for deleted batch:", error);
+    }
   }
 
   function upsertDryFlowerPackagingBatch(batch: any) {
@@ -1083,7 +1137,8 @@ export default function Cultivation() {
     forceRefresh();
   }
 
-  function runDeleteBatch(batchId: string) {
+  async function runDeleteBatch(batchId: string) {
+    markDryFlowerBatchDeleted(batchId);
     const deletedRecords = getAllBatchLists().filter((b: any) => b?.id === batchId);
     const deletedLogCount = s.logs.filter(
       (log: any) =>
@@ -1121,20 +1176,29 @@ export default function Cultivation() {
       );
     });
 
-    s.logs.unshift(withLoggedBy({
+    const loggedBy = getLoggedBy();
+    const loggedAtIso = new Date().toISOString();
+    const deleteAudit = {
       area: "Audit",
       batch: batchId,
       task: "Deleted Record",
       output: `Deleted cultivation-related record(s): ${batchId} | Records removed: ${deletedRecords.length} | Related logs removed: ${deletedLogCount}`,
+      loggedBy,
+      loggedAt: loggedAtIso,
+      loggedAtIso,
       data: {
         deletedRecordType: "Cultivation Batch Chain",
         deletedRecordId: batchId,
         deletedRecords,
         deletedLogCount,
         deletedAtIso: new Date().toISOString(),
+        loggedBy,
+        loggedAt: loggedAtIso,
+        loggedAtIso,
       },
       time: nowIsoForLog(),
-    }));
+    };
+    s.logs.unshift(deleteAudit);
 
     if (selectedBatch?.id === batchId) {
       const nextBatch = s.cultivationBatches[0] || null;
@@ -1150,7 +1214,31 @@ export default function Cultivation() {
     if (viewBatch?.id === batchId) setViewBatch(null);
     if (failBatch?.id === batchId) setFailBatch(null);
 
-    deleteRealCultivationBatchIfNeeded(batchId, wasCultivationBatch);
+    await purgeBackendLogsForBatch(batchId);
+    try {
+      await createLog({
+        area: deleteAudit.area,
+        batch: deleteAudit.batch,
+        task: deleteAudit.task,
+        output: deleteAudit.output,
+        data: deleteAudit.data,
+      });
+    } catch (error) {
+      console.error("Could not save delete audit log to backend:", error);
+      showNotice(
+        "Delete Audit Sync Failed",
+        "The batch was removed locally, but the delete audit log did not save to the backend.",
+        "Please refresh and retry if deleted rows reappear."
+      );
+    }
+    const deleteOk = await deleteRealCultivationBatchIfNeeded(batchId, wasCultivationBatch);
+    if (!deleteOk) {
+      showNotice(
+        "Backend Delete Failed",
+        "The batch was removed locally, but the backend delete failed.",
+        "Please refresh and retry. This can happen if your role cannot delete this batch."
+      );
+    }
     forceRefresh();
   }
 
@@ -2325,6 +2413,13 @@ export default function Cultivation() {
     marginTop: 14,
   } as const;
 
+  const stageCardsWrapStyle = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 12,
+    marginTop: 10,
+  } as const;
+
 
   return (
     <PageAccessGate permission="page.cultivation">
@@ -2358,53 +2453,32 @@ export default function Cultivation() {
             {activeBatches.length === 0 ? (
               <p style={{ textAlign: "center", color: "#cbd5e1" }}>No active cultivation batches.</p>
             ) : (
-              activeBatches.map((b: any) => (
-                <div
-                  key={b.id}
-                  style={{
-                    ...rowStyle,
-                    background: selectedBatch?.id === b.id ? "#22c55e" : "#0f172a",
-                    color: selectedBatch?.id === b.id ? "black" : "white",
-                    border: selectedBatch?.id === b.id ? "1px solid #22c55e" : "1px solid #334155",
-                  }}
-                >
-                  <div
-                    onClick={() => selectBatch(b)}
-                    style={{ cursor: "pointer", flex: 1, lineHeight: 1.5 }}
+              <div style={stageCardsWrapStyle}>
+                {stageOrder.map((stageName) => (
+                  <button
+                    key={stageName}
+                    style={{
+                      ...buttonStyle,
+                      width: "100%",
+                      minHeight: 86,
+                      textAlign: "left",
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "center",
+                      gap: 4,
+                      background: "#0f172a",
+                      border: "1px solid #334155",
+                    }}
+                    onClick={() => setSelectedStage(stageName)}
                   >
-                    <b>{b.id}</b>
-                    <br />
-                    {b.strain} | Stage: {b.stage} | Plants Left: {b.plants}
-                    {b.stage === "Veg" && b.vegRoom && (
-                      <>
-                        <br />
-                        Veg room: {b.vegRoom}
-                      </>
-                    )}
-                    {b.stage === "Flower" && (b.flowerRoom || b.flowerBay || b.flowerTable || b.flowerTables) && (
-                      <>
-                        <br />
-                        Room: {b.flowerRoom || "—"} | Bay: {b.flowerBay || "—"} | Tables: {formatFlowerTables(b)}
-                      </>
-                    )}
-                  </div>
-
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    <button style={buttonStyle} onClick={() => setViewBatch(b)}>
-                      View
-                    </button>
-                    {canDeleteRecords && (
-
-                      <button style={dangerButtonStyle} onClick={() => deleteBatch(b.id)}>
-
-                        Delete
-
-                      </button>
-
-                    )}
-                  </div>
-                </div>
-              ))
+                    <span style={{ fontWeight: 900, fontSize: 16 }}>{stageName}</span>
+                    <span style={{ color: "#cbd5e1", fontWeight: 700 }}>
+                      {activeBatchesByStage[stageName].length} batch
+                      {activeBatchesByStage[stageName].length === 1 ? "" : "es"}
+                    </span>
+                  </button>
+                ))}
+              </div>
             )}
           </section>
 
@@ -2695,6 +2769,70 @@ export default function Cultivation() {
               </button>
               <button style={primaryButtonStyle} onClick={createCloneBatch}>
                 Create Clone Batch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedStage && (
+        <div style={modalOverlayStyle}>
+          <div style={modalStyle}>
+            <h2 style={{ textAlign: "center", marginTop: 0 }}>
+              {selectedStage} Batches ({selectedStageBatches.length})
+            </h2>
+
+            {selectedStageBatches.length === 0 ? (
+              <p style={{ textAlign: "center", color: "#cbd5e1" }}>No batches in this stage.</p>
+            ) : (
+              selectedStageBatches.map((b: any) => (
+                <div
+                  key={b.id}
+                  style={{
+                    ...rowStyle,
+                    background: selectedBatch?.id === b.id ? "#22c55e" : "#0f172a",
+                    color: selectedBatch?.id === b.id ? "black" : "white",
+                    border: selectedBatch?.id === b.id ? "1px solid #22c55e" : "1px solid #334155",
+                  }}
+                >
+                  <div
+                    onClick={() => selectBatch(b)}
+                    style={{ cursor: "pointer", flex: 1, lineHeight: 1.5 }}
+                  >
+                    <b>{b.id}</b>
+                    <br />
+                    {b.strain} | Stage: {b.stage} | Plants Left: {b.plants}
+                    {b.stage === "Veg" && b.vegRoom && (
+                      <>
+                        <br />
+                        Veg room: {b.vegRoom}
+                      </>
+                    )}
+                    {b.stage === "Flower" && (b.flowerRoom || b.flowerBay || b.flowerTable || b.flowerTables) && (
+                      <>
+                        <br />
+                        Room: {b.flowerRoom || "—"} | Bay: {b.flowerBay || "—"} | Tables: {formatFlowerTables(b)}
+                      </>
+                    )}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <button style={buttonStyle} onClick={() => setViewBatch(b)}>
+                      View
+                    </button>
+                    {canDeleteRecords && (
+                      <button style={dangerButtonStyle} onClick={() => deleteBatch(b.id)}>
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+
+            <div style={modalButtonRowStyle}>
+              <button style={buttonStyle} onClick={() => setSelectedStage(null)}>
+                Close
               </button>
             </div>
           </div>

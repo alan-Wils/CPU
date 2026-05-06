@@ -45,11 +45,46 @@ function logEpochMs(log: unknown): number {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+function deletedRecordIdFromLog(log: unknown): string {
+  const row = log as Record<string, unknown>;
+  const data = row?.data as Record<string, unknown> | undefined;
+  const explicit = String(data?.deletedRecordId || "");
+  if (explicit) return explicit;
+  const deletedRecord = data?.deletedRecord as Record<string, unknown> | undefined;
+  const nested = String(deletedRecord?.id || "");
+  if (nested) return nested;
+  return "";
+}
+
 /** Merge snapshots from cultivation logs onto `dryFlowerBatches`, chronologically (oldest first). */
-export function hydrateDryFlowerBatchesFromLogSnapshots(storeObj: any) {
+export function hydrateDryFlowerBatchesFromLogSnapshots(
+  storeObj: any,
+  extraDeletedIds?: Iterable<string>,
+) {
   const logs = storeObj?.logs;
   const batches = storeObj?.dryFlowerBatches;
   if (!Array.isArray(logs) || !Array.isArray(batches)) return;
+  const deletedIds = new Set<string>();
+
+  for (const rawLog of logs as unknown[]) {
+    const deletedId = deletedRecordIdFromLog(rawLog);
+    if (deletedId) deletedIds.add(deletedId);
+  }
+
+  for (const id of extraDeletedIds || []) {
+    const value = String(id || "");
+    if (value) deletedIds.add(value);
+  }
+
+  if (deletedIds.size > 0) {
+    const kept = batches.filter((b: unknown) => {
+      const row = b as Record<string, unknown>;
+      const id = String(row?.id || "");
+      return !id || !deletedIds.has(id);
+    });
+    batches.length = 0;
+    batches.push(...kept);
+  }
 
   const withSnapshots = logs.filter((l: unknown) => {
     const row = l as Record<string, unknown>;
@@ -59,7 +94,7 @@ export function hydrateDryFlowerBatchesFromLogSnapshots(storeObj: any) {
       snap && typeof snap === "object" && (snap as { id?: string }).id
         ? String((snap as { id?: string }).id)
         : "";
-    return row?.area === "Cultivation" && Boolean(id);
+    return row?.area === "Cultivation" && Boolean(id) && !deletedIds.has(id);
   }) as Record<string, unknown>[];
 
   withSnapshots.sort((a, b) => logEpochMs(a) - logEpochMs(b));

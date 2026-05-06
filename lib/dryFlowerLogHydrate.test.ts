@@ -86,6 +86,72 @@ describe("hydrateDryFlowerBatchesFromLogSnapshots", () => {
     expect((store.dryFlowerBatches as any[])[0].id).toBe(dryId);
     expect((store.dryFlowerBatches as any[])[0].trimmedWeightLbs).toBe(12);
   });
+
+  it("does not rehydrate dry rows that were deleted in any workflow area", () => {
+    const dryId = "DRY-DELETED-0001";
+    const store = {
+      logs: [
+        {
+          area: "Cultivation",
+          task: "Bucking",
+          time: "2026-01-01T00:00:00.000Z",
+          data: {
+            dryFlowerCardSnapshot: {
+              id: dryId,
+              status: "Bucked",
+              buckWholePlantLbs: 30,
+            },
+          },
+        },
+        {
+          area: "Extraction",
+          task: "Deleted Record",
+          time: "2026-01-01T01:00:00.000Z",
+          data: {
+            deletedRecordType: "Extraction Batch",
+            deletedRecordId: dryId,
+          },
+        },
+      ],
+      dryFlowerBatches: [
+        {
+          id: dryId,
+          status: "Bucked",
+        },
+      ] as unknown[],
+      productionBatches: [{ id: dryId, status: "Bucked" }] as unknown[],
+    };
+
+    hydrateDryFlowerBatchesFromLogSnapshots(store);
+
+    expect((store.dryFlowerBatches as any[]).find((b) => b.id === dryId)).toBeUndefined();
+  });
+
+  it("does not rehydrate dry rows listed as locally deleted", () => {
+    const dryId = "DRY-LOCAL-DELETE-0001";
+    const store = {
+      logs: [
+        {
+          area: "Cultivation",
+          task: "Bucking",
+          time: "2026-01-01T00:00:00.000Z",
+          data: {
+            dryFlowerCardSnapshot: {
+              id: dryId,
+              status: "Bucked",
+              buckWholePlantLbs: 30,
+            },
+          },
+        },
+      ],
+      dryFlowerBatches: [] as unknown[],
+      productionBatches: [] as unknown[],
+    };
+
+    hydrateDryFlowerBatchesFromLogSnapshots(store, [dryId]);
+
+    expect((store.dryFlowerBatches as any[]).find((b) => b.id === dryId)).toBeUndefined();
+  });
 });
 
 describe("snapshotDryFlowerCardFields", () => {

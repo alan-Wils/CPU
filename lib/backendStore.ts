@@ -6,6 +6,7 @@ import {
 } from "./dryFlowerLogHydrate";
 
 export { snapshotDryFlowerCardFields } from "./dryFlowerLogHydrate";
+const locallyDeletedDryFlowerBatchIds = new Set<string>();
 
 /**
  * When `NEXT_PUBLIC_SERVER_DATABASE_ONLY` is `true` / `1` / `yes`, the UI does **not** send
@@ -96,15 +97,35 @@ export function applyStoreSnapshot(snapshot: any, options?: ApplyStoreSnapshotOp
   }
 }
 
+function removeLocallyDeletedDryRows() {
+  if (locallyDeletedDryFlowerBatchIds.size === 0) return;
+  (store as any).dryFlowerBatches = ((store as any).dryFlowerBatches || []).filter((row: any) => {
+    const id = String(row?.id || "");
+    return !id || !locallyDeletedDryFlowerBatchIds.has(id);
+  });
+  (store as any).productionBatches = ((store as any).productionBatches || []).filter((row: any) => {
+    const id = String(row?.id || "");
+    return !id || !locallyDeletedDryFlowerBatchIds.has(id);
+  });
+}
+
+export function markDryFlowerBatchDeleted(batchId: string) {
+  const id = String(batchId || "").trim();
+  if (!id) return;
+  locallyDeletedDryFlowerBatchIds.add(id);
+}
+
 /** `@cpu/api` exposes `/api/store` (legacy Node backend used `/api/sync`). */
 export async function loadBackendStore(options?: ApplyStoreSnapshotOptions) {
   const snapshot = await apiRequest("/api/store");
   const prevDry = [...((store as any).dryFlowerBatches || [])];
   applyStoreSnapshot(snapshot, options);
+  removeLocallyDeletedDryRows();
   (store as any).dryFlowerBatches = mergeDryFlowerBatchesWithLocalSnapshot(
     (store as any).dryFlowerBatches,
     prevDry,
   );
+  removeLocallyDeletedDryRows();
   copyDryFlowerBatchesIntoProduction(store);
   return snapshot;
 }
@@ -119,7 +140,7 @@ export async function hydrateTaskLogsFromApi() {
   try {
     const rows = await getLogs();
     (store as any).logs = Array.isArray(rows) ? rows : [];
-    hydrateDryFlowerBatchesFromLogSnapshots(store);
+    hydrateDryFlowerBatchesFromLogSnapshots(store, locallyDeletedDryFlowerBatchIds);
   } catch (e) {
     console.error("[TASK_LOGS] Could not hydrate logs from API:", e);
   }
