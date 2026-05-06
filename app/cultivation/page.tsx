@@ -63,6 +63,17 @@ import {
   normalizeLaborBreaksFromConfig,
 } from "@/lib/laborBreaks";
 import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
+import {
+  buildMetrcVegMovePayload,
+  collectExistingPlantTagsFromCultivationBatches,
+  findOverlappingTags,
+  generateMetrcTagSequence,
+  isMoveToVegTaskName,
+  sumImmatureAvailableExcluding,
+  type MetrcImmatureSyncStatus,
+  TASK_CREATE_IMMATURE_PLANT_BATCH,
+  TASK_MOVE_TO_VEG_ASSIGN_TAGS,
+} from "@/lib/cultivationMetrcWorkflow";
 
 type ConfigStrain = {
   id?: string;
@@ -310,7 +321,8 @@ const defaultCloneTasks = [
   "Burp",
   "Fill Pots",
   "Combine Batches",
-  "Clone → Veg",
+  TASK_CREATE_IMMATURE_PLANT_BATCH,
+  TASK_MOVE_TO_VEG_ASSIGN_TAGS,
 ];
 
 const defaultVegTasks = [
@@ -857,7 +869,7 @@ export default function Cultivation() {
   const [output, setOutput] = useState("");
   /** Cultivation batch id to merge into the currently selected batch (same stage grouping as Clones / Veg / Flower). */
   const [combinePartnerBatchId, setCombinePartnerBatchId] = useState("");
-  /** Calendar date (YYYY-MM-DD) when Clone→Veg or Move-to-Flower actually happened; defaults to facility “today”. */
+  /** Calendar date (YYYY-MM-DD) when Move to Veg / Assign Plant Tags or Move to Flower actually happened; defaults to facility “today”. */
   const [stageMoveDate, setStageMoveDate] = useState("");
   /** Destination veg layout (config `cultivation.rooms.vegRooms`); required when that list is non-empty. */
   const [vegRoomId, setVegRoomId] = useState("");
@@ -874,7 +886,7 @@ export default function Cultivation() {
   const [editVegTableIds, setEditVegTableIds] = useState<string[]>([]);
   const [editVegBatchNotes, setEditVegBatchNotes] = useState("");
   const [isSavingEditVegModal, setIsSavingEditVegModal] = useState(false);
-  /** Edit clone batches (strain, plants, dates, notes) — placement is N/A until Clone → Veg. */
+  /** Edit clone batches (strain, plants, dates, notes) — placement is N/A until Move to Veg / Assign Plant Tags. */
   const [editCloneModalBatch, setEditCloneModalBatch] = useState<any>(null);
   const [editClonePlants, setEditClonePlants] = useState("");
   const [editCloneStrain, setEditCloneStrain] = useState("");
@@ -905,6 +917,27 @@ export default function Cultivation() {
   const [freshFrozenGrams, setFreshFrozenGrams] = useState("");
   /** Final live plant count when using Finish batch — must be 0 to close the batch. */
   const [finishBatchPlantCount, setFinishBatchPlantCount] = useState("0");
+
+  /** Create Immature Plant Batch (Clone stage) */
+  const [imbName, setImbName] = useState("");
+  const [imbStrain, setImbStrain] = useState("");
+  const [imbCount, setImbCount] = useState("");
+  const [imbLocation, setImbLocation] = useState("");
+  const [imbSublocation, setImbSublocation] = useState("");
+  const [imbPlantDate, setImbPlantDate] = useState("");
+  const [imbSourceType, setImbSourceType] = useState<string>("");
+  const [imbNotes, setImbNotes] = useState("");
+  const [imbMetrcBatchId, setImbMetrcBatchId] = useState("");
+  const [imbMetrcSyncStatus, setImbMetrcSyncStatus] = useState<MetrcImmatureSyncStatus>("Not Synced");
+
+  /** Move to Veg / Assign Plant Tags */
+  const [vegImmatureBatchId, setVegImmatureBatchId] = useState("");
+  const [vegMoveCount, setVegMoveCount] = useState("");
+  const [vegFirstMetrcTag, setVegFirstMetrcTag] = useState("");
+  const [vegSublocationDraft, setVegSublocationDraft] = useState("");
+  const [vegMoveNotes, setVegMoveNotes] = useState("");
+  const [vegTagOverlapAck, setVegTagOverlapAck] = useState(false);
+  const [vegSubmitConfirmAck, setVegSubmitConfirmAck] = useState(false);
 
   type HarvestSheetRowEdit = { tag: string; weightValue: string; unitGuess: string };
   type HarvestSheetPhoto = { id: string; storedPath: string; imageUrl: string };
@@ -955,7 +988,7 @@ export default function Cultivation() {
   } | null>(null);
   const prevStageMoveTaskPickerRef = useRef<string | null>(null);
 
-  /** Pending partial Clone→Veg / Veg→Flower when merge-or-new modal may run; cleared after apply or cancel. */
+  /** Pending partial veg-tag move / Veg→Flower when merge-or-new modal may run; cleared after apply or cancel. */
   const pendingPartialSplitRef = useRef<{
     lab: {
       ok: true;
@@ -967,7 +1000,7 @@ export default function Cultivation() {
     };
     sourceBatchId: string;
     movedPlants: number;
-    taskKey: "Clone → Veg" | "Move to Flower";
+    taskKey: typeof TASK_MOVE_TO_VEG_ASSIGN_TAGS | "Move to Flower";
     stageMoveDate: string;
     vegRoomId: string;
     vegBayId: string;
@@ -975,6 +1008,10 @@ export default function Cultivation() {
     flowerRoomId: string;
     flowerBayId: string;
     flowerTableIds: string[];
+    immaturePlantBatchId?: string;
+    generatedTags?: string[];
+    vegSublocation?: string;
+    immatureBatchName?: string;
   } | null>(null);
 
   const [partialSplitChoiceModal, setPartialSplitChoiceModal] = useState<{
@@ -1535,6 +1572,20 @@ export default function Cultivation() {
     (batch: any) => batch.status !== "Complete"
   );
 
+  function immatureHasAvailablePlants(batch: any): boolean {
+    const arr = batch?.immaturePlantBatches;
+    if (!Array.isArray(arr) || arr.length === 0) return false;
+    return arr.some((x: any) => num(x?.countAvailable) > 0);
+  }
+
+  function filterCloneTaskListForBatch(batch: any | null, tasks: string[]): string[] {
+    if (!batch || String(batch.stage || "") !== "Clone") return tasks;
+    return tasks.filter((t) => {
+      if (t === TASK_MOVE_TO_VEG_ASSIGN_TAGS) return immatureHasAvailablePlants(batch);
+      return true;
+    });
+  }
+
   function getTasksForStage(stage: string) {
     if (stage === "Clone") return cloneTasks;
     if (stage === "Veg") return vegTasks;
@@ -1543,7 +1594,18 @@ export default function Cultivation() {
     return [];
   }
 
-  const currentTasks = getTasksForStage(selectedBatch?.stage || "Clone");
+  const currentTasks = useMemo(() => {
+    const stage = selectedBatch?.stage || "Clone";
+    const base = getTasksForStage(stage);
+    return filterCloneTaskListForBatch(selectedBatch, base);
+  }, [selectedBatch, cloneTasks, vegTasks, flowerTasks]);
+
+  useEffect(() => {
+    if (!selectedBatch || !selectedTask) return;
+    if (currentTasks.length > 0 && !currentTasks.includes(selectedTask)) {
+      setSelectedTask(currentTasks[0]);
+    }
+  }, [selectedBatch, currentTasks, selectedTask]);
 
   function forceRefresh() {
     persistStore();
@@ -1680,6 +1742,10 @@ export default function Cultivation() {
         return logTask === "Harvest" || logTask.startsWith("Harvest -");
       }
 
+      if (taskName === TASK_MOVE_TO_VEG_ASSIGN_TAGS) {
+        return logTask === TASK_MOVE_TO_VEG_ASSIGN_TAGS || logTask === "Clone → Veg";
+      }
+
       return logTask === taskName;
     });
   }
@@ -1717,9 +1783,9 @@ export default function Cultivation() {
   function confirmStageMoveDateIfNeeded(onProceed: () => void): boolean {
     if (!selectedBatch) return true;
 
-    const moveTasks = ["Clone → Veg", "Move to Flower"];
     const taskLabel = selectedTask ?? "";
-    if (!moveTasks.includes(taskLabel)) return true;
+    const needsMoveDate = taskLabel === "Move to Flower" || isMoveToVegTaskName(taskLabel);
+    if (!needsMoveDate) return true;
 
     const md = stageMoveDate.trim();
     const todayYmd = getTodayYmdInCompanyTimezone();
@@ -1758,7 +1824,7 @@ export default function Cultivation() {
 
   useEffect(() => {
     const t = selectedTask;
-    if (t !== "Clone → Veg" && t !== "Move to Flower") {
+    if (!isMoveToVegTaskName(t) && t !== "Move to Flower") {
       prevStageMoveTaskPickerRef.current = t;
       return;
     }
@@ -1773,8 +1839,9 @@ export default function Cultivation() {
     setSelectedBatch(batch);
 
     const taskList = getTasksForStage(batch.stage || "Clone");
-    if (taskList.length > 0) {
-      setSelectedTask(taskList[0]);
+    const filtered = filterCloneTaskListForBatch(batch, taskList);
+    if (filtered.length > 0) {
+      setSelectedTask(filtered[0]);
     }
   }
 
@@ -3224,6 +3291,25 @@ export default function Cultivation() {
     setPeople("");
     setMinutes("");
     setFinishBatchPlantCount("0");
+    setImbName("");
+    setImbCount("");
+    setImbLocation("");
+    setImbSublocation("");
+    setImbSourceType("");
+    setImbNotes("");
+    setImbMetrcBatchId("");
+    setImbMetrcSyncStatus("Not Synced");
+    const imbList = Array.isArray(batch?.immaturePlantBatches) ? batch.immaturePlantBatches : [];
+    const firstAvail = imbList.find((x: any) => num(x?.countAvailable) > 0);
+    setVegImmatureBatchId(firstAvail ? String(firstAvail.id) : imbList[0] ? String((imbList[0] as any).id) : "");
+    setImbPlantDate(getTodayYmdInCompanyTimezone());
+    setImbStrain(String(batch?.strain || ""));
+    setVegMoveCount("");
+    setVegFirstMetrcTag("");
+    setVegSublocationDraft("");
+    setVegMoveNotes("");
+    setVegTagOverlapAck(false);
+    setVegSubmitConfirmAck(false);
   }
 
   function resetHarvestSheetForm() {
@@ -3245,6 +3331,23 @@ export default function Cultivation() {
     setPeople("");
     setMinutes("");
     setFinishBatchPlantCount("0");
+    setImbName("");
+    setImbStrain("");
+    setImbCount("");
+    setImbLocation("");
+    setImbSublocation("");
+    setImbPlantDate("");
+    setImbSourceType("");
+    setImbNotes("");
+    setImbMetrcBatchId("");
+    setImbMetrcSyncStatus("Not Synced");
+    setVegImmatureBatchId("");
+    setVegMoveCount("");
+    setVegFirstMetrcTag("");
+    setVegSublocationDraft("");
+    setVegMoveNotes("");
+    setVegTagOverlapAck(false);
+    setVegSubmitConfirmAck(false);
     resetHarvestSheetForm();
     setShowTaskWindow(false);
   }
@@ -3537,7 +3640,7 @@ export default function Cultivation() {
     moveDateBypassRef.current = null;
     setStageMoveDate(getTodayYmdInCompanyTimezone());
     selectBatch(batch);
-    const taskList = getTasksForStage(batch.stage || "Clone");
+    const taskList = filterCloneTaskListForBatch(batch, getTasksForStage(batch.stage || "Clone"));
     setSelectedTask(taskList[0] || "Maintenance");
     primeTaskModalFromSelectedBatch(batch);
     setShowTaskWindow(true);
@@ -3578,6 +3681,27 @@ export default function Cultivation() {
     };
   }
 
+  function ensurePlantTagRecords(batch: any): any[] {
+    if (!Array.isArray(batch.plantTagRecords)) batch.plantTagRecords = [];
+    return batch.plantTagRecords;
+  }
+
+  function syncClonePlantsFromImmature(batch: any) {
+    if (String(batch?.stage || "") !== "Clone") return;
+    const arr = batch?.immaturePlantBatches;
+    if (!Array.isArray(arr) || arr.length === 0) return;
+    batch.plants = arr.reduce((acc: number, x: any) => acc + Math.max(0, num(x?.countAvailable)), 0);
+  }
+
+  function applyImmatureDecrement(batch: any, immatureId: string, by: number) {
+    const arr = batch?.immaturePlantBatches;
+    if (!Array.isArray(arr)) return;
+    const row = arr.find((x: any) => String(x?.id || "") === immatureId);
+    if (!row) return;
+    row.countAvailable = Math.max(0, num(row.countAvailable) - by);
+    row.updatedAt = new Date().toISOString();
+  }
+
   function findPartialStageMergeCandidates(sourceBatchId: string, targetStage: "Veg" | "Flower") {
     return (s.cultivationBatches || []).filter((b: any) => {
       if (String(b?.status || "").toLowerCase() === "complete") return false;
@@ -3601,10 +3725,30 @@ export default function Cultivation() {
 
     const moved = pending.movedPlants;
     const current = num(source.plants);
-    if (moved <= 0 || moved >= current) {
+
+    if (moved <= 0) {
       pendingPartialSplitRef.current = null;
       setPartialSplitChoiceModal(null);
-      showNotice("Invalid split", "Plant counts changed — reopen the task and try again.");
+      showNotice("Invalid split", "Nothing to move.");
+      return;
+    }
+
+    const isTagVegMove = isMoveToVegTaskName(pending.taskKey);
+
+    if (!isTagVegMove) {
+      if (moved >= current) {
+        pendingPartialSplitRef.current = null;
+        setPartialSplitChoiceModal(null);
+        showNotice("Invalid split", "Plant counts changed — reopen the task and try again.");
+        return;
+      }
+    } else if (!pending.generatedTags || pending.generatedTags.length !== moved) {
+      pendingPartialSplitRef.current = null;
+      setPartialSplitChoiceModal(null);
+      showNotice(
+        "Invalid tag move",
+        "METRC tag list is missing or does not match the move count — reopen Move to Veg / Assign Plant Tags.",
+      );
       return;
     }
 
@@ -3613,18 +3757,67 @@ export default function Cultivation() {
 
     const moveDateCanonical = pending.stageMoveDate;
     const logEventTimeIso = logTimeIsoForStageMoveDate(moveDateCanonical);
-    const remainderAfter = current - moved;
+    let remainderAfter = current - moved;
 
     let selectAfter: any = null;
 
     const laborData = { ...lab.laborDetail, totalLaborMinutes: lab.totalLaborMinutes };
 
     try {
-      if (pending.taskKey === "Clone → Veg") {
+      if (isMoveToVegTaskName(pending.taskKey)) {
         const vl = resolveVegLayoutLabels(pending.vegRoomId, pending.vegBayId, pending.vegTableIds);
         const layoutTail = `Move date: ${moveDateCanonical} | Room: ${vl.roomName || "—"} | Bay: ${vl.bayName || "—"} | Tables: ${
           vl.tableNames.length ? vl.tableNames.join(", ") : "—"
         }`;
+
+        const tags = pending.generatedTags || [];
+        const immatureId = String(pending.immaturePlantBatchId || "");
+        const imb = immatureId
+          ? source.immaturePlantBatches?.find((x: any) => String(x?.id || "") === immatureId)
+          : null;
+
+        if (!imb || tags.length !== moved) {
+          showNotice(
+            "Cannot complete partial veg move",
+            "METRC tag data or immature batch linkage is missing — cancel and run Move to Veg / Assign Plant Tags again.",
+          );
+          return;
+        }
+
+        applyImmatureDecrement(source, immatureId, moved);
+        syncClonePlantsFromImmature(source);
+        remainderAfter = num(source.plants);
+
+        const nowIso = new Date().toISOString();
+        const subloc = String(pending.vegSublocation || "").trim();
+
+        const plantRecordsForTarget = (batchId: string) =>
+          tags.map((tag: string) => ({
+            id:
+              typeof crypto !== "undefined" && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `PT-${batchId}-${tag}-${nowIso}`,
+            cultivationBatchId: batchId,
+            immaturePlantBatchId: immatureId,
+            tag,
+            strain: String(imb.strain || source.strain || ""),
+            stage: "Veg",
+            location: vl.roomName || "",
+            sublocation: subloc || undefined,
+            status: "Active",
+            metrcPlantId: undefined,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          }));
+
+        const payload = buildMetrcVegMovePayload({
+          immatureBatchName: String(pending.immatureBatchName || imb.name || source.id),
+          countMovingToVeg: moved,
+          startingTag: tags[0] || "",
+          newLocationLabel: vl.roomName || "",
+          newSublocation: subloc,
+          growthDateYmd: moveDateCanonical,
+        });
 
         if (mergeTargetId) {
           const target = s.cultivationBatches.find((b: any) => b?.id === mergeTargetId);
@@ -3638,14 +3831,15 @@ export default function Cultivation() {
           }
 
           target.plants = num(target.plants) + moved;
-          source.plants = remainderAfter;
+          ensurePlantTagRecords(target).push(...plantRecordsForTarget(target.id));
 
-          const srcOutput = `${moved} plants moved to Veg — merged into ${target.id} (${remainderAfter} remain in Clone) | ${layoutTail}`;
+          const tagSpan = `${tags[0]} → ${tags[tags.length - 1]}`;
+          const srcOutput = `${moved} plants moved to Veg — merged into ${target.id} (${remainderAfter} immature plants remain on Clone batch) | Tags ${tagSpan} | ${layoutTail}`;
           s.logs.unshift(
             withLoggedBy({
               area: "Cultivation",
               batch: source.id,
-              task: "Clone → Veg",
+              task: TASK_MOVE_TO_VEG_ASSIGN_TAGS,
               people: lab.peopleStr,
               minutes: lab.minutesStr,
               totalLaborMinutes: lab.totalLaborMinutes,
@@ -3661,6 +3855,10 @@ export default function Cultivation() {
                 mergeIntoBatchId: target.id,
                 plantsMoved: moved,
                 plantsRemainingOnSource: remainderAfter,
+                metrcVegMovePayload: payload,
+                metrcPreparedLocalOnly: true,
+                metrcPlantTags: tags,
+                immaturePlantBatchId: immatureId,
                 ...laborData,
               },
             }),
@@ -3670,10 +3868,10 @@ export default function Cultivation() {
             withLoggedBy({
               area: "Cultivation",
               batch: target.id,
-              task: "Clone → Veg",
+              task: TASK_MOVE_TO_VEG_ASSIGN_TAGS,
               people: "",
               minutes: "",
-              output: `+${moved} plants from Clone batch ${source.id} (partial merge). Total plants: ${num(target.plants)}.`,
+              output: `+${moved} tagged plants from Clone batch ${source.id} (partial merge). Total plants: ${num(target.plants)}.`,
               linkedBatch: source.id,
               time: logEventTimeIso,
               data: {
@@ -3681,6 +3879,7 @@ export default function Cultivation() {
                 partialStageMove: true,
                 mergeFromBatchId: source.id,
                 plantsAdded: moved,
+                metrcPlantTags: tags,
               },
             }),
           );
@@ -3689,8 +3888,13 @@ export default function Cultivation() {
           await saveRealCultivationBatch(source);
           await saveRealCultivationBatch(target);
         } else {
+          const newBatchId = makeBatchId(
+            String(source.acronym || "BATCH"),
+            String(source.cloneDate || moveDateCanonical),
+            getAllBatchLists(),
+          );
           const newBatch: Record<string, unknown> = {
-            id: makeBatchId(String(source.acronym || "BATCH"), String(source.cloneDate || moveDateCanonical), getAllBatchLists()),
+            id: newBatchId,
             strain: source.strain,
             acronym: source.acronym,
             cloneDate: source.cloneDate,
@@ -3706,18 +3910,20 @@ export default function Cultivation() {
             vegRoom: vl.roomName,
             vegBay: vl.bayName,
             vegTables: [...vl.tableNames],
+            vegSublocation: subloc || undefined,
+            plantTagRecords: plantRecordsForTarget(newBatchId),
           };
 
           s.cultivationBatches.unshift(newBatch as any);
           createRealCultivationBatch(newBatch);
-          source.plants = remainderAfter;
 
-          const srcOutput = `${moved} plants moved to Veg (partial; ${remainderAfter} remain in Clone) | New veg batch ${newBatch.id} | ${layoutTail}`;
+          const tagSpan = `${tags[0]} → ${tags[tags.length - 1]}`;
+          const srcOutput = `${moved} plants moved to Veg (partial; ${remainderAfter} immature plants remain on Clone batch) | New veg batch ${newBatch.id} | Tags ${tagSpan} | ${layoutTail}`;
           s.logs.unshift(
             withLoggedBy({
               area: "Cultivation",
               batch: source.id,
-              task: "Clone → Veg",
+              task: TASK_MOVE_TO_VEG_ASSIGN_TAGS,
               people: lab.peopleStr,
               minutes: lab.minutesStr,
               totalLaborMinutes: lab.totalLaborMinutes,
@@ -3733,6 +3939,10 @@ export default function Cultivation() {
                 newBatchId: newBatch.id,
                 plantsMoved: moved,
                 plantsRemainingOnSource: remainderAfter,
+                metrcVegMovePayload: payload,
+                metrcPreparedLocalOnly: true,
+                metrcPlantTags: tags,
+                immaturePlantBatchId: immatureId,
                 ...laborData,
               },
             }),
@@ -3742,10 +3952,10 @@ export default function Cultivation() {
             withLoggedBy({
               area: "Cultivation",
               batch: String(newBatch.id),
-              task: "Clone → Veg",
+              task: TASK_MOVE_TO_VEG_ASSIGN_TAGS,
               people: "",
               minutes: "",
-              output: `Split from Clone batch ${source.id} — ${moved} plants | ${layoutTail}`,
+              output: `Split from Clone batch ${source.id} — ${moved} tagged plants | ${layoutTail}`,
               linkedBatch: source.id,
               time: logEventTimeIso,
               data: {
@@ -3753,6 +3963,7 @@ export default function Cultivation() {
                 partialStageMove: true,
                 splitFromBatchId: source.id,
                 plantsReceived: moved,
+                metrcPlantTags: tags,
               },
             }),
           );
@@ -4759,6 +4970,357 @@ export default function Cultivation() {
     };
   }, [laborTimeMode, taskStartTime, taskEndTime, laborBreakSchedule, people]);
 
+  const vegTagPreview = useMemo(() => {
+    const raw = vegMoveCount.trim();
+    const n = Number(raw);
+    if (raw === "" || !Number.isFinite(n) || n < 1) {
+      return { ok: null, tags: [] as string[], error: "" };
+    }
+    return generateMetrcTagSequence(vegFirstMetrcTag, n);
+  }, [vegFirstMetrcTag, vegMoveCount]);
+
+  async function saveCreateImmaturePlantBatch(lab: {
+    ok: true;
+    peopleStr: string;
+    minutesStr: string;
+    totalLaborMinutes: number;
+    laborDetail: Record<string, unknown>;
+    outputSuffix: string;
+  }) {
+    if (!selectedBatch) return;
+    if (String(selectedBatch.stage || "") !== "Clone") {
+      showNotice("Wrong stage", "Create Immature Plant Batch is only available for Clone-stage batches.");
+      return;
+    }
+    const n = Number(imbCount.trim());
+    if (!imbName.trim() || !imbStrain.trim() || !imbLocation.trim() || !imbPlantDate.trim()) {
+      showNotice("Missing fields", "Batch name, strain, location, and plant date are required.");
+      return;
+    }
+    if (!Number.isFinite(n) || n < 1) {
+      showNotice("Invalid count", "Enter a clone/plant count of at least 1.");
+      return;
+    }
+    if (!Array.isArray(selectedBatch.immaturePlantBatches)) selectedBatch.immaturePlantBatches = [];
+    const now = new Date().toISOString();
+    const id = `IPB-${selectedBatch.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+    selectedBatch.immaturePlantBatches.push({
+      id,
+      cultivationBatchId: selectedBatch.id,
+      name: imbName.trim(),
+      strain: imbStrain.trim(),
+      countOriginal: n,
+      countAvailable: n,
+      location: imbLocation.trim(),
+      sublocation: imbSublocation.trim() || undefined,
+      plantDate: imbPlantDate.trim(),
+      sourceType: imbSourceType.trim() || undefined,
+      notes: imbNotes.trim() || undefined,
+      metrcBatchId: imbMetrcBatchId.trim() || undefined,
+      metrcSyncStatus: imbMetrcSyncStatus,
+      createdAt: now,
+      updatedAt: now,
+    });
+    syncClonePlantsFromImmature(selectedBatch);
+    const detailNote = [
+      `Immature batch "${imbName.trim()}" (${n} plants) — ${imbLocation.trim()}`,
+      imbSublocation.trim() ? `Sub: ${imbSublocation.trim()}` : "",
+      imbSourceType.trim() ? `Source: ${imbSourceType.trim()}` : "",
+      imbMetrcBatchId.trim() ? `METRC immature ID: ${imbMetrcBatchId.trim()}` : "",
+      `METRC sync: ${imbMetrcSyncStatus}`,
+    ]
+      .filter(Boolean)
+      .join(" | ");
+    s.logs.unshift(
+      withLoggedBy({
+        area: "Cultivation",
+        batch: selectedBatch.id,
+        task: TASK_CREATE_IMMATURE_PLANT_BATCH,
+        people: lab.peopleStr,
+        minutes: lab.minutesStr,
+        totalLaborMinutes: lab.totalLaborMinutes,
+        output: `${detailNote}${lab.outputSuffix}`,
+        time: nowIsoForLog(),
+        data: {
+          ...lab.laborDetail,
+          totalLaborMinutes: lab.totalLaborMinutes,
+          immaturePlantBatchId: id,
+        },
+      }),
+    );
+    setImbName("");
+    setImbStrain("");
+    setImbCount("");
+    setImbLocation("");
+    setImbSublocation("");
+    setImbPlantDate("");
+    setImbSourceType("");
+    setImbNotes("");
+    setImbMetrcBatchId("");
+    setImbMetrcSyncStatus("Not Synced");
+    setPeople("");
+    setMinutes("");
+    setLaborTimeMode("range");
+    setTaskLaborDate(getTodayYmdInCompanyTimezone());
+    setTaskStartTime("");
+    setTaskEndTime("");
+    setShowTaskWindow(false);
+    forceRefresh();
+    try {
+      showSyncMessageNotice("Saving immature plant batch…");
+      const synced = await saveRealCultivationBatch(selectedBatch);
+      showSyncMessageNotice(synced ? "Saved to server." : "Saved locally — server sync failed.");
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function commitMoveToVegFlow(
+    lab: {
+      ok: true;
+      peopleStr: string;
+      minutesStr: string;
+      totalLaborMinutes: number;
+      laborDetail: Record<string, unknown>;
+      outputSuffix: string;
+    },
+    tags: string[],
+    imb: any,
+  ) {
+    if (!selectedBatch) return;
+    const batch = selectedBatch;
+    const moved = tags.length;
+    const availBefore = num(imb.countAvailable);
+    const otherAvail = sumImmatureAvailableExcluding(batch.immaturePlantBatches, String(imb.id));
+    const isPartialScenario =
+      moved < availBefore || (moved === availBefore && otherAvail > 0);
+
+    const vl = resolveVegSelectionLabels();
+    const moveDateCanonical = stageMoveDate.trim();
+    const logEventTimeIso = logTimeIsoForStageMoveDate(moveDateCanonical);
+
+    const payload = buildMetrcVegMovePayload({
+      immatureBatchName: String(imb.name || imb.strain || batch.id),
+      countMovingToVeg: moved,
+      startingTag: tags[0] || "",
+      newLocationLabel: vl.roomName || "",
+      newSublocation: vegSublocationDraft.trim(),
+      growthDateYmd: moveDateCanonical,
+    });
+
+    if (isPartialScenario) {
+      pendingPartialSplitRef.current = {
+        lab,
+        sourceBatchId: batch.id,
+        movedPlants: moved,
+        taskKey: TASK_MOVE_TO_VEG_ASSIGN_TAGS,
+        stageMoveDate: moveDateCanonical,
+        vegRoomId,
+        vegBayId,
+        vegTableIds: [...vegTableIds],
+        flowerRoomId,
+        flowerBayId,
+        flowerTableIds: [...flowerTableIds],
+        immaturePlantBatchId: String(imb.id),
+        generatedTags: tags,
+        vegSublocation: vegSublocationDraft.trim(),
+        immatureBatchName: String(imb.name || ""),
+      };
+      const candidates = findPartialStageMergeCandidates(batch.id, "Veg");
+      if (candidates.length > 0) {
+        setPartialSplitChoiceModal({
+          candidates: candidates.map((b: any) => ({
+            id: b.id,
+            plants: num(b.plants),
+            strain: String(b.strain || "—"),
+          })),
+          mergeTargetId: String(candidates[0]?.id || ""),
+        });
+        return;
+      }
+      await applyPartialStageMove(null);
+      return;
+    }
+
+    applyImmatureDecrement(batch, String(imb.id), moved);
+    syncClonePlantsFromImmature(batch);
+
+    const now = new Date().toISOString();
+    const records = tags.map((tag) => ({
+      id:
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `PT-${batch.id}-${tag}-${now}`,
+      cultivationBatchId: batch.id,
+      immaturePlantBatchId: String(imb.id),
+      tag,
+      strain: String(imb.strain || batch.strain || ""),
+      stage: "Veg",
+      location: vl.roomName || "",
+      sublocation: vegSublocationDraft.trim() || undefined,
+      status: "Active",
+      metrcPlantId: undefined,
+      createdAt: now,
+      updatedAt: now,
+    }));
+    ensurePlantTagRecords(batch).push(...records);
+
+    batch.stage = "Veg";
+    batch.plants = records.length;
+    batch.vegRoomId = vegRoomId;
+    batch.vegBayId = vegBayId;
+    batch.vegTableIds = [...vegTableIds];
+    batch.vegRoom = vl.roomName;
+    batch.vegBay = vl.bayName;
+    batch.vegTables = [...vl.tableNames];
+    if (vegSublocationDraft.trim()) batch.vegSublocation = vegSublocationDraft.trim();
+
+    const layoutTail = `Move date: ${moveDateCanonical} | Room: ${vl.roomName || "—"} | Bay: ${vl.bayName || "—"} | Tables: ${
+      vl.tableNames.length ? vl.tableNames.join(", ") : "—"
+    }`;
+
+    const noteSuffix = vegMoveNotes.trim() ? ` Notes: ${vegMoveNotes.trim()}` : "";
+
+    s.logs.unshift(
+      withLoggedBy({
+        area: "Cultivation",
+        batch: batch.id,
+        task: TASK_MOVE_TO_VEG_ASSIGN_TAGS,
+        people: lab.peopleStr,
+        minutes: lab.minutesStr,
+        totalLaborMinutes: lab.totalLaborMinutes,
+        output: `${moved} plants assigned METRC tags (${tags[0]} → ${tags[moved - 1]}) | ${layoutTail}${noteSuffix}${lab.outputSuffix}`,
+        room: vl.roomName || undefined,
+        bay: vl.bayName || undefined,
+        tables: vl.tableNames.length ? [...vl.tableNames] : undefined,
+        time: logEventTimeIso,
+        data: {
+          stageMoveDate: moveDateCanonical,
+          ...lab.laborDetail,
+          totalLaborMinutes: lab.totalLaborMinutes,
+          metrcVegMovePayload: payload,
+          metrcPreparedLocalOnly: true,
+          immaturePlantBatchId: imb.id,
+          metrcPlantTags: tags,
+        },
+      }),
+    );
+
+    setSelectedTask("Set Irrigation Up");
+    setPeople("");
+    setMinutes("");
+    setLaborTimeMode("range");
+    setTaskLaborDate(getTodayYmdInCompanyTimezone());
+    setTaskStartTime("");
+    setTaskEndTime("");
+    setOutput("");
+    setVegMoveCount("");
+    setVegFirstMetrcTag("");
+    setVegSublocationDraft("");
+    setVegMoveNotes("");
+    setVegTagOverlapAck(false);
+    setVegSubmitConfirmAck(false);
+    setCombinePartnerBatchId("");
+    primeTaskModalLocationFields(cultivationRooms);
+    setShowTaskWindow(false);
+    forceRefresh();
+    try {
+      showSyncMessageNotice("Saving veg transition…");
+      const synced = await saveRealCultivationBatch(batch);
+      showSyncMessageNotice(synced ? "Saved to server." : "Saved locally — server sync failed.");
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function saveMoveToVegAssignTags(lab: {
+    ok: true;
+    peopleStr: string;
+    minutesStr: string;
+    totalLaborMinutes: number;
+    laborDetail: Record<string, unknown>;
+    outputSuffix: string;
+  }) {
+    if (!selectedBatch) return;
+
+    if (String(selectedBatch.stage || "") !== "Clone") {
+      showNotice("Wrong stage", "Move to Veg / Assign Plant Tags is only for Clone-stage batches.");
+      return;
+    }
+
+    if (!immatureHasAvailablePlants(selectedBatch)) {
+      showNotice(
+        "Immature batch required",
+        "Create an immature plant batch first (Create Immature Plant Batch task).",
+      );
+      return;
+    }
+
+    const imb = (selectedBatch.immaturePlantBatches || []).find(
+      (x: any) => String(x?.id || "") === vegImmatureBatchId.trim(),
+    );
+    if (!imb) {
+      showNotice("Select immature batch", "Choose which immature plant batch you are drawing plants from.");
+      return;
+    }
+
+    const avail = num(imb.countAvailable);
+    const moved = Number(vegMoveCount.trim());
+
+    if (!(moved >= 1)) {
+      showNotice("Invalid count", "Enter how many plants are moving to Veg (at least 1).");
+      return;
+    }
+    if (moved > avail) {
+      showNotice("Not enough plants", `Only ${avail} immature plants remain on this line.`);
+      return;
+    }
+
+    if (!vegFirstMetrcTag.trim()) {
+      showNotice(
+        "Starting tag required",
+        "Enter the first METRC plant tag (existing tag from METRC inventory).",
+      );
+      return;
+    }
+
+    const seq = generateMetrcTagSequence(vegFirstMetrcTag.trim(), moved);
+    if (!seq.ok) {
+      showNotice("Tag sequence", seq.error);
+      return;
+    }
+
+    if (new Set(seq.tags).size !== seq.tags.length) {
+      showNotice("Duplicate tags", "Generated list contains duplicates — check starting tag and count.");
+      return;
+    }
+
+    const existing = collectExistingPlantTagsFromCultivationBatches(s.cultivationBatches, selectedBatch.id);
+    const overlaps = findOverlappingTags(seq.tags, existing);
+    if (overlaps.length > 0 && !vegTagOverlapAck) {
+      showNotice(
+        "Tags already recorded locally",
+        `These tags exist on another batch in this workspace (showing up to 12): ${overlaps.slice(0, 12).join(", ")}${overlaps.length > 12 ? "…" : ""}. Acknowledge below or correct the starting tag.`,
+      );
+      return;
+    }
+
+    if (!vegSubmitConfirmAck) {
+      showNotice(
+        "Confirmation required",
+        "Check the confirmation box after reviewing first tag, last tag, location, and growth date.",
+      );
+      return;
+    }
+
+    if (cultivationRooms.vegRooms.length > 0 && !vegRoomId) {
+      showNotice("Veg location", "Select a veg room.");
+      return;
+    }
+
+    await commitMoveToVegFlow(lab, seq.tags, imb);
+  }
+
   async function save() {
     if (isSavingTask) return;
     if (!canWriteRecords) {
@@ -4778,8 +5340,22 @@ export default function Cultivation() {
       });
     }
 
-    if (selectedTask === "Clone → Veg") {
-      taskRequiredFields.push({ label: "Plants Moved to Veg", value: output, positive: true });
+    if (selectedTask === TASK_CREATE_IMMATURE_PLANT_BATCH) {
+      taskRequiredFields.push(
+        { label: "Immature batch name", value: imbName.trim() },
+        { label: "Strain", value: imbStrain.trim() },
+        { label: "Clone/plant count", value: imbCount.trim(), positive: true },
+        { label: "Location", value: imbLocation.trim() },
+        { label: "Plant date", value: imbPlantDate.trim() },
+      );
+    }
+
+    if (selectedTask === TASK_MOVE_TO_VEG_ASSIGN_TAGS) {
+      taskRequiredFields.push(
+        { label: "Immature batch", value: vegImmatureBatchId.trim() },
+        { label: "Plants moving to Veg", value: vegMoveCount.trim(), positive: true },
+        { label: "Starting METRC tag", value: vegFirstMetrcTag.trim() },
+      );
       if (cultivationRooms.vegRooms.length > 0) {
         taskRequiredFields.push({ label: "Veg room", value: vegRoomId });
         const vegRoomObj = cultivationRooms.vegRooms.find((r) => r.id === vegRoomId);
@@ -4814,8 +5390,8 @@ export default function Cultivation() {
       }
     }
 
-    if (selectedTask === "Clone → Veg" || selectedTask === "Move to Flower") {
-      taskRequiredFields.push({ label: "Move date", value: stageMoveDate.trim() });
+    if (selectedTask === TASK_MOVE_TO_VEG_ASSIGN_TAGS || selectedTask === "Move to Flower") {
+      taskRequiredFields.push({ label: "Growth / move date", value: stageMoveDate.trim() });
     }
 
     if (!requireFieldsStyled(taskRequiredFields)) {
@@ -4824,7 +5400,7 @@ export default function Cultivation() {
     }
 
     if (
-      (selectedTask === "Clone → Veg" || selectedTask === "Move to Flower") &&
+      (selectedTask === TASK_MOVE_TO_VEG_ASSIGN_TAGS || selectedTask === "Move to Flower") &&
       !/^\d{4}-\d{2}-\d{2}$/.test(stageMoveDate.trim())
     ) {
       showNotice("Move date invalid", "Pick a calendar date for when this batch actually moved.");
@@ -4867,6 +5443,24 @@ export default function Cultivation() {
     if (selectedTask === "Finish batch") {
       try {
         await saveFinishBatch(lab);
+      } finally {
+        setIsSavingTask(false);
+      }
+      return;
+    }
+
+    if (selectedTask === TASK_CREATE_IMMATURE_PLANT_BATCH) {
+      try {
+        await saveCreateImmaturePlantBatch(lab);
+      } finally {
+        setIsSavingTask(false);
+      }
+      return;
+    }
+
+    if (selectedTask === TASK_MOVE_TO_VEG_ASSIGN_TAGS) {
+      try {
+        await saveMoveToVegAssignTags(lab);
       } finally {
         setIsSavingTask(false);
       }
@@ -5007,7 +5601,7 @@ export default function Cultivation() {
       return;
     }
 
-    if (selectedTask === "Clone → Veg" || selectedTask === "Move to Flower") {
+    if (selectedTask === "Move to Flower") {
       const movedPlants = Number(output);
       const currentPlants = num(selectedBatch.plants);
       if (movedPlants > currentPlants) {
@@ -5019,13 +5613,12 @@ export default function Cultivation() {
         return;
       }
       if (movedPlants > 0 && movedPlants < currentPlants) {
-        const targetStage = selectedTask === "Clone → Veg" ? "Veg" : "Flower";
-        const candidates = findPartialStageMergeCandidates(selectedBatch.id, targetStage);
+        const candidates = findPartialStageMergeCandidates(selectedBatch.id, "Flower");
         pendingPartialSplitRef.current = {
           lab,
           sourceBatchId: selectedBatch.id,
           movedPlants,
-          taskKey: selectedTask,
+          taskKey: "Move to Flower",
           stageMoveDate: stageMoveDate.trim(),
           vegRoomId,
           vegBayId,
@@ -5057,19 +5650,11 @@ export default function Cultivation() {
     let logBay: string | undefined;
     let logTables: string[] | undefined;
 
-    const isStageMoveTask = selectedTask === "Clone → Veg" || selectedTask === "Move to Flower";
+    const isStageMoveTask = selectedTask === "Move to Flower";
     const moveDateCanonical = stageMoveDate.trim();
     const logEventTimeIso = isStageMoveTask
       ? logTimeIsoForStageMoveDate(moveDateCanonical)
       : nowIsoForLog();
-
-    if (selectedTask === "Clone → Veg") {
-      const vl = resolveVegSelectionLabels();
-      taskOutput = `${output} plants moved to Veg | Move date: ${moveDateCanonical} | Room: ${vl.roomName || "—"} | Bay: ${vl.bayName || "—"} | Tables: ${vl.tableNames.length ? vl.tableNames.join(", ") : "—"}`;
-      logRoom = vl.roomName || undefined;
-      logBay = vl.bayName || undefined;
-      logTables = vl.tableNames.length ? [...vl.tableNames] : undefined;
-    }
 
     if (selectedTask === "Move to Flower") {
       const fl = resolveFlowerSelectionLabels();
@@ -5149,19 +5734,6 @@ export default function Cultivation() {
       const note = String(output || "").trim();
       selectedBatch.metrcTagsLastLoggedAt = nowIsoForLog();
       if (note) selectedBatch.metrcTagsLastNote = note.slice(0, 4000);
-    }
-
-    if (selectedTask === "Clone → Veg") {
-      selectedBatch.stage = "Veg";
-      selectedBatch.plants = Number(output || selectedBatch.plants || 0);
-      const vl = resolveVegSelectionLabels();
-      selectedBatch.vegRoomId = vegRoomId;
-      selectedBatch.vegBayId = vegBayId;
-      selectedBatch.vegTableIds = [...vegTableIds];
-      selectedBatch.vegRoom = vl.roomName;
-      selectedBatch.vegBay = vl.bayName;
-      selectedBatch.vegTables = [...vl.tableNames];
-      setSelectedTask("Set Irrigation Up");
     }
 
     if (selectedTask === "Move to Flower") {
@@ -6136,8 +6708,8 @@ export default function Cultivation() {
           <div style={{ ...modalStyle, maxWidth: 640 }}>
             <h2 style={{ textAlign: "center", marginTop: 0 }}>Edit clone batch</h2>
             <p style={{ textAlign: "center", color: "#cbd5e1", marginTop: 0 }}>
-              <b>{editCloneModalBatch.id}</b> — update plant count, strain, clone date, and notes (placement is set at
-              Clone → Veg).
+              <b>{editCloneModalBatch.id}</b> — update plant count, strain, clone date, and notes. Veg placement is set
+              when you log <strong>&quot;{TASK_MOVE_TO_VEG_ASSIGN_TAGS}&quot;</strong>.
             </p>
 
             <div style={formStyle}>
@@ -6610,7 +7182,7 @@ export default function Cultivation() {
                 )}
               </div>
 
-              {(selectedTask === "Clone → Veg" || selectedTask === "Move to Flower") && (
+              {(selectedTask === TASK_MOVE_TO_VEG_ASSIGN_TAGS || selectedTask === "Move to Flower") && (
                 <>
                   <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
                     Move date (when plants actually moved stages)
@@ -6964,13 +7536,13 @@ export default function Cultivation() {
                 selectedTask !== "Combine Batches" &&
                 selectedTask !== "Print harvest sheet" &&
                 selectedTask !== "Finish batch" &&
+                selectedTask !== TASK_CREATE_IMMATURE_PLANT_BATCH &&
+                selectedTask !== TASK_MOVE_TO_VEG_ASSIGN_TAGS &&
                 !(selectedBatch?.stage === "Veg" && selectedTask === "Add METRC Tags") && (
                 <input
                   style={inputStyle}
                   placeholder={
-                    selectedTask === "Clone → Veg"
-                      ? "# plants moving now (rest stay Clone until moved)"
-                      : selectedTask === "Move to Flower"
+                    selectedTask === "Move to Flower"
                       ? "# plants moving now (rest stay Veg until moved)"
                       : "Output / notes / result"
                   }
@@ -6980,8 +7552,265 @@ export default function Cultivation() {
                 />
               )}
 
-              {selectedTask === "Clone → Veg" && (
+              {selectedTask === TASK_CREATE_IMMATURE_PLANT_BATCH && (
                 <>
+                  <p style={{ color: "#94a3b8", fontSize: 13, margin: 0, lineHeight: 1.5 }}>
+                    Records a <strong>grouped</strong> immature plant batch linked to this cultivation batch. Individual
+                    METRC plant tags are created only when you run <strong>{TASK_MOVE_TO_VEG_ASSIGN_TAGS}</strong>.
+                  </p>
+                  <input
+                    style={inputStyle}
+                    placeholder="Batch name"
+                    value={imbName}
+                    onChange={(e) => setImbName(e.target.value)}
+                    onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                  />
+                  <input
+                    style={inputStyle}
+                    placeholder="Strain"
+                    value={imbStrain}
+                    onChange={(e) => setImbStrain(e.target.value)}
+                    onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                  />
+                  <input
+                    style={inputStyle}
+                    placeholder="Clone/plant count"
+                    inputMode="numeric"
+                    value={imbCount}
+                    onChange={(e) => setImbCount(e.target.value)}
+                    onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                  />
+                  <input
+                    style={inputStyle}
+                    placeholder="Location"
+                    value={imbLocation}
+                    onChange={(e) => setImbLocation(e.target.value)}
+                    onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                  />
+                  <input
+                    style={inputStyle}
+                    placeholder="Sublocation (optional)"
+                    value={imbSublocation}
+                    onChange={(e) => setImbSublocation(e.target.value)}
+                    onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                  />
+                  <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                    Plant date
+                    <input
+                      style={inputStyle}
+                      type="date"
+                      value={imbPlantDate}
+                      onChange={(e) => setImbPlantDate(e.target.value)}
+                      onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                    Source type (optional)
+                    <select
+                      style={inputStyle}
+                      value={imbSourceType}
+                      onChange={(e) => setImbSourceType(e.target.value)}
+                      onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                    >
+                      <option value="">—</option>
+                      <option value="clone">clone</option>
+                      <option value="seed">seed</option>
+                      <option value="mother">mother</option>
+                      <option value="other">other</option>
+                    </select>
+                  </label>
+                  <textarea
+                    style={{ ...inputStyle, minHeight: 72, resize: "vertical" as const }}
+                    placeholder="Notes (optional)"
+                    value={imbNotes}
+                    onChange={(e) => setImbNotes(e.target.value)}
+                    onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                  />
+                  <input
+                    style={inputStyle}
+                    placeholder="METRC immature batch ID (optional)"
+                    value={imbMetrcBatchId}
+                    onChange={(e) => setImbMetrcBatchId(e.target.value)}
+                    onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                  />
+                  <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                    METRC sync status
+                    <select
+                      style={inputStyle}
+                      value={imbMetrcSyncStatus}
+                      onChange={(e) => setImbMetrcSyncStatus(e.target.value as MetrcImmatureSyncStatus)}
+                      onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                    >
+                      <option value="Not Synced">Not Synced</option>
+                      <option value="Ready to Sync">Ready to Sync</option>
+                      <option value="Synced">Synced</option>
+                      <option value="Failed">Failed</option>
+                    </select>
+                  </label>
+                  <p style={{ color: "#64748b", fontSize: 11, margin: 0, lineHeight: 1.45 }}>
+                    {/* TODO: Fetch Available METRC Plant Tags from compliance API — user-entered IDs only for now. */}
+                  </p>
+                </>
+              )}
+
+              {selectedTask === TASK_MOVE_TO_VEG_ASSIGN_TAGS && (
+                <>
+                  <p style={{ color: "#94a3b8", fontSize: 13, margin: 0, lineHeight: 1.5 }}>
+                    Assign sequential <strong>existing</strong> METRC plant tags (you supply the first tag; the app
+                    previews the range). Growth phase is <strong>Vegetative</strong>.{" "}
+                    {/* TODO: Fetch Available METRC Plant Tags from METRC / compliance service instead of manual entry. */}
+                  </p>
+                  <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                    Immature plant batch
+                    <select
+                      style={inputStyle}
+                      value={vegImmatureBatchId}
+                      onChange={(e) => setVegImmatureBatchId(e.target.value)}
+                      onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                    >
+                      <option value="">Select…</option>
+                      {(selectedBatch?.immaturePlantBatches || [])
+                        .filter((row: any) => num(row?.countAvailable) > 0)
+                        .map((row: any) => (
+                          <option key={row.id} value={row.id}>
+                            {row.name || row.id} — {num(row.countAvailable)} avail · {String(row.strain || "—")}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <input
+                    style={{ ...inputStyle, opacity: 0.85 }}
+                    readOnly
+                    value={`Strain (read-only): ${(() => {
+                      const row = (selectedBatch?.immaturePlantBatches || []).find(
+                        (x: any) => String(x?.id || "") === vegImmatureBatchId,
+                      );
+                      return row ? String(row.strain || "—") : "—";
+                    })()}`}
+                  />
+                  <input
+                    style={{ ...inputStyle, opacity: 0.85 }}
+                    readOnly
+                    value={`Available immature plants (read-only): ${(() => {
+                      const row = (selectedBatch?.immaturePlantBatches || []).find(
+                        (x: any) => String(x?.id || "") === vegImmatureBatchId,
+                      );
+                      return row ? String(num(row.countAvailable)) : "—";
+                    })()}`}
+                  />
+                  <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                    Number of plants moving to Veg
+                    <input
+                      style={inputStyle}
+                      inputMode="numeric"
+                      value={vegMoveCount}
+                      onChange={(e) => setVegMoveCount(e.target.value)}
+                      onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                    Starting METRC plant tag
+                    <input
+                      style={inputStyle}
+                      value={vegFirstMetrcTag}
+                      onChange={(e) => setVegFirstMetrcTag(e.target.value)}
+                      onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                    />
+                  </label>
+                  <input
+                    style={{ ...inputStyle, opacity: 0.85 }}
+                    readOnly
+                    value="Growth phase: Vegetative (locked)"
+                  />
+                  {vegTagPreview.ok === false ? (
+                    <p style={{ color: "#f97316", fontSize: 13, margin: 0 }}>{vegTagPreview.error}</p>
+                  ) : vegTagPreview.ok === true && vegTagPreview.tags.length > 0 ? (
+                    <div
+                      style={{
+                        ...inputStyle,
+                        maxHeight: 160,
+                        overflowY: "auto",
+                        fontSize: 12,
+                        fontFamily: "ui-monospace, monospace",
+                      }}
+                    >
+                      <div style={{ color: "#93c5fd", marginBottom: 8 }}>Tag preview ({vegTagPreview.tags.length})</div>
+                      {vegTagPreview.tags.map((t, i) => (
+                        <div key={`${t}-${i}`}>{t}</div>
+                      ))}
+                    </div>
+                  ) : null}
+                  <input
+                    style={inputStyle}
+                    placeholder="New veg sublocation (optional)"
+                    value={vegSublocationDraft}
+                    onChange={(e) => setVegSublocationDraft(e.target.value)}
+                    onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                  />
+                  <textarea
+                    style={{ ...inputStyle, minHeight: 64, resize: "vertical" as const }}
+                    placeholder="Notes (optional)"
+                    value={vegMoveNotes}
+                    onChange={(e) => setVegMoveNotes(e.target.value)}
+                    onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                  />
+                  {(() => {
+                    const vl = resolveVegSelectionLabels();
+                    const first =
+                      vegTagPreview.ok === true && vegTagPreview.tags.length > 0 ? vegTagPreview.tags[0] : "—";
+                    const last =
+                      vegTagPreview.ok === true && vegTagPreview.tags.length > 0
+                        ? vegTagPreview.tags[vegTagPreview.tags.length - 1]
+                        : "—";
+                    return (
+                      <div
+                        style={{
+                          ...inputStyle,
+                          background: "#0f172a",
+                          borderColor: "#334155",
+                          fontSize: 13,
+                          lineHeight: 1.6,
+                        }}
+                      >
+                        <div style={{ color: "#93c5fd", fontWeight: 700, marginBottom: 8 }}>Submit summary</div>
+                        <div>
+                          <strong>Batch:</strong> {selectedBatch?.id}
+                        </div>
+                        <div>
+                          <strong>Count:</strong> {vegMoveCount.trim() || "—"}
+                        </div>
+                        <div>
+                          <strong>First tag:</strong> {first}
+                        </div>
+                        <div>
+                          <strong>Last tag:</strong> {last}
+                        </div>
+                        <div>
+                          <strong>Location:</strong> {vl.roomName || "—"} / {vl.bayName || "—"}
+                        </div>
+                        <div>
+                          <strong>Growth date:</strong> {stageMoveDate || "—"}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  <label style={{ display: "flex", alignItems: "center", gap: 10, color: "#e2e8f0", fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={vegTagOverlapAck}
+                      onChange={(e) => setVegTagOverlapAck(e.target.checked)}
+                    />
+                    I acknowledge if warned that tags overlap existing local records (correct tags in METRC before
+                    submitting).
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 10, color: "#e2e8f0", fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={vegSubmitConfirmAck}
+                      onChange={(e) => setVegSubmitConfirmAck(e.target.checked)}
+                    />
+                    I confirm first tag, last tag, veg placement, and growth date before submitting.
+                  </label>
                   {cultivationRooms.vegRooms.length === 0 ? (
                     <p style={{ color: "#fbbf24", fontSize: 14, margin: 0, lineHeight: 1.5 }}>
                       No veg rooms are configured yet. An Admin can add them under{" "}
@@ -6990,7 +7819,7 @@ export default function Cultivation() {
                   ) : (
                     <>
                       <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
-                        Veg room
+                        New veg room
                         <select
                           style={inputStyle}
                           value={vegRoomId}
@@ -7869,7 +8698,7 @@ export default function Cultivation() {
             </h2>
             <p style={{ color: "#cbd5e1", marginTop: 0, lineHeight: 1.55, textAlign: "center" }}>
               You already moved plants from this batch into another{" "}
-              {selectedTask === "Clone → Veg" ? (
+              {selectedTask === TASK_MOVE_TO_VEG_ASSIGN_TAGS ? (
                 <strong style={{ color: "#e2e8f0" }}>Veg</strong>
               ) : (
                 <strong style={{ color: "#e2e8f0" }}>Flower</strong>
