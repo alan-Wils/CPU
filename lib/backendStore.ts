@@ -57,7 +57,8 @@ export type ApplyStoreSnapshotOptions = {
 
 /**
  * Merge server dry-flower rows with the previous in-memory list so local workflow fields
- * (buck/trim/decon/testing) are not wiped when `PUT /api/store` is skipped (DATABASE_ONLY).
+ * (buck/trim/decon/testing) win over a stale snapshot. Necessary when `PUT /api/store` is skipped
+ * (DATABASE_ONLY), and also when snapshots lag briefly behind in-session edits after a PUT.
  */
 export function mergeDryFlowerBatchesWithLocalSnapshot(snapRows: unknown[], localRows: unknown[]): unknown[] {
   const byId = new Map<string, any>();
@@ -105,17 +106,13 @@ export function applyStoreSnapshot(snapshot: any, options?: ApplyStoreSnapshotOp
 /** `@cpu/api` exposes `/api/store` (legacy Node backend used `/api/sync`). */
 export async function loadBackendStore(options?: ApplyStoreSnapshotOptions) {
   const snapshot = await apiRequest("/api/store");
-  const prevDry = !shouldWriteCompanyStoreSnapshot()
-    ? [...((store as any).dryFlowerBatches || [])]
-    : null;
+  const prevDry = [...((store as any).dryFlowerBatches || [])];
   applyStoreSnapshot(snapshot, options);
-  if (prevDry) {
-    (store as any).dryFlowerBatches = mergeDryFlowerBatchesWithLocalSnapshot(
-      (store as any).dryFlowerBatches,
-      prevDry,
-    );
-    copyDryFlowerBatchesIntoProduction(store);
-  }
+  (store as any).dryFlowerBatches = mergeDryFlowerBatchesWithLocalSnapshot(
+    (store as any).dryFlowerBatches,
+    prevDry,
+  );
+  copyDryFlowerBatchesIntoProduction(store);
   return snapshot;
 }
 
