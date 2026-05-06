@@ -855,6 +855,7 @@ export default function Cultivation() {
   } as const;
 
   const selectedStageBatches = selectedStage ? activeBatchesByStage[selectedStage] : [];
+  const selectedStageBatchesOldestFirst = [...selectedStageBatches].reverse();
 
   const activeDryFlowerBatches = s.dryFlowerBatches.filter(
     (batch: any) => batch.status !== "Complete"
@@ -2720,6 +2721,11 @@ export default function Cultivation() {
       {selectedStage && (
         <div style={modalOverlayStyle}>
           <div style={modalStyle}>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+              <button style={buttonStyle} onClick={() => setSelectedStage(null)}>
+                Close
+              </button>
+            </div>
             <h2 style={{ textAlign: "center", marginTop: 0 }}>
               {selectedStage} Batches ({selectedStageBatches.length})
             </h2>
@@ -2727,7 +2733,7 @@ export default function Cultivation() {
             {selectedStageBatches.length === 0 ? (
               <p style={{ textAlign: "center", color: "#cbd5e1" }}>No batches in this stage.</p>
             ) : (
-              selectedStageBatches.map((b: any) => (
+              selectedStageBatchesOldestFirst.map((b: any) => (
                 <div
                   key={b.id}
                   style={{
