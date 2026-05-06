@@ -8,7 +8,7 @@ import {
 } from "@cpu/shared";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiRequest, getMe, getSelectedCompanyId } from "@/lib/api";
 import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
 import {
@@ -45,6 +45,8 @@ export default function Nav() {
   const company = getAuthCompany();
   const [portalCompanies, setPortalCompaniesState] = useState<CpuCompany[]>([]);
   const [rewardsProgramEnabled, setRewardsProgramEnabled] = useState(false);
+  /** Bumps after `/auth/me` merges so `getAuthUser()` (e.g. rewards enrollment) re-reads. */
+  const [sessionBump, setSessionBump] = useState(0);
 
   useEffect(() => {
     setPortalCompaniesState(getPortalCompanies());
@@ -81,6 +83,7 @@ export default function Nav() {
         const raw = me as { token?: string; user?: CpuUser };
         if (raw.token)
           mergeAuthSessionToken(raw.token, raw.user);
+        setSessionBump((n) => n + 1);
       }
       catch {
         /* offline / stale */
@@ -111,6 +114,17 @@ export default function Nav() {
   }
 
   const isHomePage = pathname === "/";
+
+  const staffRewardsQuickLink = useMemo(() => {
+    return (
+      isLoggedIn() &&
+      rewardsProgramEnabled &&
+      Boolean(getAuthUser()?.rewardsEnrolled) &&
+      !isElevatedManagerRole(String(getAuthUser()?.role || "")) &&
+      !canNavToPage("page.rewards") &&
+      pathname !== "/rewards"
+    );
+  }, [pathname, rewardsProgramEnabled, sessionBump]);
 
   const navButtonStyle = (active: boolean): React.CSSProperties => ({
     padding: "14px 26px",
@@ -167,20 +181,51 @@ export default function Nav() {
   };
 
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: 16,
-        padding: "18px 24px",
-        background:
-          "linear-gradient(90deg, #020617 0%, #0f172a 50%, #1e293b 100%)",
-        borderRadius: 20,
-        marginBottom: 20,
-        flexWrap: "wrap",
-      }}
-    >
+    <div style={{ marginBottom: 20, width: "100%" }}>
+      {staffRewardsQuickLink && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            marginBottom: 12,
+          }}
+        >
+          <Link
+            href="/rewards"
+            style={{
+              padding: "12px 28px",
+              borderRadius: 14,
+              border: "1px solid rgba(34, 197, 94, 0.55)",
+              background:
+                "linear-gradient(135deg, rgba(6, 78, 59, 0.85), rgba(15, 23, 42, 0.95))",
+              color: "#bbf7d0",
+              fontWeight: 800,
+              fontSize: 15,
+              textDecoration: "none",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              boxShadow: "0 0 20px rgba(34, 197, 94, 0.2)",
+            }}
+          >
+            My rewards — points & progress
+          </Link>
+        </div>
+      )}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 16,
+          padding: "18px 24px",
+          background:
+            "linear-gradient(90deg, #020617 0%, #0f172a 50%, #1e293b 100%)",
+          borderRadius: 20,
+          flexWrap: "wrap",
+        }}
+      >
       {!isHomePage && (
         <div
           style={{
@@ -362,6 +407,7 @@ export default function Nav() {
         >
           Logout
         </button>
+      </div>
       </div>
     </div>
   );

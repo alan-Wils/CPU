@@ -20,6 +20,8 @@ export type PageAccessGateProps =
   | {
       permission: string;
       allowedRoles?: undefined;
+      /** When `permission` is `page.rewards`, also allow enrolled staff without that JWT permission. */
+      allowEnrolledRewardsBypass?: boolean;
       children: React.ReactNode;
     };
 
@@ -102,6 +104,8 @@ export default function PageAccessGate(props: PageAccessGateProps) {
     "allowedRoles" in props && props.allowedRoles ? props.allowedRoles : undefined;
   const permission =
     "permission" in props && props.permission ? props.permission : undefined;
+  const allowEnrolledRewardsBypass =
+    "allowEnrolledRewardsBypass" in props ? props.allowEnrolledRewardsBypass : false;
 
   const pathname = usePathname();
   const router = useRouter();
@@ -136,14 +140,19 @@ export default function PageAccessGate(props: PageAccessGateProps) {
     }
 
     if (permission) {
-      setAllowed(hasPagePermissionAccess(user, permission));
+      const permOk = hasPagePermissionAccess(user, permission);
+      const enrolledRewardsBypass =
+        Boolean(allowEnrolledRewardsBypass) &&
+        permission === "page.rewards" &&
+        Boolean(user?.rewardsEnrolled);
+      setAllowed(permOk || enrolledRewardsBypass);
     } else if (allowedRoles && allowedRoles.length > 0) {
       setAllowed(hasRoleListAccess(role, allowedRoles));
     } else {
       setAllowed(false);
     }
     setChecking(false);
-  }, [hydrated, allowedRoles, permission, pathname, router]);
+  }, [hydrated, allowedRoles, permission, pathname, router, allowEnrolledRewardsBypass]);
 
   if (!hydrated || checking) {
     return (

@@ -10,7 +10,9 @@ import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
 import {
   buildRewardsSnapshot,
   keysForCurrentUser,
+  listRewardEventsForUser,
   type LogLike,
+  type RewardPointEvent,
 } from "@/lib/buildRewardsSnapshot";
 import { getNextRewardProgress } from "@/lib/rewardTierProgress";
 import { hydrateTaskLogsFromApi, loadBackendStore } from "@/lib/backendStore";
@@ -18,7 +20,7 @@ import { hasAppPermission, isElevatedManagerRole } from "@cpu/shared";
 
 export default function RewardsPage() {
   return (
-    <PageAccessGate permission="page.rewards">
+    <PageAccessGate permission="page.rewards" allowEnrolledRewardsBypass>
       <RewardsBody />
     </PageAccessGate>
   );
@@ -35,6 +37,13 @@ function RewardsBody() {
   const [enabled, setEnabled] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [rows, setRows] = useState<{ displayName: string; totalPoints: number }[]>([]);
+  const [selfBreakdown, setSelfBreakdown] = useState<{
+    fastTask: number;
+    potency: number;
+    yieldPts: number;
+    taskChallenge: number;
+  } | null>(null);
+  const [pointEvents, setPointEvents] = useState<RewardPointEvent[]>([]);
   const [facility, setFacility] = useState(0);
   const [windowDays, setWindowDays] = useState(30);
 
@@ -77,7 +86,16 @@ function RewardsBody() {
           username: me?.username,
           email: me?.email ?? null,
         });
+        setPointEvents(
+          listRewardEventsForUser({
+            rewards,
+            logs,
+            userKeys: keys,
+            windowDays: snap.windowDays,
+          }),
+        );
         const self = snap.individuals.find((i) => keys.some((k) => i.key === k));
+        setSelfBreakdown(self ? { ...self.breakdown } : null);
         const pts = self?.totalPoints ?? 0;
         const prog = getNextRewardProgress(pts, rewards.rewardItems);
         if (prog.allComplete) {
@@ -101,11 +119,11 @@ function RewardsBody() {
   }, []);
 
   const gated = useMemo(() => {
-    if (!hasRewardsPerm) return false;
     if (!enabled) return false;
     if (!canSee) return false;
+    if (!hasRewardsPerm && !user?.rewardsEnrolled) return false;
     return true;
-  }, [hasRewardsPerm, enabled, canSee]);
+  }, [hasRewardsPerm, enabled, canSee, user?.rewardsEnrolled]);
 
   if (!ready) {
     return (
@@ -151,6 +169,92 @@ function RewardsBody() {
           {banner}
         </div>
       ) : null}
+
+      <section
+        style={{
+          maxWidth: 720,
+          margin: "0 auto 28px",
+          padding: 18,
+          borderRadius: 16,
+          border: "1px solid rgba(34, 197, 94, 0.35)",
+          background: "rgba(6, 78, 59, 0.12)",
+        }}
+      >
+        <h2 style={{ marginTop: 0, textAlign: "center", fontSize: 18 }}>Your points</h2>
+        {selfBreakdown ? (
+          <>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                gap: 10,
+                marginBottom: 16,
+              }}
+            >
+              <BreakdownChip
+                label="Fast task bonus"
+                value={selfBreakdown.fastTask}
+              />
+              <BreakdownChip
+                label="Task challenge"
+                value={selfBreakdown.taskChallenge}
+              />
+              <BreakdownChip label="Potency (individual)" value={selfBreakdown.potency} />
+              <BreakdownChip label="Yield (individual)" value={selfBreakdown.yieldPts} />
+            </div>
+            <h3
+              style={{
+                fontSize: 15,
+                color: "#94a3b8",
+                fontWeight: 700,
+                marginBottom: 10,
+                textAlign: "center",
+              }}
+            >
+              Where your points came from
+            </h3>
+            {pointEvents.length === 0 ? (
+              <p style={{ color: "#94a3b8", textAlign: "center", margin: 0, fontSize: 14 }}>
+                No itemized log entries in this window yet (facility potency bonuses may still apply at the snapshot
+                level).
+              </p>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {pointEvents.map((ev) => (
+                  <div
+                    key={ev.id}
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      background: "#0f172a",
+                      border: "1px solid #334155",
+                      alignItems: "center",
+                    }}
+                  >
+                    <div style={{ flex: "1 1 200px" }}>
+                      <div style={{ color: "#e2e8f0", fontWeight: 700 }}>{ev.label}</div>
+                      <div style={{ color: "#94a3b8", fontSize: 13 }}>
+                        {ev.detail}
+                        {ev.at ? ` · ${formatRewardEventDate(ev.at)}` : ""}
+                      </div>
+                    </div>
+                    <strong style={{ color: "#86efac" }}>+{Math.round(ev.points * 100) / 100} pts</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <p style={{ color: "#94a3b8", textAlign: "center", margin: 0 }}>
+            No task points matched to your profile in this window yet. Use the same account when logging tasks so points
+            attribute correctly.
+          </p>
+        )}
+      </section>
 
       <section
         style={{
@@ -205,6 +309,40 @@ function RewardsBody() {
       </section>
     </div>
   );
+}
+
+function BreakdownChip(props: { label: string; value: number }) {
+  const v = Math.round(props.value * 100) / 100;
+  return (
+    <div
+      style={{
+        padding: "10px 12px",
+        borderRadius: 10,
+        background: "#0f172a",
+        border: "1px solid #334155",
+        textAlign: "center",
+      }}
+    >
+      <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>{props.label}</div>
+      <div style={{ fontWeight: 800, color: "#93c5fd" }}>{v} pts</div>
+    </div>
+  );
+}
+
+function formatRewardEventDate(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso;
+  try {
+    return new Date(t).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
 }
 
 const shell: CSSProperties = {

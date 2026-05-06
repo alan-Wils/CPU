@@ -179,3 +179,68 @@ export function keysForCurrentUser(user: {
   if (handle) out.push(`u:${handle.toLowerCase()}`);
   return out;
 }
+
+export type RewardPointEvent = {
+  id: string;
+  at: string | null;
+  source: "fast_task" | "task_challenge";
+  label: string;
+  detail: string;
+  points: number;
+};
+
+/** Per-log point sources for the signed-in user within the rewards window (for “where points came from”). */
+export function listRewardEventsForUser(input: {
+  rewards: RewardsSettings;
+  logs: LogLike[];
+  userKeys: string[];
+  windowDays: number;
+}): RewardPointEvent[] {
+  const { rewards, logs, userKeys } = input;
+  const keySet = new Set(userKeys);
+  const start = windowStartMs(input.windowDays);
+  const filtered = logs.filter((l) => logTimeMs(l) >= start);
+  const targets = rewards.scoring.targetMinutesByTask || {};
+  const events: RewardPointEvent[] = [];
+  let n = 0;
+
+  for (const log of filtered) {
+    const k = actorKey(log);
+    if (!k || !keySet.has(k)) continue;
+    const task = String(log.task || "").trim() || "Task";
+
+    const nm = normMinutes(log);
+    if (nm != null) {
+      const tgt = matchesTarget(task, targets);
+      if (tgt != null && nm <= tgt + 1e-6) {
+        events.push({
+          id: `ft-${n++}`,
+          at: log.createdAt ? String(log.createdAt) : null,
+          source: "fast_task",
+          label: "Fast task bonus",
+          detail: task,
+          points: rewards.scoring.fastTaskBonusPoints,
+        });
+      }
+    }
+
+    const tcPts = Number(log.data?.taskChallenge?.pointsEarned);
+    if (Number.isFinite(tcPts) && tcPts > 0) {
+      events.push({
+        id: `tc-${n++}`,
+        at: log.createdAt ? String(log.createdAt) : null,
+        source: "task_challenge",
+        label: "Task challenge",
+        detail: task,
+        points: tcPts,
+      });
+    }
+  }
+
+  events.sort((a, b) => {
+    const ta = a.at ? Date.parse(a.at) : 0;
+    const tb = b.at ? Date.parse(b.at) : 0;
+    return tb - ta;
+  });
+  return events;
+}
