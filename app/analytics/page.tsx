@@ -88,32 +88,50 @@ const STRAIN_COLORS = [
   "#94a3b8",
 ];
 
-type TooltipPayloadItem = {
-  dataKey?: string | number;
-  name?: string;
-  value?: string | number;
+type TooltipSeriesRow = {
+  dataKey: string | number;
+  name: string;
+  value: number;
   color?: string;
-  payload?: Record<string, unknown>;
 };
 
+/** Recharts passes `Payload` items whose `name`/`value` types are wider than plain strings. */
 function StrainMetricTooltip(props: {
   active?: boolean;
-  label?: string;
-  payload?: TooltipPayloadItem[];
+  label?: unknown;
+  payload?: readonly unknown[];
   valueSuffix?: string;
 }) {
   const { active, label, payload, valueSuffix = "" } = props;
   if (!active || !payload?.length) return null;
-  const row = (payload[0]?.payload ?? {}) as Record<string, unknown>;
-  const batchId = row.batchId != null ? String(row.batchId) : "";
-  const entries = payload
-    .map((it) => {
-      const n = finiteNumber(it.value);
-      if (n == null) return null;
-      return { ...it, value: n };
-    })
-    .filter(Boolean) as Array<TooltipPayloadItem & { value: number }>;
+
+  const first = payload[0];
+  const row =
+    first != null && typeof first === "object" && "payload" in first
+      ? ((first as { payload?: unknown }).payload ?? {})
+      : {};
+  const batchId =
+    row != null && typeof row === "object" && !Array.isArray(row) && "batchId" in row
+      ? String((row as Record<string, unknown>).batchId ?? "")
+      : "";
+
+  const entries: TooltipSeriesRow[] = [];
+  for (const raw of payload) {
+    if (raw == null || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const it = raw as Record<string, unknown>;
+    const n = finiteNumber(it.value);
+    if (n == null) continue;
+    entries.push({
+      dataKey: it.dataKey as string | number,
+      name: String(it.name ?? ""),
+      value: n,
+      color: typeof it.color === "string" ? it.color : undefined,
+    });
+  }
   if (entries.length === 0) return null;
+
+  const labelText = label != null && label !== "" ? String(label) : "";
+
   return (
     <div
       style={{
@@ -125,9 +143,7 @@ function StrainMetricTooltip(props: {
         color: "#e2e8f0",
       }}
     >
-      {label != null && label !== "" && (
-        <div style={{ marginBottom: 6, fontWeight: 700 }}>{label}</div>
-      )}
+      {labelText ? <div style={{ marginBottom: 6, fontWeight: 700 }}>{labelText}</div> : null}
       {batchId ? (
         <div style={{ color: "#94a3b8", marginBottom: 8, fontSize: 12, wordBreak: "break-all" }}>
           Batch <span style={{ color: "#e2e8f0" }}>{batchId}</span>
