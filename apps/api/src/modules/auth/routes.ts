@@ -2,7 +2,7 @@ import { Router } from "express";
 import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { authMiddleware } from "../../middleware/auth.js";
-import { acceptInviteSchema, loginSchema, resetRequestSchema, selectCompanySchema } from "../../validation/schemas.js";
+import { acceptInviteSchema, loginSchema, passwordResetConfirmSchema, resetRequestSchema, selectCompanySchema } from "../../validation/schemas.js";
 import { AuthService } from "../../services/authService.js";
 export const authRouter = Router();
 const authService = new AuthService();
@@ -48,4 +48,9 @@ authRouter.post("/password-reset/request", validate({ body: resetRequestSchema }
     const payload = req.body;
     const result = await authService.requestPasswordReset(payload.email);
     res.status(202).json(result);
+}));
+authRouter.post("/password-reset/confirm", validate({ body: passwordResetConfirmSchema }), asyncHandler(async (req, res) => {
+    const payload = req.body;
+    const result = await authService.confirmPasswordReset(payload.token, payload.password);
+    res.json(result);
 }));

@@ -74,6 +74,21 @@ export class AuthRepository extends TenantRepository {
             }
         });
     }
+    async deleteUnusedPasswordResetsForUser(userId) {
+        return this.db.passwordResetToken.deleteMany({
+            where: { userId, usedAt: null },
+        });
+    }
+    async findOpenPasswordResetByTokenHash(tokenHash) {
+        return this.db.passwordResetToken.findFirst({
+            where: {
+                tokenHash,
+                usedAt: null,
+                expiresAt: { gt: new Date() },
+            },
+            include: { user: true },
+        });
+    }
     async findOpenInviteByTokenHash(tokenHash) {
         return this.db.inviteToken.findFirst({
             where: {

@@ -211,7 +211,9 @@ export async function apiRequest<T = any>(
       if (
         !path.startsWith("/login") &&
         !path.startsWith("/accept-invite") &&
-        !path.startsWith("/accept-nexbatch-invite")
+        !path.startsWith("/accept-nexbatch-invite") &&
+        !path.startsWith("/forgot-password") &&
+        !path.startsWith("/password-reset")
       ) {
         clearAuthSession();
         const next = encodeURIComponent(path + (window.location.search || ""));
@@ -254,6 +256,25 @@ export async function acceptNexBatchInvite(payload: {
   password: string;
 }) {
   return apiRequest<LoginResponse>("/api/auth/accept-nexbatch-invite", {
+    method: "POST",
+    auth: false,
+    body: payload,
+  });
+}
+
+export async function requestPasswordResetEmail(email: string) {
+  return apiRequest("/api/auth/password-reset/request", {
+    method: "POST",
+    auth: false,
+    body: { email: email.trim().toLowerCase() },
+  });
+}
+
+export async function confirmPasswordReset(payload: {
+  token: string;
+  password: string;
+}) {
+  return apiRequest("/api/auth/password-reset/confirm", {
     method: "POST",
     auth: false,
     body: payload,

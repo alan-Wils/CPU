@@ -70,6 +70,13 @@ export const selectCompanySchema = z.object({
 export const resetRequestSchema = z.object({
     email: z.string().email()
 });
+export const passwordResetConfirmSchema = z.object({
+    token: z.string().min(16).max(512),
+    password: z.string().min(8).max(128),
+});
+export const adminUserIdParam = z.object({
+    userId: z.string().cuid(),
+});
 export const acceptInviteSchema = z.object({
     token: z.string().min(16).max(256),
     password: z.string().min(8).max(128)

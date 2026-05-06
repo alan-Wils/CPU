@@ -354,6 +354,30 @@ export async function sendHtmlEmail(opts: {
  * Sends invite mail via Resend (HTTPS) when configured, else SMTP when fully configured;
  * otherwise logs the invite URL for operators.
  */
+export async function sendPasswordResetEmail(opts: {
+  to: string;
+  resetUrl: string;
+}): Promise<void> {
+  const subject = "Reset your NexBatch password";
+  const html = `
+      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+        <h2>Password reset</h2>
+        <p>Someone requested a password reset for your account. Use the link below to choose a new password.</p>
+        <p>This link expires in about one hour.</p>
+        <p><a href="${opts.resetUrl}">Reset password</a></p>
+        <p style="font-size: 12px; color: #666;">${escapeHtml(opts.resetUrl)}</p>
+        <p style="font-size: 12px; color: #666;">If you did not request this, you can ignore this email.</p>
+      </div>
+    `;
+
+  await sendHtmlEmail({
+    to: opts.to,
+    subject,
+    html,
+    logContext: opts.resetUrl,
+  });
+}
+
 export async function sendInviteEmail(opts: {
   to: string;
   inviteUrl: string;

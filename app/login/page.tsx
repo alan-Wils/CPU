@@ -276,6 +276,15 @@ export default function LoginPage() {
           </div>
         </label>
 
+        <div style={{ marginBottom: 14, textAlign: "right" }}>
+          <a
+            href="/forgot-password"
+            style={{ color: "#38bdf8", fontWeight: 800, fontSize: 14, textDecoration: "none" }}
+          >
+            Forgot password?
+          </a>
+        </div>
+
         {capsLockOn && (
           <div
             style={{

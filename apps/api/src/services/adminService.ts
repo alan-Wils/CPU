@@ -6,6 +6,7 @@ import { mergeCashLogEodPrefs } from "../lib/cashLogEodPrefs.js";
 import { AdminRepository } from "../repositories/adminRepository.js";
 import { mayAdminEnableOwnerDigestEmails } from "./adminDigestPolicy.js";
 import { AuditService } from "./auditService.js";
+import { AuthService } from "./authService.js";
 export class AdminService {
     repo = new AdminRepository();
     auditService = new AuditService();
@@ -238,6 +239,35 @@ export class AdminService {
             cashLogEodEnabled,
             rewardsEnrolled: Boolean(membershipAfter?.rewardsEnrolled),
         };
+    }
+    async sendUserPasswordResetEmail(input: {
+        companyId: string;
+        actorUserId: string;
+        actorRole: string;
+        targetUserId: string;
+    }) {
+        const target = await this.repo.findUserById(input.companyId, input.targetUserId);
+        if (!target)
+            throw new AppError("Target user not found", 404);
+        if (target.role === "OWNER" && input.actorRole !== "OWNER") {
+            throw new AppError("Only an owner can send a password reset for the owner account", 403);
+        }
+        const email = String(target.email || "").trim().toLowerCase();
+        if (!email)
+            throw new AppError("This user has no email address on file", 400);
+        if (!target.isActive)
+            throw new AppError("Cannot send a password reset for an inactive account", 400);
+        const authService = new AuthService();
+        const out = await authService.issuePasswordResetEmail(email);
+        await this.auditService.logAction({
+            companyId: input.companyId,
+            actorUserId: input.actorUserId,
+            action: "admin.user.password_reset_email",
+            entityType: "User",
+            entityId: input.targetUserId,
+            after: { emailed: out.emailed },
+        });
+        return { ok: true, emailed: out.emailed, resetUrl: out.resetUrl };
     }
     async deleteUser(input) {
         if (input.targetUserId === input.actorUserId) {

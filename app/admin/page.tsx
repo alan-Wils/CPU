@@ -413,6 +413,7 @@ export default function AdminPage() {
   const [editCashLogEodEnabled, setEditCashLogEodEnabled] = useState(false);
   const [editRewardsEnrolled, setEditRewardsEnrolled] = useState(false);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
+  const [sendingResetUserId, setSendingResetUserId] = useState<string | null>(null);
   const [savingInviteId, setSavingInviteId] = useState<string | null>(null);
 
   const checkImageInputRef = useRef<HTMLInputElement | null>(null);
@@ -1639,6 +1640,60 @@ export default function AdminPage() {
       setError(err?.message || "Could not update user.");
     } finally {
       setSavingUserId(null);
+    }
+  }
+
+  async function sendPasswordResetForEditingUser() {
+    setError("");
+    setSuccess("");
+    if (!editingTargetUser) return;
+    if (!canManageUsers(currentUser?.role || "")) {
+      setError("Only OWNER or ADMIN users can send password resets.");
+      return;
+    }
+    if (!canEditTargetUser(currentUser?.role || "", editingTargetUser.role)) {
+      setError("You do not have permission to reset this user.");
+      return;
+    }
+    const savedEmail = String(editingTargetUser.email || "").trim();
+    const dirtyEmail = String(editEmail || "").trim() !== savedEmail;
+    if (dirtyEmail) {
+      setError(
+        "Save or revert email changes first. The reset email goes to the address already saved for this employee.",
+      );
+      return;
+    }
+    if (!savedEmail) {
+      setError("Add an email address for this user and save before sending a reset.");
+      return;
+    }
+    if (!editingTargetUser.active) {
+      setError("Cannot send a reset while this account is inactive.");
+      return;
+    }
+    setSendingResetUserId(editingTargetUser.id);
+    try {
+      const cid = checksCompanyId();
+      const data = await apiRequest<{ ok?: boolean; emailed?: boolean; resetUrl?: string }>(
+        withCompanyQuery(
+          `/api/admin/users/${encodeURIComponent(editingTargetUser.id)}/password-reset-email`,
+          cid,
+        ),
+        { method: "POST" },
+      );
+      if (data.emailed) {
+        setSuccess(`Password reset email sent to ${savedEmail}.`);
+      } else if (data.resetUrl) {
+        setSuccess(
+          `Email delivery failed (check API mail settings). Share this one-time link with the employee — it expires in about an hour: ${data.resetUrl}`,
+        );
+      } else {
+        setError("Could not issue a password reset.");
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not send password reset.");
+    } finally {
+      setSendingResetUserId(null);
     }
   }
 
@@ -4204,6 +4259,39 @@ export default function AdminPage() {
 
                 <div
                   style={{
+                    marginBottom: 18,
+                    borderRadius: 14,
+                    border: "1px solid rgba(148, 163, 184, 0.22)",
+                    background: "rgba(2, 6, 23, 0.42)",
+                    padding: 14,
+                  }}
+                >
+                  <div style={{ color: "#e2e8f0", fontWeight: 900, marginBottom: 8 }}>Password recovery</div>
+                  <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.45, margin: "0 0 12px" }}>
+                    Sends a one-time link to the <strong>saved email</strong> on file for this employee (not unsaved edits
+                    in this form).
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void sendPasswordResetForEditingUser()}
+                    disabled={
+                      savingUserId === editingTargetUser.id ||
+                      sendingResetUserId === editingTargetUser.id ||
+                      !canEditTargetUser(currentUser?.role || "", editingTargetUser.role)
+                    }
+                    style={{
+                      ...smallButtonStyle,
+                      background: "rgba(56, 189, 248, 0.18)",
+                      border: "1px solid rgba(56, 189, 248, 0.45)",
+                      color: "#e0f2fe",
+                    }}
+                  >
+                    {sendingResetUserId === editingTargetUser.id ? "Sending…" : "Send password reset email"}
+                  </button>
+                </div>
+
+                <div
+                  style={{
                     background: "rgba(2, 6, 23, 0.72)",
                     border: "1px solid rgba(148, 163, 184, 0.16)",
                     borderRadius: 14,
@@ -4221,7 +4309,7 @@ export default function AdminPage() {
                   <button
                     type="button"
                     onClick={cancelEditUser}
-                    disabled={savingUserId === editingTargetUser.id}
+                    disabled={savingUserId === editingTargetUser.id || sendingResetUserId === editingTargetUser.id}
                     style={{
                       ...smallButtonStyle,
                       background: "rgba(71, 85, 105, 0.32)",
@@ -4235,7 +4323,9 @@ export default function AdminPage() {
                   <button
                     type="button"
                     onClick={() => saveEditedUser(editingTargetUser)}
-                    disabled={savingUserId === editingTargetUser.id}
+                    disabled={
+                      savingUserId === editingTargetUser.id || sendingResetUserId === editingTargetUser.id
+                    }
                     style={{
                       ...smallButtonStyle,
                       background: "#22c55e",

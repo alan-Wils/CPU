@@ -2,7 +2,7 @@ import { Router } from "express";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
-import { adminUserStatusSchema, adminUserUpdateSchema, inviteCreateSchema, inviteIdParam } from "../../validation/schemas.js";
+import { adminUserIdParam, adminUserStatusSchema, adminUserUpdateSchema, inviteCreateSchema, inviteIdParam } from "../../validation/schemas.js";
 import { AdminService } from "../../services/adminService.js";
 import { requireRole } from "../../middleware/rbac.js";
 export const adminRouter = Router();
@@ -43,6 +43,15 @@ adminRouter.delete("/users/:userId", requireRole(["OWNER", "ADMIN"]), asyncHandl
         actorUserId: req.auth.userId,
         actorRole: req.auth.role,
         targetUserId: String(req.params.userId)
+    });
+    res.json(out);
+}));
+adminRouter.post("/users/:userId/password-reset-email", requireRole(["OWNER", "ADMIN"]), validate({ params: adminUserIdParam }), asyncHandler(async (req, res) => {
+    const out = await adminService.sendUserPasswordResetEmail({
+        companyId: getScopedCompanyId(req),
+        actorUserId: req.auth.userId,
+        actorRole: req.auth.role,
+        targetUserId: String(req.params.userId),
     });
     res.json(out);
 }));

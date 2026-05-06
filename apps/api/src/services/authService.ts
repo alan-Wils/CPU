@@ -5,6 +5,8 @@ import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type { Company, User } from "@prisma/client";
 import { env } from "../config/env.js";
+import { resolvePublicWebBaseUrl } from "../config/publicWebUrl.js";
+import { sendPasswordResetEmail } from "../lib/mailer.js";
 import { AppError } from "../errors/AppError.js";
 import { AuthRepository } from "../repositories/authRepository.js";
 import {
@@ -341,15 +343,72 @@ export class AuthService {
         };
     }
 
+    /**
+     * Public “forgot password” — always returns `{ ok: true }` when email is syntactically valid (privacy).
+     */
     async requestPasswordReset(email: string) {
+        const clean = String(email || "").trim().toLowerCase();
+        if (!clean) return { ok: true };
+        await this.issuePasswordResetEmail(clean, { omitIfMissing: true });
+        return { ok: true };
+    }
+
+    /**
+     * Sends reset email when user exists and is active. Used by admin and may return `resetUrl` if mail transport fails (operator fallback).
+     */
+    async issuePasswordResetEmail(
+        email: string,
+        opts: { omitIfMissing?: boolean } = {},
+    ): Promise<{ emailed: boolean; resetUrl?: string }> {
         const user = await this.repo.findUserByEmail(email);
         if (!user) {
-            return { ok: true };
+            if (opts.omitIfMissing) return { emailed: false };
+            throw new AppError("No account found for that email", 404);
         }
+        if (!user.isActive) {
+            if (opts.omitIfMissing) return { emailed: false };
+            throw new AppError("This account is inactive", 400);
+        }
+        await this.repo.deleteUnusedPasswordResetsForUser(user.id);
         const rawToken = crypto.randomBytes(32).toString("hex");
         const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
-        const expiresAt = new Date(Date.now() + 1000 * 60 * 30);
+        const expiresAt = new Date(Date.now() + 1000 * 60 * 60);
         await this.repo.createPasswordResetToken(user.id, tokenHash, expiresAt);
+        const baseUrl = resolvePublicWebBaseUrl();
+        const resetUrl = `${baseUrl}/password-reset?token=${encodeURIComponent(rawToken)}`;
+        try {
+            await sendPasswordResetEmail({ to: user.email, resetUrl });
+            return { emailed: true, resetUrl };
+        } catch (err) {
+            console.error("[auth] Password reset email failed:", err);
+            return { emailed: false, resetUrl };
+        }
+    }
+
+    async confirmPasswordReset(token: string, password: string) {
+        const t = String(token || "").trim();
+        if (t.length < 16) {
+            throw new AppError("Invalid reset link", 400);
+        }
+        if (String(password || "").length < 8) {
+            throw new AppError("Password must be at least 8 characters", 400);
+        }
+        const tokenHash = crypto.createHash("sha256").update(t).digest("hex");
+        const row = await this.repo.findOpenPasswordResetByTokenHash(tokenHash);
+        if (!row?.user) {
+            throw new AppError("This reset link is invalid or has expired", 400);
+        }
+        const passwordHash = await bcrypt.hash(password, 12);
+        await this.repo.db.$transaction(async (tx) => {
+            await tx.user.update({
+                where: { id: row.userId },
+                data: { passwordHash },
+            });
+            await tx.passwordResetToken.update({
+                where: { id: row.id },
+                data: { usedAt: new Date() },
+            });
+        });
         return { ok: true };
     }
     async acceptInvite(input: { token: string; password: string }) {
