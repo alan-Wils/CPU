@@ -7,6 +7,8 @@ export const ALL_APP_PERMISSION_IDS = [
   "page.extraction",
   "page.packaging",
   "page.data-hub",
+  "page.analytics",
+  "page.rewards",
   "workflow.delete",
 ] as const;
 
@@ -17,6 +19,8 @@ export const APP_PERMISSION_LABELS: Record<AdminUiPermissionId, string> = {
   "page.extraction": "Extraction",
   "page.packaging": "Packaging",
   "page.data-hub": "Data Hub",
+  "page.analytics": "Analytics",
+  "page.rewards": "Rewards",
   "workflow.delete": "Delete workflow records (batches, runs, lots, source packages)",
 };
 
@@ -25,6 +29,8 @@ const PAGE_SET_ALL: AdminUiPermissionId[] = [
   "page.extraction",
   "page.packaging",
   "page.data-hub",
+  "page.analytics",
+  "page.rewards",
 ];
 
 export function defaultPagePermissionsForRole(role: string): AdminUiPermissionId[] {

@@ -44,8 +44,11 @@ import {
 import {
   computeAllocatedDryCanopySqFt,
   computeDryYieldGPerSqFt,
+  isElevatedManagerRole,
   sumTableSquareFeetFromIds,
 } from "@cpu/shared";
+import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
+import { computeAverageNormalizedMinutes, scoreChallengeByLoggedMinutes } from "@/lib/taskChallengeMath";
 import {
   type LaborBreakWindow,
   computeLaborRangeDeduction,
@@ -800,6 +803,8 @@ export default function Cultivation() {
 
   const [showCreateBatch, setShowCreateBatch] = useState(false);
   const [showTaskWindow, setShowTaskWindow] = useState(false);
+  const [rewardsCfg, setRewardsCfg] = useState<ReturnType<typeof extractRewardsFromCompanyConfig> | null>(null);
+  const [showRewardsChallengeModal, setShowRewardsChallengeModal] = useState(false);
   const [showDryTaskWindow, setShowDryTaskWindow] = useState(false);
   const [showAddTaskWindow, setShowAddTaskWindow] = useState(false);
   const [selectedStage, setSelectedStage] = useState<StageModalKey>(null);
@@ -1003,12 +1008,14 @@ export default function Cultivation() {
           )
         );
         setCultivationRooms(rooms);
+        setRewardsCfg(extractRewardsFromCompanyConfig(data));
       } catch (error) {
         console.error("Could not load company cultivation config:", error);
 
         if (mounted) {
           setConfigStrains([]);
           setCultivationRooms(emptyCultivationRooms);
+          setRewardsCfg(null);
         }
       }
     }
@@ -2989,6 +2996,19 @@ export default function Cultivation() {
     }
   }
 
+  useEffect(() => {
+    if (!showTaskWindow || !rewardsCfg?.enabled || !rewardsCfg.taskChallenge.enabled) {
+      setShowRewardsChallengeModal(false);
+      return;
+    }
+    const u = getAuthUser();
+    if (!u || (!u.rewardsEnrolled && !isElevatedManagerRole(String(u.role || "")))) {
+      setShowRewardsChallengeModal(false);
+      return;
+    }
+    setShowRewardsChallengeModal(true);
+  }, [showTaskWindow, rewardsCfg, selectedTask]);
+
   function openTaskWindowForBatch(batch: any) {
     if (!batch) return;
     moveDateBypassRef.current = null;
@@ -4518,6 +4538,35 @@ export default function Cultivation() {
       logTables = fl.tableNames.length ? [...fl.tableNames] : undefined;
     }
 
+    let challengeExtra: Record<string, unknown> = {};
+    if (rewardsCfg?.enabled && rewardsCfg.taskChallenge.enabled && lab.ok) {
+      const u = getAuthUser();
+      if (u && (u.rewardsEnrolled || isElevatedManagerRole(String(u.role || "")))) {
+        const { avg, sampleCount } = computeAverageNormalizedMinutes(s.logs as any[], "Cultivation", selectedTask, {
+          includeAreaInTaskKey: rewardsCfg.taskChallenge.includeAreaInTaskKey,
+          lookbackDays: rewardsCfg.primaryWindowDays * 3,
+        });
+        const minSamples = rewardsCfg.taskChallenge.minSamplesForAverage;
+        const effectiveAvg = sampleCount >= minSamples ? avg : null;
+        const tier = scoreChallengeByLoggedMinutes(
+          effectiveAvg,
+          lab.netMinutesPerPerson,
+          rewardsCfg.taskChallenge.tiers,
+          45,
+        );
+        if (tier) {
+          challengeExtra = {
+            taskChallenge: {
+              pointsEarned: tier.points,
+              tierLabel: tier.label,
+              tierIndex: tier.tierIndex,
+              targetMinutes: tier.targetMinutes,
+            },
+          };
+        }
+      }
+    }
+
     s.logs.unshift(
       withLoggedBy({
         area: "Cultivation",
@@ -4535,6 +4584,7 @@ export default function Cultivation() {
           ...(isStageMoveTask ? { stageMoveDate: moveDateCanonical } : {}),
           ...lab.laborDetail,
           totalLaborMinutes: lab.totalLaborMinutes,
+          ...challengeExtra,
         },
       }),
     )
@@ -5884,6 +5934,64 @@ export default function Cultivation() {
           </div>
         </div>
       )}
+
+      {showRewardsChallengeModal &&
+        showTaskWindow &&
+        selectedBatch &&
+        rewardsCfg?.enabled &&
+        rewardsCfg.taskChallenge.enabled && (
+          <div style={{ ...modalOverlayStyle, zIndex: 10000 }}>
+            <div style={{ ...modalStyle, maxWidth: 480 }}>
+              <h3 style={{ marginTop: 0, textAlign: "center" }}>Task challenge</h3>
+              <p style={{ color: "#cbd5e1", textAlign: "center", fontSize: 14 }}>
+                Task: <b>{selectedTask}</b>
+              </p>
+              {(() => {
+                const tc = rewardsCfg.taskChallenge;
+                const { avg, sampleCount } = computeAverageNormalizedMinutes(
+                  s.logs as any[],
+                  "Cultivation",
+                  selectedTask,
+                  {
+                    includeAreaInTaskKey: tc.includeAreaInTaskKey,
+                    lookbackDays: rewardsCfg.primaryWindowDays * 3,
+                  },
+                );
+                const base = sampleCount >= tc.minSamplesForAverage && avg != null ? avg : null;
+                const fallback = 45;
+                return (
+                  <>
+                    <p style={{ color: "#94a3b8", fontSize: 13, lineHeight: 1.5 }}>
+                      {base != null
+                        ? `Facility avg (normalized min/person) for this task: ${base.toFixed(1)} min (${sampleCount} samples).`
+                        : `Not enough history yet — targets use a ${fallback} min placeholder until averages stabilize.`}
+                    </p>
+                    <ul style={{ color: "#e2e8f0", paddingLeft: 18 }}>
+                      {tc.tiers.map((tier: { label: string; multiplierVsAvg: number; points: number }, i: number) => {
+                        const target = (base ?? fallback) * tier.multiplierVsAvg;
+                        return (
+                          <li key={i} style={{ marginBottom: 8 }}>
+                            <b>{tier.label}</b>: finish within <b>{target.toFixed(1)} min</b> per person →{" "}
+                            <b>{tier.points} pts</b>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </>
+                );
+              })()}
+              <div style={{ ...modalButtonRowStyle, justifyContent: "center" }}>
+                <button
+                  type="button"
+                  style={primaryButtonStyle}
+                  onClick={() => setShowRewardsChallengeModal(false)}
+                >
+                  Got it
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       {showTaskWindow && selectedBatch && (
         <div style={modalOverlayStyle}>

@@ -9,6 +9,8 @@ export type CpuUser = {
   platformRole?: string | null;
   companyId?: string;
   companyCode?: string;
+  /** Company membership: enrolled in staff rewards (when returned by API). */
+  rewardsEnrolled?: boolean;
 };
 
 export type CpuCompany = {

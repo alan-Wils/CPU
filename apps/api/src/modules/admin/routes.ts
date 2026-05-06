@@ -33,6 +33,7 @@ adminRouter.patch("/users/:userId", requireRole(["OWNER", "ADMIN"]), validate({ 
         isActive: payload.isActive,
         appPermissions: payload.appPermissions,
         cashLogEodEnabled: payload.cashLogEodEnabled,
+        rewardsEnrolled: payload.rewardsEnrolled,
     });
     res.json(updated);
 }));

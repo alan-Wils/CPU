@@ -1,0 +1,215 @@
+"use client";
+
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import Nav from "@/components/Nav";
+import PageAccessGate from "@/components/PageAccessGate";
+import { apiRequest, getSelectedCompanyId } from "@/lib/api";
+import { getAuthUser } from "@/lib/auth";
+import { store } from "@/lib/store";
+import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
+import {
+  buildRewardsSnapshot,
+  keysForCurrentUser,
+  type LogLike,
+} from "@/lib/buildRewardsSnapshot";
+import { getNextRewardProgress } from "@/lib/rewardTierProgress";
+import { hydrateTaskLogsFromApi, loadBackendStore } from "@/lib/backendStore";
+import { hasAppPermission, isElevatedManagerRole } from "@cpu/shared";
+
+export default function RewardsPage() {
+  return (
+    <PageAccessGate permission="page.rewards">
+      <RewardsBody />
+    </PageAccessGate>
+  );
+}
+
+function RewardsBody() {
+  const user = getAuthUser();
+  const canSee =
+    Boolean(user?.rewardsEnrolled) || isElevatedManagerRole(String(user?.role || ""));
+  const perms = user?.permissions ?? [];
+  const hasRewardsPerm = hasAppPermission(perms, "page.rewards");
+
+  const [ready, setReady] = useState(false);
+  const [enabled, setEnabled] = useState(false);
+  const [banner, setBanner] = useState<string | null>(null);
+  const [rows, setRows] = useState<{ displayName: string; totalPoints: number }[]>([]);
+  const [facility, setFacility] = useState(0);
+  const [windowDays, setWindowDays] = useState(30);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        await loadBackendStore({ omitCultivation: true });
+        await hydrateTaskLogsFromApi();
+        const cfg = await apiRequest<unknown>("/api/config", {
+          companyId: getSelectedCompanyId().trim() || undefined,
+        });
+        const rewards = extractRewardsFromCompanyConfig(cfg);
+        if (cancelled) return;
+        setEnabled(rewards.enabled);
+        if (!rewards.enabled) {
+          setReady(true);
+          return;
+        }
+
+        const logs = ((store as { logs?: unknown }).logs || []) as LogLike[];
+        const dryFlowerBatches = (store as { dryFlowerBatches?: unknown[] }).dryFlowerBatches || [];
+        const snap = buildRewardsSnapshot({
+          rewards,
+          logs,
+          dryFlowerBatches,
+        });
+        setRows(
+          snap.individuals.map((i) => ({
+            displayName: i.displayName,
+            totalPoints: i.totalPoints,
+          })),
+        );
+        setFacility(snap.facilityTotalPoints);
+        setWindowDays(snap.windowDays);
+
+        const me = getAuthUser();
+        const keys = keysForCurrentUser({
+          id: me?.id,
+          username: me?.username,
+          email: me?.email ?? null,
+        });
+        const self = snap.individuals.find((i) => keys.some((k) => i.key === k));
+        const pts = self?.totalPoints ?? 0;
+        const prog = getNextRewardProgress(pts, rewards.rewardItems);
+        if (prog.allComplete) {
+          setBanner("You have reached all configured reward levels.");
+        } else if (prog.nextItem && prog.pointsAway != null) {
+          setBanner(
+            `You are ${prog.pointsAway} points away from earning ${prog.nextItem.label}.`,
+          );
+        } else {
+          setBanner(null);
+        }
+        setReady(true);
+      } catch (e) {
+        console.error(e);
+        if (!cancelled) setReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const gated = useMemo(() => {
+    if (!hasRewardsPerm) return false;
+    if (!enabled) return false;
+    if (!canSee) return false;
+    return true;
+  }, [hasRewardsPerm, enabled, canSee]);
+
+  if (!ready) {
+    return (
+      <div style={shell}>
+        <Nav />
+        <p style={{ color: "#94a3b8", textAlign: "center" }}>Loading…</p>
+      </div>
+    );
+  }
+
+  if (!gated) {
+    return (
+      <div style={shell}>
+        <Nav />
+        <p style={{ color: "#94a3b8", textAlign: "center", marginTop: 40 }}>
+          Rewards are not available for your account or are disabled in Company Config.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={shell}>
+      <Nav />
+      <h1 style={{ textAlign: "center", marginBottom: 8 }}>Rewards</h1>
+      <p style={{ textAlign: "center", color: "#94a3b8", marginBottom: 24 }}>
+        Rolling window: last {windowDays} days. Points are indicative (from logs and batch data).
+      </p>
+      {banner ? (
+        <div
+          style={{
+            maxWidth: 640,
+            margin: "0 auto 24px",
+            padding: 16,
+            borderRadius: 14,
+            border: "1px solid rgba(34, 197, 94, 0.45)",
+            background: "rgba(6, 78, 59, 0.35)",
+            color: "#e2e8f0",
+            textAlign: "center",
+            fontWeight: 700,
+          }}
+        >
+          {banner}
+        </div>
+      ) : null}
+
+      <section
+        style={{
+          maxWidth: 720,
+          margin: "0 auto 28px",
+          padding: 18,
+          borderRadius: 16,
+          border: "1px solid #334155",
+          background: "rgba(15, 23, 42, 0.85)",
+        }}
+      >
+        <h2 style={{ marginTop: 0, textAlign: "center", fontSize: 18 }}>Facility snapshot</h2>
+        <p style={{ textAlign: "center", color: "#cbd5e1", marginBottom: 0 }}>
+          Total points (including facility potency bonuses):{" "}
+          <strong style={{ color: "#86efac" }}>{Math.round(facility * 100) / 100}</strong>
+        </p>
+      </section>
+
+      <section
+        style={{
+          maxWidth: 720,
+          margin: "0 auto",
+          padding: 18,
+          borderRadius: 16,
+          border: "1px solid #334155",
+          background: "rgba(15, 23, 42, 0.85)",
+        }}
+      >
+        <h2 style={{ marginTop: 0, textAlign: "center", fontSize: 18 }}>Individual totals</h2>
+        {rows.length === 0 ? (
+          <p style={{ color: "#94a3b8", textAlign: "center" }}>No attributed task points in this window yet.</p>
+        ) : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {rows.map((r, i) => (
+              <div
+                key={`${r.displayName}-${i}`}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  background: "#0f172a",
+                  border: "1px solid #334155",
+                }}
+              >
+                <span>{r.displayName}</span>
+                <strong style={{ color: "#93c5fd" }}>{Math.round(r.totalPoints * 100) / 100} pts</strong>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+const shell: CSSProperties = {
+  minHeight: "100vh",
+  background: "radial-gradient(circle at top, #1e293b 0, #020617 45%, #020617 100%)",
+  color: "white",
+  padding: 20,
+};

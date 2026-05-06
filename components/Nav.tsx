@@ -3,12 +3,14 @@
 import {
   defaultPagePermissionsForRole,
   hasAppPermission,
+  isElevatedManagerRole,
   isOwnerOrAdminRole,
 } from "@cpu/shared";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getMe } from "@/lib/api";
+import { apiRequest, getMe, getSelectedCompanyId } from "@/lib/api";
+import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
 import {
   clearAuthSession,
   getAuthCompany,
@@ -42,9 +44,29 @@ export default function Nav() {
   const user = getAuthUser();
   const company = getAuthCompany();
   const [portalCompanies, setPortalCompaniesState] = useState<CpuCompany[]>([]);
+  const [rewardsProgramEnabled, setRewardsProgramEnabled] = useState(false);
 
   useEffect(() => {
     setPortalCompaniesState(getPortalCompanies());
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!isLoggedIn()) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiRequest<unknown>("/api/config", {
+          companyId: getSelectedCompanyId().trim() || undefined,
+        });
+        if (cancelled) return;
+        setRewardsProgramEnabled(extractRewardsFromCompanyConfig(data).enabled);
+      } catch {
+        if (!cancelled) setRewardsProgramEnabled(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [pathname]);
 
   useEffect(() => {
@@ -218,6 +240,15 @@ export default function Nav() {
               Analytics
             </Link>
           )}
+
+          {canNavToPage("page.rewards") &&
+            rewardsProgramEnabled &&
+            (Boolean(getAuthUser()?.rewardsEnrolled) ||
+              isElevatedManagerRole(String(getAuthUser()?.role || ""))) && (
+              <Link href="/rewards" style={navButtonStyle(pathname === "/rewards")}>
+                Rewards
+              </Link>
+            )}
         </div>
       )}
 

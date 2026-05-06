@@ -41,6 +41,8 @@ type AdminUser = {
   appPermissions?: string[] | null;
   /** Per-employee EOD financial digest recipient toggle (default false). */
   cashLogEodEnabled?: boolean;
+  /** Staff rewards enrollment for this company membership. */
+  rewardsEnrolled?: boolean;
 };
 
 type CompanyItem = {
@@ -409,6 +411,7 @@ export default function AdminPage() {
   const [editActive, setEditActive] = useState(true);
   const [editAppPermissions, setEditAppPermissions] = useState<string[]>([]);
   const [editCashLogEodEnabled, setEditCashLogEodEnabled] = useState(false);
+  const [editRewardsEnrolled, setEditRewardsEnrolled] = useState(false);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [savingInviteId, setSavingInviteId] = useState<string | null>(null);
 
@@ -1534,6 +1537,7 @@ export default function AdminPage() {
     setEditCashLogEodEnabled(
       normalizePlatformRole(user.role) === "OWNER" ? false : Boolean(user.cashLogEodEnabled),
     );
+    setEditRewardsEnrolled(Boolean(user.rewardsEnrolled));
     const roleU = String(user.role || "VIEW_ONLY").trim().toUpperCase();
     if (isOwnerOrAdminRoleKey(roleU)) {
       setEditAppPermissions(fullAccessPermissionIds());
@@ -1556,6 +1560,7 @@ export default function AdminPage() {
     setEditActive(true);
     setEditAppPermissions([]);
     setEditCashLogEodEnabled(false);
+    setEditRewardsEnrolled(false);
   }
 
   function toggleEditPermission(id: string) {
@@ -1613,6 +1618,7 @@ export default function AdminPage() {
       if (normalizePlatformRole(user.role) !== "OWNER") {
         body.cashLogEodEnabled = editCashLogEodEnabled;
       }
+      body.rewardsEnrolled = editRewardsEnrolled;
       if (ownerOrAdminRole)
         body.appPermissions = null;
       else
@@ -4158,6 +4164,43 @@ export default function AdminPage() {
                     </label>
                   </div>
                 )}
+
+                <div
+                  style={{
+                    marginBottom: 14,
+                    borderRadius: 12,
+                    border: "1px solid rgba(148, 163, 184, 0.22)",
+                    background: "rgba(2, 6, 23, 0.42)",
+                    padding: 12,
+                    textAlign: "left",
+                  }}
+                >
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 10,
+                      cursor: "pointer",
+                      color: "#e2e8f0",
+                      fontSize: 14,
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={editRewardsEnrolled}
+                      onChange={(e) => setEditRewardsEnrolled(e.target.checked)}
+                      style={{ marginTop: 3 }}
+                    />
+                    <span>
+                      <b>Enrolled in staff rewards program</b>
+                      <br />
+                      <span style={{ color: "#94a3b8" }}>
+                        If unchecked, this user will not see Rewards (managers with access still see the dashboard).
+                      </span>
+                    </span>
+                  </label>
+                </div>
 
                 <div
                   style={{

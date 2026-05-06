@@ -380,8 +380,10 @@ export const adminUserUpdateSchema = z.preprocess(preprocessBodyNormalizeUserRol
     appPermissions: z.array(appPermissionIdSchema).max(32).nullable().optional(),
     /** Per-employee EOD financial digest recipient toggle (defaults false when unset). */
     cashLogEodEnabled: z.boolean().optional(),
+    /** Staff rewards program enrollment for this company membership. */
+    rewardsEnrolled: z.boolean().optional(),
 }).superRefine((val, ctx) => {
-    const n = [val.email, val.role, val.isActive, val.appPermissions, val.cashLogEodEnabled].filter((x) => x !== undefined).length;
+    const n = [val.email, val.role, val.isActive, val.appPermissions, val.cashLogEodEnabled, val.rewardsEnrolled].filter((x) => x !== undefined).length;
     if (n === 0) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,

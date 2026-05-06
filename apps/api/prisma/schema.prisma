@@ -170,6 +170,8 @@ model CompanyMembership {
   role      NexBatchCompanyRole
   /// JSON string[] of `AppPermissionId` (e.g. `page.cultivation`). `null` = use role defaults.
   appPermissions Json?
+  /// Staff rewards program opt-in for this company (Admin Edit user).
+  rewardsEnrolled Boolean @default(false)
   /// Optional per-user schedule for cash / financial log digest email (see `cashLogEodPrefsSchema`).
   cashLogEodPrefs      Json?
   /// Last successful EOD digest send (dedupe + ops); optional.

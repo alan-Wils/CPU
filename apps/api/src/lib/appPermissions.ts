@@ -9,6 +9,7 @@ export const APP_PAGE_PERMISSION_IDS = [
   "page.packaging",
   "page.data-hub",
   "page.analytics",
+  "page.rewards",
 ] as const;
 
 export type AppPagePermissionId = (typeof APP_PAGE_PERMISSION_IDS)[number];
@@ -29,6 +30,7 @@ export const APP_PERMISSION_LABELS: Record<AppPermissionId, string> = {
   "page.packaging": "Packaging",
   "page.data-hub": "Data Hub",
   "page.analytics": "Analytics",
+  "page.rewards": "Rewards",
   "workflow.delete": "Delete workflow records (batches, runs, lots, source packages)",
 };
 
@@ -38,6 +40,7 @@ const PAGE_SET_ALL: AppPagePermissionId[] = [
   "page.packaging",
   "page.data-hub",
   "page.analytics",
+  "page.rewards",
 ];
 
 const PAGE_SET_OWNER_ADMIN: AppPagePermissionId[] = [...PAGE_SET_ALL];

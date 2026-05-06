@@ -116,7 +116,7 @@ export class AdminService {
     }
     async listUsers(input) {
         const rows = await this.repo.listUsers(input.companyId);
-        return rows.map(({ user: u, appPermissions, cashLogEodEnabled }) => ({
+        return rows.map(({ user: u, appPermissions, cashLogEodEnabled, rewardsEnrolled }) => ({
             id: u.id,
             username: u.email.split("@")[0],
             email: u.email,
@@ -126,6 +126,7 @@ export class AdminService {
             createdAt: u.createdAt,
             appPermissions: appPermissions ?? null,
             cashLogEodEnabled: Boolean(cashLogEodEnabled),
+            rewardsEnrolled: Boolean(rewardsEnrolled),
         }));
     }
     async updateUser(input) {
@@ -200,6 +201,7 @@ export class AdminService {
             isActive: input.isActive,
             appPermissions: input.appPermissions,
             cashLogEodEnabled: input.cashLogEodEnabled,
+            rewardsEnrolled: input.rewardsEnrolled,
         });
         if (changed.count === 0)
             throw new AppError("No user changes persisted", 400);
@@ -208,7 +210,7 @@ export class AdminService {
             throw new AppError("User not found after update", 404);
         const membershipAfter = await this.repo.db.companyMembership.findFirst({
             where: { companyId: input.companyId, userId: input.targetUserId },
-            select: { appPermissions: true, cashLogEodPrefs: true },
+            select: { appPermissions: true, cashLogEodPrefs: true, rewardsEnrolled: true },
         });
         const cashLogEodEnabled = mergeCashLogEodPrefs(membershipAfter?.cashLogEodPrefs ?? null).enabled;
         await this.auditService.logAction({
@@ -234,6 +236,7 @@ export class AdminService {
             status: next.isActive ? "ACTIVE" : "INACTIVE",
             appPermissions: membershipAfter?.appPermissions ?? null,
             cashLogEodEnabled,
+            rewardsEnrolled: Boolean(membershipAfter?.rewardsEnrolled),
         };
     }
     async deleteUser(input) {

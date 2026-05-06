@@ -19,7 +19,13 @@ import { CompanyService } from "./companyService.js";
 
 type UserWithRelations = User & {
     company: Company | null;
-    memberships: Array<{ companyId: string; role: string; company: Company; appPermissions?: unknown }>;
+    memberships: Array<{
+        companyId: string;
+        role: string;
+        company: Company;
+        appPermissions?: unknown;
+        rewardsEnrolled?: boolean;
+    }>;
 };
 
 export type JwtSession = {
@@ -92,7 +98,13 @@ export class AuthService {
     }
 
     /** SPA `CpuUser` expects `username` + `email`; DB only stores `email`. */
-    sessionUserFields(user: UserWithRelations, effectiveRole: string, activeCompany: Company | null, permissions: string[]) {
+    sessionUserFields(
+        user: UserWithRelations,
+        effectiveRole: string,
+        activeCompany: Company | null,
+        permissions: string[],
+        rewardsEnrolled = false,
+    ) {
         const email = String(user.email ?? "").trim().toLowerCase();
         const username = email.includes("@")
             ? email.slice(0, email.indexOf("@"))
@@ -108,7 +120,16 @@ export class AuthService {
             sessionKind: isPlatformOperator(platformRole) ? "portal" : "company",
             platformRole,
             permissions,
+            rewardsEnrolled,
         };
+    }
+
+    rewardsEnrolledForScopedCompany(user: UserWithRelations, companyId: string): boolean {
+        const cid = String(companyId || "").trim();
+        if (!cid)
+            return false;
+        const m = user.memberships?.find((x) => x.companyId === cid);
+        return Boolean(m?.rewardsEnrolled);
     }
     private resolveActiveCompany(user: UserWithRelations, activeCompanyId: string | null | undefined): Company | null {
         const id = String(activeCompanyId ?? "").trim();
@@ -143,8 +164,9 @@ export class AuthService {
         }
         const companyKey = scopedId || activeCo?.id || "";
         const permissions = this.jwtPermissionsForCompany(user, effectiveRole, companyKey);
+        const rewardsEnrolled = this.rewardsEnrolledForScopedCompany(user, companyKey);
         return {
-            user: this.sessionUserFields(user, effectiveRole, activeCo, permissions),
+            user: this.sessionUserFields(user, effectiveRole, activeCo, permissions, rewardsEnrolled),
             company: activeCo ? this.companyPayload(activeCo) : null,
             companies: (user.memberships ?? []).map((m) => this.companyPayload(m.company)),
             sessionKind: (jwtSessionKind === "portal" || isPlatformOperator(user.platformRole)) ? "portal" : "company",
@@ -205,9 +227,10 @@ export class AuthService {
                 permissions,
             };
             const token = this.issueToken(jwtPayload, remember);
+            const rewardsEnrolled = Boolean(membership.rewardsEnrolled);
             return {
                 token,
-                user: this.sessionUserFields(user, legacyRole, company, permissions),
+                user: this.sessionUserFields(user, legacyRole, company, permissions, rewardsEnrolled),
                 company: this.companyPayload(company),
             };
         }
@@ -237,7 +260,7 @@ export class AuthService {
             const token = this.issueToken(jwtPayloadNoCompany, remember);
             return {
                 token,
-                user: this.sessionUserFields(user, portalRole, null, permissions),
+                user: this.sessionUserFields(user, portalRole, null, permissions, false),
                 company: null,
                 needsCompanySelection: true,
                 companies: accessible.map((c) =>
@@ -268,9 +291,10 @@ export class AuthService {
             permissions,
         };
         const token = this.issueToken(jwtPayload, remember);
+        const portalRe = this.rewardsEnrolledForScopedCompany(user, co.id);
         return {
             token,
-            user: this.sessionUserFields(user, mergedRole, co, permissions),
+            user: this.sessionUserFields(user, mergedRole, co, permissions, portalRe),
             company: this.companyPayload(co),
             needsCompanySelection: false,
         };
@@ -306,7 +330,13 @@ export class AuthService {
         };
         return {
             token: this.issueToken(jwtPayload, true),
-            user: this.sessionUserFields(user, jwtPayload.role, membership.company, permissions),
+            user: this.sessionUserFields(
+                user,
+                jwtPayload.role,
+                membership.company,
+                permissions,
+                Boolean(membership.rewardsEnrolled),
+            ),
             company: this.companyPayload(membership.company),
         };
     }
@@ -354,9 +384,10 @@ export class AuthService {
             permissions,
         };
         const authToken = jwt.sign({ ...jwtPayload }, env.JWT_SECRET, inviteSignOpts);
+        const inviteRe = this.rewardsEnrolledForScopedCompany(u, co.id);
         return {
             token: authToken,
-            user: this.sessionUserFields(u, legacyRole, co, permissions),
+            user: this.sessionUserFields(u, legacyRole, co, permissions, inviteRe),
             company: this.companyPayload(co)
         };
     }
@@ -417,7 +448,7 @@ export class AuthService {
             const token = this.issueToken(jwtPayloadNoCompany, remember);
             return {
                 token,
-                user: this.sessionUserFields(u, portalRole, null, permissions),
+                user: this.sessionUserFields(u, portalRole, null, permissions, false),
                 company: null,
                 needsCompanySelection: true,
                 companies: accessible.map((c) =>
@@ -447,9 +478,10 @@ export class AuthService {
             permissions,
         };
         const token = this.issueToken(jwtPayload, remember);
+        const staffRe = this.rewardsEnrolledForScopedCompany(u, co.id);
         return {
             token,
-            user: this.sessionUserFields(u, mergedRole, co, permissions),
+            user: this.sessionUserFields(u, mergedRole, co, permissions, staffRe),
             company: this.companyPayload(co),
             needsCompanySelection: false,
         };

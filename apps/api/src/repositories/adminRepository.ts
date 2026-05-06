@@ -21,6 +21,7 @@ export class AdminRepository extends TenantRepository {
             user: r.user,
             appPermissions: r.appPermissions ?? null,
             cashLogEodEnabled: mergeCashLogEodPrefs(r.cashLogEodPrefs).enabled,
+            rewardsEnrolled: Boolean(r.rewardsEnrolled),
         }));
     }
     async updateUserStatus(companyId, userId, isActive) {
@@ -52,6 +53,9 @@ export class AdminRepository extends TenantRepository {
         if (Object.prototype.hasOwnProperty.call(data, "appPermissions")) {
             membershipData.appPermissions =
                 data.appPermissions === null ? null : (data.appPermissions as Prisma.InputJsonValue);
+        }
+        if (Object.prototype.hasOwnProperty.call(data, "rewardsEnrolled")) {
+            membershipData.rewardsEnrolled = Boolean(data.rewardsEnrolled);
         }
         if (data.cashLogEodEnabled !== undefined) {
             let mergedPrefs = mergeCashLogEodPrefs(m.cashLogEodPrefs);

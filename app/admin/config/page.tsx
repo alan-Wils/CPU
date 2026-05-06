@@ -90,6 +90,24 @@ type AppConfig = {
       displayTimezone?: string;
       /** Facility-day wall times (24h HH:mm). Subtracts from start→end cultivation labor when overlap applies. */
       laborBreaks?: { id: string; label: string; start: string; end: string }[];
+      rewards?: {
+        enabled: boolean;
+        primaryWindowDays: number;
+        scoring: {
+          fastTaskBonusPoints: number;
+          targetMinutesByTask: Record<string, number>;
+          potencyThresholdPercent: number;
+          potencyBonusPoints: number;
+          yieldBonusPoints: number;
+        };
+        rewardItems: Array<{ id: string; label: string; pointsRequired: number }>;
+        taskChallenge: {
+          enabled: boolean;
+          minSamplesForAverage: number;
+          includeAreaInTaskKey: boolean;
+          tiers: Array<{ label: string; multiplierVsAvg: number; points: number }>;
+        };
+      };
     };
   };
   cultivation: {
@@ -129,6 +147,28 @@ const emptyConfig: AppConfig = {
       companyWideNotes: "",
       displayTimezone: "",
       laborBreaks: [],
+      rewards: {
+        enabled: false,
+        primaryWindowDays: 30,
+        scoring: {
+          fastTaskBonusPoints: 5,
+          targetMinutesByTask: {},
+          potencyThresholdPercent: 20,
+          potencyBonusPoints: 15,
+          yieldBonusPoints: 10,
+        },
+        rewardItems: [],
+        taskChallenge: {
+          enabled: true,
+          minSamplesForAverage: 5,
+          includeAreaInTaskKey: true,
+          tiers: [
+            { label: "Fast", multiplierVsAvg: 0.85, points: 30 },
+            { label: "On target", multiplierVsAvg: 1, points: 20 },
+            { label: "Stretch", multiplierVsAvg: 1.15, points: 10 },
+          ],
+        },
+      },
     },
   },
   cultivation: {
@@ -151,6 +191,35 @@ const emptyConfig: AppConfig = {
 
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+}
+
+function mergeRewardsSettings(
+  incoming: AppConfig["company"]["settings"] | undefined,
+): NonNullable<AppConfig["company"]["settings"]["rewards"]> {
+  const base = emptyConfig.company.settings.rewards!;
+  const inc = incoming?.rewards;
+  if (!inc) return { ...base };
+  return {
+    ...base,
+    ...inc,
+    scoring: {
+      ...base.scoring,
+      ...inc.scoring,
+      targetMinutesByTask: {
+        ...base.scoring.targetMinutesByTask,
+        ...(inc.scoring?.targetMinutesByTask || {}),
+      },
+    },
+    rewardItems: Array.isArray(inc.rewardItems) ? inc.rewardItems : base.rewardItems,
+    taskChallenge: {
+      ...base.taskChallenge,
+      ...inc.taskChallenge,
+      tiers:
+        Array.isArray(inc.taskChallenge?.tiers) && inc.taskChallenge!.tiers.length > 0
+          ? inc.taskChallenge!.tiers
+          : base.taskChallenge.tiers,
+    },
+  };
 }
 
 function normalizeRoomsLayout(raw: unknown): RoomWithBayLayout[] {
@@ -332,6 +401,7 @@ export default function ConfigPage() {
           settings: {
             ...emptyConfig.company.settings,
             ...(data.company?.settings || {}),
+            rewards: mergeRewardsSettings(data.company?.settings),
           },
         },
         cultivation: {
@@ -400,6 +470,7 @@ export default function ConfigPage() {
           settings: {
             ...emptyConfig.company.settings,
             ...(data.company?.settings || {}),
+            rewards: mergeRewardsSettings(data.company?.settings),
           },
         },
         cultivation: {
@@ -1180,6 +1251,394 @@ export default function ConfigPage() {
             }
           />
         </label>
+
+        <h3 style={styles.subTitle}>Staff rewards</h3>
+        <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+          Points are derived from task logs and batch data (informational). Turn off to hide Rewards everywhere.
+          Managers enroll employees under Admin → Users.
+        </p>
+        <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 10 }}>
+          <input
+            type="checkbox"
+            checked={config.company.settings.rewards?.enabled ?? false}
+            onChange={(e) =>
+              setConfig((prev) => ({
+                ...prev,
+                company: {
+                  ...prev.company,
+                  settings: {
+                    ...prev.company.settings,
+                    rewards: {
+                      ...(prev.company.settings.rewards || mergeRewardsSettings(undefined)),
+                      enabled: e.target.checked,
+                    },
+                  },
+                },
+              }))
+            }
+          />
+          Enable staff rewards program
+        </label>
+        <div style={styles.grid}>
+          <label style={styles.label}>
+            Points window (days)
+            <input
+              style={styles.input}
+              type="number"
+              min={1}
+              value={config.company.settings.rewards?.primaryWindowDays ?? 30}
+              onChange={(e) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    settings: {
+                      ...prev.company.settings,
+                      rewards: {
+                        ...(prev.company.settings.rewards || mergeRewardsSettings(undefined)),
+                        primaryWindowDays: Math.max(1, Number(e.target.value) || 30),
+                      },
+                    },
+                  },
+                }))
+              }
+            />
+          </label>
+          <label style={styles.label}>
+            Fast-task bonus points
+            <input
+              style={styles.input}
+              type="number"
+              value={config.company.settings.rewards?.scoring.fastTaskBonusPoints ?? 5}
+              onChange={(e) =>
+                setConfig((prev) => {
+                  const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                  return {
+                    ...prev,
+                    company: {
+                      ...prev.company,
+                      settings: {
+                        ...prev.company.settings,
+                        rewards: {
+                          ...r,
+                          scoring: {
+                            ...r.scoring,
+                            fastTaskBonusPoints: Number(e.target.value) || 0,
+                          },
+                        },
+                      },
+                    },
+                  };
+                })
+              }
+            />
+          </label>
+          <label style={styles.label}>
+            Potency threshold (% THC)
+            <input
+              style={styles.input}
+              type="number"
+              value={config.company.settings.rewards?.scoring.potencyThresholdPercent ?? 20}
+              onChange={(e) =>
+                setConfig((prev) => {
+                  const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                  return {
+                    ...prev,
+                    company: {
+                      ...prev.company,
+                      settings: {
+                        ...prev.company.settings,
+                        rewards: {
+                          ...r,
+                          scoring: {
+                            ...r.scoring,
+                            potencyThresholdPercent: Number(e.target.value) || 0,
+                          },
+                        },
+                      },
+                    },
+                  };
+                })
+              }
+            />
+          </label>
+          <label style={styles.label}>
+            Potency bonus points
+            <input
+              style={styles.input}
+              type="number"
+              value={config.company.settings.rewards?.scoring.potencyBonusPoints ?? 15}
+              onChange={(e) =>
+                setConfig((prev) => {
+                  const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                  return {
+                    ...prev,
+                    company: {
+                      ...prev.company,
+                      settings: {
+                        ...prev.company.settings,
+                        rewards: {
+                          ...r,
+                          scoring: {
+                            ...r.scoring,
+                            potencyBonusPoints: Number(e.target.value) || 0,
+                          },
+                        },
+                      },
+                    },
+                  };
+                })
+              }
+            />
+          </label>
+        </div>
+        <p style={{ color: "#94a3b8", fontSize: 13, marginBottom: 8 }}>Reward milestones (label + points required)</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+          {(config.company.settings.rewards?.rewardItems || []).map((item, idx) => (
+            <div key={item.id || idx} style={{ ...styles.grid, alignItems: "end" }}>
+              <label style={styles.label}>
+                Label
+                <input
+                  style={styles.input}
+                  value={item.label}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setConfig((prev) => {
+                      const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                      const list = [...(r.rewardItems || [])];
+                      list[idx] = { ...list[idx], label: v };
+                      return {
+                        ...prev,
+                        company: {
+                          ...prev.company,
+                          settings: {
+                            ...prev.company.settings,
+                            rewards: { ...r, rewardItems: list },
+                          },
+                        },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <label style={styles.label}>
+                Points required
+                <input
+                  style={styles.input}
+                  type="number"
+                  value={item.pointsRequired}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setConfig((prev) => {
+                      const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                      const list = [...(r.rewardItems || [])];
+                      list[idx] = { ...list[idx], pointsRequired: v };
+                      return {
+                        ...prev,
+                        company: {
+                          ...prev.company,
+                          settings: {
+                            ...prev.company.settings,
+                            rewards: { ...r, rewardItems: list },
+                          },
+                        },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                style={styles.deleteButton}
+                onClick={() =>
+                  setConfig((prev) => {
+                    const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                    return {
+                      ...prev,
+                      company: {
+                        ...prev.company,
+                        settings: {
+                          ...prev.company.settings,
+                          rewards: {
+                            ...r,
+                            rewardItems: r.rewardItems.filter((_, i) => i !== idx),
+                          },
+                        },
+                      },
+                    };
+                  })
+                }
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            style={styles.secondaryButton}
+            onClick={() =>
+              setConfig((prev) => {
+                const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                return {
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    settings: {
+                      ...prev.company.settings,
+                      rewards: {
+                        ...r,
+                        rewardItems: [
+                          ...r.rewardItems,
+                          { id: makeId("reward"), label: "Reward", pointsRequired: 100 },
+                        ],
+                      },
+                    },
+                  },
+                };
+              })
+            }
+          >
+            + Add reward item
+          </button>
+        </div>
+        <p style={{ color: "#94a3b8", fontSize: 13, marginBottom: 8 }}>Task challenge (beat-the-clock tiers vs facility average)</p>
+        <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 10 }}>
+          <input
+            type="checkbox"
+            checked={config.company.settings.rewards?.taskChallenge.enabled ?? true}
+            onChange={(e) =>
+              setConfig((prev) => {
+                const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                return {
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    settings: {
+                      ...prev.company.settings,
+                      rewards: {
+                        ...r,
+                        taskChallenge: { ...r.taskChallenge, enabled: e.target.checked },
+                      },
+                    },
+                  },
+                };
+              })
+            }
+          />
+          Show challenge popup when logging tasks
+        </label>
+        <label style={styles.label}>
+          Min samples for average
+          <input
+            style={styles.input}
+            type="number"
+            min={1}
+            value={config.company.settings.rewards?.taskChallenge.minSamplesForAverage ?? 5}
+            onChange={(e) =>
+              setConfig((prev) => {
+                const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                return {
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    settings: {
+                      ...prev.company.settings,
+                      rewards: {
+                        ...r,
+                        taskChallenge: {
+                          ...r.taskChallenge,
+                          minSamplesForAverage: Math.max(1, Number(e.target.value) || 5),
+                        },
+                      },
+                    },
+                  },
+                };
+              })
+            }
+          />
+        </label>
+        {(config.company.settings.rewards?.taskChallenge.tiers || []).map((tier, tidx) => (
+          <div key={`tier-${tidx}`} style={{ ...styles.grid, marginBottom: 8 }}>
+            <label style={styles.label}>
+              Tier label
+              <input
+                style={styles.input}
+                value={tier.label}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setConfig((prev) => {
+                    const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                    const tiers = [...r.taskChallenge.tiers];
+                    tiers[tidx] = { ...tiers[tidx], label: v };
+                    return {
+                      ...prev,
+                      company: {
+                        ...prev.company,
+                        settings: {
+                          ...prev.company.settings,
+                          rewards: { ...r, taskChallenge: { ...r.taskChallenge, tiers } },
+                        },
+                      },
+                    };
+                  });
+                }}
+              />
+            </label>
+            <label style={styles.label}>
+              × avg minutes
+              <input
+                style={styles.input}
+                type="number"
+                step={0.01}
+                value={tier.multiplierVsAvg}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setConfig((prev) => {
+                    const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                    const tiers = [...r.taskChallenge.tiers];
+                    tiers[tidx] = { ...tiers[tidx], multiplierVsAvg: v };
+                    return {
+                      ...prev,
+                      company: {
+                        ...prev.company,
+                        settings: {
+                          ...prev.company.settings,
+                          rewards: { ...r, taskChallenge: { ...r.taskChallenge, tiers } },
+                        },
+                      },
+                    };
+                  });
+                }}
+              />
+            </label>
+            <label style={styles.label}>
+              Points
+              <input
+                style={styles.input}
+                type="number"
+                value={tier.points}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setConfig((prev) => {
+                    const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                    const tiers = [...r.taskChallenge.tiers];
+                    tiers[tidx] = { ...tiers[tidx], points: v };
+                    return {
+                      ...prev,
+                      company: {
+                        ...prev.company,
+                        settings: {
+                          ...prev.company.settings,
+                          rewards: { ...r, taskChallenge: { ...r.taskChallenge, tiers } },
+                        },
+                      },
+                    };
+                  });
+                }}
+              />
+            </label>
+          </div>
+        ))}
 
         <h3 style={styles.subTitle}>Labor — breaks & lunch (facility clock)</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>

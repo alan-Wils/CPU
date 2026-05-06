@@ -48,6 +48,28 @@ const defaultConfig = {
       displayTimezone: "",
       /** `{ id, label, start, end }[]` wall-clock `HH:mm` breaks/lunch (same facility day) excluded from range labor. */
       laborBreaks: [],
+      rewards: {
+        enabled: false,
+        primaryWindowDays: 30,
+        scoring: {
+          fastTaskBonusPoints: 5,
+          targetMinutesByTask: {},
+          potencyThresholdPercent: 20,
+          potencyBonusPoints: 15,
+          yieldBonusPoints: 10,
+        },
+        rewardItems: [],
+        taskChallenge: {
+          enabled: true,
+          minSamplesForAverage: 5,
+          includeAreaInTaskKey: true,
+          tiers: [
+            { label: "Fast", multiplierVsAvg: 0.85, points: 30 },
+            { label: "On target", multiplierVsAvg: 1, points: 20 },
+            { label: "Stretch", multiplierVsAvg: 1.15, points: 10 },
+          ],
+        },
+      },
     },
   },
 
