@@ -9,6 +9,8 @@ export type CultivationStrainMetricPoint = {
     dryYieldGPerSqFt: number | null;
     /** Grams per sq ft from Fresh Frozen source-batch harvest ÷ parent `dryCanopySqFt`. */
     freshFrozenYieldGPerSqFt: number | null;
+    /** Stem waste from AI sheet sum minus operator-entered FF grams, ÷ canopy (g/sq ft). */
+    freshFrozenStemWasteGPerSqFt: number | null;
 };
 
 type CultivationRowInput = {
@@ -76,6 +78,22 @@ function readFreshFrozenGrams(row: Record<string, unknown>): number | null {
     const lbs = readNum(row, "weightLbs");
     if (lbs != null && lbs > 0)
         return +(lbs * 453.592).toFixed(4);
+    return null;
+}
+
+/** Plants remaining on parent cultivation batch (partial harvest). When > 0, FF metrics are deferred. */
+function readParentPlantsRemaining(ui: Record<string, unknown>): number | null {
+    const raw = ui.plants ?? ui.plantsRemaining;
+    if (raw == null || raw === "")
+        return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+}
+
+function readFreshFrozenStemWasteGrams(row: Record<string, unknown>): number | null {
+    const w = readNum(row, "freshFrozenStemWasteGrams");
+    if (w != null && w >= 0 && Number.isFinite(w))
+        return w;
     return null;
 }
 
@@ -150,6 +168,7 @@ export function buildCultivationStrainMetricPoints(input: {
             potencyPct: hasPotency ? potency : null,
             dryYieldGPerSqFt: hasYield ? yld : null,
             freshFrozenYieldGPerSqFt: null,
+            freshFrozenStemWasteGPerSqFt: null,
         });
     }
 
@@ -172,13 +191,26 @@ export function buildCultivationStrainMetricPoints(input: {
         if (strainFilter && strainFilter.length > 0 && !strainFilter.includes(ac))
             continue;
 
-        const grams = readFreshFrozenGrams(sb);
         const ui = asUiRecord(parent.cultivationUiState);
+        const plantsLeft = readParentPlantsRemaining(ui);
+        /** Plot FF yield/stem waste only after the cultivation batch is fully harvested (no plants left). */
+        if (plantsLeft != null && plantsLeft > 0)
+            continue;
+
+        const grams = readFreshFrozenGrams(sb);
         const canopy = readNum(ui, "dryCanopySqFt");
         let ffYld: number | null = null;
         if (grams != null && grams > 0 && canopy != null && canopy > 0)
             ffYld = +(grams / canopy).toFixed(4);
-        if (ffYld == null || ffYld <= 0 || !Number.isFinite(ffYld))
+        const stemWasteG = readFreshFrozenStemWasteGrams(sb);
+        let stemYld: number | null = null;
+        if (stemWasteG != null && stemWasteG > 0 && canopy != null && canopy > 0)
+            stemYld = +(stemWasteG / canopy).toFixed(4);
+
+        if (
+            (ffYld == null || ffYld <= 0 || !Number.isFinite(ffYld))
+            && (stemYld == null || stemYld <= 0 || !Number.isFinite(stemYld))
+        )
             continue;
 
         const fallback = parent.updatedAt;
@@ -195,7 +227,8 @@ export function buildCultivationStrainMetricPoints(input: {
             date: metricDate.toISOString().slice(0, 10),
             potencyPct: null,
             dryYieldGPerSqFt: null,
-            freshFrozenYieldGPerSqFt: ffYld,
+            freshFrozenYieldGPerSqFt: ffYld != null && ffYld > 0 ? ffYld : null,
+            freshFrozenStemWasteGPerSqFt: stemYld != null && stemYld > 0 ? stemYld : null,
         });
     }
 
@@ -231,6 +264,7 @@ export function buildCultivationStrainMetricPoints(input: {
             potencyPct: hasPotency ? potency : null,
             dryYieldGPerSqFt: hasYield ? yld : null,
             freshFrozenYieldGPerSqFt: null,
+            freshFrozenStemWasteGPerSqFt: null,
         });
     }
 

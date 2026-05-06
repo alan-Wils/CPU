@@ -1003,6 +1003,17 @@ export default function Cultivation() {
     onConfirm: null,
   });
 
+  const harvestLeftoverResolverRef = useRef<
+    ((value: { action: "keep" | "dispose"; reason?: string } | null) => void) | null
+  >(null);
+
+  const [harvestLeftoverModal, setHarvestLeftoverModal] = useState<{ remaining: number } | null>(
+    null,
+  );
+
+  const [harvestDisposeReasonDraft, setHarvestDisposeReasonDraft] = useState("");
+  const [harvestDisposeReasonError, setHarvestDisposeReasonError] = useState("");
+
   useEffect(() => {
     setCanDeleteRecords(userCanDeleteWorkflow());
     setCanWriteRecords(hasCultivationWriteAccess());
@@ -1217,6 +1228,37 @@ export default function Cultivation() {
       cancelText: "",
       onConfirm: null,
     });
+  }
+
+  function promptHarvestLeftoverPlants(
+    remaining: number,
+  ): Promise<{ action: "keep" | "dispose"; reason?: string } | null> {
+    return new Promise((resolve) => {
+      harvestLeftoverResolverRef.current = resolve;
+      setHarvestDisposeReasonDraft("");
+      setHarvestDisposeReasonError("");
+      setHarvestLeftoverModal({ remaining });
+    });
+  }
+
+  function resolveHarvestLeftoverPlants(
+    result: { action: "keep" | "dispose"; reason?: string } | null,
+  ) {
+    const fn = harvestLeftoverResolverRef.current;
+    harvestLeftoverResolverRef.current = null;
+    setHarvestLeftoverModal(null);
+    setHarvestDisposeReasonDraft("");
+    setHarvestDisposeReasonError("");
+    fn?.(result);
+  }
+
+  function confirmHarvestDisposeRemaining() {
+    const reason = harvestDisposeReasonDraft.trim();
+    if (!reason) {
+      setHarvestDisposeReasonError("Enter a reason before disposing remaining plants.");
+      return;
+    }
+    resolveHarvestLeftoverPlants({ action: "dispose", reason });
   }
 
   function showSyncMessageNotice(message: string) {
@@ -2133,7 +2175,7 @@ export default function Cultivation() {
 
     const plantsHarvested = Number(harvestPlants || 0);
     const currentPlants = Number(selectedBatch.plants || 0);
-    const remainingPlants = Math.max(currentPlants - plantsHarvested, 0);
+    const plantsRemainingAfterHarvest = Math.max(currentPlants - plantsHarvested, 0);
 
     const apiOrigin = API_BASE_URL.replace(/\/+$/, "");
     const harvestSheetSnapshot =
@@ -2164,9 +2206,42 @@ export default function Cultivation() {
           }
         : null;
 
-    selectedBatch.plants = remainingPlants;
+    let effectiveRemainingPlants = plantsRemainingAfterHarvest;
+    let leftoverDisposition: "keep" | "dispose" | undefined;
+    let leftoverDisposeReason = "";
+
+    if (plantsRemainingAfterHarvest > 0) {
+      const choice = await promptHarvestLeftoverPlants(plantsRemainingAfterHarvest);
+      if (choice === null) return;
+      if (choice.action === "dispose") {
+        effectiveRemainingPlants = 0;
+        leftoverDisposition = "dispose";
+        leftoverDisposeReason = String(choice.reason || "").trim();
+      } else {
+        leftoverDisposition = "keep";
+      }
+    }
+
+    const leftoverLogSuffix =
+      leftoverDisposition === "dispose" && leftoverDisposeReason
+        ? ` | Disposed ${plantsRemainingAfterHarvest} remaining plants: ${leftoverDisposeReason}`
+        : plantsRemainingAfterHarvest > 0 && leftoverDisposition === "keep"
+          ? ` | ${plantsRemainingAfterHarvest} plants remain on batch after partial harvest`
+          : "";
+
+    const leftoverLogData: Record<string, unknown> =
+      leftoverDisposition === "dispose"
+        ? {
+            leftoverPlantsDisposedCount: plantsRemainingAfterHarvest,
+            leftoverDisposeReason,
+          }
+        : leftoverDisposition === "keep"
+          ? { leftoverPlantsRetainedCount: plantsRemainingAfterHarvest }
+          : {};
+
+    selectedBatch.plants = effectiveRemainingPlants;
     selectedBatch.stage =
-      remainingPlants > 0 ? "Partially Harvested" : "Harvested";
+      effectiveRemainingPlants > 0 ? "Partially Harvested" : "Harvested";
 
     if (harvestType === "A Grade Flower") {
       selectedBatch.plantsHarvestedDry = num(selectedBatch.plantsHarvestedDry) + plantsHarvested;
@@ -2210,12 +2285,13 @@ export default function Cultivation() {
             people: lab.peopleStr,
             minutes: lab.minutesStr,
             totalLaborMinutes: lab.totalLaborMinutes,
-            output: `${plantsHarvested} plants harvested for A Grade Flower. No weight recorded until bucking.${lab.outputSuffix}`,
+            output: `${plantsHarvested} plants harvested for A Grade Flower. No weight recorded until bucking.${lab.outputSuffix}${leftoverLogSuffix}`,
             linkedBatch: dryBatch.id,
             data: {
               ...lab.laborDetail,
               totalLaborMinutes: lab.totalLaborMinutes,
               ...(harvestSheetSnapshot || {}),
+              ...leftoverLogData,
             },
             time: nowIsoForLog(),
           },
@@ -2230,6 +2306,18 @@ export default function Cultivation() {
       recomputeDryCanopyForCultivationBatch(selectedBatch, cultivationRooms);
 
       const gramsParsed = num(String(freshFrozenGrams ?? "").replace(/,/g, ""));
+      const aiSumGrams =
+        harvestSheetSnapshot &&
+        typeof harvestSheetSnapshot.harvestSheetSumGramsFromRows === "number"
+          ? harvestSheetSnapshot.harvestSheetSumGramsFromRows
+          : null;
+      const stemWasteGrams =
+        aiSumGrams != null &&
+        Number.isFinite(aiSumGrams) &&
+        Number.isFinite(gramsParsed) &&
+        gramsParsed >= 0
+          ? Math.max(0, Math.round((Number(aiSumGrams) - gramsParsed) * 100) / 100)
+          : null;
       const weightLbs = +(gramsParsed / 453.592).toFixed(4);
       const freshFrozenBatch = {
         id: `FF-${selectedBatch.id}-${Date.now().toString().slice(-4)}`,
@@ -2245,6 +2333,8 @@ export default function Cultivation() {
         status: "Available for Extraction",
         createdAt: nowIsoForLog(),
         ...(harvestSheetSnapshot ? { harvestSheetSnapshot } : {}),
+        ...(stemWasteGrams != null ? { freshFrozenStemWasteGrams: stemWasteGrams } : {}),
+        ...(aiSumGrams != null ? { harvestSheetAiTotalGrams: aiSumGrams } : {}),
       };
 
       s.sourceBatches.unshift(freshFrozenBatch);
@@ -2270,28 +2360,33 @@ export default function Cultivation() {
         totalLaborMinutes: lab.totalLaborMinutes,
         output: `${plantsHarvested} plants harvested for Fresh Frozen | ${
           freshFrozenBundles || 0
-        } bundles / ${freshFrozenGrams || 0} grams${lab.outputSuffix}`,
+        } bundles / ${freshFrozenGrams || 0} grams${lab.outputSuffix}${leftoverLogSuffix}`,
         linkedBatch: freshFrozenBatch.id,
         data: {
           ...lab.laborDetail,
           totalLaborMinutes: lab.totalLaborMinutes,
           ...(harvestSheetSnapshot || {}),
+          ...leftoverLogData,
+          ...(stemWasteGrams != null
+            ? {
+                freshFrozenStemWasteGrams: stemWasteGrams,
+                harvestSheetAiTotalGrams: aiSumGrams,
+              }
+            : {}),
         },
         time: nowIsoForLog(),
       }))
     }
 
-    if (remainingPlants <= 0) {
+    if (effectiveRemainingPlants <= 0) {
       moveBatchToCompleted(selectedBatch);
     }
 
-    try {
-      await saveRealCultivationBatch(selectedBatch);
-    } catch (error) {
-      console.error(error);
+    const syncedAfterHarvest = await saveRealCultivationBatch(selectedBatch);
+    if (!syncedAfterHarvest) {
       showNotice(
         "Save failed",
-        error instanceof Error ? error.message : "Could not sync cultivation data after harvest.",
+        "Could not sync cultivation data after harvest. Your harvest may only exist on this device until sync succeeds.",
       );
       return;
     }
@@ -7657,6 +7752,72 @@ export default function Cultivation() {
           </div>
         </div>
       )}
+
+      {harvestLeftoverModal ? (
+        <div style={{ ...modalOverlayStyle, zIndex: 10002 }}>
+          <div style={{ ...modalStyle, maxWidth: 520 }}>
+            <h2 style={{ textAlign: "center", marginTop: 0, marginBottom: 12 }}>
+              Plants remaining after harvest
+            </h2>
+            <p style={{ color: "#cbd5e1", marginTop: 0, lineHeight: 1.55, textAlign: "center" }}>
+              After removing <strong>{harvestLeftoverModal.remaining}</strong> plants in this entry,{" "}
+              <strong>{harvestLeftoverModal.remaining}</strong> plants would still be on this batch. Keep tracking them
+              for another harvest, or dispose them now with a documented reason.
+            </p>
+            <label style={{ display: "grid", gap: 8, marginTop: 14, color: "#e2e8f0", fontSize: 14 }}>
+              Reason (required only if disposing remaining plants)
+              <textarea
+                value={harvestDisposeReasonDraft}
+                onChange={(e) => {
+                  setHarvestDisposeReasonDraft(e.target.value);
+                  setHarvestDisposeReasonError("");
+                }}
+                rows={3}
+                placeholder="e.g. pests, mold check, policy cull, counted error…"
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  borderRadius: 12,
+                  border: "1px solid #475569",
+                  background: "#020617",
+                  color: "#f8fafc",
+                  padding: 12,
+                  fontSize: 14,
+                  resize: "vertical",
+                }}
+              />
+            </label>
+            {harvestDisposeReasonError ? (
+              <p style={{ color: "#fca5a5", fontSize: 13, marginTop: 10, marginBottom: 0, textAlign: "center" }}>
+                {harvestDisposeReasonError}
+              </p>
+            ) : null}
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 10,
+                justifyContent: "center",
+                marginTop: 20,
+              }}
+            >
+              <button type="button" style={buttonStyle} onClick={() => resolveHarvestLeftoverPlants(null)}>
+                Cancel harvest
+              </button>
+              <button
+                type="button"
+                style={{ ...buttonStyle, borderColor: "#22c55e", color: "#bbf7d0" }}
+                onClick={() => resolveHarvestLeftoverPlants({ action: "keep" })}
+              >
+                Keep remaining plants on batch
+              </button>
+              <button type="button" style={primaryButtonStyle} onClick={() => confirmHarvestDisposeRemaining()}>
+                Dispose remaining plants…
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {notificationModal.open && (
         <div style={{ ...modalOverlayStyle, zIndex: 10001 }}>

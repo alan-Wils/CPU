@@ -158,7 +158,49 @@ describe("buildCultivationStrainMetricPoints", () => {
                 strain: "Tangerine Haze",
                 strainAcronym: "TAHA",
                 updatedAt: parentUpdated,
-                cultivationUiState: { dryCanopySqFt: 10 },
+                cultivationUiState: { dryCanopySqFt: 10, plants: 0 },
+            },
+        ];
+        const sourceBatches = [
+            {
+                id: "FF-TAHA.050726-8899",
+                type: "Fresh Frozen",
+                source: "TAHA.050726",
+                grams: 453.592,
+                freshFrozenStemWasteGrams: 50,
+                createdAt: "2026-05-10T12:00:00.000Z",
+            },
+        ];
+
+        const fromMs = Date.UTC(2026, 4, 1, 0, 0, 0, 0);
+        const toMs = Date.UTC(2026, 4, 31, 23, 59, 59, 999);
+
+        const points = buildCultivationStrainMetricPoints({
+            fromMs,
+            toMs,
+            strainFilter: null,
+            cultivationRows,
+            dryFlowerBatches: [],
+            sourceBatches,
+        });
+
+        expect(points).toHaveLength(1);
+        expect(points[0].batchId).toBe("FF-TAHA.050726-8899");
+        expect(points[0].freshFrozenYieldGPerSqFt).toBeCloseTo(45.3592, 3);
+        expect(points[0].freshFrozenStemWasteGPerSqFt).toBeCloseTo(5, 3);
+        expect(points[0].potencyPct).toBeNull();
+        expect(points[0].dryYieldGPerSqFt).toBeNull();
+        expect(points[0].date).toBe("2026-05-10");
+    });
+
+    it("skips fresh frozen metrics while parent batch still has plants remaining", () => {
+        const cultivationRows = [
+            {
+                id: "TAHA.050726",
+                strain: "Tangerine Haze",
+                strainAcronym: "TAHA",
+                updatedAt: parentUpdated,
+                cultivationUiState: { dryCanopySqFt: 10, plants: 4 },
             },
         ];
         const sourceBatches = [
@@ -183,11 +225,6 @@ describe("buildCultivationStrainMetricPoints", () => {
             sourceBatches,
         });
 
-        expect(points).toHaveLength(1);
-        expect(points[0].batchId).toBe("FF-TAHA.050726-8899");
-        expect(points[0].freshFrozenYieldGPerSqFt).toBeCloseTo(45.3592, 3);
-        expect(points[0].potencyPct).toBeNull();
-        expect(points[0].dryYieldGPerSqFt).toBeNull();
-        expect(points[0].date).toBe("2026-05-10");
+        expect(points).toHaveLength(0);
     });
 });

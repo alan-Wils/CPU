@@ -67,6 +67,7 @@ function normalizeMetricPoints(raw: unknown[]): CultivationStrainMetricPoint[] {
     const potencyPct = finiteNumber(r.potencyPct);
     const dryYieldGPerSqFt = finiteNumber(r.dryYieldGPerSqFt);
     const freshFrozenYieldGPerSqFt = finiteNumber(r.freshFrozenYieldGPerSqFt);
+    const freshFrozenStemWasteGPerSqFt = finiteNumber(r.freshFrozenStemWasteGPerSqFt);
     out.push({
       batchId,
       strain,
@@ -75,6 +76,7 @@ function normalizeMetricPoints(raw: unknown[]): CultivationStrainMetricPoint[] {
       potencyPct,
       dryYieldGPerSqFt,
       freshFrozenYieldGPerSqFt,
+      freshFrozenStemWasteGPerSqFt,
     });
   }
   return out;
@@ -207,6 +209,7 @@ function buildStrainMetricCharts(
   potencyRows: Record<string, string | number | undefined>[];
   yieldRows: Record<string, string | number | undefined>[];
   freshFrozenRows: Record<string, string | number | undefined>[];
+  freshFrozenStemWasteRows: Record<string, string | number | undefined>[];
   seriesKeys: string[];
 } {
   const want = new Set(acronyms.map((a) => a.toUpperCase()));
@@ -216,10 +219,12 @@ function buildStrainMetricCharts(
       const potN = finiteNumber(p.potencyPct);
       const yldN = finiteNumber(p.dryYieldGPerSqFt);
       const ffN = finiteNumber(p.freshFrozenYieldGPerSqFt);
+      const ffStemN = finiteNumber(p.freshFrozenStemWasteGPerSqFt);
       const pot = potN != null;
       const yld = yldN != null && yldN > 0;
       const ff = ffN != null && ffN > 0;
-      return pot || yld || ff;
+      const ffStem = ffStemN != null && ffStemN > 0;
+      return pot || yld || ff || ffStem;
     })
     .sort(
       (a, b) =>
@@ -231,6 +236,7 @@ function buildStrainMetricCharts(
   const potencyRows: Record<string, string | number | undefined>[] = [];
   const yieldRows: Record<string, string | number | undefined>[] = [];
   const freshFrozenRows: Record<string, string | number | undefined>[] = [];
+  const freshFrozenStemWasteRows: Record<string, string | number | undefined>[] = [];
 
   for (const p of filtered) {
     const sk = seriesKeyForPoint(p);
@@ -242,23 +248,28 @@ function buildStrainMetricCharts(
     const pr: Record<string, string | number | undefined> = { ...base };
     const yr: Record<string, string | number | undefined> = { ...base };
     const fr: Record<string, string | number | undefined> = { ...base };
+    const fs: Record<string, string | number | undefined> = { ...base };
     for (const k of seriesKeys) {
       pr[k] = undefined;
       yr[k] = undefined;
       fr[k] = undefined;
+      fs[k] = undefined;
     }
     const potN = finiteNumber(p.potencyPct);
     const yldN = finiteNumber(p.dryYieldGPerSqFt);
     const ffN = finiteNumber(p.freshFrozenYieldGPerSqFt);
+    const ffStemN = finiteNumber(p.freshFrozenStemWasteGPerSqFt);
     if (potN != null) pr[sk] = potN;
     if (yldN != null && yldN > 0) yr[sk] = yldN;
     if (ffN != null && ffN > 0) fr[sk] = ffN;
+    if (ffStemN != null && ffStemN > 0) fs[sk] = ffStemN;
     potencyRows.push(pr);
     yieldRows.push(yr);
     freshFrozenRows.push(fr);
+    freshFrozenStemWasteRows.push(fs);
   }
 
-  return { potencyRows, yieldRows, freshFrozenRows, seriesKeys };
+  return { potencyRows, yieldRows, freshFrozenRows, freshFrozenStemWasteRows, seriesKeys };
 }
 
 export default function AnalyticsPage() {
@@ -324,10 +335,13 @@ export default function AnalyticsPage() {
     return [...set];
   }, [points, selectedAcronyms]);
 
-  const { potencyRows, yieldRows, freshFrozenRows, seriesKeys: metricSeriesKeys } = useMemo(
-    () => buildStrainMetricCharts(points, acronymsForChart),
-    [points, acronymsForChart],
-  );
+  const {
+    potencyRows,
+    yieldRows,
+    freshFrozenRows,
+    freshFrozenStemWasteRows,
+    seriesKeys: metricSeriesKeys,
+  } = useMemo(() => buildStrainMetricCharts(points, acronymsForChart), [points, acronymsForChart]);
 
   const potencyYDomain = useMemo((): [number, number] | undefined => {
     const vals: number[] = [];
@@ -389,6 +403,26 @@ export default function AnalyticsPage() {
     return [+Math.max(0, lo - pad).toFixed(3), +(hi + pad).toFixed(3)];
   }, [freshFrozenRows, metricSeriesKeys]);
 
+  const freshFrozenStemWasteYDomain = useMemo((): [number, number] | undefined => {
+    const vals: number[] = [];
+    for (const row of freshFrozenStemWasteRows) {
+      for (const sk of metricSeriesKeys) {
+        const n = finiteNumber(row[sk]);
+        if (n != null && n > 0) vals.push(n);
+      }
+    }
+    if (vals.length === 0) return undefined;
+    let lo = Math.min(...vals);
+    let hi = Math.max(...vals);
+    if (lo === hi) {
+      lo = Math.max(0, lo * 0.92);
+      hi = hi * 1.08;
+    }
+    const span = hi - lo;
+    const pad = Math.max(span * 0.06, 0.01);
+    return [+Math.max(0, lo - pad).toFixed(3), +(hi + pad).toFixed(3)];
+  }, [freshFrozenStemWasteRows, metricSeriesKeys]);
+
   const pageStyle = {
     minHeight: "100vh",
     background:
@@ -431,9 +465,10 @@ export default function AnalyticsPage() {
           <p style={{ textAlign: "center", color: "#94a3b8", marginTop: 0 }}>
             Cultivation strain metrics: <strong>potency</strong> and <strong>dry yield</strong> (g / sq ft) come from dry
             flower batches when synced to the server, dated by lab result (<strong>Test Passed</strong>).
-            <strong> Fresh frozen yield</strong> (g / sq ft) uses each Fresh Frozen source batch grams ÷ parent
-            canopy (<code style={{ fontSize: 12 }}>dryCanopySqFt</code>), dated by harvest/source{" "}
-            <strong>createdAt</strong>. Multiple burping batches share one parent but plot separately (date · batch id).
+            <strong> Fresh frozen yield</strong> (g / sq ft) uses operator-entered FF grams ÷ parent canopy once the
+            cultivation batch has <strong>no plants remaining</strong>. Stem waste (g / sq ft) is (AI sheet sum − entered
+            grams) ÷ canopy when logged on the FF batch. Points date from harvest{" "}
+            <strong>createdAt</strong>. Multiple FF pulls share one parent but plot separately (date · batch id).
             Lines connect batches of the same strain in time order; hover for the full batch id.
           </p>
 
@@ -646,6 +681,51 @@ export default function AnalyticsPage() {
                           name={displayNameForAcronym(sk, points)}
                           stroke={STRAIN_COLORS[i % STRAIN_COLORS.length]}
                           strokeWidth={2}
+                          dot={{ r: 4 }}
+                          connectNulls
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
+
+              <section style={cardStyle}>
+                <h3 style={{ marginTop: 0 }}>Fresh frozen stem waste (g / sq ft)</h3>
+                <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
+                  From harvest sheet AI row-sum minus the grams you entered as packaged FF, divided by parent canopy.
+                  Appears when both values exist and the cultivation batch is fully harvested.
+                </p>
+                <div style={{ width: "100%", height: 360 }}>
+                  <ResponsiveContainer>
+                    <LineChart data={freshFrozenStemWasteRows} margin={{ bottom: 28, left: 8, right: 8 }}>
+                      <CartesianGrid stroke="#334155" strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="xTick"
+                        stroke="#94a3b8"
+                        interval={0}
+                        angle={-22}
+                        textAnchor="end"
+                        height={72}
+                        tick={{ fontSize: 11 }}
+                      />
+                      <YAxis
+                        stroke="#94a3b8"
+                        domain={freshFrozenStemWasteYDomain ?? ["auto", "auto"]}
+                        tickFormatter={(v) => (typeof v === "number" ? v.toFixed(2) : String(v))}
+                        allowDataOverflow
+                      />
+                      <Tooltip content={(tp) => <StrainMetricTooltip {...tp} valueSuffix=" g/sq ft" />} />
+                      <Legend />
+                      {metricSeriesKeys.map((sk, i) => (
+                        <Line
+                          key={`ffstem-${sk}`}
+                          type="monotone"
+                          dataKey={sk}
+                          name={displayNameForAcronym(sk, points)}
+                          stroke={STRAIN_COLORS[i % STRAIN_COLORS.length]}
+                          strokeWidth={2}
+                          strokeDasharray="6 4"
                           dot={{ r: 4 }}
                           connectNulls
                         />
