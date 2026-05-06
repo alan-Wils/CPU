@@ -32,6 +32,7 @@ import {
   computeDryYieldGPerSqFt,
   sumTableSquareFeetFromIds,
 } from "@cpu/shared";
+import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
 
 type ConfigStrain = {
   id?: string;
@@ -592,9 +593,11 @@ export default function Cultivation() {
         if (!mounted) return;
 
         setConfigStrains(
-          strains.filter((item: ConfigStrain) => {
-            return getConfigStrainName(item) && getConfigStrainAcronym(item);
-          })
+          sortStrainsAlphabetically(
+            strains.filter((item: ConfigStrain) => {
+              return getConfigStrainName(item) && getConfigStrainAcronym(item);
+            }),
+          )
         );
         setCultivationRooms(rooms);
       } catch (error) {

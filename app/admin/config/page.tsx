@@ -16,6 +16,7 @@ import {
   setCompanyDisplayTimezone,
   syncCompanyTimezoneFromConfigPayload,
 } from "@/lib/companyTimezone";
+import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
 
 type Strain = {
   id: string;
@@ -38,11 +39,6 @@ type Supply = {
   unit: string;
 };
 
-type VegRoom = {
-  id: string;
-  name: string;
-};
-
 type TableConfig = {
   id: string;
   name: string;
@@ -55,11 +51,15 @@ type BayConfig = {
   tables: TableConfig[];
 };
 
-type FlowerRoom = {
+/** Same structure for veg and flower — bays contain tables that operators pick during workflow. */
+type RoomWithBayLayout = {
   id: string;
   name: string;
   bays: BayConfig[];
 };
+
+type VegRoom = RoomWithBayLayout;
+type FlowerRoom = RoomWithBayLayout;
 
 type ProductNameRecord = {
   id: string;
@@ -150,10 +150,40 @@ function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 }
 
+function normalizeRoomsLayout(raw: unknown): RoomWithBayLayout[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const obj = entry as Record<string, unknown>;
+    let id = String(obj.id ?? "").trim();
+    if (!id) id = makeId("room");
+    const name = String(obj.name ?? "").trim();
+    const baysRaw = Array.isArray(obj.bays) ? obj.bays : [];
+    const bays = baysRaw.map((bEnt) => {
+      const b = bEnt as Record<string, unknown>;
+      let bayId = String(b.id ?? "").trim();
+      if (!bayId) bayId = makeId("bay");
+      const bayName = String(b.name ?? "").trim();
+      const tablesRaw = Array.isArray(b.tables) ? b.tables : [];
+      const tables = tablesRaw.map((tEnt) => {
+        const t = tEnt as Record<string, unknown>;
+        let tid = String(t.id ?? "").trim();
+        if (!tid) tid = makeId("table");
+        return {
+          id: tid,
+          name: String(t.name ?? "").trim(),
+          squareFeet: String(t.squareFeet ?? ""),
+        };
+      });
+      return { id: bayId, name: bayName, tables };
+    });
+    return { id, name, bays };
+  });
+}
+
 type CultivationFieldModalState =
   | { kind: "closed" }
-  | { kind: "addBay"; roomId: string }
-  | { kind: "addTable"; roomId: string; bayId: string };
+  | { kind: "addBay"; suite: "vegRooms" | "flowerRooms"; roomId: string }
+  | { kind: "addTable"; suite: "vegRooms" | "flowerRooms"; roomId: string; bayId: string };
 
 function extractionAiNamingStatusLine(extraction: AppConfig["extraction"]): string {
   const md = String(extraction.productNameAiPromptMarkdown || "").trim();
@@ -220,6 +250,11 @@ export default function ConfigPage() {
     return ianaTimeZones.filter((z) => z.toLowerCase().includes(q));
   }, [ianaTimeZones, timeZoneFilter]);
 
+  const cultivationStrainsAlphabetical = useMemo(
+    () => sortStrainsAlphabetically(config.cultivation.strains),
+    [config.cultivation.strains],
+  );
+
   const [strainForm, setStrainForm] = useState({
     name: "",
     acronym: "",
@@ -251,6 +286,8 @@ export default function ConfigPage() {
   /** Quick-add flower room: number of bays and tables per bay (generated names A,B,… and table 1,2,…). */
   const [flowerQuickBayCount, setFlowerQuickBayCount] = useState("3");
   const [flowerQuickTablesPerBay, setFlowerQuickTablesPerBay] = useState("5");
+  const [vegQuickBayCount, setVegQuickBayCount] = useState("3");
+  const [vegQuickTablesPerBay, setVegQuickTablesPerBay] = useState("5");
   const [productNameForm, setProductNameForm] = useState({
     sourceMix: "",
     productName: "",
@@ -300,6 +337,8 @@ export default function ConfigPage() {
           rooms: {
             ...emptyConfig.cultivation.rooms,
             ...(data.cultivation?.rooms || {}),
+            vegRooms: normalizeRoomsLayout((data.cultivation?.rooms as { vegRooms?: unknown } | undefined)?.vegRooms),
+            flowerRooms: normalizeRoomsLayout((data.cultivation?.rooms as { flowerRooms?: unknown } | undefined)?.flowerRooms),
           },
         },
         extraction: {
@@ -471,6 +510,59 @@ export default function ConfigPage() {
             {
               id: makeId("veg-room"),
               name: vegRoomName.trim(),
+              bays: [],
+            },
+          ],
+        },
+      },
+    }));
+
+    setVegRoomName("");
+  }
+
+  function addVegRoomWithLayout() {
+    const name = vegRoomName.trim();
+    const bayCount = Math.min(26, Math.max(1, Math.floor(Number(vegQuickBayCount))));
+    const tablesPerBay = Math.max(1, Math.floor(Number(vegQuickTablesPerBay)));
+    if (!name) {
+      alert("Enter a veg room name first.");
+      return;
+    }
+    if (!Number.isFinite(bayCount) || bayCount < 1) {
+      alert("Number of bays must be at least 1 (max 26).");
+      return;
+    }
+    if (!Number.isFinite(tablesPerBay) || tablesPerBay < 1) {
+      alert("Tables per bay must be at least 1.");
+      return;
+    }
+
+    const bays = Array.from({ length: bayCount }, (_, i) => {
+      const bayLabel = i < 26 ? String.fromCharCode(65 + i) : String(i + 1);
+      const tables = Array.from({ length: tablesPerBay }, (_, j) => ({
+        id: makeId("table"),
+        name: String(j + 1),
+        squareFeet: "",
+      }));
+      return {
+        id: makeId("bay"),
+        name: bayLabel,
+        tables,
+      };
+    });
+
+    setConfig((prev) => ({
+      ...prev,
+      cultivation: {
+        ...prev.cultivation,
+        rooms: {
+          ...prev.cultivation.rooms,
+          vegRooms: [
+            ...prev.cultivation.rooms.vegRooms,
+            {
+              id: makeId("veg-room"),
+              name,
+              bays,
             },
           ],
         },
@@ -584,14 +676,20 @@ export default function ConfigPage() {
     }));
   }
 
-  function openAddBayModal(roomId: string) {
+  function openAddBayModal(suite: "vegRooms" | "flowerRooms", roomId: string) {
     setFieldModalError("");
     setFieldModalBayName("");
-    setCultivationFieldModal({ kind: "addBay", roomId });
+    setCultivationFieldModal({ kind: "addBay", suite, roomId });
   }
 
   function confirmCultivationFieldModal() {
     if (cultivationFieldModal.kind === "closed") return;
+
+    const suite =
+      cultivationFieldModal.kind === "addBay" || cultivationFieldModal.kind === "addTable"
+        ? cultivationFieldModal.suite
+        : null;
+    if (!suite) return;
 
     if (cultivationFieldModal.kind === "addBay") {
       const bayName = fieldModalBayName.trim();
@@ -606,7 +704,7 @@ export default function ConfigPage() {
           ...prev.cultivation,
           rooms: {
             ...prev.cultivation.rooms,
-            flowerRooms: prev.cultivation.rooms.flowerRooms.map((room) =>
+            [suite]: prev.cultivation.rooms[suite].map((room) =>
               room.id === roomId
                 ? {
                     ...room,
@@ -619,7 +717,7 @@ export default function ConfigPage() {
                       },
                     ],
                   }
-                : room
+                : room,
             ),
           },
         },
@@ -644,7 +742,7 @@ export default function ConfigPage() {
         ...prev.cultivation,
         rooms: {
           ...prev.cultivation.rooms,
-          flowerRooms: prev.cultivation.rooms.flowerRooms.map((room) =>
+          [suite]: prev.cultivation.rooms[suite].map((room) =>
             room.id === roomId
               ? {
                   ...room,
@@ -661,10 +759,10 @@ export default function ConfigPage() {
                             },
                           ],
                         }
-                      : bay
+                      : bay,
                   ),
                 }
-              : room
+              : room,
           ),
         },
       },
@@ -683,41 +781,46 @@ export default function ConfigPage() {
     setFieldModalSquareFeet("");
   }
 
-  function removeBay(roomId: string, bayId: string) {
+  function removeBay(suite: "vegRooms" | "flowerRooms", roomId: string, bayId: string) {
     setConfig((prev) => ({
       ...prev,
       cultivation: {
         ...prev.cultivation,
         rooms: {
           ...prev.cultivation.rooms,
-          flowerRooms: prev.cultivation.rooms.flowerRooms.map((room) =>
+          [suite]: prev.cultivation.rooms[suite].map((room) =>
             room.id === roomId
               ? {
                   ...room,
                   bays: room.bays.filter((bay) => bay.id !== bayId),
                 }
-              : room
+              : room,
           ),
         },
       },
     }));
   }
 
-  function openAddTableModal(roomId: string, bayId: string) {
+  function openAddTableModal(suite: "vegRooms" | "flowerRooms", roomId: string, bayId: string) {
     setFieldModalError("");
     setFieldModalTableName("");
     setFieldModalSquareFeet("");
-    setCultivationFieldModal({ kind: "addTable", roomId, bayId });
+    setCultivationFieldModal({ kind: "addTable", suite, roomId, bayId });
   }
 
-  function removeTable(roomId: string, bayId: string, tableId: string) {
+  function removeTable(
+    suite: "vegRooms" | "flowerRooms",
+    roomId: string,
+    bayId: string,
+    tableId: string,
+  ) {
     setConfig((prev) => ({
       ...prev,
       cultivation: {
         ...prev.cultivation,
         rooms: {
           ...prev.cultivation.rooms,
-          flowerRooms: prev.cultivation.rooms.flowerRooms.map((room) =>
+          [suite]: prev.cultivation.rooms[suite].map((room) =>
             room.id === roomId
               ? {
                   ...room,
@@ -727,10 +830,10 @@ export default function ConfigPage() {
                           ...bay,
                           tables: bay.tables.filter((t) => t.id !== tableId),
                         }
-                      : bay
+                      : bay,
                   ),
                 }
-              : room
+              : room,
           ),
         },
       },
@@ -1119,7 +1222,7 @@ export default function ConfigPage() {
         </div>
 
         <div style={styles.list}>
-          {config.cultivation.strains.map((strain) => (
+          {cultivationStrainsAlphabetical.map((strain) => (
             <div key={strain.id} style={styles.row}>
               <span>
                 <strong>{strain.name}</strong> ({strain.acronym}) —{" "}
@@ -1163,27 +1266,96 @@ export default function ConfigPage() {
           onRemove={(id) => removeSupply("cultivation", id)}
         />
 
-        <h3 style={styles.subTitle}>Veg Rooms</h3>
+        <h3 style={styles.subTitle}>Veg Rooms / Bays / Tables</h3>
 
-        <div style={styles.inline}>
+        <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
+          Same layout as flower: use <strong style={{ color: "#e5e7eb" }}>Add room with layout</strong> to name a
+          veg room and generate bays (A, B, C, …) with numbered tables (1, 2, …) per bay. Locations appear when
+          operators log <strong style={{ color: "#e5e7eb" }}>Clone → Veg</strong> on the Cultivation page.
+        </p>
+
+        <div style={{ ...styles.grid, marginBottom: 12 }}>
           <input
             style={styles.input}
-            placeholder="Veg Room Name"
+            placeholder="Veg room name"
             value={vegRoomName}
             onChange={(e) => setVegRoomName(e.target.value)}
           />
-          <button style={styles.addButton} onClick={addVegRoom}>
-            Add Veg Room
+          <input
+            style={styles.input}
+            placeholder="Number of bays"
+            inputMode="numeric"
+            value={vegQuickBayCount}
+            onChange={(e) => setVegQuickBayCount(e.target.value)}
+          />
+          <input
+            style={styles.input}
+            placeholder="Tables per bay"
+            inputMode="numeric"
+            value={vegQuickTablesPerBay}
+            onChange={(e) => setVegQuickTablesPerBay(e.target.value)}
+          />
+          <button style={styles.addButton} type="button" onClick={addVegRoomWithLayout}>
+            Add room with layout
+          </button>
+          <button style={styles.secondaryButton} type="button" onClick={addVegRoom}>
+            Add empty room
           </button>
         </div>
 
         <div style={styles.list}>
           {config.cultivation.rooms.vegRooms.map((room) => (
-            <div key={room.id} style={styles.row}>
-              <strong>{room.name}</strong>
-              <button style={styles.deleteButton} onClick={() => removeVegRoom(room.id)}>
-                Remove
-              </button>
+            <div key={room.id} style={styles.nestedBox}>
+              <div style={styles.row}>
+                <strong>{room.name}</strong>
+                <div style={styles.inlineSmall}>
+                  <button style={styles.addButton} type="button" onClick={() => openAddBayModal("vegRooms", room.id)}>
+                    Add Bay
+                  </button>
+                  <button style={styles.deleteButton} type="button" onClick={() => removeVegRoom(room.id)}>
+                    Remove Room
+                  </button>
+                </div>
+              </div>
+
+              {room.bays.map((bay) => (
+                <div key={bay.id} style={styles.bayBox}>
+                  <div style={styles.row}>
+                    <strong>Bay {bay.name}</strong>
+                    <div style={styles.inlineSmall}>
+                      <button
+                        style={styles.addButton}
+                        type="button"
+                        onClick={() => openAddTableModal("vegRooms", room.id, bay.id)}
+                      >
+                        Add Table
+                      </button>
+                      <button
+                        style={styles.deleteButton}
+                        type="button"
+                        onClick={() => removeBay("vegRooms", room.id, bay.id)}
+                      >
+                        Remove Bay
+                      </button>
+                    </div>
+                  </div>
+
+                  {bay.tables.map((table) => (
+                    <div key={table.id} style={styles.row}>
+                      <span>
+                        Table {table.name} — {table.squareFeet} sq ft
+                      </span>
+                      <button
+                        style={styles.deleteButton}
+                        type="button"
+                        onClick={() => removeTable("vegRooms", room.id, bay.id, table.id)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ))}
             </div>
           ))}
         </div>
@@ -1232,7 +1404,7 @@ export default function ConfigPage() {
               <div style={styles.row}>
                 <strong>{room.name}</strong>
                 <div style={styles.inlineSmall}>
-                  <button style={styles.addButton} onClick={() => openAddBayModal(room.id)}>
+                  <button style={styles.addButton} onClick={() => openAddBayModal("flowerRooms", room.id)}>
                     Add Bay
                   </button>
                   <button
@@ -1251,13 +1423,13 @@ export default function ConfigPage() {
                     <div style={styles.inlineSmall}>
                       <button
                         style={styles.addButton}
-                        onClick={() => openAddTableModal(room.id, bay.id)}
+                        onClick={() => openAddTableModal("flowerRooms", room.id, bay.id)}
                       >
                         Add Table
                       </button>
                       <button
                         style={styles.deleteButton}
-                        onClick={() => removeBay(room.id, bay.id)}
+                        onClick={() => removeBay("flowerRooms", room.id, bay.id)}
                       >
                         Remove Bay
                       </button>
@@ -1271,7 +1443,7 @@ export default function ConfigPage() {
                       </span>
                       <button
                         style={styles.deleteButton}
-                        onClick={() => removeTable(room.id, bay.id, table.id)}
+                        onClick={() => removeTable("flowerRooms", room.id, bay.id, table.id)}
                       >
                         Remove
                       </button>

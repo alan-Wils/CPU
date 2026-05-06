@@ -8,6 +8,7 @@ import {
   fetchCultivationStrainMetrics,
   type CultivationStrainMetricPoint,
 } from "@/lib/analyticsApi";
+import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
 import {
   CartesianGrid,
   Legend,
@@ -280,7 +281,9 @@ export default function AnalyticsPage() {
         const list = Array.isArray(raw) ? raw : [];
         if (!cancelled) {
           setStrains(
-            list.filter((s) => getStrainAcronym(s as ConfigStrain)),
+            sortStrainsAlphabetically(
+              list.filter((s) => getStrainAcronym(s as ConfigStrain)),
+            ),
           );
         }
       } catch {
