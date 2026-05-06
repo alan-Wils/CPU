@@ -97,6 +97,19 @@ function cleanId(value: any) {
     .replaceAll(" ", "");
 }
 
+/** Fuzzy “same lineage” matching is only valid once a batch can have harvest-derived outputs. */
+function cultivationStageAllowsChainHeuristics(stage: unknown): boolean {
+  const s = String(stage ?? "")
+    .trim()
+    .toLowerCase();
+  return (
+    s === "flower" ||
+    s === "partially harvested" ||
+    s === "harvested" ||
+    s === "complete"
+  );
+}
+
 function lower(value: any) {
   return String(value || "").toLowerCase();
 }
@@ -151,7 +164,12 @@ function getBatchDateKey(batch: any) {
 }
 
 function sameBatchFamily(cult: any, other: any) {
+  const rawCultId = String(cult?.id ?? "").trim();
+  if (!rawCultId) return false;
+
   const cultId = cleanId(cult?.id);
+  if (!cultId) return false;
+
   const otherId = cleanId(other?.id);
   const otherSource = cleanId(other?.source);
   const otherSourceBatchId = cleanId(other?.sourceBatchId);
@@ -162,21 +180,24 @@ function sameBatchFamily(cult: any, other: any) {
   const acronym = cleanId(cult?.acronym);
   const dateKey = getBatchDateKey(cult);
 
+  const hayIncludesNeedle = (hay: string, needle: string) =>
+    needle.length > 0 && hay.includes(needle);
+
   return (
-    otherId.includes(cultId) ||
-    otherSource.includes(cultId) ||
-    otherSourceBatchId.includes(cultId) ||
-    otherOriginalBatchId.includes(cultId) ||
-    otherCultivationBatchId.includes(cultId) ||
-    otherParentCultivationBatch.includes(cultId) ||
-    (acronym &&
-      dateKey &&
-      (otherId.includes(acronym) ||
-        otherSource.includes(acronym) ||
-        otherSourceBatchId.includes(acronym)) &&
-      (otherId.includes(dateKey) ||
-        otherSource.includes(dateKey) ||
-        otherSourceBatchId.includes(dateKey)))
+    hayIncludesNeedle(otherId, cultId) ||
+    hayIncludesNeedle(otherSource, cultId) ||
+    hayIncludesNeedle(otherSourceBatchId, cultId) ||
+    hayIncludesNeedle(otherOriginalBatchId, cultId) ||
+    hayIncludesNeedle(otherCultivationBatchId, cultId) ||
+    hayIncludesNeedle(otherParentCultivationBatch, cultId) ||
+    (acronym.length >= 3 &&
+      dateKey.length >= 4 &&
+      (hayIncludesNeedle(otherId, acronym) ||
+        hayIncludesNeedle(otherSource, acronym) ||
+        hayIncludesNeedle(otherSourceBatchId, acronym)) &&
+      (hayIncludesNeedle(otherId, dateKey) ||
+        hayIncludesNeedle(otherSource, dateKey) ||
+        hayIncludesNeedle(otherSourceBatchId, dateKey)))
   );
 }
 
@@ -237,37 +258,50 @@ function isSourceMaterialBatch(batch: any) {
 
 function findRelatedSourceBatches(cultivationBatch: any, sourceBatches: any[]) {
   const cultId = cultivationBatch?.id;
+  const allowHeuristic = cultivationStageAllowsChainHeuristics(cultivationBatch?.stage);
 
   return sourceBatches.filter((source: any) => {
-    return (
-      isSourceMaterialBatch(source) &&
-      (source.sourceBatchId === cultId ||
-        source.originalBatchId === cultId ||
-        source.cultivationBatchId === cultId ||
-        source.parentCultivationBatch === cultId ||
-        source.source === cultId ||
-        sameBatchFamily(cultivationBatch, source))
-    );
+    if (!isSourceMaterialBatch(source)) return false;
+
+    const explicitLink =
+      source.sourceBatchId === cultId ||
+      source.originalBatchId === cultId ||
+      source.cultivationBatchId === cultId ||
+      source.parentCultivationBatch === cultId ||
+      source.source === cultId;
+
+    if (explicitLink) return true;
+
+    // Do not fuzzy-match harvest-derived source rows onto Clone/Veg batches.
+    if (!allowHeuristic) return false;
+
+    return sameBatchFamily(cultivationBatch, source);
   });
 }
 
 function findRelatedFlowerOutputs(cultivationBatch: any, flowerBatches: any[]) {
   const cultId = cultivationBatch?.id;
+  const allowHeuristic = cultivationStageAllowsChainHeuristics(cultivationBatch?.stage);
 
   return flowerBatches.filter((batch: any) => {
-    return (
-      isFlowerOutputBatch(batch) &&
-      (batch.source === cultId ||
-        batch.sourceBatchId === cultId ||
-        batch.originalBatchId === cultId ||
-        batch.cultivationBatchId === cultId ||
-        sameBatchFamily(cultivationBatch, batch))
-    );
+    if (!isFlowerOutputBatch(batch)) return false;
+
+    const explicitLink =
+      batch.source === cultId ||
+      batch.sourceBatchId === cultId ||
+      batch.originalBatchId === cultId ||
+      batch.cultivationBatchId === cultId;
+
+    if (explicitLink) return true;
+    if (!allowHeuristic) return false;
+
+    return sameBatchFamily(cultivationBatch, batch);
   });
 }
 
 function findRelatedExtractionBatches(cultivationBatch: any, extractionBatches: any[], sourceBatches: any[]) {
   const cultId = cultivationBatch?.id;
+  const allowHeuristic = cultivationStageAllowsChainHeuristics(cultivationBatch?.stage);
   const relatedSources = findRelatedSourceBatches(cultivationBatch, sourceBatches);
   const sourceIds = relatedSources.map((s: any) => s.id);
 
@@ -275,60 +309,73 @@ function findRelatedExtractionBatches(cultivationBatch: any, extractionBatches: 
     const exSourceIds = ex.sourceBatchIds || [];
     const exSources = ex.sources || ex.sourceBatches || [];
 
+    if (!isExtractionProductBatch(ex)) return false;
+
+    const explicitLink =
+      ex.sourceBatchId === cultId ||
+      ex.cultivationBatchId === cultId ||
+      ex.originalBatchId === cultId ||
+      exSourceIds.includes(cultId) ||
+      sourceIds.includes(ex.sourceBatchId) ||
+      sourceIds.includes(ex.source) ||
+      exSourceIds.some((id: string) => sourceIds.includes(id)) ||
+      exSources.some(
+        (src: any) =>
+          src.id === cultId ||
+          src.batchId === cultId ||
+          src.sourceId === cultId ||
+          sourceIds.includes(src.id) ||
+          sourceIds.includes(src.batchId) ||
+          sourceIds.includes(src.sourceId),
+      );
+
+    if (explicitLink) return true;
+    if (!allowHeuristic) return false;
+
     return (
-      isExtractionProductBatch(ex) &&
-      (ex.sourceBatchId === cultId ||
-        ex.cultivationBatchId === cultId ||
-        ex.originalBatchId === cultId ||
-        exSourceIds.includes(cultId) ||
-        sameBatchFamily(cultivationBatch, ex) ||
-        sourceIds.includes(ex.sourceBatchId) ||
-        sourceIds.includes(ex.source) ||
-        exSourceIds.some((id: string) => sourceIds.includes(id)) ||
-        exSources.some(
-          (src: any) =>
-            src.id === cultId ||
-            src.batchId === cultId ||
-            src.sourceId === cultId ||
-            sourceIds.includes(src.id) ||
-            sourceIds.includes(src.batchId) ||
-            sourceIds.includes(src.sourceId) ||
-            sameBatchFamily(cultivationBatch, src)
-        ))
+      sameBatchFamily(cultivationBatch, ex) ||
+      exSources.some((src: any) => sameBatchFamily(cultivationBatch, src))
     );
   });
 }
 
 function findRelatedPackagingBatches(cultivationBatch: any, extractionBatches: any[], packagingBatches: any[]) {
   const cultId = cultivationBatch?.id;
+  const allowHeuristic = cultivationStageAllowsChainHeuristics(cultivationBatch?.stage);
   const extractionIds = extractionBatches.map((b: any) => b.id);
 
   return packagingBatches.filter((p: any) => {
     const pSourceIds = p.sourceBatchIds || [];
     const pSources = p.sources || p.sourceBatches || [];
 
+    if (!isExtractionProductBatch(p)) return false;
+
+    const explicitLink =
+      p.source === cultId ||
+      p.sourceBatchId === cultId ||
+      p.cultivationBatchId === cultId ||
+      p.originalBatchId === cultId ||
+      extractionIds.includes(p.id) ||
+      extractionIds.includes(p.sourceBatchId) ||
+      extractionIds.includes(p.productionBatchId) ||
+      pSourceIds.includes(cultId) ||
+      pSourceIds.some((id: string) => extractionIds.includes(id)) ||
+      pSources.some(
+        (src: any) =>
+          src.id === cultId ||
+          src.batchId === cultId ||
+          src.sourceId === cultId ||
+          extractionIds.includes(src.id) ||
+          extractionIds.includes(src.batchId) ||
+          extractionIds.includes(src.sourceId),
+      );
+
+    if (explicitLink) return true;
+    if (!allowHeuristic) return false;
+
     return (
-      isExtractionProductBatch(p) &&
-      (p.source === cultId ||
-        p.sourceBatchId === cultId ||
-        p.cultivationBatchId === cultId ||
-        p.originalBatchId === cultId ||
-        extractionIds.includes(p.id) ||
-        extractionIds.includes(p.sourceBatchId) ||
-        extractionIds.includes(p.productionBatchId) ||
-        pSourceIds.includes(cultId) ||
-        pSourceIds.some((id: string) => extractionIds.includes(id)) ||
-        pSources.some(
-          (src: any) =>
-            src.id === cultId ||
-            src.batchId === cultId ||
-            src.sourceId === cultId ||
-            extractionIds.includes(src.id) ||
-            extractionIds.includes(src.batchId) ||
-            extractionIds.includes(src.sourceId) ||
-            sameBatchFamily(cultivationBatch, src)
-        ) ||
-        sameBatchFamily(cultivationBatch, p))
+      sameBatchFamily(cultivationBatch, p) ||
+      pSources.some((src: any) => sameBatchFamily(cultivationBatch, src))
     );
   });
 }
