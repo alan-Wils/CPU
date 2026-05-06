@@ -137,6 +137,14 @@ function getPreDeconFlowerLbs(batch: any): number {
   return num(batch?.trimmedWeightLbs) + num(batch?.popcornWeightLbs);
 }
 
+function getTrimFromTrimmingLbs(batch: any): number {
+  const explicit = num(batch?.trimFromTrimmingLbs);
+  if (explicit > 0) return explicit;
+  const total = num(batch?.totalTrimLbs);
+  const fromBuck = num(batch?.trimFromBuckLbs);
+  return Math.max(total - fromBuck, 0);
+}
+
 function dryTaskPrereqMessage(task: string, batch: any): string | null {
   if (!batch) return "Select a dry flower batch.";
   const bucked = getBuckWholePlantLbs(batch) > 0;
@@ -488,6 +496,7 @@ export default function Cultivation() {
   /** Dry flower Test Passed → lab THC % modal; metrics are written on the parent cultivation batch. */
   const [testPassModalBatch, setTestPassModalBatch] = useState<any>(null);
   const [testPassThcPct, setTestPassThcPct] = useState("");
+  const [testPassResultDate, setTestPassResultDate] = useState("");
   const [testPassPotencyNote, setTestPassPotencyNote] = useState("");
 
   const repeatTaskBypassRef = useRef<{ batchId: string; taskName: string } | null>(null);
@@ -1325,7 +1334,27 @@ export default function Cultivation() {
     );
   }
 
-  async function applyDryFlowerTestPassed(batch: any, labThcPct: number, potencyNote: string) {
+  function handleTestPassResultDateChange(nextValue: string) {
+    const next = String(nextValue || "").trim();
+    const current = String(testPassResultDate || "").trim();
+    if (!next || !current || next === current) {
+      setTestPassResultDate(next);
+      return;
+    }
+    showConfirm(
+      "Use different result date?",
+      "Are you sure you want to use a different lab result date for this test?",
+      () => setTestPassResultDate(next),
+      `Current date: ${current}\nNew date: ${next}`,
+    );
+  }
+
+  async function applyDryFlowerTestPassed(
+    batch: any,
+    labThcPct: number,
+    potencyNote: string,
+    resultDateYmd: string,
+  ) {
     if (!canWriteRecords) {
       showReadOnlyNotice();
       return;
@@ -1340,12 +1369,23 @@ export default function Cultivation() {
       showNotice("Lab THC % out of range", `Enter a lab THC % no greater than ${LAB_THC_MAX} (typical flower range).`);
       return;
     }
+    const resultDate = String(resultDateYmd || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(resultDate)) {
+      showNotice("Lab result date required", "Enter the date this test result came back from the lab.");
+      return;
+    }
+    // Use a UTC midday anchor so date-only values remain stable across time zones.
+    const potencyAt = new Date(`${resultDate}T12:00:00.000Z`);
+    if (Number.isNaN(potencyAt.getTime())) {
+      showNotice("Invalid lab result date", "Enter a valid date for the lab result.");
+      return;
+    }
 
     batch.testStatus = "Test Passed";
     batch.status = "Passed / Ready for Packaging";
     batch.testFailureReason = "";
     batch.finalLabPotencyPct = thc;
-    batch.finalLabPotencyAt = new Date().toISOString();
+    batch.finalLabPotencyAt = potencyAt.toISOString();
     const noteTrim = String(potencyNote || "").trim().slice(0, 500);
     if (noteTrim) {
       batch.finalLabPotencyNote = noteTrim;
@@ -1423,6 +1463,7 @@ export default function Cultivation() {
 
     setTestPassModalBatch(null);
     setTestPassThcPct("");
+    setTestPassResultDate("");
     setTestPassPotencyNote("");
     forceRefresh();
 
@@ -1564,6 +1605,18 @@ export default function Cultivation() {
     if (selectedDryFlowerTask === "Bucking") {
       const wholePlant = num(dryBuckWholePlant);
       const stemWaste = num(dryBuckStemWaste);
+      const existingTrimOutForCap =
+        num(selectedDryFlowerBatch.trimmedWeightLbs) +
+        num(selectedDryFlowerBatch.popcornWeightLbs) +
+        getTrimFromTrimmingLbs(selectedDryFlowerBatch);
+      if (existingTrimOutForCap > wholePlant + 0.02) {
+        showNotice(
+          "Whole plant is below trimmed output",
+          `This batch already has ${existingTrimOutForCap.toFixed(2)} lbs recorded from trimming (A-grade + popcorn + trim from trimming). Whole plant at bucking cannot be set below that.`,
+          "Enter a whole-plant bucking weight that is at least the trimmed output, or adjust the trimming values first.",
+        );
+        return;
+      }
       selectedDryFlowerBatch.buckWholePlantLbs = +wholePlant.toFixed(4);
       selectedDryFlowerBatch.buckStemWasteLbs = +stemWaste.toFixed(4);
       selectedDryFlowerBatch.buckedWeightLbs = +wholePlant.toFixed(4);
@@ -2936,6 +2989,7 @@ export default function Cultivation() {
                             setShowDryTaskWindow(false);
                             setTestPassModalBatch(selectedDryFlowerBatch);
                             setTestPassThcPct("");
+                            setTestPassResultDate(new Date().toISOString().slice(0, 10));
                             setTestPassPotencyNote("");
                           }}
                         >
@@ -3243,6 +3297,15 @@ export default function Cultivation() {
               style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}
             />
             <label style={{ display: "block", marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+              Lab result date
+              <input
+                type="date"
+                value={testPassResultDate}
+                onChange={(e) => handleTestPassResultDateChange(e.target.value)}
+                style={{ ...inputStyle, width: "100%", boxSizing: "border-box", marginTop: 6 }}
+              />
+            </label>
+            <label style={{ display: "block", marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
               Optional note
               <textarea
                 placeholder="Lab sample id, COA reference, etc."
@@ -3257,6 +3320,7 @@ export default function Cultivation() {
                 onClick={() => {
                   setTestPassModalBatch(null);
                   setTestPassThcPct("");
+                  setTestPassResultDate("");
                   setTestPassPotencyNote("");
                 }}
               >
@@ -3269,6 +3333,7 @@ export default function Cultivation() {
                     testPassModalBatch,
                     Number(testPassThcPct),
                     testPassPotencyNote,
+                    testPassResultDate,
                   );
                 }}
               >
