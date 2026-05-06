@@ -28,6 +28,12 @@ export function hasMinimumRole(minimumRole: string) {
   return currentLevel >= requiredLevel;
 }
 
+/** Veg/Flower batch editor (placement + core fields): Manager-tier and above (`MANAGER`, `OPERATIONS_MANAGER`, Admin, Owner). */
+export function canManageCultivationBatchPlacement(): boolean {
+  if (typeof window === "undefined") return false;
+  return hasMinimumRole("MANAGER");
+}
+
 export function canDeleteRecords() {
   if (typeof window === "undefined") return false;
   if (hasMinimumRole("MANAGER"))

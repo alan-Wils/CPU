@@ -5,10 +5,16 @@ import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import {
   canDeleteRecords as userCanDeleteWorkflow,
-  hasMinimumRole,
+  canManageCultivationBatchPlacement,
 } from "@/lib/permissions";
 import { store } from "@/lib/store";
-import { displayNameFromLogActor, getAuthDisplayName, getAuthUser } from "@/lib/auth";
+import {
+  CPU_AUTH_CHANGED_EVENT,
+  CPU_AUTH_USER_STORAGE_KEY,
+  displayNameFromLogActor,
+  getAuthDisplayName,
+  getAuthUser,
+} from "@/lib/auth";
 import {
   hydrateTaskLogsFromApi,
   loadBackendStore,
@@ -519,8 +525,6 @@ export default function Cultivation() {
   const [refresh, setRefresh] = useState(0);
   const [canDeleteRecords, setCanDeleteRecords] = useState(false);
   const [canWriteRecords, setCanWriteRecords] = useState(false);
-  /** Room/bay/table + identity edits (Veg/Flower batch editor) — Manager, Ops Manager, Admin, Owner only. */
-  const [canManagerEditBatchDetails, setCanManagerEditBatchDetails] = useState(false);
   const [selectedBatch, setSelectedBatch] = useState<any>(
     s.cultivationBatches[0] || null
   );
@@ -646,7 +650,6 @@ export default function Cultivation() {
   useEffect(() => {
     setCanDeleteRecords(userCanDeleteWorkflow());
     setCanWriteRecords(hasCultivationWriteAccess());
-    setCanManagerEditBatchDetails(hasMinimumRole("MANAGER"));
 
     let mounted = true;
 
@@ -754,6 +757,36 @@ export default function Cultivation() {
     return () => {
       mounted = false;
       clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    /** Re-render so manager-level gates (batch Edit) pick up JWT after login or tab/session sync. */
+    const bump = () => {
+      setCanDeleteRecords(userCanDeleteWorkflow());
+      setCanWriteRecords(hasCultivationWriteAccess());
+      setRefresh((n) => n + 1);
+    };
+
+    window.addEventListener(CPU_AUTH_CHANGED_EVENT, bump);
+    const onStorage = (e: StorageEvent) => {
+      if (
+        !e.storageArea ||
+        e.storageArea !== window.localStorage ||
+        (e.key != null &&
+          e.key !== CPU_AUTH_USER_STORAGE_KEY &&
+          e.key !== "cpu_auth_token")
+      ) {
+        return;
+      }
+      bump();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(CPU_AUTH_CHANGED_EVENT, bump);
+      window.removeEventListener("storage", onStorage);
     };
   }, []);
 
@@ -2376,7 +2409,7 @@ export default function Cultivation() {
   }
 
   function openEditVegBatchModal(b: any) {
-    if (!canManagerEditBatchDetails) {
+    if (!canManageCultivationBatchPlacement()) {
       showManagerBatchEditNotice();
       return;
     }
@@ -2435,7 +2468,7 @@ export default function Cultivation() {
   }
 
   async function saveEditVegBatchModal() {
-    if (!editVegModalBatch || !canManagerEditBatchDetails) return;
+    if (!editVegModalBatch || !canManageCultivationBatchPlacement()) return;
 
     const vr = cultivationRooms.vegRooms || [];
     const taskRequiredFields: { label: string; value: unknown; positive?: boolean }[] = [
@@ -2572,7 +2605,7 @@ export default function Cultivation() {
   }
 
   function openEditFlowerBatchModal(b: any) {
-    if (!canManagerEditBatchDetails) {
+    if (!canManageCultivationBatchPlacement()) {
       showManagerBatchEditNotice();
       return;
     }
@@ -2631,7 +2664,7 @@ export default function Cultivation() {
   }
 
   async function saveEditFlowerBatchModal() {
-    if (!editFlowerModalBatch || !canManagerEditBatchDetails) return;
+    if (!editFlowerModalBatch || !canManageCultivationBatchPlacement()) return;
 
     const fr = cultivationRooms.flowerRooms || [];
     const taskRequiredFields: { label: string; value: unknown; positive?: boolean }[] = [
@@ -3552,7 +3585,7 @@ export default function Cultivation() {
                         Tasks
                       </button>
                     ) : null}
-                    {canManagerEditBatchDetails && selectedStage === "Veg" && b.stage === "Veg" ? (
+                    {canManageCultivationBatchPlacement() && selectedStage === "Veg" && b.stage === "Veg" ? (
                       <button
                         type="button"
                         style={{
@@ -3566,7 +3599,7 @@ export default function Cultivation() {
                         Edit
                       </button>
                     ) : null}
-                    {canManagerEditBatchDetails && selectedStage === "Flower" ? (
+                    {canManageCultivationBatchPlacement() && selectedStage === "Flower" ? (
                       <button
                         type="button"
                         style={{
@@ -4697,7 +4730,7 @@ export default function Cultivation() {
               <button type="button" style={buttonStyle} onClick={() => setViewBatch(null)}>
                 Close
               </button>
-              {canManagerEditBatchDetails && String(viewBatch.stage || "") === "Veg" ? (
+              {canManageCultivationBatchPlacement() && String(viewBatch.stage || "") === "Veg" ? (
                 <button
                   type="button"
                   style={{
@@ -4714,7 +4747,7 @@ export default function Cultivation() {
                   Edit batch
                 </button>
               ) : null}
-              {canManagerEditBatchDetails &&
+              {canManageCultivationBatchPlacement() &&
               (viewBatch.stage === "Flower" || viewBatch.stage === "Partially Harvested") ? (
                 <button
                   type="button"

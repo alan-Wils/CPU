@@ -28,7 +28,9 @@ export type LoginResponse = {
 };
 
 const TOKEN_KEY = "cpu_auth_token";
-const USER_KEY = "cpu_auth_user";
+/** Exported for listeners (other-tab `storage` events) where role-gated UI must resync. */
+export const CPU_AUTH_USER_STORAGE_KEY = "cpu_auth_user";
+const USER_KEY = CPU_AUTH_USER_STORAGE_KEY;
 const COMPANY_KEY = "cpu_auth_company";
 const PORTAL_COMPANIES_KEY = "cpu_portal_companies_json";
 
