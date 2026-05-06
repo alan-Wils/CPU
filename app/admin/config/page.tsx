@@ -16,6 +16,11 @@ import {
   setCompanyDisplayTimezone,
   syncCompanyTimezoneFromConfigPayload,
 } from "@/lib/companyTimezone";
+import {
+  defaultMetrcCompanyConfig,
+  type MetrcCompanyConfig,
+  resolveMetrcApiBaseUrl,
+} from "@/lib/metrcCompanyConfig";
 import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
 
 type Strain = {
@@ -77,13 +82,7 @@ type BlendNameHistoryRecord = {
 
 type AppConfig = {
   company: {
-    metrc: {
-      apiKey: string;
-      userKey: string;
-      licenseNumber: string;
-      facilityName: string;
-      notes: string;
-    };
+    metrc: MetrcCompanyConfig;
     settings: {
       companyWideNotes: string;
       /** IANA time zone for every facility-facing timestamp. Empty = browser default. */
@@ -156,13 +155,7 @@ type AppConfig = {
 
 const emptyConfig: AppConfig = {
   company: {
-    metrc: {
-      apiKey: "",
-      userKey: "",
-      licenseNumber: "",
-      facilityName: "",
-      notes: "",
-    },
+    metrc: { ...defaultMetrcCompanyConfig },
     settings: {
       companyWideNotes: "",
       displayTimezone: "",
@@ -318,6 +311,7 @@ export default function ConfigPage() {
   const [timeZoneModalOpen, setTimeZoneModalOpen] = useState(false);
   const [displayTimezoneDraft, setDisplayTimezoneDraft] = useState("");
   const [timeZoneFilter, setTimeZoneFilter] = useState("");
+  const [showMetrcSecrets, setShowMetrcSecrets] = useState(false);
 
   const ianaTimeZones = useMemo(() => {
     if (typeof Intl !== "undefined" && typeof (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf === "function") {
@@ -348,6 +342,11 @@ export default function ConfigPage() {
   const cultivationStrainsAlphabetical = useMemo(
     () => sortStrainsAlphabetically(config.cultivation.strains),
     [config.cultivation.strains],
+  );
+
+  const metrcResolvedBaseUrl = useMemo(
+    () => resolveMetrcApiBaseUrl(config.company.metrc),
+    [config.company.metrc],
   );
 
   const [strainForm, setStrainForm] = useState({
@@ -418,7 +417,7 @@ export default function ConfigPage() {
           ...emptyConfig.company,
           ...(data.company || {}),
           metrc: {
-            ...emptyConfig.company.metrc,
+            ...defaultMetrcCompanyConfig,
             ...(data.company?.metrc || {}),
           },
           settings: {
@@ -496,7 +495,7 @@ export default function ConfigPage() {
           ...emptyConfig.company,
           ...(data.company || {}),
           metrc: {
-            ...emptyConfig.company.metrc,
+            ...defaultMetrcCompanyConfig,
             ...(data.company?.metrc || {}),
           },
           settings: {
@@ -1191,11 +1190,135 @@ export default function ConfigPage() {
           . Use the clock button to change how dates and times appear everywhere.
         </p>
 
+        <h3 style={{ ...styles.subTitle, marginTop: 18 }}>METRC API (facility)</h3>
+        <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 12, lineHeight: 1.55 }}>
+          Credentials are saved per company in the database and used only by your server (e.g. Railway). They are not
+          exposed to browsers except on this admin screen. Confirm API host patterns with your state&apos;s METRC
+          integration guide — use <strong>API base URL override</strong> if the resolved URL below does not match your
+          environment.
+        </p>
+
+        <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <input
+            type="checkbox"
+            checked={config.company.metrc.integrationEnabled}
+            onChange={(e) =>
+              setConfig((prev) => ({
+                ...prev,
+                company: {
+                  ...prev.company,
+                  metrc: {
+                    ...prev.company.metrc,
+                    integrationEnabled: e.target.checked,
+                  },
+                },
+              }))
+            }
+          />
+          Enable METRC API integration for this company (server-side sync)
+        </label>
+
         <div style={styles.grid}>
           <label style={styles.label}>
-            METRC API Key
+            State code (2 letters)
             <input
               style={styles.input}
+              maxLength={2}
+              placeholder="e.g. CO"
+              value={config.company.metrc.stateCode}
+              onChange={(e) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    metrc: {
+                      ...prev.company.metrc,
+                      stateCode: e.target.value.toUpperCase().replace(/[^A-Za-z]/g, ""),
+                    },
+                  },
+                }))
+              }
+            />
+          </label>
+
+          <label style={styles.label}>
+            Environment
+            <select
+              style={styles.input}
+              value={config.company.metrc.environment}
+              onChange={(e) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    metrc: {
+                      ...prev.company.metrc,
+                      environment: e.target.value === "sandbox" ? "sandbox" : "production",
+                    },
+                  },
+                }))
+              }
+            >
+              <option value="production">Production</option>
+              <option value="sandbox">Sandbox</option>
+            </select>
+          </label>
+
+          <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
+            API base URL override (optional)
+            <input
+              style={styles.input}
+              placeholder="https://api-co.metrc.com"
+              value={config.company.metrc.apiBaseUrlOverride}
+              onChange={(e) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    metrc: {
+                      ...prev.company.metrc,
+                      apiBaseUrlOverride: e.target.value,
+                    },
+                  },
+                }))
+              }
+            />
+          </label>
+        </div>
+
+        <div
+          style={{
+            ...styles.input,
+            marginBottom: 14,
+            fontSize: 13,
+            color: "#cbd5e1",
+            borderStyle: "dashed",
+          }}
+        >
+          <strong style={{ color: "#93c5fd" }}>Resolved API base URL:</strong>{" "}
+          {metrcResolvedBaseUrl || (
+            <span style={{ color: "#fbbf24" }}>
+              Enter a 2-letter state code or paste an override URL above.
+            </span>
+          )}
+        </div>
+
+        <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <input
+            type="checkbox"
+            checked={showMetrcSecrets}
+            onChange={(e) => setShowMetrcSecrets(e.target.checked)}
+          />
+          Show METRC keys on screen (disable when sharing your display)
+        </label>
+
+        <div style={styles.grid}>
+          <label style={styles.label}>
+            Software vendor API key (integrator key from METRC)
+            <input
+              style={styles.input}
+              type={showMetrcSecrets ? "text" : "password"}
+              autoComplete="off"
               value={config.company.metrc.apiKey}
               onChange={(e) =>
                 setConfig((prev) => ({
@@ -1213,9 +1336,11 @@ export default function ConfigPage() {
           </label>
 
           <label style={styles.label}>
-            METRC User Key
+            User API key (facility user key from METRC)
             <input
               style={styles.input}
+              type={showMetrcSecrets ? "text" : "password"}
+              autoComplete="off"
               value={config.company.metrc.userKey}
               onChange={(e) =>
                 setConfig((prev) => ({
@@ -1233,7 +1358,7 @@ export default function ConfigPage() {
           </label>
 
           <label style={styles.label}>
-            License Number
+            Facility license number
             <input
               style={styles.input}
               value={config.company.metrc.licenseNumber}
@@ -1253,7 +1378,7 @@ export default function ConfigPage() {
           </label>
 
           <label style={styles.label}>
-            Facility Name
+            Facility name (label only)
             <input
               style={styles.input}
               value={config.company.metrc.facilityName}
@@ -1272,6 +1397,26 @@ export default function ConfigPage() {
             />
           </label>
         </div>
+
+        <label style={styles.label}>
+          METRC notes (internal — not sent to METRC)
+          <textarea
+            style={styles.textarea}
+            value={config.company.metrc.notes}
+            onChange={(e) =>
+              setConfig((prev) => ({
+                ...prev,
+                company: {
+                  ...prev.company,
+                  metrc: {
+                    ...prev.company.metrc,
+                    notes: e.target.value,
+                  },
+                },
+              }))
+            }
+          />
+        </label>
 
         <label style={styles.label}>
           Company Notes

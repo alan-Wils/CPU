@@ -41,6 +41,10 @@ const defaultConfig = {
       licenseNumber: "",
       facilityName: "",
       notes: "",
+      stateCode: "",
+      environment: "production",
+      apiBaseUrlOverride: "",
+      integrationEnabled: false,
     },
     settings: {
       companyWideNotes: "",
