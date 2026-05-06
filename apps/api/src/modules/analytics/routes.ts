@@ -47,11 +47,17 @@ analyticsRouter.get(
                 take: 3500,
                 orderBy: { updatedAt: "desc" },
             }),
-            storeService.load(companyId).catch(() => ({ dryFlowerBatches: [] as unknown[] })),
+            storeService.load(companyId).catch(() => ({
+                dryFlowerBatches: [] as unknown[],
+                sourceBatches: [] as unknown[],
+            })),
         ]);
 
         const dryFlowerBatches = Array.isArray((storeSnap as { dryFlowerBatches?: unknown }).dryFlowerBatches)
             ? (storeSnap as { dryFlowerBatches: unknown[] }).dryFlowerBatches
+            : [];
+        const sourceBatches = Array.isArray((storeSnap as { sourceBatches?: unknown }).sourceBatches)
+            ? (storeSnap as { sourceBatches: unknown[] }).sourceBatches
             : [];
 
         const points = buildCultivationStrainMetricPoints({
@@ -66,6 +72,7 @@ analyticsRouter.get(
                 cultivationUiState: row.cultivationUiState,
             })),
             dryFlowerBatches,
+            sourceBatches,
         });
 
         res.json({ points });

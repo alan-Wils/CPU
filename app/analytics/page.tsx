@@ -65,6 +65,7 @@ function normalizeMetricPoints(raw: unknown[]): CultivationStrainMetricPoint[] {
     if (!batchId || !strainAcronym || !date) continue;
     const potencyPct = finiteNumber(r.potencyPct);
     const dryYieldGPerSqFt = finiteNumber(r.dryYieldGPerSqFt);
+    const freshFrozenYieldGPerSqFt = finiteNumber(r.freshFrozenYieldGPerSqFt);
     out.push({
       batchId,
       strain,
@@ -72,6 +73,7 @@ function normalizeMetricPoints(raw: unknown[]): CultivationStrainMetricPoint[] {
       date,
       potencyPct,
       dryYieldGPerSqFt,
+      freshFrozenYieldGPerSqFt,
     });
   }
   return out;
@@ -203,6 +205,7 @@ function buildStrainMetricCharts(
 ): {
   potencyRows: Record<string, string | number | undefined>[];
   yieldRows: Record<string, string | number | undefined>[];
+  freshFrozenRows: Record<string, string | number | undefined>[];
   seriesKeys: string[];
 } {
   const want = new Set(acronyms.map((a) => a.toUpperCase()));
@@ -211,9 +214,11 @@ function buildStrainMetricCharts(
     .filter((p) => {
       const potN = finiteNumber(p.potencyPct);
       const yldN = finiteNumber(p.dryYieldGPerSqFt);
+      const ffN = finiteNumber(p.freshFrozenYieldGPerSqFt);
       const pot = potN != null;
       const yld = yldN != null && yldN > 0;
-      return pot || yld;
+      const ff = ffN != null && ffN > 0;
+      return pot || yld || ff;
     })
     .sort(
       (a, b) =>
@@ -224,6 +229,7 @@ function buildStrainMetricCharts(
 
   const potencyRows: Record<string, string | number | undefined>[] = [];
   const yieldRows: Record<string, string | number | undefined>[] = [];
+  const freshFrozenRows: Record<string, string | number | undefined>[] = [];
 
   for (const p of filtered) {
     const sk = seriesKeyForPoint(p);
@@ -234,19 +240,24 @@ function buildStrainMetricCharts(
     };
     const pr: Record<string, string | number | undefined> = { ...base };
     const yr: Record<string, string | number | undefined> = { ...base };
+    const fr: Record<string, string | number | undefined> = { ...base };
     for (const k of seriesKeys) {
       pr[k] = undefined;
       yr[k] = undefined;
+      fr[k] = undefined;
     }
     const potN = finiteNumber(p.potencyPct);
     const yldN = finiteNumber(p.dryYieldGPerSqFt);
+    const ffN = finiteNumber(p.freshFrozenYieldGPerSqFt);
     if (potN != null) pr[sk] = potN;
     if (yldN != null && yldN > 0) yr[sk] = yldN;
+    if (ffN != null && ffN > 0) fr[sk] = ffN;
     potencyRows.push(pr);
     yieldRows.push(yr);
+    freshFrozenRows.push(fr);
   }
 
-  return { potencyRows, yieldRows, seriesKeys };
+  return { potencyRows, yieldRows, freshFrozenRows, seriesKeys };
 }
 
 export default function AnalyticsPage() {
@@ -310,7 +321,7 @@ export default function AnalyticsPage() {
     return [...set];
   }, [points, selectedAcronyms]);
 
-  const { potencyRows, yieldRows, seriesKeys: metricSeriesKeys } = useMemo(
+  const { potencyRows, yieldRows, freshFrozenRows, seriesKeys: metricSeriesKeys } = useMemo(
     () => buildStrainMetricCharts(points, acronymsForChart),
     [points, acronymsForChart],
   );
@@ -355,6 +366,26 @@ export default function AnalyticsPage() {
     return [+Math.max(0, lo - pad).toFixed(3), +(hi + pad).toFixed(3)];
   }, [yieldRows, metricSeriesKeys]);
 
+  const freshFrozenYDomain = useMemo((): [number, number] | undefined => {
+    const vals: number[] = [];
+    for (const row of freshFrozenRows) {
+      for (const sk of metricSeriesKeys) {
+        const n = finiteNumber(row[sk]);
+        if (n != null && n > 0) vals.push(n);
+      }
+    }
+    if (vals.length === 0) return undefined;
+    let lo = Math.min(...vals);
+    let hi = Math.max(...vals);
+    if (lo === hi) {
+      lo = Math.max(0, lo * 0.92);
+      hi = hi * 1.08;
+    }
+    const span = hi - lo;
+    const pad = Math.max(span * 0.06, 0.01);
+    return [+Math.max(0, lo - pad).toFixed(3), +(hi + pad).toFixed(3)];
+  }, [freshFrozenRows, metricSeriesKeys]);
+
   const pageStyle = {
     minHeight: "100vh",
     background:
@@ -395,10 +426,12 @@ export default function AnalyticsPage() {
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
           <h1 style={{ textAlign: "center", marginBottom: 8 }}>Analytics</h1>
           <p style={{ textAlign: "center", color: "#94a3b8", marginTop: 0 }}>
-            Cultivation strain metrics from lab THC % and dry yield (g / sq ft) per dry flower batch when synced to the
-            server; each point uses the lab result date saved at <strong>Test Passed</strong>. Multiple burping batches
-            share one parent cultivation id but plot as separate points (date · batch id). Lines connect batches of the
-            same strain in time order; hover a point for the full batch id.
+            Cultivation strain metrics: <strong>potency</strong> and <strong>dry yield</strong> (g / sq ft) come from dry
+            flower batches when synced to the server, dated by lab result (<strong>Test Passed</strong>).
+            <strong> Fresh frozen yield</strong> (g / sq ft) uses each Fresh Frozen source batch grams ÷ parent
+            canopy (<code style={{ fontSize: 12 }}>dryCanopySqFt</code>), dated by harvest/source{" "}
+            <strong>createdAt</strong>. Multiple burping batches share one parent but plot separately (date · batch id).
+            Lines connect batches of the same strain in time order; hover for the full batch id.
           </p>
 
           <section style={cardStyle}>
@@ -491,13 +524,9 @@ export default function AnalyticsPage() {
 
           {!loading && !error && points.length === 0 && (
             <p style={{ textAlign: "center", color: "#94a3b8", maxWidth: 720, margin: "24px auto 0", lineHeight: 1.6 }}>
-              No data in this range. Each point uses the cultivation batch lab result{" "}
-              <strong>date</strong>
-              {" "}
-              captured when dry flower <strong>Test Passed</strong> saves to the server. Extend <strong>To</strong> to
-              cover that calendar day (and <strong>From</strong> as needed), or clear strain checkboxes to include every
-              strain. If saves failed when passing testing, Cultivation analytics will stay empty until the parent batch
-              sync succeeds—check connectivity and retry.
+              No data in this range. Dry/analytics potency points use lab result dates from <strong>Test Passed</strong>;
+              fresh frozen points use source-batch harvest dates and require grams plus parent canopy in sync. Extend the
+              date range or clear strain filters. If cultivation or company-store sync fails, retry after a successful save.
             </p>
           )}
 
@@ -569,6 +598,46 @@ export default function AnalyticsPage() {
                       {metricSeriesKeys.map((sk, i) => (
                         <Line
                           key={`y-${sk}`}
+                          type="monotone"
+                          dataKey={sk}
+                          name={displayNameForAcronym(sk, points)}
+                          stroke={STRAIN_COLORS[i % STRAIN_COLORS.length]}
+                          strokeWidth={2}
+                          dot={{ r: 4 }}
+                          connectNulls
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
+
+              <section style={cardStyle}>
+                <h3 style={{ marginTop: 0 }}>Fresh frozen yield (g / sq ft)</h3>
+                <div style={{ width: "100%", height: 360 }}>
+                  <ResponsiveContainer>
+                    <LineChart data={freshFrozenRows} margin={{ bottom: 28, left: 8, right: 8 }}>
+                      <CartesianGrid stroke="#334155" strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="xTick"
+                        stroke="#94a3b8"
+                        interval={0}
+                        angle={-22}
+                        textAnchor="end"
+                        height={72}
+                        tick={{ fontSize: 11 }}
+                      />
+                      <YAxis
+                        stroke="#94a3b8"
+                        domain={freshFrozenYDomain ?? ["auto", "auto"]}
+                        tickFormatter={(v) => (typeof v === "number" ? v.toFixed(2) : String(v))}
+                        allowDataOverflow
+                      />
+                      <Tooltip content={(tp) => <StrainMetricTooltip {...tp} valueSuffix=" g/sq ft" />} />
+                      <Legend />
+                      {metricSeriesKeys.map((sk, i) => (
+                        <Line
+                          key={`ff-${sk}`}
                           type="monotone"
                           dataKey={sk}
                           name={displayNameForAcronym(sk, points)}

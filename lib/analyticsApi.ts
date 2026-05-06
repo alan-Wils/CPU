@@ -7,6 +7,7 @@ export type CultivationStrainMetricPoint = {
   date: string;
   potencyPct: number | null;
   dryYieldGPerSqFt: number | null;
+  freshFrozenYieldGPerSqFt: number | null;
 };
 
 export async function fetchCultivationStrainMetrics(params: {

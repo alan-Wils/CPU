@@ -7,6 +7,8 @@ export type CultivationStrainMetricPoint = {
     date: string;
     potencyPct: number | null;
     dryYieldGPerSqFt: number | null;
+    /** Grams per sq ft from Fresh Frozen source-batch harvest ÷ parent `dryCanopySqFt`. */
+    freshFrozenYieldGPerSqFt: number | null;
 };
 
 type CultivationRowInput = {
@@ -51,12 +53,35 @@ function resolveMetricDate(
         if (!Number.isNaN(d.getTime()))
             return d;
     }
+    if (typeof atRaw === "number" && Number.isFinite(atRaw)) {
+        const d = new Date(atRaw);
+        if (!Number.isNaN(d.getTime()))
+            return d;
+    }
     return fallback;
 }
 
+function isFreshFrozenSourceRow(row: Record<string, unknown>): boolean {
+    const id = String(row.id ?? "").trim();
+    const typ = String(row.type ?? "").trim().toLowerCase();
+    if (id.startsWith("FF-"))
+        return true;
+    return typ.includes("fresh frozen") || typ.includes("freshfrozen");
+}
+
+function readFreshFrozenGrams(row: Record<string, unknown>): number | null {
+    let g = readNum(row, "grams");
+    if (g != null && g > 0)
+        return g;
+    const lbs = readNum(row, "weightLbs");
+    if (lbs != null && lbs > 0)
+        return +(lbs * 453.592).toFixed(4);
+    return null;
+}
+
 /**
- * One point per dry flower batch that recorded lab THC / yield, plus parent cultivation rows
- * when no in-range dry batch represents that parent (legacy or store not synced).
+ * Points from: dry flower batches (lab THC / dry yield), Fresh Frozen source batches (g/sq ft),
+ * plus parent cultivation fallback when no in-range dry batch represents that parent.
  */
 export function buildCultivationStrainMetricPoints(input: {
     fromMs: number;
@@ -64,8 +89,16 @@ export function buildCultivationStrainMetricPoints(input: {
     strainFilter: string[] | null;
     cultivationRows: CultivationRowInput[];
     dryFlowerBatches: unknown[];
+    sourceBatches: unknown[];
 }): CultivationStrainMetricPoint[] {
-    const { fromMs, toMs, strainFilter, cultivationRows, dryFlowerBatches } = input;
+    const {
+        fromMs,
+        toMs,
+        strainFilter,
+        cultivationRows,
+        dryFlowerBatches,
+        sourceBatches,
+    } = input;
 
     const parentById = new Map(
         cultivationRows.map((r) => [r.id, r]),
@@ -116,6 +149,53 @@ export function buildCultivationStrainMetricPoints(input: {
             date: metricDate.toISOString().slice(0, 10),
             potencyPct: hasPotency ? potency : null,
             dryYieldGPerSqFt: hasYield ? yld : null,
+            freshFrozenYieldGPerSqFt: null,
+        });
+    }
+
+    const sourceList = Array.isArray(sourceBatches) ? sourceBatches : [];
+
+    for (const raw of sourceList) {
+        const sb = asUiRecord(raw);
+        if (!isFreshFrozenSourceRow(sb))
+            continue;
+        const ffId = String(sb.id ?? "").trim();
+        const source = String(sb.source ?? "").trim();
+        if (!ffId || !source)
+            continue;
+
+        const parent = parentById.get(source);
+        if (!parent)
+            continue;
+
+        const ac = String(parent.strainAcronym || "").trim().toUpperCase();
+        if (strainFilter && strainFilter.length > 0 && !strainFilter.includes(ac))
+            continue;
+
+        const grams = readFreshFrozenGrams(sb);
+        const ui = asUiRecord(parent.cultivationUiState);
+        const canopy = readNum(ui, "dryCanopySqFt");
+        let ffYld: number | null = null;
+        if (grams != null && grams > 0 && canopy != null && canopy > 0)
+            ffYld = +(grams / canopy).toFixed(4);
+        if (ffYld == null || ffYld <= 0 || !Number.isFinite(ffYld))
+            continue;
+
+        const fallback = parent.updatedAt;
+        const harvestAtRaw = sb.createdAt ?? sb.created_at;
+        const metricDate = resolveMetricDate(harvestAtRaw, fallback);
+        const t = metricDate.getTime();
+        if (t < fromMs || t > toMs)
+            continue;
+
+        points.push({
+            batchId: ffId,
+            strain: String(parent.strain || "").trim() || String(sb.strain ?? "").trim(),
+            strainAcronym: ac,
+            date: metricDate.toISOString().slice(0, 10),
+            potencyPct: null,
+            dryYieldGPerSqFt: null,
+            freshFrozenYieldGPerSqFt: ffYld,
         });
     }
 
@@ -150,6 +230,7 @@ export function buildCultivationStrainMetricPoints(input: {
             date: metricDate.toISOString().slice(0, 10),
             potencyPct: hasPotency ? potency : null,
             dryYieldGPerSqFt: hasYield ? yld : null,
+            freshFrozenYieldGPerSqFt: null,
         });
     }
 
