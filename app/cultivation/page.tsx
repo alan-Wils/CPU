@@ -555,6 +555,17 @@ export default function Cultivation() {
   const [vegRoomId, setVegRoomId] = useState("");
   const [vegBayId, setVegBayId] = useState("");
   const [vegTableIds, setVegTableIds] = useState<string[]>([]);
+  /** Edit veg batch (placement + core fields); separate from task-modal veg pickers. */
+  const [editVegModalBatch, setEditVegModalBatch] = useState<any>(null);
+  const [editVegPlants, setEditVegPlants] = useState("");
+  const [editVegStrain, setEditVegStrain] = useState("");
+  const [editVegAcronym, setEditVegAcronym] = useState("");
+  const [editVegCloneDate, setEditVegCloneDate] = useState("");
+  const [editVegRoomId, setEditVegRoomId] = useState("");
+  const [editVegBayId, setEditVegBayId] = useState("");
+  const [editVegTableIds, setEditVegTableIds] = useState<string[]>([]);
+  const [editVegBatchNotes, setEditVegBatchNotes] = useState("");
+  const [isSavingEditVegModal, setIsSavingEditVegModal] = useState(false);
   /** Flower layout from config — store ids in modal, persist names on batch/log. */
   const [flowerRoomId, setFlowerRoomId] = useState("");
   const [flowerBayId, setFlowerBayId] = useState("");
@@ -1318,6 +1329,7 @@ export default function Cultivation() {
 
     if (selectedDryFlowerBatch?.id === batchId) setSelectedDryFlowerBatch(null);
     if (viewBatch?.id === batchId) setViewBatch(null);
+    if (editVegModalBatch?.id === batchId) setEditVegModalBatch(null);
     if (failBatch?.id === batchId) setFailBatch(null);
 
     await purgeBackendLogsForBatch(batchId);
@@ -2320,6 +2332,202 @@ export default function Cultivation() {
     };
   }
 
+  function resolveEditVegSelectionLabels() {
+    const room = cultivationRooms.vegRooms.find((r) => r.id === editVegRoomId);
+    const bay = room?.bays?.find((b) => b.id === editVegBayId);
+    const tableNames =
+      bay?.tables.filter((t) => editVegTableIds.includes(t.id)).map((t) => t.name) || [];
+    return {
+      roomName: room?.name || "",
+      bayName: bay?.name || "",
+      tableNames,
+    };
+  }
+
+  function toggleEditVegTableId(tableId: string) {
+    setEditVegTableIds((current) =>
+      current.includes(tableId) ? current.filter((id) => id !== tableId) : [...current, tableId],
+    );
+  }
+
+  function openEditVegBatchModal(b: any) {
+    if (!canWriteRecords) {
+      showReadOnlyNotice();
+      return;
+    }
+    if (!b || String(b.stage || "") !== "Veg") return;
+
+    setEditVegModalBatch(b);
+    setEditVegPlants(String(Math.max(0, num(b.plants))));
+    setEditVegStrain(String(b.strain ?? "").trim());
+    setEditVegAcronym(String(b.acronym ?? "").trim().toUpperCase());
+    const cd = b.cloneDate ? String(b.cloneDate).slice(0, 10) : "";
+    setEditVegCloneDate(cd);
+    setEditVegBatchNotes(String(b.batchNotes ?? "").trim());
+
+    const veg = cultivationRooms.vegRooms || [];
+    let roomId = "";
+    let bayId = "";
+    let tableIds: string[] = [];
+
+    if (b.vegRoomId && veg.some((r) => r.id === b.vegRoomId)) {
+      roomId = String(b.vegRoomId);
+      const r0 = veg.find((x) => x.id === roomId);
+      if (b.vegBayId && r0?.bays?.some((bb) => bb.id === b.vegBayId)) {
+        bayId = String(b.vegBayId);
+      } else if (r0?.bays?.[0]) {
+        bayId = r0.bays[0].id;
+      }
+      if (Array.isArray(b.vegTableIds) && b.vegTableIds.length > 0 && bayId) {
+        const bayObj = r0?.bays?.find((bb) => bb.id === bayId);
+        const allowed = new Set((bayObj?.tables || []).map((t) => t.id));
+        tableIds = (b.vegTableIds as unknown[]).filter((id) => allowed.has(String(id))).map(String);
+      }
+    } else if (typeof b.vegRoom === "string" && b.vegRoom.trim()) {
+      const byName = veg.find((v) => v.name === b.vegRoom.trim());
+      if (byName) {
+        roomId = byName.id;
+        const b0 = byName.bays?.[0];
+        bayId = b0?.id || "";
+        tableIds = [];
+      }
+    }
+
+    if (!roomId && veg.length > 0) {
+      roomId = veg[0].id;
+      bayId = veg[0].bays?.[0]?.id || "";
+      tableIds = [];
+    }
+
+    setEditVegRoomId(roomId);
+    setEditVegBayId(bayId);
+    setEditVegTableIds(tableIds);
+  }
+
+  function closeEditVegModal() {
+    if (isSavingEditVegModal) return;
+    setEditVegModalBatch(null);
+  }
+
+  async function saveEditVegBatchModal() {
+    if (!editVegModalBatch || !canWriteRecords) return;
+
+    const vr = cultivationRooms.vegRooms || [];
+    const taskRequiredFields: { label: string; value: unknown; positive?: boolean }[] = [
+      { label: "Strain", value: editVegStrain.trim() },
+      { label: "Strain acronym", value: editVegAcronym.trim() },
+      { label: "Plants", value: editVegPlants, positive: true },
+    ];
+
+    if (vr.length > 0) {
+      taskRequiredFields.push({ label: "Veg room", value: editVegRoomId.trim() });
+      const vegRoomObj = vr.find((r) => r.id === editVegRoomId);
+      if (vegRoomObj && vegRoomObj.bays.length > 0) {
+        taskRequiredFields.push({ label: "Veg bay", value: editVegBayId.trim() });
+        const bayObj = vegRoomObj.bays.find((b) => b.id === editVegBayId);
+        if (bayObj && bayObj.tables.length > 0) {
+          taskRequiredFields.push({
+            label: "Veg table(s)",
+            value: editVegTableIds.length > 0 ? editVegTableIds.join(",") : "",
+          });
+        }
+      }
+    }
+
+    if (!requireFieldsStyled(taskRequiredFields)) return;
+
+    setIsSavingEditVegModal(true);
+    const b = editVegModalBatch;
+    const before = {
+      strain: b.strain,
+      acronym: b.acronym,
+      cloneDate: b.cloneDate,
+      plants: b.plants,
+      vegRoomId: b.vegRoomId,
+      vegBayId: b.vegBayId,
+      vegTableIds: Array.isArray(b.vegTableIds) ? [...b.vegTableIds] : [],
+      vegRoom: b.vegRoom,
+      vegBay: b.vegBay,
+      vegTables: Array.isArray(b.vegTables) ? [...b.vegTables] : undefined,
+      batchNotes: b.batchNotes,
+    };
+
+    b.strain = editVegStrain.trim();
+    b.acronym = editVegAcronym.trim().toUpperCase();
+    b.cloneDate = editVegCloneDate.trim();
+    b.plants = num(editVegPlants);
+    b.batchNotes = editVegBatchNotes.trim();
+
+    if (vr.length > 0 && editVegRoomId.trim()) {
+      const vl = resolveEditVegSelectionLabels();
+      b.vegRoomId = editVegRoomId.trim();
+      b.vegBayId = editVegBayId.trim();
+      b.vegTableIds = [...editVegTableIds];
+      b.vegRoom = vl.roomName;
+      b.vegBay = vl.bayName;
+      b.vegTables = [...vl.tableNames];
+    }
+
+    const after = {
+      strain: b.strain,
+      acronym: b.acronym,
+      cloneDate: b.cloneDate,
+      plants: b.plants,
+      vegRoomId: b.vegRoomId,
+      vegBayId: b.vegBayId,
+      vegTableIds: b.vegTableIds,
+      vegRoom: b.vegRoom,
+      vegBay: b.vegBay,
+      vegTables: b.vegTables,
+      batchNotes: b.batchNotes,
+    };
+
+    const output =
+      `Updated batch details | Room: ${after.vegRoom || "—"} | Bay: ${after.vegBay || "—"} | Tables: ` +
+      `${Array.isArray(after.vegTables) && after.vegTables.length ? after.vegTables.join(", ") : "—"}`;
+    const loggedAtIso = new Date().toISOString();
+    const auditBase = {
+      area: "Audit",
+      batch: b.id,
+      task: "Batch Details Updated",
+      output: `Edited Veg batch fields (${b.id})`,
+      data: {
+        stage: "Veg",
+        before,
+        after,
+        editedAtIso: loggedAtIso,
+      },
+      time: nowIsoForLog(),
+    };
+    s.logs.unshift(withLoggedBy(auditBase));
+
+    forceRefresh();
+    try {
+      await createLog({
+        area: auditBase.area,
+        batch: auditBase.batch,
+        task: auditBase.task,
+        output,
+        data: auditBase.data,
+      });
+    } catch (e) {
+      console.error("Could not persist batch edit audit log:", e);
+      showNotice(
+        "Log sync warning",
+        "Batch was updated locally, but the audit line may not have saved to the server.",
+        "Refresh and check task history if needed.",
+      );
+    }
+    try {
+      showSyncMessageNotice("Saving batch to server…");
+      const ok = await saveRealCultivationBatch(b);
+      showSyncMessageNotice(ok ? "Batch saved to server." : "Saved locally — server sync failed.");
+    } finally {
+      setEditVegModalBatch(null);
+      setIsSavingEditVegModal(false);
+    }
+  }
+
   async function save() {
     if (isSavingTask) return;
     if (!canWriteRecords) {
@@ -2963,6 +3171,12 @@ export default function Cultivation() {
                         Room: {b.flowerRoom || "—"} | Bay: {b.flowerBay || "—"} | Tables: {formatFlowerTables(b)}
                       </>
                     )}
+                    {String(b.batchNotes ?? "").trim() !== "" && (
+                      <>
+                        <br />
+                        Notes: {String(b.batchNotes)}
+                      </>
+                    )}
                   </div>
 
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -3070,6 +3284,14 @@ export default function Cultivation() {
                         Room: {b.vegRoom || "—"} | Bay: {b.vegBay || "—"} | Tables: {formatVegTables(b)}
                       </>
                     )}
+                    {b.stage === "Veg" && String(b.batchNotes ?? "").trim() !== "" && (
+                      <>
+                        <br />
+                        <span style={{ color: selectedBatch?.id === b.id ? "#0f172a" : "#cbd5e1" }}>
+                          Notes: {String(b.batchNotes)}
+                        </span>
+                      </>
+                    )}
                     {b.stage === "Flower" && (b.flowerRoom || b.flowerBay || b.flowerTable || b.flowerTables) && (
                       <>
                         <br />
@@ -3090,6 +3312,20 @@ export default function Cultivation() {
                         onClick={() => openTaskWindowForBatch(b)}
                       >
                         Tasks
+                      </button>
+                    ) : null}
+                    {canWriteRecords && selectedStage === "Veg" && b.stage === "Veg" ? (
+                      <button
+                        type="button"
+                        style={{
+                          ...buttonStyle,
+                          background: "#92400e",
+                          border: "1px solid #ea580c",
+                          color: "white",
+                        }}
+                        onClick={() => openEditVegBatchModal(b)}
+                      >
+                        Edit
                       </button>
                     ) : null}
                     <button style={buttonStyle} onClick={() => setViewBatch(b)}>
@@ -3113,6 +3349,198 @@ export default function Cultivation() {
           </div>
         </div>
       )}
+
+      {editVegModalBatch ? (
+        <div style={modalOverlayStyle}>
+          <div style={{ ...modalStyle, maxWidth: 640 }}>
+            <h2 style={{ textAlign: "center", marginTop: 0 }}>Edit veg batch</h2>
+            <p style={{ textAlign: "center", color: "#cbd5e1", marginTop: 0 }}>
+              <b>{editVegModalBatch.id}</b> — update placement, plant count, strain, clone date, and notes.
+            </p>
+
+            <div style={formStyle}>
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Plants in veg
+                <input
+                  style={inputStyle}
+                  inputMode="numeric"
+                  value={editVegPlants}
+                  onChange={(e) => setEditVegPlants(e.target.value)}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Quick fill strain (optional)
+                <select
+                  style={inputStyle}
+                  value=""
+                  onChange={(e) => {
+                    const name = e.target.value;
+                    if (!name) return;
+                    const selectedCloneStrain = getCloneStrainByName(name, configStrains);
+                    setEditVegStrain(getConfigStrainName(selectedCloneStrain || {}));
+                    setEditVegAcronym(getConfigStrainAcronym(selectedCloneStrain || {}).toUpperCase());
+                  }}
+                >
+                  <option value="">Pick from configured strains…</option>
+                  {sortStrainsAlphabetically(configStrains).map((item) => (
+                    <option key={item.id || getConfigStrainAcronym(item) || getConfigStrainName(item)} value={getConfigStrainName(item)}>
+                      {getConfigStrainName(item)} ({getConfigStrainAcronym(item)})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Strain name
+                <input style={inputStyle} value={editVegStrain} onChange={(e) => setEditVegStrain(e.target.value)} />
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Strain acronym
+                <input
+                  style={inputStyle}
+                  value={editVegAcronym}
+                  onChange={(e) => setEditVegAcronym(e.target.value.toUpperCase())}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Clone date (optional)
+                <input
+                  style={inputStyle}
+                  type="date"
+                  value={editVegCloneDate}
+                  onChange={(e) => setEditVegCloneDate(e.target.value)}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Batch notes (optional — racks, labels, IPM markers, …)
+                <textarea
+                  style={{ ...inputStyle, minHeight: 72, resize: "vertical" as const }}
+                  value={editVegBatchNotes}
+                  onChange={(e) => setEditVegBatchNotes(e.target.value)}
+                />
+              </label>
+
+              <>
+                {cultivationRooms.vegRooms.length === 0 ? (
+                  <p style={{ color: "#fbbf24", fontSize: 14, margin: 0, lineHeight: 1.5 }}>
+                    No veg rooms are configured yet. Placement fields are skipped until an Admin adds rooms under{" "}
+                    <strong style={{ color: "#fef08a" }}>Admin → Company Config</strong>.
+                  </p>
+                ) : (
+                  <>
+                    <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                      Veg room
+                      <select
+                        style={inputStyle}
+                        value={editVegRoomId}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          setEditVegRoomId(id);
+                          const room = cultivationRooms.vegRooms.find((r) => r.id === id);
+                          const b0 = room?.bays?.[0];
+                          setEditVegBayId(b0?.id || "");
+                          setEditVegTableIds([]);
+                        }}
+                      >
+                        {cultivationRooms.vegRooms.map((room) => (
+                          <option key={room.id} value={room.id}>
+                            {room.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    {(() => {
+                      const vegRoomObj = cultivationRooms.vegRooms.find((r) => r.id === editVegRoomId);
+                      const bayObj = vegRoomObj?.bays?.find((bay) => bay.id === editVegBayId);
+                      return (
+                        <>
+                          {vegRoomObj && vegRoomObj.bays.length > 0 ? (
+                            <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                              Bay
+                              <select
+                                style={inputStyle}
+                                value={editVegBayId}
+                                onChange={(e) => {
+                                  setEditVegBayId(e.target.value);
+                                  setEditVegTableIds([]);
+                                }}
+                              >
+                                {vegRoomObj.bays.map((bay) => (
+                                  <option key={bay.id} value={bay.id}>
+                                    Bay {bay.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : (
+                            <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                              This veg room has no bays yet—add bays in Company Config.
+                            </p>
+                          )}
+
+                          {bayObj && bayObj.tables.length > 0 ? (
+                            <div style={{ ...inputStyle, display: "grid", gap: 8 }}>
+                              <b>Tables</b>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                {bayObj.tables.map((table) => (
+                                  <label
+                                    key={table.id}
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 6,
+                                      border: "1px solid #334155",
+                                      borderRadius: 10,
+                                      padding: "8px 10px",
+                                      background: editVegTableIds.includes(table.id) ? "#22c55e" : "#1e293b",
+                                      color: editVegTableIds.includes(table.id) ? "black" : "white",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={editVegTableIds.includes(table.id)}
+                                      onChange={() => toggleEditVegTableId(table.id)}
+                                    />
+                                    Table {table.name}
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          ) : vegRoomObj && vegRoomObj.bays.length > 0 ? (
+                            <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                              No tables in this bay—add tables in Company Config.
+                            </p>
+                          ) : null}
+                        </>
+                      );
+                    })()}
+                  </>
+                )}
+              </>
+            </div>
+
+            <div style={modalButtonRowStyle}>
+              <button style={buttonStyle} type="button" onClick={closeEditVegModal} disabled={isSavingEditVegModal}>
+                Cancel
+              </button>
+              <button
+                style={primaryButtonStyle}
+                type="button"
+                onClick={() => void saveEditVegBatchModal()}
+                disabled={isSavingEditVegModal}
+              >
+                {isSavingEditVegModal ? "Saving..." : "Save changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {showAddTaskWindow && selectedBatch && (
         <div style={modalOverlayStyle}>
@@ -3805,10 +4233,35 @@ export default function Cultivation() {
               {viewBatch.strain || viewBatch.name} | Stage/Status: {viewBatch.stage || viewBatch.status}
             </p>
 
-            <div style={{ textAlign: "center" }}>
-              <button style={buttonStyle} onClick={() => setViewBatch(null)}>
+            <div
+              style={{
+                textAlign: "center",
+                display: "flex",
+                gap: 10,
+                justifyContent: "center",
+                flexWrap: "wrap",
+              }}
+            >
+              <button type="button" style={buttonStyle} onClick={() => setViewBatch(null)}>
                 Close
               </button>
+              {canWriteRecords && String(viewBatch.stage || "") === "Veg" ? (
+                <button
+                  type="button"
+                  style={{
+                    ...buttonStyle,
+                    background: "#92400e",
+                    border: "1px solid #ea580c",
+                    color: "white",
+                  }}
+                  onClick={() => {
+                    openEditVegBatchModal(viewBatch);
+                    setViewBatch(null);
+                  }}
+                >
+                  Edit batch
+                </button>
+              ) : null}
             </div>
 
             <div style={{ marginTop: 20 }}>
