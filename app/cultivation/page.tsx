@@ -468,6 +468,8 @@ export default function Cultivation() {
   const [dryMinutes, setDryMinutes] = useState("");
   const [dryOutput, setDryOutput] = useState("");
   const [dryTrimWeight, setDryTrimWeight] = useState("");
+  /** Leaf/trim separated at bucking — added to trim-from-trimming for extraction; not part of whole-plant cap. */
+  const [dryTrimFromBucking, setDryTrimFromBucking] = useState("");
   const [dryPopcornWeight, setDryPopcornWeight] = useState("");
   const [dryPackagingMode, setDryPackagingMode] = useState("Single package by weight");
   const [dryPackageCategory, setDryPackageCategory] = useState("A Grade Flower");
@@ -1225,6 +1227,8 @@ export default function Cultivation() {
         buckedWeightLbs: "",
         trimmedWeightLbs: "",
         totalTrimLbs: "",
+        trimFromTrimmingLbs: "",
+        trimFromBuckLbs: "",
         popcornWeightLbs: "",
         deconWeightLbs: "",
         packagedWeightLbs: 0,
@@ -1490,7 +1494,8 @@ export default function Cultivation() {
       dryRequiredFields.push(
         { label: "Total A Grade Flower", value: dryOutput, zeroOrPositive: true },
         { label: "Total Popcorn", value: dryPopcornWeight, zeroOrPositive: true },
-        { label: "Total Trim", value: dryTrimWeight, zeroOrPositive: true }
+        { label: "Trim from trimming", value: dryTrimWeight, zeroOrPositive: true },
+        { label: "Trim from bucking", value: dryTrimFromBucking, zeroOrPositive: true },
       );
     }
 
@@ -1579,13 +1584,15 @@ export default function Cultivation() {
     if (selectedDryFlowerTask === "Trimming") {
       const aGradeFlowerWeight = enteredWeight;
       const popcornWeight = num(dryPopcornWeight);
-      const totalTrimWeight = num(dryTrimWeight);
+      const trimFromTrimming = num(dryTrimWeight);
+      const trimFromBuck = num(dryTrimFromBucking);
+      const totalTrimForExtraction = trimFromTrimming + trimFromBuck;
       const cap = getBuckWholePlantLbs(selectedDryFlowerBatch);
-      const totalOut = aGradeFlowerWeight + popcornWeight + totalTrimWeight;
-      if (cap > 0 && totalOut > cap + 0.02) {
+      const totalOutForCap = aGradeFlowerWeight + popcornWeight + trimFromTrimming;
+      if (cap > 0 && totalOutForCap > cap + 0.02) {
         showNotice(
           "Trim totals exceed bucked whole plant",
-          `A-grade (${aGradeFlowerWeight}) + popcorn (${popcornWeight}) + trim (${totalTrimWeight}) = ${totalOut.toFixed(2)} lbs, but whole plant after bucking was ${cap.toFixed(2)} lbs. Adjust your weights.`,
+          `A-grade (${aGradeFlowerWeight}) + popcorn (${popcornWeight}) + trim from trimming (${trimFromTrimming}) = ${totalOutForCap.toFixed(2)} lbs, but whole plant after bucking was ${cap.toFixed(2)} lbs. Trim from bucking does not count toward this cap. Adjust your weights.`,
         );
         return;
       }
@@ -1593,9 +1600,16 @@ export default function Cultivation() {
 
       selectedDryFlowerBatch.trimmedWeightLbs = aGradeFlowerWeight;
       selectedDryFlowerBatch.popcornWeightLbs = popcornWeight;
-      selectedDryFlowerBatch.totalTrimLbs = totalTrimWeight;
+      selectedDryFlowerBatch.trimFromTrimmingLbs = +trimFromTrimming.toFixed(4);
+      selectedDryFlowerBatch.trimFromBuckLbs = +trimFromBuck.toFixed(4);
+      selectedDryFlowerBatch.totalTrimLbs = +totalTrimForExtraction.toFixed(4);
       selectedDryFlowerBatch.remainingPackableLbs = totalPackableFlower;
       selectedDryFlowerBatch.status = "Trimmed";
+
+      const trimLogExtra =
+        trimFromBuck > 0
+          ? ` | Trim from trimming: ${trimFromTrimming} lbs | Trim from bucking: ${trimFromBuck} lbs | Total trim to extraction: ${totalTrimForExtraction} lbs`
+          : ` | Total trim to extraction: ${totalTrimForExtraction} lbs`;
 
       s.logs.unshift(withLoggedBy({
         area: "Cultivation",
@@ -1603,20 +1617,20 @@ export default function Cultivation() {
         task: "Trimming",
         people: dryPeople,
         minutes: dryMinutes,
-        output: `Total A Grade Flower: ${aGradeFlowerWeight} lbs | Total Popcorn: ${popcornWeight} lbs | Total Trim: ${totalTrimWeight} lbs`,
+        output: `Total A Grade Flower: ${aGradeFlowerWeight} lbs | Total Popcorn: ${popcornWeight} lbs${trimLogExtra}`,
         source: selectedDryFlowerBatch.source,
         time: nowIsoForLog(),
       }))
 
-      if (totalTrimWeight > 0) {
+      if (totalTrimForExtraction > 0) {
         const trimBatch = {
           id: `TRIM-${selectedDryFlowerBatch.id}-${Date.now()
             .toString()
             .slice(-4)}`,
           name: `${selectedDryFlowerBatch.name} Trim`,
           type: "Dry Trim",
-          amount: `${totalTrimWeight} lbs`,
-          weightLbs: totalTrimWeight,
+          amount: `${totalTrimForExtraction} lbs`,
+          weightLbs: totalTrimForExtraction,
           source: selectedDryFlowerBatch.id,
           parentCultivationBatch: selectedDryFlowerBatch.source,
           status: "Available for Extraction",
@@ -1643,7 +1657,7 @@ export default function Cultivation() {
           task: "Trim Available for Extraction",
           people: "",
           minutes: "",
-          output: `${totalTrimWeight} lbs dry trim is available for extraction`,
+          output: `${totalTrimForExtraction} lbs dry trim is available for extraction`,
           linkedBatch: trimBatch.id,
           source: selectedDryFlowerBatch.source,
           time: nowIsoForLog(),
@@ -1840,6 +1854,7 @@ export default function Cultivation() {
     setDryBuckWholePlant("");
     setDryBuckStemWaste("");
     setDryTrimWeight("");
+    setDryTrimFromBucking("");
     setDryPopcornWeight("");
     setDryPackagingMode("Single package by weight");
     setDryPackageCategory("A Grade Flower");
@@ -2354,8 +2369,10 @@ export default function Cultivation() {
                   Status: {b.status} | Test: {b.testStatus || "Not Submitted"} | Whole plant (buck):{" "}
                   {getBuckWholePlantLbs(b) || "—"} lbs | Stem waste:{" "}
                   {b.buckStemWasteLbs !== undefined && b.buckStemWasteLbs !== "" ? b.buckStemWasteLbs : "—"} lbs | A
-                  Grade: {b.trimmedWeightLbs || "—"} lbs | Popcorn: {b.popcornWeightLbs || "—"} lbs | Trim:{" "}
-                  {b.totalTrimLbs || "—"} lbs | Decon: {b.deconWeightLbs || "—"} lbs | Packaged:{" "}
+                  Grade: {b.trimmedWeightLbs || "—"} lbs | Popcorn: {b.popcornWeightLbs || "—"} lbs | Trim (total):{" "}
+                  {b.totalTrimLbs || "—"} lbs
+                  {num(b.trimFromBuckLbs) > 0 ? ` (incl. ${num(b.trimFromBuckLbs)} from buck)` : ""} | Decon:{" "}
+                  {b.deconWeightLbs || "—"} lbs | Packaged:{" "}
                   {b.packagedWeightLbs || 0} lbs | Remaining:{" "}
                   {b.remainingPackableLbs === "" ? "—" : b.remainingPackableLbs} lbs | A Grade Available: {getDryFlowerPackagingAvailability(b).remainingAGradeLbs} lbs | Popcorn Available: {getDryFlowerPackagingAvailability(b).remainingPopcornLbs} lbs | Final A Grade: {b.finalAGradeFlowerLbs || "—"} lbs | Final Popcorn: {b.finalPopcornLbs || "—"} lbs
                 </div>
@@ -2822,15 +2839,46 @@ export default function Cultivation() {
                       background: "#111827",
                     }}
                   >
-                    <b>From bucking (max for A + popcorn + trim)</b>
+                    <b>Whole plant cap (from bucking)</b>
                     <span>Whole plant to process: {getBuckWholePlantLbs(selectedDryFlowerBatch) || "—"} lbs</span>
                     <span style={{ color: "#94a3b8", fontSize: 13 }}>
-                      Sum of A-grade, popcorn, and trim cannot exceed this weight.
+                      A-grade + popcorn + <b>trim from trimming</b> cannot exceed this weight. Trim separated at bucking
+                      is entered below and is <b>not</b> part of this cap; it is added to total trim for extraction.
                     </span>
                   </div>
                   <input style={inputStyle} placeholder="Total A Grade Flower in lbs" value={dryOutput} onChange={(e) => setDryOutput(e.target.value)} />
                   <input style={inputStyle} placeholder="Total Popcorn in lbs" value={dryPopcornWeight} onChange={(e) => setDryPopcornWeight(e.target.value)} />
-                  <input style={inputStyle} placeholder="Total Trim in lbs" value={dryTrimWeight} onChange={(e) => setDryTrimWeight(e.target.value)} />
+                  <input
+                    style={inputStyle}
+                    placeholder="Trim from trimming (lbs)"
+                    value={dryTrimWeight}
+                    onChange={(e) => setDryTrimWeight(e.target.value)}
+                  />
+                  <div
+                    style={{
+                      ...inputStyle,
+                      display: "grid",
+                      gap: 8,
+                      background: "#0f172a",
+                      border: "1px solid #334155",
+                    }}
+                  >
+                    <b style={{ color: "#93c5fd" }}>Trim from bucking</b>
+                    <span style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                      Leaf or sugar-leaf trim removed during buck (does not count against whole-plant weight). It is
+                      combined with trim from trimming for the dry-trim extraction batch.
+                    </span>
+                    <input
+                      style={{ ...inputStyle, margin: 0 }}
+                      placeholder="Trim from bucking (lbs, 0 if none)"
+                      value={dryTrimFromBucking}
+                      onChange={(e) => setDryTrimFromBucking(e.target.value)}
+                    />
+                    <span style={{ color: "#cbd5e1", fontSize: 13 }}>
+                      Total trim to extraction:{" "}
+                      <b>{(num(dryTrimWeight) + num(dryTrimFromBucking)).toFixed(2)} lbs</b>
+                    </span>
+                  </div>
                 </>
               ) : selectedDryFlowerTask === "Decontamination" ? (
                 <>
