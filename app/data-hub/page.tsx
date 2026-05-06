@@ -211,6 +211,27 @@ function dedupeById(items: any[]) {
   );
 }
 
+/** Matches Prisma `SourcePackage.id` shape merged into legacy lists via `/source-batches`. */
+function isLikelyDatabaseSourcePackageId(id: unknown): boolean {
+  const s = String(id || "").trim();
+  if (!s) return false;
+  return /^c[a-z0-9]{20,}$/i.test(s) || (!s.includes("-") && s.length >= 22);
+}
+
+/**
+ * Every new cultivation batch seeds four workflow `SourcePackage` rows; dry trim + fresh frozen map to
+ * legacy “source material” with 0g and are not real harvested packages — exclude them from chain counts.
+ */
+function isEmptySeededSourcePackagePlaceholder(batch: any): boolean {
+  if (!isLikelyDatabaseSourcePackageId(batch?.id)) return false;
+  const grams = num(batch?.grams);
+  const bundles = num(batch?.bundles);
+  if (grams > 0 || bundles > 0) return false;
+  const amt = String(batch?.amount ?? "").trim();
+  if (amt.length > 0 && amt !== "0" && !/^0\s*bundles/i.test(amt)) return false;
+  return true;
+}
+
 function isDryTrimBatch(batch: any) {
   const text = `${lower(batch?.id)} ${lower(batch?.name)} ${lower(batch?.type)} ${lower(batch?.productType)}`;
   return text.includes("dry trim") || text.includes("trim-") || text.startsWith("trim") || lower(batch?.type) === "dry trim";
@@ -1224,7 +1245,9 @@ export default function DataHub() {
     ...(s.availableExtractionSourceBatches || []),
     ...(s.completedExtractionSourceBatches || []),
     ...(s.productionBatches || []),
-  ]).filter(isSourceMaterialBatch);
+  ])
+    .filter(isSourceMaterialBatch)
+    .filter((b: any) => !isEmptySeededSourcePackagePlaceholder(b));
 
   const allFlowerOutputCandidates = dedupeById([
     ...(s.dryFlowerBatches || []),
