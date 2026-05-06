@@ -2527,11 +2527,10 @@ export default function Cultivation() {
                 >
                   <span style={{ fontWeight: 900, fontSize: 16 }}>{stageName}</span>
                   <span style={{ color: "#cbd5e1", fontWeight: 700 }}>
-                    {activeBatchesByStage[stageName].length} batch
-                    {activeBatchesByStage[stageName].length === 1 ? "" : "es"}
+                    {activeBatchesByStage[stageName].length} Batches
                   </span>
                   <span style={{ color: "#93c5fd", fontWeight: 700 }}>
-                    {stagePlantTotals[stageName]} plants
+                    {stagePlantTotals[stageName]} Amount of plants
                   </span>
                 </button>
               ))}
