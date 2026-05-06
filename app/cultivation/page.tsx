@@ -34,6 +34,9 @@ import { createSourceBatch } from "@/lib/sourceBatchApi";
 import { createLog, deleteLog as deleteTaskLogRemote, getAllLogs } from "@/lib/logsApi";
 import {
   formatLogDisplayTime,
+  getCompanyDisplayTimezone,
+  getTodayYmdInCompanyTimezone,
+  logTimeIsoForStageMoveDate,
   nowIsoForLog,
   syncCompanyTimezoneFromConfigPayload,
 } from "@/lib/companyTimezone";
@@ -561,6 +564,8 @@ export default function Cultivation() {
   const [output, setOutput] = useState("");
   /** Cultivation batch id to merge into the currently selected batch (same stage grouping as Clones / Veg / Flower). */
   const [combinePartnerBatchId, setCombinePartnerBatchId] = useState("");
+  /** Calendar date (YYYY-MM-DD) when Clone→Veg or Move-to-Flower actually happened; defaults to facility “today”. */
+  const [stageMoveDate, setStageMoveDate] = useState("");
   /** Destination veg layout (config `cultivation.rooms.vegRooms`); required when that list is non-empty. */
   const [vegRoomId, setVegRoomId] = useState("");
   const [vegBayId, setVegBayId] = useState("");
@@ -638,6 +643,13 @@ export default function Cultivation() {
   const [testPassPotencyNote, setTestPassPotencyNote] = useState("");
 
   const repeatTaskBypassRef = useRef<{ batchId: string; taskName: string } | null>(null);
+  /** After confirm uses `save`; cleared when proceeding or closing task modal. */
+  const moveDateBypassRef = useRef<{
+    batchId: string;
+    taskName: string;
+    stageMoveDate: string;
+  } | null>(null);
+  const prevStageMoveTaskPickerRef = useRef<string | null>(null);
 
   const [notificationModal, setNotificationModal] = useState<{
     open: boolean;
@@ -1219,6 +1231,61 @@ export default function Cultivation() {
 
     return false;
   }
+
+  function confirmStageMoveDateIfNeeded(onProceed: () => void): boolean {
+    if (!selectedBatch) return true;
+
+    const moveTasks = ["Clone → Veg", "Move to Flower"];
+    const taskLabel = selectedTask ?? "";
+    if (!moveTasks.includes(taskLabel)) return true;
+
+    const md = stageMoveDate.trim();
+    const todayYmd = getTodayYmdInCompanyTimezone();
+
+    const bypass = moveDateBypassRef.current;
+    if (
+      bypass &&
+      bypass.batchId === selectedBatch.id &&
+      bypass.taskName === taskLabel &&
+      bypass.stageMoveDate === md
+    ) {
+      moveDateBypassRef.current = null;
+      return true;
+    }
+
+    if (md === todayYmd) return true;
+
+    const tzLabel = getCompanyDisplayTimezone();
+
+    showConfirm(
+      "Different move date",
+      `The move date (${md}) is not today (${todayYmd}) for company timezone (${tzLabel}). Logs will stamp this transition on that calendar day.`,
+      () => {
+        moveDateBypassRef.current = {
+          batchId: selectedBatch.id,
+          taskName: taskLabel,
+          stageMoveDate: md,
+        };
+        onProceed();
+      },
+      "Confirm only if you mean to back-date or fix the record.",
+    );
+
+    return false;
+  }
+
+  useEffect(() => {
+    const t = selectedTask;
+    if (t !== "Clone → Veg" && t !== "Move to Flower") {
+      prevStageMoveTaskPickerRef.current = t;
+      return;
+    }
+    if (prevStageMoveTaskPickerRef.current !== t) {
+      setStageMoveDate(getTodayYmdInCompanyTimezone());
+      moveDateBypassRef.current = null;
+    }
+    prevStageMoveTaskPickerRef.current = t;
+  }, [selectedTask]);
 
   function selectBatch(batch: any) {
     setSelectedBatch(batch);
@@ -2347,6 +2414,7 @@ export default function Cultivation() {
 
   function closeCultivationTaskWindow() {
     setCombinePartnerBatchId("");
+    moveDateBypassRef.current = null;
     setShowTaskWindow(false);
   }
 
@@ -2377,6 +2445,8 @@ export default function Cultivation() {
 
   function openTaskWindowForBatch(batch: any) {
     if (!batch) return;
+    moveDateBypassRef.current = null;
+    setStageMoveDate(getTodayYmdInCompanyTimezone());
     selectBatch(batch);
     const taskList = getTasksForStage(batch.stage || "Clone");
     setSelectedTask(taskList[0] || "Maintenance");
@@ -3138,12 +3208,30 @@ export default function Cultivation() {
       }
     }
 
+    if (selectedTask === "Clone → Veg" || selectedTask === "Move to Flower") {
+      taskRequiredFields.push({ label: "Move date", value: stageMoveDate.trim() });
+    }
+
     if (!requireFieldsStyled(taskRequiredFields)) {
       setIsSavingTask(false);
       return;
     }
 
+    if (
+      (selectedTask === "Clone → Veg" || selectedTask === "Move to Flower") &&
+      !/^\d{4}-\d{2}-\d{2}$/.test(stageMoveDate.trim())
+    ) {
+      showNotice("Move date invalid", "Pick a calendar date for when this batch actually moved.");
+      setIsSavingTask(false);
+      return;
+    }
+
     if (!confirmRepeatTask(selectedBatch.id, selectedTask, save)) {
+      setIsSavingTask(false);
+      return;
+    }
+
+    if (!confirmStageMoveDateIfNeeded(save)) {
       setIsSavingTask(false);
       return;
     }
@@ -3287,9 +3375,15 @@ export default function Cultivation() {
     let logBay: string | undefined;
     let logTables: string[] | undefined;
 
+    const isStageMoveTask = selectedTask === "Clone → Veg" || selectedTask === "Move to Flower";
+    const moveDateCanonical = stageMoveDate.trim();
+    const logEventTimeIso = isStageMoveTask
+      ? logTimeIsoForStageMoveDate(moveDateCanonical)
+      : nowIsoForLog();
+
     if (selectedTask === "Clone → Veg") {
       const vl = resolveVegSelectionLabels();
-      taskOutput = `${output} plants moved to Veg | Room: ${vl.roomName || "—"} | Bay: ${vl.bayName || "—"} | Tables: ${vl.tableNames.length ? vl.tableNames.join(", ") : "—"}`;
+      taskOutput = `${output} plants moved to Veg | Move date: ${moveDateCanonical} | Room: ${vl.roomName || "—"} | Bay: ${vl.bayName || "—"} | Tables: ${vl.tableNames.length ? vl.tableNames.join(", ") : "—"}`;
       logRoom = vl.roomName || undefined;
       logBay = vl.bayName || undefined;
       logTables = vl.tableNames.length ? [...vl.tableNames] : undefined;
@@ -3297,24 +3391,27 @@ export default function Cultivation() {
 
     if (selectedTask === "Move to Flower") {
       const fl = resolveFlowerSelectionLabels();
-      taskOutput = `${output || selectedBatch.plants || 0} plants moved to Flower | Room: ${fl.roomName || "—"} | Bay: ${fl.bayName || "—"} | Tables: ${fl.tableNames.length ? fl.tableNames.join(", ") : "—"}`;
+      taskOutput = `${output || selectedBatch.plants || 0} plants moved to Flower | Move date: ${moveDateCanonical} | Room: ${fl.roomName || "—"} | Bay: ${fl.bayName || "—"} | Tables: ${fl.tableNames.length ? fl.tableNames.join(", ") : "—"}`;
       logRoom = fl.roomName;
       logBay = fl.bayName;
       logTables = fl.tableNames.length ? [...fl.tableNames] : undefined;
     }
 
-    s.logs.unshift(withLoggedBy({
-      area: "Cultivation",
-      batch: selectedBatch.id,
-      task: selectedTask,
-      people,
-      minutes,
-      output: taskOutput,
-      room: logRoom,
-      bay: logBay,
-      tables: logTables,
-      time: nowIsoForLog(),
-    }))
+    s.logs.unshift(
+      withLoggedBy({
+        area: "Cultivation",
+        batch: selectedBatch.id,
+        task: selectedTask,
+        people,
+        minutes,
+        output: taskOutput,
+        room: logRoom,
+        bay: logBay,
+        tables: logTables,
+        time: logEventTimeIso,
+        ...(isStageMoveTask ? { data: { stageMoveDate: moveDateCanonical } } : {}),
+      }),
+    )
 
     if (selectedTask === "Clone → Veg") {
       selectedBatch.stage = "Veg";
@@ -4588,6 +4685,24 @@ export default function Cultivation() {
                   ))
                 )}
               </div>
+
+              {(selectedTask === "Clone → Veg" || selectedTask === "Move to Flower") && (
+                <>
+                  <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                    Move date (when plants actually moved stages)
+                    <input
+                      style={inputStyle}
+                      type="date"
+                      value={stageMoveDate}
+                      onChange={(e) => setStageMoveDate(e.target.value)}
+                    />
+                  </label>
+                  <p style={{ color: "#94a3b8", fontSize: 12, margin: 0, lineHeight: 1.45 }}>
+                    Facility timezone: <b style={{ color: "#cbd5e1" }}>{getCompanyDisplayTimezone()}</b> — “today”
+                    compares to this calendar. Choosing another date asks for confirmation.
+                  </p>
+                </>
+              )}
 
               {selectedTask === "Harvest" && (
                 <>
