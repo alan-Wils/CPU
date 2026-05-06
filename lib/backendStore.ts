@@ -55,6 +55,40 @@ export type ApplyStoreSnapshotOptions = {
   omitCultivation?: boolean;
 };
 
+/**
+ * Merge server dry-flower rows with the previous in-memory list so local workflow fields
+ * (buck/trim/decon/testing) are not wiped when `PUT /api/store` is skipped (DATABASE_ONLY).
+ */
+export function mergeDryFlowerBatchesWithLocalSnapshot(snapRows: unknown[], localRows: unknown[]): unknown[] {
+  const byId = new Map<string, any>();
+  for (const s of Array.isArray(snapRows) ? snapRows : []) {
+    const row = s as any;
+    const id = String(row?.id || "");
+    if (id) byId.set(id, { ...row });
+  }
+  for (const loc of Array.isArray(localRows) ? localRows : []) {
+    const row = loc as any;
+    const id = String(row?.id || "");
+    if (!id) continue;
+    const prev = byId.get(id) || {};
+    byId.set(id, { ...prev, ...row });
+  }
+  return [...byId.values()];
+}
+
+/** Keep `productionBatches` rows in sync with canonical dry-flower rows (same id). */
+export function copyDryFlowerBatchesIntoProduction(storeObj: any) {
+  const dry = storeObj?.dryFlowerBatches;
+  const prod = storeObj?.productionBatches;
+  if (!Array.isArray(dry) || !Array.isArray(prod)) return;
+  for (const d of dry) {
+    const id = (d as any)?.id;
+    if (!id) continue;
+    const i = prod.findIndex((p: any) => p?.id === id);
+    if (i >= 0) prod[i] = { ...prod[i], ...d };
+  }
+}
+
 export function applyStoreSnapshot(snapshot: any, options?: ApplyStoreSnapshotOptions) {
   if (!snapshot || typeof snapshot !== "object") return;
 
@@ -71,7 +105,17 @@ export function applyStoreSnapshot(snapshot: any, options?: ApplyStoreSnapshotOp
 /** `@cpu/api` exposes `/api/store` (legacy Node backend used `/api/sync`). */
 export async function loadBackendStore(options?: ApplyStoreSnapshotOptions) {
   const snapshot = await apiRequest("/api/store");
+  const prevDry = !shouldWriteCompanyStoreSnapshot()
+    ? [...((store as any).dryFlowerBatches || [])]
+    : null;
   applyStoreSnapshot(snapshot, options);
+  if (prevDry) {
+    (store as any).dryFlowerBatches = mergeDryFlowerBatchesWithLocalSnapshot(
+      (store as any).dryFlowerBatches,
+      prevDry,
+    );
+    copyDryFlowerBatchesIntoProduction(store);
+  }
   return snapshot;
 }
 
