@@ -903,9 +903,9 @@ export default function Cultivation() {
   const [freshFrozenGrams, setFreshFrozenGrams] = useState("");
 
   type HarvestSheetRowEdit = { tag: string; weightValue: string; unitGuess: string };
+  type HarvestSheetPhoto = { id: string; storedPath: string; imageUrl: string };
   const [harvestSheetRows, setHarvestSheetRows] = useState<HarvestSheetRowEdit[]>([]);
-  const [harvestSheetStoredPath, setHarvestSheetStoredPath] = useState("");
-  const [harvestSheetImageUrl, setHarvestSheetImageUrl] = useState("");
+  const [harvestSheetPhotos, setHarvestSheetPhotos] = useState<HarvestSheetPhoto[]>([]);
   const [harvestSheetWarnings, setHarvestSheetWarnings] = useState<string[]>([]);
   const [harvestSheetModel, setHarvestSheetModel] = useState("");
   const [harvestSheetBusy, setHarvestSheetBusy] = useState(false);
@@ -2137,12 +2137,17 @@ export default function Cultivation() {
 
     const apiOrigin = API_BASE_URL.replace(/\/+$/, "");
     const harvestSheetSnapshot =
-      harvestSheetStoredPath.trim().length > 0
+      harvestSheetPhotos.length > 0
         ? {
-            harvestSheetStoredPath,
-            harvestSheetImageUrl: harvestSheetImageUrl || undefined,
-            harvestSheetImageAbsUrl: harvestSheetImageUrl
-              ? `${apiOrigin}${harvestSheetImageUrl}`
+            harvestSheetPhotos: harvestSheetPhotos.map((p) => ({
+              harvestSheetStoredPath: p.storedPath,
+              harvestSheetImageUrl: p.imageUrl || undefined,
+              harvestSheetImageAbsUrl: p.imageUrl ? `${apiOrigin}${p.imageUrl}` : undefined,
+            })),
+            harvestSheetStoredPath: harvestSheetPhotos[0].storedPath,
+            harvestSheetImageUrl: harvestSheetPhotos[0].imageUrl || undefined,
+            harvestSheetImageAbsUrl: harvestSheetPhotos[0].imageUrl
+              ? `${apiOrigin}${harvestSheetPhotos[0].imageUrl}`
               : undefined,
             harvestSheetRows: harvestSheetRows.map((r) => ({
               tag: r.tag.trim(),
@@ -2280,6 +2285,17 @@ export default function Cultivation() {
       moveBatchToCompleted(selectedBatch);
     }
 
+    try {
+      await saveRealCultivationBatch(selectedBatch);
+    } catch (error) {
+      console.error(error);
+      showNotice(
+        "Save failed",
+        error instanceof Error ? error.message : "Could not sync cultivation data after harvest.",
+      );
+      return;
+    }
+
     setPeople("");
     setMinutes("");
     setLaborTimeMode("range");
@@ -2292,7 +2308,6 @@ export default function Cultivation() {
     setFreshFrozenGrams("");
     resetHarvestSheetForm();
     setShowTaskWindow(false);
-    await saveRealCultivationBatch(selectedBatch);
     forceRefresh();
   }
 
@@ -3027,8 +3042,7 @@ export default function Cultivation() {
 
   function resetHarvestSheetForm() {
     setHarvestSheetRows([]);
-    setHarvestSheetStoredPath("");
-    setHarvestSheetImageUrl("");
+    setHarvestSheetPhotos([]);
     setHarvestSheetWarnings([]);
     setHarvestSheetModel("");
     setHarvestSheetBusy(false);
@@ -3213,28 +3227,43 @@ export default function Cultivation() {
     setShowRewardsChallengeModal(true);
   }
 
-  async function onHarvestSheetFileSelected(file: File | null) {
-    if (!file || !canWriteRecords) return;
+  async function onHarvestSheetFilesSelected(fileList: FileList | null) {
+    if (!fileList?.length || !canWriteRecords) return;
+    const files = Array.from(fileList);
     setHarvestSheetBusy(true);
     setHarvestSheetWarnings([]);
     try {
-      const shrunk = await shrinkHarvestSheetImageFileIfLarge(file, 2000);
-      const dataUrl = await fileToBase64DataUrl(shrunk);
-      const up = await uploadHarvestSheetImage(dataUrl, shrunk.type || "image/jpeg");
-      setHarvestSheetStoredPath(up.storedPath);
-      setHarvestSheetImageUrl(up.imageUrl || "");
-      showSyncMessageNotice("Harvest sheet photo uploaded.");
+      let uploaded = 0;
+      for (const file of files) {
+        const shrunk = await shrinkHarvestSheetImageFileIfLarge(file, 2000);
+        const dataUrl = await fileToBase64DataUrl(shrunk);
+        const up = await uploadHarvestSheetImage(dataUrl, shrunk.type || "image/jpeg");
+        const id =
+          typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        setHarvestSheetPhotos((prev) => [
+          ...prev,
+          { id, storedPath: up.storedPath, imageUrl: up.imageUrl || "" },
+        ]);
+        uploaded += 1;
+      }
+      showSyncMessageNotice(
+        uploaded === 1 ? "Harvest sheet photo uploaded." : `${uploaded} harvest sheet photos uploaded.`,
+      );
     } catch (e) {
       console.error(e);
       showNotice("Upload failed", e instanceof Error ? e.message : "Could not upload harvest sheet image.");
     } finally {
       setHarvestSheetBusy(false);
+      if (harvestSheetFileInputRef.current) harvestSheetFileInputRef.current.value = "";
     }
   }
 
   async function runHarvestSheetExtract() {
-    if (!harvestSheetStoredPath) {
-      showNotice("No photo", "Upload a photo of the filled harvest sheet first.");
+    const paths = harvestSheetPhotos.map((p) => p.storedPath).filter(Boolean);
+    if (paths.length === 0) {
+      showNotice("No photo", "Upload at least one photo of the filled harvest sheet first.");
       return;
     }
     if (!canWriteRecords) {
@@ -3246,7 +3275,7 @@ export default function Cultivation() {
     try {
       const plantsHint = num(harvestPlants);
       const ex = await extractHarvestSheet({
-        storedPath: harvestSheetStoredPath,
+        storedPaths: paths,
         plantsHarvested: plantsHint > 0 ? plantsHint : undefined,
       });
       setHarvestSheetModel(ex.model || "");
@@ -4640,8 +4669,11 @@ export default function Cultivation() {
     }
 
     if (selectedTask === "Harvest") {
-      void saveHarvest(lab);
-      setIsSavingTask(false);
+      try {
+        await saveHarvest(lab);
+      } finally {
+        setIsSavingTask(false);
+      }
       return;
     }
 
@@ -6430,17 +6462,19 @@ export default function Cultivation() {
                   >
                     <div style={{ color: "#e2e8f0", fontWeight: 700 }}>Harvest sheet (optional)</div>
                     <p style={{ color: "#94a3b8", fontSize: 13, margin: 0, lineHeight: 1.45 }}>
-                      Upload a photo of the handwritten sheet (camera on mobile). The server uses OpenAI vision to read
-                      tag/weight rows. Always review and edit before saving. Images are sent to OpenAI — avoid sensitive
-                      info outside plant weights.
+                      Upload one or more photos of the handwritten sheet (camera or gallery on mobile). The API runs
+                      OpenAI vision on each image and merges rows. Review sheet totals below; expand plant-by-plant
+                      detail to edit tags and weights. Images are sent to OpenAI — avoid sensitive info outside plant
+                      weights.
                     </p>
                     <input
                       ref={harvestSheetFileInputRef}
                       type="file"
                       accept="image/jpeg,image/png,image/webp"
                       capture="environment"
+                      multiple
                       style={{ display: "none" }}
-                      onChange={(e) => void onHarvestSheetFileSelected(e.target.files?.[0] || null)}
+                      onChange={(e) => void onHarvestSheetFilesSelected(e.target.files)}
                     />
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                       <button
@@ -6449,12 +6483,12 @@ export default function Cultivation() {
                         disabled={harvestSheetBusy || !canWriteRecords}
                         onClick={() => harvestSheetFileInputRef.current?.click()}
                       >
-                        {harvestSheetBusy ? "Working…" : "Choose photo / camera"}
+                        {harvestSheetBusy ? "Working…" : "Add photo(s) / camera"}
                       </button>
                       <button
                         type="button"
                         style={{ ...buttonStyle, borderColor: "#38bdf8", color: "#38bdf8" }}
-                        disabled={harvestSheetBusy || !harvestSheetStoredPath || !canWriteRecords}
+                        disabled={harvestSheetBusy || harvestSheetPhotos.length === 0 || !canWriteRecords}
                         onClick={() => void runHarvestSheetExtract()}
                       >
                         Extract with AI
@@ -6471,14 +6505,57 @@ export default function Cultivation() {
                         </button>
                       ) : null}
                     </div>
-                    {harvestSheetImageUrl ? (
-                      <div style={{ marginTop: 6 }}>
-                        <div style={{ color: "#93c5fd", fontSize: 12, marginBottom: 6 }}>Uploaded preview</div>
-                        <img
-                          src={`${API_BASE_URL.replace(/\/+$/, "")}${harvestSheetImageUrl}`}
-                          alt="Harvest sheet"
-                          style={{ maxWidth: "100%", maxHeight: 220, borderRadius: 8, border: "1px solid #334155" }}
-                        />
+                    {harvestSheetPhotos.length > 0 ? (
+                      <div style={{ marginTop: 8 }}>
+                        <div style={{ color: "#93c5fd", fontSize: 12, marginBottom: 8 }}>
+                          Uploaded ({harvestSheetPhotos.length}) — tap remove to drop a photo before extract
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                          {harvestSheetPhotos.map((p) => (
+                            <div
+                              key={p.id}
+                              style={{
+                                position: "relative",
+                                width: 112,
+                                flexShrink: 0,
+                              }}
+                            >
+                              <img
+                                src={`${API_BASE_URL.replace(/\/+$/, "")}${p.imageUrl}`}
+                                alt=""
+                                style={{
+                                  width: "100%",
+                                  height: 112,
+                                  objectFit: "cover",
+                                  borderRadius: 8,
+                                  border: "1px solid #334155",
+                                }}
+                              />
+                              <button
+                                type="button"
+                                disabled={harvestSheetBusy || !canWriteRecords}
+                                onClick={() =>
+                                  setHarvestSheetPhotos((prev) => prev.filter((x) => x.id !== p.id))
+                                }
+                                style={{
+                                  position: "absolute",
+                                  top: 4,
+                                  right: 4,
+                                  fontSize: 11,
+                                  fontWeight: 900,
+                                  padding: "4px 8px",
+                                  borderRadius: 8,
+                                  border: "1px solid rgba(248,113,113,0.7)",
+                                  background: "rgba(127,29,29,0.92)",
+                                  color: "#fecaca",
+                                  cursor: harvestSheetBusy ? "not-allowed" : "pointer",
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     ) : null}
                     {harvestSheetWarnings.length > 0 ? (
@@ -6489,59 +6566,90 @@ export default function Cultivation() {
                       </div>
                     ) : null}
                     {harvestSheetRows.length > 0 ? (
-                      <div style={{ overflowX: "auto", marginTop: 8 }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                          <thead>
-                            <tr style={{ color: "#93c5fd" }}>
-                              <th style={{ border: "1px solid #334155", padding: 6 }}>Tag</th>
-                              <th style={{ border: "1px solid #334155", padding: 6 }}>Weight</th>
-                              <th style={{ border: "1px solid #334155", padding: 6 }}>Unit</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {harvestSheetRows.map((row, idx) => (
-                              <tr key={idx}>
-                                <td style={{ border: "1px solid #334155", padding: 4 }}>
-                                  <input
-                                    style={{ ...inputStyle, padding: 6 }}
-                                    value={row.tag}
-                                    onChange={(e) => {
-                                      const v = e.target.value;
-                                      setHarvestSheetRows((prev) =>
-                                        prev.map((r, j) => (j === idx ? { ...r, tag: v } : r)),
-                                      );
-                                    }}
-                                  />
-                                </td>
-                                <td style={{ border: "1px solid #334155", padding: 4 }}>
-                                  <input
-                                    style={{ ...inputStyle, padding: 6 }}
-                                    value={row.weightValue}
-                                    onChange={(e) => {
-                                      const v = e.target.value;
-                                      setHarvestSheetRows((prev) =>
-                                        prev.map((r, j) => (j === idx ? { ...r, weightValue: v } : r)),
-                                      );
-                                    }}
-                                  />
-                                </td>
-                                <td style={{ border: "1px solid #334155", padding: 4 }}>
-                                  <input
-                                    style={{ ...inputStyle, padding: 6 }}
-                                    value={row.unitGuess}
-                                    onChange={(e) => {
-                                      const v = e.target.value;
-                                      setHarvestSheetRows((prev) =>
-                                        prev.map((r, j) => (j === idx ? { ...r, unitGuess: v } : r)),
-                                      );
-                                    }}
-                                  />
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                      <>
+                        <div
+                          style={{
+                            marginTop: 10,
+                            padding: "10px 12px",
+                            borderRadius: 10,
+                            border: "1px solid rgba(148,163,184,0.28)",
+                            background: "rgba(15,23,42,0.65)",
+                            color: "#e2e8f0",
+                            fontSize: 14,
+                            fontWeight: 800,
+                          }}
+                        >
+                          Sheet totals: {harvestSheetRows.length} row{harvestSheetRows.length === 1 ? "" : "s"} ·{" "}
+                          {Math.round(sumGramsFromHarvestSheetRows(harvestSheetRows)).toLocaleString()} g combined (from
+                          tags below)
+                        </div>
+                        <details style={{ marginTop: 10 }}>
+                          <summary
+                            style={{
+                              cursor: "pointer",
+                              color: "#93c5fd",
+                              fontWeight: 800,
+                              fontSize: 14,
+                              listStylePosition: "outside",
+                            }}
+                          >
+                            Plant-by-plant detail — tag #, weight, unit (tap to expand)
+                          </summary>
+                          <div style={{ overflowX: "auto", marginTop: 10 }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                              <thead>
+                                <tr style={{ color: "#93c5fd" }}>
+                                  <th style={{ border: "1px solid #334155", padding: 6 }}>Tag</th>
+                                  <th style={{ border: "1px solid #334155", padding: 6 }}>Weight</th>
+                                  <th style={{ border: "1px solid #334155", padding: 6 }}>Unit</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {harvestSheetRows.map((row, idx) => (
+                                  <tr key={idx}>
+                                    <td style={{ border: "1px solid #334155", padding: 4 }}>
+                                      <input
+                                        style={{ ...inputStyle, padding: 6 }}
+                                        value={row.tag}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          setHarvestSheetRows((prev) =>
+                                            prev.map((r, j) => (j === idx ? { ...r, tag: v } : r)),
+                                          );
+                                        }}
+                                      />
+                                    </td>
+                                    <td style={{ border: "1px solid #334155", padding: 4 }}>
+                                      <input
+                                        style={{ ...inputStyle, padding: 6 }}
+                                        value={row.weightValue}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          setHarvestSheetRows((prev) =>
+                                            prev.map((r, j) => (j === idx ? { ...r, weightValue: v } : r)),
+                                          );
+                                        }}
+                                      />
+                                    </td>
+                                    <td style={{ border: "1px solid #334155", padding: 4 }}>
+                                      <input
+                                        style={{ ...inputStyle, padding: 6 }}
+                                        value={row.unitGuess}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          setHarvestSheetRows((prev) =>
+                                            prev.map((r, j) => (j === idx ? { ...r, unitGuess: v } : r)),
+                                          );
+                                        }}
+                                      />
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </details>
+                      </>
                     ) : null}
                   </div>
                 </>

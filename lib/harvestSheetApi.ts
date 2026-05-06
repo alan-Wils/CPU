@@ -33,7 +33,8 @@ export type HarvestSheetExtractResponse = {
 };
 
 export async function extractHarvestSheet(body: {
-  storedPath: string;
+  storedPath?: string;
+  storedPaths?: string[];
   plantsHarvested?: number;
 }): Promise<HarvestSheetExtractResponse> {
   return apiRequest("/api/harvest-sheet/extract", {

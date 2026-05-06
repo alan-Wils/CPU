@@ -20,6 +20,7 @@ import { legacyCpuRouter } from "./modules/legacyCpu/routes.js";
 import { analyticsRouter } from "./modules/analytics/routes.js";
 import { nexbatchRouter } from "./modules/nexbatch/routes.js";
 import { extractionAssistRouter } from "./modules/extractionAssist/routes.js";
+import { harvestSheetRouter } from "./modules/harvestSheet/routes.js";
 import { internalJobsRouter } from "./modules/internal/jobsRoutes.js";
 export const appRouter = Router();
 appRouter.use("/auth", authRouter);
@@ -44,6 +45,7 @@ appRouter.use("/sync", storeRouter);
 appRouter.use("/checks", checksRouter);
 appRouter.use("/cash-log", cashLogRouter);
 appRouter.use("/extraction-assist", extractionAssistRouter);
+appRouter.use("/harvest-sheet", harvestSheetRouter);
 appRouter.use("/analytics", analyticsRouter);
 /** Legacy SPA paths (`/api/cultivation`, `/api/logs`, …) used before `@cpu/api` workflow router. */
 appRouter.use(legacyCpuRouter);
