@@ -1427,6 +1427,8 @@ export default function Cultivation() {
       parent.finalLabPotencyPct = thc;
       parent.finalLabPotencyAt = batch.finalLabPotencyAt;
       parent.dryYieldGPerSqFt = +yld.toFixed(4);
+      /** Persist per-dry yield so Analytics can plot each burping batch (parent values are overwritten by later passes). */
+      batch.dryYieldGPerSqFt = +yld.toFixed(4);
       parent.strainMetricsDryFlowerBatchId = batch.id;
       if (noteTrim) {
         parent.finalLabPotencyNote = noteTrim;

@@ -242,8 +242,9 @@ export default function AnalyticsPage() {
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
           <h1 style={{ textAlign: "center", marginBottom: 8 }}>Analytics</h1>
           <p style={{ textAlign: "center", color: "#94a3b8", marginTop: 0 }}>
-            Cultivation strain metrics from batches with lab THC % and dry yield (g / sq ft allocated to dry harvest).
-            Multiple batches on the same lab date appear as separate points (date · batch id).
+            Cultivation strain metrics from lab THC % and dry yield (g / sq ft) per dry flower batch when synced to the
+            server; each point uses the lab result date saved at <strong>Test Passed</strong>. Multiple burping batches
+            share one parent cultivation id but plot as separate points (date · batch id).
           </p>
 
           <section style={cardStyle}>
