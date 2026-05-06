@@ -808,6 +808,8 @@ export default function Cultivation() {
   const [showTaskWindow, setShowTaskWindow] = useState(false);
   const [rewardsCfg, setRewardsCfg] = useState<ReturnType<typeof extractRewardsFromCompanyConfig> | null>(null);
   const [showRewardsChallengeModal, setShowRewardsChallengeModal] = useState(false);
+  /** While the task modal is open, at most one Task challenge popup per batch+task (focus-triggered). */
+  const rewardsChallengeShownKeyRef = useRef<string | null>(null);
   const [showDryTaskWindow, setShowDryTaskWindow] = useState(false);
   const [showAddTaskWindow, setShowAddTaskWindow] = useState(false);
   const [selectedStage, setSelectedStage] = useState<StageModalKey>(null);
@@ -3085,13 +3087,53 @@ export default function Cultivation() {
   </table>
   <p class="hint">Fill one row per plant. For Fresh Frozen / dry flower harvest, total bundles or grams can be noted on the sheet footer if your process uses totals.</p>
 </body></html>`;
-    const w = window.open("", "_blank", "noopener,noreferrer");
-    if (!w) {
-      showNotice("Pop-up blocked", "Allow pop-ups for this site to open the printable harvest sheet.");
+    // Same-document iframe print avoids popup blockers (no window.open).
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("title", "Harvest sheet print");
+    iframe.setAttribute("sandbox", "allow-modals allow-same-origin allow-scripts");
+    iframe.style.cssText =
+      "position:fixed;inset:0;width:100%;height:100%;opacity:0;pointer-events:none;z-index:-1;border:none;";
+    document.body.appendChild(iframe);
+    const pwin = iframe.contentWindow;
+    if (!pwin) {
+      document.body.removeChild(iframe);
+      showNotice("Print failed", "Could not prepare the printable harvest sheet.");
       return;
     }
-    w.document.write(html);
-    w.document.close();
+    pwin.document.open();
+    pwin.document.write(html);
+    pwin.document.close();
+    const cleanup = () => {
+      try {
+        iframe.remove();
+      } catch {
+        /* ignore */
+      }
+    };
+    const runPrint = () => {
+      try {
+        pwin.focus();
+        pwin.print();
+      } finally {
+        setTimeout(cleanup, 800);
+      }
+    };
+    setTimeout(runPrint, 50);
+  }
+
+  function tryShowRewardsChallengeFromTaskInputFocus() {
+    if (selectedTask === "Print harvest sheet") return;
+    if (!showTaskWindow || !selectedBatch || !rewardsCfg?.enabled || !rewardsCfg.taskChallenge.enabled) {
+      return;
+    }
+    const u = getAuthUser();
+    if (!u || (!u.rewardsEnrolled && !isElevatedManagerRole(String(u.role || "")))) {
+      return;
+    }
+    const key = `${selectedBatch.id}\u0000${selectedTask}`;
+    if (rewardsChallengeShownKeyRef.current === key) return;
+    rewardsChallengeShownKeyRef.current = key;
+    setShowRewardsChallengeModal(true);
   }
 
   async function onHarvestSheetFileSelected(file: File | null) {
@@ -3185,17 +3227,17 @@ export default function Cultivation() {
   }
 
   useEffect(() => {
-    if (!showTaskWindow || !rewardsCfg?.enabled || !rewardsCfg.taskChallenge.enabled) {
+    if (!showTaskWindow) {
+      rewardsChallengeShownKeyRef.current = null;
       setShowRewardsChallengeModal(false);
-      return;
     }
-    const u = getAuthUser();
-    if (!u || (!u.rewardsEnrolled && !isElevatedManagerRole(String(u.role || "")))) {
+  }, [showTaskWindow]);
+
+  useEffect(() => {
+    if (selectedTask === "Print harvest sheet") {
       setShowRewardsChallengeModal(false);
-      return;
     }
-    setShowRewardsChallengeModal(true);
-  }, [showTaskWindow, rewardsCfg, selectedTask]);
+  }, [selectedTask]);
 
   function openTaskWindowForBatch(batch: any) {
     if (!batch) return;
@@ -6131,6 +6173,7 @@ export default function Cultivation() {
 
       {showRewardsChallengeModal &&
         showTaskWindow &&
+        selectedTask !== "Print harvest sheet" &&
         selectedBatch &&
         rewardsCfg?.enabled &&
         rewardsCfg.taskChallenge.enabled && (
@@ -6196,8 +6239,18 @@ export default function Cultivation() {
             </p>
 
             <div style={formStyle}>
-              <input style={inputStyle} value={selectedBatch.id} readOnly />
-              <input style={inputStyle} value={selectedTask} readOnly />
+              <input
+                style={inputStyle}
+                value={selectedBatch.id}
+                readOnly
+                onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+              />
+              <input
+                style={inputStyle}
+                value={selectedTask}
+                readOnly
+                onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+              />
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
                 {currentTasks.length === 0 ? (
                   <p style={{ color: "#cbd5e1", margin: 0 }}>No tasks available for this stage.</p>
@@ -6228,6 +6281,7 @@ export default function Cultivation() {
                       type="date"
                       value={stageMoveDate}
                       onChange={(e) => setStageMoveDate(e.target.value)}
+                      onFocus={tryShowRewardsChallengeFromTaskInputFocus}
                     />
                   </label>
                   <p style={{ color: "#94a3b8", fontSize: 12, margin: 0, lineHeight: 1.45 }}>
@@ -6239,17 +6293,40 @@ export default function Cultivation() {
 
               {selectedTask === "Harvest" && (
                 <>
-                  <select style={inputStyle} value={harvestType} onChange={(e) => setHarvestType(e.target.value)}>
+                  <select
+                    style={inputStyle}
+                    value={harvestType}
+                    onChange={(e) => setHarvestType(e.target.value)}
+                    onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                  >
                     <option>A Grade Flower</option>
                     <option>Fresh Frozen</option>
                   </select>
 
-                  <input style={inputStyle} placeholder="Plants harvested" value={harvestPlants} onChange={(e) => setHarvestPlants(e.target.value)} />
+                  <input
+                    style={inputStyle}
+                    placeholder="Plants harvested"
+                    value={harvestPlants}
+                    onChange={(e) => setHarvestPlants(e.target.value)}
+                    onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                  />
 
                   {harvestType === "Fresh Frozen" && (
                     <>
-                      <input style={inputStyle} placeholder="Bundles" value={freshFrozenBundles} onChange={(e) => setFreshFrozenBundles(e.target.value)} />
-                      <input style={inputStyle} placeholder="Grams" value={freshFrozenGrams} onChange={(e) => setFreshFrozenGrams(e.target.value)} />
+                      <input
+                        style={inputStyle}
+                        placeholder="Bundles"
+                        value={freshFrozenBundles}
+                        onChange={(e) => setFreshFrozenBundles(e.target.value)}
+                        onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                      />
+                      <input
+                        style={inputStyle}
+                        placeholder="Grams"
+                        value={freshFrozenGrams}
+                        onChange={(e) => setFreshFrozenGrams(e.target.value)}
+                        onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                      />
                     </>
                   )}
 
@@ -6394,6 +6471,7 @@ export default function Cultivation() {
                       style={inputStyle}
                       value={combinePartnerBatchId}
                       onChange={(e) => setCombinePartnerBatchId(e.target.value)}
+                      onFocus={tryShowRewardsChallengeFromTaskInputFocus}
                     >
                       <option value="">Select batch…</option>
                       {combinePartnerOptions.map((b: any) => (
@@ -6413,6 +6491,7 @@ export default function Cultivation() {
                     placeholder="Optional merge notes (labels, racks, lineage, …)"
                     value={output}
                     onChange={(e) => setOutput(e.target.value)}
+                    onFocus={tryShowRewardsChallengeFromTaskInputFocus}
                   />
                 </>
               )}
@@ -6431,6 +6510,7 @@ export default function Cultivation() {
                   }
                   value={output}
                   onChange={(e) => setOutput(e.target.value)}
+                  onFocus={tryShowRewardsChallengeFromTaskInputFocus}
                 />
               )}
 
