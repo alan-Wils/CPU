@@ -2,6 +2,8 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
+const fs = require("fs");
 
 const authRoutes = require("./routes/auth");
 const userRoutes = require("./routes/users");
@@ -63,6 +65,7 @@ app.use("/api/source-batches", sourceBatchRoutes);
 app.use("/api/extraction", extractionRoutes);
 app.use("/api/packaging", packagingRoutes);
 app.use("/api/config", configRoutes);
+app.use("/api/harvest-sheet", harvestSheetRoutes);
 
 const port = process.env.PORT || 4000;
 

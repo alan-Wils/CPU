@@ -30,7 +30,9 @@ import {
   deleteCultivationBatch,
 } from "@/lib/cultivationApi";
 import { resolveAbsorbedPlantsAndStageForUncombine } from "@/lib/cultivationMergeHelpers";
-import { apiRequest } from "@/lib/api";
+import { apiRequest, API_BASE_URL } from "@/lib/api";
+import { extractHarvestSheet, uploadHarvestSheetImage } from "@/lib/harvestSheetApi";
+import { fileToBase64DataUrl, shrinkHarvestSheetImageFileIfLarge } from "@/lib/shrinkHarvestSheetImage";
 import { createSourceBatch } from "@/lib/sourceBatchApi";
 import { createLog, deleteLog as deleteTaskLogRemote, getAllLogs } from "@/lib/logsApi";
 import {
@@ -319,6 +321,7 @@ const defaultFlowerTasks = [
   "Plant Work",
   "IPM",
   "Combine Batches",
+  "Print harvest sheet",
   "Harvest",
 ];
 
@@ -887,6 +890,15 @@ export default function Cultivation() {
   const [harvestPlants, setHarvestPlants] = useState("");
   const [freshFrozenBundles, setFreshFrozenBundles] = useState("");
   const [freshFrozenGrams, setFreshFrozenGrams] = useState("");
+
+  type HarvestSheetRowEdit = { tag: string; weightValue: string; unitGuess: string };
+  const [harvestSheetRows, setHarvestSheetRows] = useState<HarvestSheetRowEdit[]>([]);
+  const [harvestSheetStoredPath, setHarvestSheetStoredPath] = useState("");
+  const [harvestSheetImageUrl, setHarvestSheetImageUrl] = useState("");
+  const [harvestSheetWarnings, setHarvestSheetWarnings] = useState<string[]>([]);
+  const [harvestSheetModel, setHarvestSheetModel] = useState("");
+  const [harvestSheetBusy, setHarvestSheetBusy] = useState(false);
+  const harvestSheetFileInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedDryFlowerBatch, setSelectedDryFlowerBatch] = useState<any>(null);
   const [selectedDryFlowerTask, setSelectedDryFlowerTask] = useState(
@@ -1621,6 +1633,7 @@ export default function Cultivation() {
     }
 
     if (taskName === "Combine Batches") return true;
+    if (taskName === "Print harvest sheet") return true;
 
     if (!hasTaskAlreadyBeenDone(batchId, taskName)) return true;
 
@@ -2104,6 +2117,30 @@ export default function Cultivation() {
     const currentPlants = Number(selectedBatch.plants || 0);
     const remainingPlants = Math.max(currentPlants - plantsHarvested, 0);
 
+    const apiOrigin = API_BASE_URL.replace(/\/+$/, "");
+    const harvestSheetSnapshot =
+      harvestSheetStoredPath.trim().length > 0
+        ? {
+            harvestSheetStoredPath,
+            harvestSheetImageUrl: harvestSheetImageUrl || undefined,
+            harvestSheetImageAbsUrl: harvestSheetImageUrl
+              ? `${apiOrigin}${harvestSheetImageUrl}`
+              : undefined,
+            harvestSheetRows: harvestSheetRows.map((r) => ({
+              tag: r.tag.trim(),
+              weightValue:
+                String(r.weightValue || "").trim() === ""
+                  ? null
+                  : Number(r.weightValue),
+              unitGuess: (r.unitGuess || "unknown").trim(),
+            })),
+            harvestSheetWarnings: [...harvestSheetWarnings],
+            harvestSheetModel: harvestSheetModel || undefined,
+            harvestSheetExtractedAt: new Date().toISOString(),
+            harvestSheetSumGramsFromRows: sumGramsFromHarvestSheetRows(harvestSheetRows),
+          }
+        : null;
+
     selectedBatch.plants = remainingPlants;
     selectedBatch.stage =
       remainingPlants > 0 ? "Partially Harvested" : "Harvested";
@@ -2134,6 +2171,7 @@ export default function Cultivation() {
         packagedPopcornLbs: 0,
         remainingPackableLbs: "",
         createdAt: nowIsoForLog(),
+        ...(harvestSheetSnapshot ? { harvestSheetSnapshot } : {}),
       };
 
       s.dryFlowerBatches.unshift(dryBatch);
@@ -2151,7 +2189,11 @@ export default function Cultivation() {
             totalLaborMinutes: lab.totalLaborMinutes,
             output: `${plantsHarvested} plants harvested for A Grade Flower. No weight recorded until bucking.${lab.outputSuffix}`,
             linkedBatch: dryBatch.id,
-            data: { ...lab.laborDetail, totalLaborMinutes: lab.totalLaborMinutes },
+            data: {
+              ...lab.laborDetail,
+              totalLaborMinutes: lab.totalLaborMinutes,
+              ...(harvestSheetSnapshot || {}),
+            },
             time: nowIsoForLog(),
           },
           dryBatch,
@@ -2179,6 +2221,7 @@ export default function Cultivation() {
         source: selectedBatch.id,
         status: "Available for Extraction",
         createdAt: nowIsoForLog(),
+        ...(harvestSheetSnapshot ? { harvestSheetSnapshot } : {}),
       };
 
       s.sourceBatches.unshift(freshFrozenBatch);
@@ -2206,7 +2249,11 @@ export default function Cultivation() {
           freshFrozenBundles || 0
         } bundles / ${freshFrozenGrams || 0} grams${lab.outputSuffix}`,
         linkedBatch: freshFrozenBatch.id,
-        data: { ...lab.laborDetail, totalLaborMinutes: lab.totalLaborMinutes },
+        data: {
+          ...lab.laborDetail,
+          totalLaborMinutes: lab.totalLaborMinutes,
+          ...(harvestSheetSnapshot || {}),
+        },
         time: nowIsoForLog(),
       }))
     }
@@ -2225,6 +2272,7 @@ export default function Cultivation() {
     setHarvestPlants("");
     setFreshFrozenBundles("");
     setFreshFrozenGrams("");
+    resetHarvestSheetForm();
     setShowTaskWindow(false);
     await saveRealCultivationBatch(selectedBatch);
     forceRefresh();
@@ -2959,6 +3007,16 @@ export default function Cultivation() {
     setMinutes("");
   }
 
+  function resetHarvestSheetForm() {
+    setHarvestSheetRows([]);
+    setHarvestSheetStoredPath("");
+    setHarvestSheetImageUrl("");
+    setHarvestSheetWarnings([]);
+    setHarvestSheetModel("");
+    setHarvestSheetBusy(false);
+    if (harvestSheetFileInputRef.current) harvestSheetFileInputRef.current.value = "";
+  }
+
   function closeCultivationTaskWindow() {
     setCombinePartnerBatchId("");
     moveDateBypassRef.current = null;
@@ -2968,7 +3026,137 @@ export default function Cultivation() {
     setTaskEndTime("");
     setPeople("");
     setMinutes("");
+    resetHarvestSheetForm();
     setShowTaskWindow(false);
+  }
+
+  function sumGramsFromHarvestSheetRows(rows: HarvestSheetRowEdit[]): number {
+    let sum = 0;
+    for (const r of rows) {
+      const w = num(r.weightValue);
+      if (!(w > 0)) continue;
+      const u = String(r.unitGuess || "").toLowerCase();
+      if (u === "lbs" || u === "lb") sum += w * 453.592;
+      else if (u === "oz") sum += w * 28.3495;
+      else if (u === "g" || u === "grams" || u === "gram") sum += w;
+      else sum += w;
+    }
+    return Math.round(sum);
+  }
+
+  function openHarvestPrintSheetWindow() {
+    if (!selectedBatch) return;
+    const b = selectedBatch;
+    const flowerRoomObj = cultivationRooms.flowerRooms.find((r: any) => r.id === b.flowerRoomId);
+    const bayObj = flowerRoomObj?.bays?.find((x: any) => x.id === b.flowerBayId);
+    const roomName = flowerRoomObj?.name || b.flowerRoom || "—";
+    const bayName = bayObj ? String(bayObj.name) : b.flowerBay || "—";
+    const tablesStr = formatFlowerTables(b);
+    const strain = b.strain || "—";
+    const rowCount = Math.min(500, Math.max(1, num(b.plants)));
+    const rowsHtml = Array.from({ length: rowCount }, (_, i) => {
+      const n = i + 1;
+      return `<tr><td>${n}</td><td></td><td></td><td></td></tr>`;
+    }).join("");
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Harvest sheet ${String(b.id)}</title>
+<style>
+  body { font-family: system-ui, sans-serif; padding: 16px; color: #111; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  .meta { font-size: 13px; margin-bottom: 14px; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { border: 1px solid #333; padding: 6px 8px; text-align: left; }
+  th { background: #eee; }
+  .hint { font-size: 11px; color: #444; margin-top: 12px; }
+  @media print { .no-print { display: none; } }
+</style></head><body>
+  <h1>Harvest weight log</h1>
+  <div class="meta">
+    <div><strong>Batch:</strong> ${String(b.id)}</div>
+    <div><strong>Strain:</strong> ${String(strain)}</div>
+    <div><strong>Flower room:</strong> ${String(roomName)}</div>
+    <div><strong>Bay:</strong> ${String(bayName)}</div>
+    <div><strong>Tables:</strong> ${String(tablesStr)}</div>
+    <div><strong>Plants (expected rows):</strong> ${rowCount}</div>
+  </div>
+  <p class="no-print"><button type="button" onclick="window.print()">Print</button></p>
+  <table>
+    <thead><tr><th>#</th><th>Tag #</th><th>Weight</th><th>Unit (lbs / g)</th></tr></thead>
+    <tbody>${rowsHtml}</tbody>
+  </table>
+  <p class="hint">Fill one row per plant. For Fresh Frozen / dry flower harvest, total bundles or grams can be noted on the sheet footer if your process uses totals.</p>
+</body></html>`;
+    const w = window.open("", "_blank", "noopener,noreferrer");
+    if (!w) {
+      showNotice("Pop-up blocked", "Allow pop-ups for this site to open the printable harvest sheet.");
+      return;
+    }
+    w.document.write(html);
+    w.document.close();
+  }
+
+  async function onHarvestSheetFileSelected(file: File | null) {
+    if (!file || !canWriteRecords) return;
+    setHarvestSheetBusy(true);
+    setHarvestSheetWarnings([]);
+    try {
+      const shrunk = await shrinkHarvestSheetImageFileIfLarge(file, 2000);
+      const dataUrl = await fileToBase64DataUrl(shrunk);
+      const up = await uploadHarvestSheetImage(dataUrl, shrunk.type || "image/jpeg");
+      setHarvestSheetStoredPath(up.storedPath);
+      setHarvestSheetImageUrl(up.imageUrl || "");
+      showSyncMessageNotice("Harvest sheet photo uploaded.");
+    } catch (e) {
+      console.error(e);
+      showNotice("Upload failed", e instanceof Error ? e.message : "Could not upload harvest sheet image.");
+    } finally {
+      setHarvestSheetBusy(false);
+    }
+  }
+
+  async function runHarvestSheetExtract() {
+    if (!harvestSheetStoredPath) {
+      showNotice("No photo", "Upload a photo of the filled harvest sheet first.");
+      return;
+    }
+    if (!canWriteRecords) {
+      showReadOnlyNotice();
+      return;
+    }
+    setHarvestSheetBusy(true);
+    setHarvestSheetWarnings([]);
+    try {
+      const plantsHint = num(harvestPlants);
+      const ex = await extractHarvestSheet({
+        storedPath: harvestSheetStoredPath,
+        plantsHarvested: plantsHint > 0 ? plantsHint : undefined,
+      });
+      setHarvestSheetModel(ex.model || "");
+      setHarvestSheetWarnings(ex.warnings || []);
+      setHarvestSheetRows(
+        ex.rows.map((r) => ({
+          tag: r.tag || "",
+          weightValue: r.weightValue != null && Number.isFinite(r.weightValue) ? String(r.weightValue) : "",
+          unitGuess: r.unitGuess || "unknown",
+        })),
+      );
+      if (harvestType === "Fresh Frozen") {
+        if (ex.totalGrams != null && Number.isFinite(ex.totalGrams)) {
+          setFreshFrozenGrams(String(Math.round(ex.totalGrams)));
+        }
+        if (ex.bundles != null && Number.isFinite(ex.bundles)) {
+          setFreshFrozenBundles(String(Math.round(ex.bundles)));
+        }
+      }
+      showSyncMessageNotice("Harvest sheet data extracted — review rows before saving.");
+    } catch (e) {
+      console.error(e);
+      showNotice(
+        "Extraction failed",
+        e instanceof Error ? e.message : "OpenAI extraction failed. Check OPENAI_API_KEY on the server.",
+      );
+    } finally {
+      setHarvestSheetBusy(false);
+    }
   }
 
   function finalizeMergedPartnerBatch(
@@ -4305,6 +4493,12 @@ export default function Cultivation() {
       !/^\d{4}-\d{2}-\d{2}$/.test(stageMoveDate.trim())
     ) {
       showNotice("Move date invalid", "Pick a calendar date for when this batch actually moved.");
+      setIsSavingTask(false);
+      return;
+    }
+
+    if (selectedTask === "Print harvest sheet") {
+      openHarvestPrintSheetWindow();
       setIsSavingTask(false);
       return;
     }
@@ -6058,6 +6252,132 @@ export default function Cultivation() {
                       <input style={inputStyle} placeholder="Grams" value={freshFrozenGrams} onChange={(e) => setFreshFrozenGrams(e.target.value)} />
                     </>
                   )}
+
+                  <div
+                    style={{
+                      ...inputStyle,
+                      display: "grid",
+                      gap: 10,
+                      background: "#0f172a",
+                      borderColor: "#475569",
+                    }}
+                  >
+                    <div style={{ color: "#e2e8f0", fontWeight: 700 }}>Harvest sheet (optional)</div>
+                    <p style={{ color: "#94a3b8", fontSize: 13, margin: 0, lineHeight: 1.45 }}>
+                      Upload a photo of the handwritten sheet (camera on mobile). The server uses OpenAI vision to read
+                      tag/weight rows. Always review and edit before saving. Images are sent to OpenAI — avoid sensitive
+                      info outside plant weights.
+                    </p>
+                    <input
+                      ref={harvestSheetFileInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      capture="environment"
+                      style={{ display: "none" }}
+                      onChange={(e) => void onHarvestSheetFileSelected(e.target.files?.[0] || null)}
+                    />
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <button
+                        type="button"
+                        style={buttonStyle}
+                        disabled={harvestSheetBusy || !canWriteRecords}
+                        onClick={() => harvestSheetFileInputRef.current?.click()}
+                      >
+                        {harvestSheetBusy ? "Working…" : "Choose photo / camera"}
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...buttonStyle, borderColor: "#38bdf8", color: "#38bdf8" }}
+                        disabled={harvestSheetBusy || !harvestSheetStoredPath || !canWriteRecords}
+                        onClick={() => void runHarvestSheetExtract()}
+                      >
+                        Extract with AI
+                      </button>
+                      {harvestType === "Fresh Frozen" && harvestSheetRows.length > 0 ? (
+                        <button
+                          type="button"
+                          style={buttonStyle}
+                          onClick={() =>
+                            setFreshFrozenGrams(String(sumGramsFromHarvestSheetRows(harvestSheetRows)))
+                          }
+                        >
+                          Sum rows → grams
+                        </button>
+                      ) : null}
+                    </div>
+                    {harvestSheetImageUrl ? (
+                      <div style={{ marginTop: 6 }}>
+                        <div style={{ color: "#93c5fd", fontSize: 12, marginBottom: 6 }}>Uploaded preview</div>
+                        <img
+                          src={`${API_BASE_URL.replace(/\/+$/, "")}${harvestSheetImageUrl}`}
+                          alt="Harvest sheet"
+                          style={{ maxWidth: "100%", maxHeight: 220, borderRadius: 8, border: "1px solid #334155" }}
+                        />
+                      </div>
+                    ) : null}
+                    {harvestSheetWarnings.length > 0 ? (
+                      <div style={{ color: "#fbbf24", fontSize: 13 }}>
+                        {harvestSheetWarnings.map((w, i) => (
+                          <div key={i}>{w}</div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {harvestSheetRows.length > 0 ? (
+                      <div style={{ overflowX: "auto", marginTop: 8 }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                          <thead>
+                            <tr style={{ color: "#93c5fd" }}>
+                              <th style={{ border: "1px solid #334155", padding: 6 }}>Tag</th>
+                              <th style={{ border: "1px solid #334155", padding: 6 }}>Weight</th>
+                              <th style={{ border: "1px solid #334155", padding: 6 }}>Unit</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {harvestSheetRows.map((row, idx) => (
+                              <tr key={idx}>
+                                <td style={{ border: "1px solid #334155", padding: 4 }}>
+                                  <input
+                                    style={{ ...inputStyle, padding: 6 }}
+                                    value={row.tag}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      setHarvestSheetRows((prev) =>
+                                        prev.map((r, j) => (j === idx ? { ...r, tag: v } : r)),
+                                      );
+                                    }}
+                                  />
+                                </td>
+                                <td style={{ border: "1px solid #334155", padding: 4 }}>
+                                  <input
+                                    style={{ ...inputStyle, padding: 6 }}
+                                    value={row.weightValue}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      setHarvestSheetRows((prev) =>
+                                        prev.map((r, j) => (j === idx ? { ...r, weightValue: v } : r)),
+                                      );
+                                    }}
+                                  />
+                                </td>
+                                <td style={{ border: "1px solid #334155", padding: 4 }}>
+                                  <input
+                                    style={{ ...inputStyle, padding: 6 }}
+                                    value={row.unitGuess}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      setHarvestSheetRows((prev) =>
+                                        prev.map((r, j) => (j === idx ? { ...r, unitGuess: v } : r)),
+                                      );
+                                    }}
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : null}
+                  </div>
                 </>
               )}
 
@@ -6097,7 +6417,9 @@ export default function Cultivation() {
                 </>
               )}
 
-              {selectedTask !== "Harvest" && selectedTask !== "Combine Batches" && (
+              {selectedTask !== "Harvest" &&
+                selectedTask !== "Combine Batches" &&
+                selectedTask !== "Print harvest sheet" && (
                 <input
                   style={inputStyle}
                   placeholder={
@@ -6316,6 +6638,7 @@ export default function Cultivation() {
                 </>
               )}
 
+              {selectedTask !== "Print harvest sheet" ? (
               <div
                 style={{
                   display: "grid",
@@ -6468,15 +6791,32 @@ export default function Cultivation() {
                   </>
                 )}
               </div>
+              ) : (
+                <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 10 }}>
+                  Open a printable harvest sheet (blank tag/weight table). No labor entry needed for this action.
+                </p>
+              )}
             </div>
 
             <div style={modalButtonRowStyle}>
               <button style={buttonStyle} onClick={closeCultivationTaskWindow}>
                 Cancel
               </button>
-              <button style={primaryButtonStyle} onClick={save} disabled={isSavingTask}>
-                {isSavingTask ? "Saving..." : "Save Task to Batch"}
-              </button>
+              {selectedTask === "Print harvest sheet" ? (
+                <button
+                  type="button"
+                  style={primaryButtonStyle}
+                  onClick={() => {
+                    openHarvestPrintSheetWindow();
+                  }}
+                >
+                  Open printable sheet
+                </button>
+              ) : (
+                <button style={primaryButtonStyle} onClick={save} disabled={isSavingTask}>
+                  {isSavingTask ? "Saving..." : "Save Task to Batch"}
+                </button>
+              )}
             </div>
           </div>
         </div>
