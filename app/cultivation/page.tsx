@@ -28,6 +28,7 @@ import {
   updateCultivationBatch,
   deleteCultivationBatch,
 } from "@/lib/cultivationApi";
+import { resolveAbsorbedPlantsAndStageForUncombine } from "@/lib/cultivationMergeHelpers";
 import { apiRequest } from "@/lib/api";
 import { createSourceBatch } from "@/lib/sourceBatchApi";
 import { createLog, deleteLog as deleteTaskLogRemote, getAllLogs } from "@/lib/logsApi";
@@ -575,6 +576,15 @@ export default function Cultivation() {
   const [editVegTableIds, setEditVegTableIds] = useState<string[]>([]);
   const [editVegBatchNotes, setEditVegBatchNotes] = useState("");
   const [isSavingEditVegModal, setIsSavingEditVegModal] = useState(false);
+  /** Edit clone batches (strain, plants, dates, notes) — placement is N/A until Clone → Veg. */
+  const [editCloneModalBatch, setEditCloneModalBatch] = useState<any>(null);
+  const [editClonePlants, setEditClonePlants] = useState("");
+  const [editCloneStrain, setEditCloneStrain] = useState("");
+  const [editCloneAcronym, setEditCloneAcronym] = useState("");
+  const [editCloneDate, setEditCloneDate] = useState("");
+  const [editCloneBatchNotes, setEditCloneBatchNotes] = useState("");
+  const [isSavingEditCloneModal, setIsSavingEditCloneModal] = useState(false);
+  const [uncombineBusyPartnerId, setUncombineBusyPartnerId] = useState<string | null>(null);
   /** Edit flower / partial-harvest batches (same fields as veg editor + canopy recompute). */
   const [editFlowerModalBatch, setEditFlowerModalBatch] = useState<any>(null);
   const [editFlowerPlants, setEditFlowerPlants] = useState("");
@@ -1387,6 +1397,7 @@ export default function Cultivation() {
     if (selectedDryFlowerBatch?.id === batchId) setSelectedDryFlowerBatch(null);
     if (viewBatch?.id === batchId) setViewBatch(null);
     if (editVegModalBatch?.id === batchId) setEditVegModalBatch(null);
+    if (editCloneModalBatch?.id === batchId) setEditCloneModalBatch(null);
     if (editFlowerModalBatch?.id === batchId) setEditFlowerModalBatch(null);
     if (failBatch?.id === batchId) setFailBatch(null);
 
@@ -2339,7 +2350,17 @@ export default function Cultivation() {
     setShowTaskWindow(false);
   }
 
-  function finalizeMergedPartnerBatch(absorbed: any, survivorId: string) {
+  function finalizeMergedPartnerBatch(
+    absorbed: any,
+    survivorId: string,
+    snapshot: { plantsAbsorbed: number; stageBeforeMerge: string; statusBeforeMerge: string },
+  ) {
+    absorbed.mergedIntoSnapshot = {
+      survivorBatchId: survivorId,
+      plantsAbsorbed: snapshot.plantsAbsorbed,
+      stageBeforeMerge: snapshot.stageBeforeMerge,
+      statusBeforeMerge: snapshot.statusBeforeMerge,
+    };
     absorbed.status = "Complete";
     absorbed.stage = "Complete";
     absorbed.completedAt = nowIsoForLog();
@@ -2467,6 +2488,197 @@ export default function Cultivation() {
     setEditVegModalBatch(null);
   }
 
+  function openEditCloneBatchModal(b: any) {
+    if (!canManageCultivationBatchPlacement()) {
+      showManagerBatchEditNotice();
+      return;
+    }
+    if (!b || String(b.stage || "") !== "Clone") return;
+
+    setEditCloneModalBatch(b);
+    setEditClonePlants(String(Math.max(0, num(b.plants))));
+    setEditCloneStrain(String(b.strain ?? "").trim());
+    setEditCloneAcronym(String(b.acronym ?? "").trim().toUpperCase());
+    const cd = b.cloneDate ? String(b.cloneDate).slice(0, 10) : "";
+    setEditCloneDate(cd);
+    setEditCloneBatchNotes(String(b.batchNotes ?? "").trim());
+  }
+
+  function closeEditCloneModal() {
+    if (isSavingEditCloneModal) return;
+    setEditCloneModalBatch(null);
+  }
+
+  function promptUncombineMergedPartnerFromModal(survivor: any, partnerIdRaw: string) {
+    if (!canManageCultivationBatchPlacement()) {
+      showManagerBatchEditNotice();
+      return;
+    }
+    if (uncombineBusyPartnerId) return;
+
+    const sid = String(survivor?.id || "");
+    const pid = String(partnerIdRaw || "").trim();
+    if (!sid || !pid) return;
+
+    const idList = Array.isArray(survivor.combinedFromBatchIds)
+      ? survivor.combinedFromBatchIds.map((x: any) => String(x))
+      : [];
+    if (!idList.includes(pid)) {
+      showNotice("Uncombine failed", "That batch is not listed as merged into this survivor.");
+      return;
+    }
+
+    const previewIdx = s.completedCultivationBatches.findIndex((b: any) => b?.id === pid);
+    const partnerPreview =
+      previewIdx >= 0 ? s.completedCultivationBatches[previewIdx] : null;
+    if (!partnerPreview || String(partnerPreview.mergedIntoBatchId || "") !== sid) {
+      showNotice(
+        "Uncombine failed",
+        "The absorbed batch could not be found as a merged (completed) record. Try refreshing.",
+      );
+      return;
+    }
+
+    const resolved = resolveAbsorbedPlantsAndStageForUncombine(
+      partnerPreview,
+      s.logs,
+      sid,
+      pid,
+    );
+    if (!resolved) {
+      showNotice(
+        "Uncombine failed",
+        "Could not resolve plant counts — merge snapshot or Combine Batches log entry is missing.",
+      );
+      return;
+    }
+
+    const { plants: plantsAbsorbed, stage: stageFinal } = resolved;
+
+    showConfirm(
+      "Uncombine batches?",
+      `Restore ${pid} as its own batch (${plantsAbsorbed} plants, ${stageFinal}) and subtract ${plantsAbsorbed} plants from survivor ${sid}?`,
+      () => {
+        void (async () => {
+          setUncombineBusyPartnerId(pid);
+          try {
+            const idxPartner = Array.isArray(survivor.combinedFromBatchIds)
+              ? survivor.combinedFromBatchIds.findIndex((x: any) => String(x) === pid)
+              : -1;
+            if (idxPartner < 0) {
+              showNotice(
+                "Uncombine failed",
+                "The merged-batch list changed. Close this dialog and try again.",
+              );
+              return;
+            }
+
+            const refreshedDoneIdx = s.completedCultivationBatches.findIndex((b: any) => b?.id === pid);
+            const pRestore =
+              refreshedDoneIdx >= 0 ? s.completedCultivationBatches[refreshedDoneIdx] : null;
+            if (!pRestore || String(pRestore.mergedIntoBatchId || "") !== sid) {
+              showNotice("Uncombine failed", "Partner batch no longer matches. Refresh and retry.");
+              return;
+            }
+
+            survivor.combinedFromBatchIds.splice(idxPartner, 1);
+            if (survivor.combinedFromBatchIds.length === 0) {
+              delete survivor.combinedFromBatchIds;
+            }
+
+            survivor.plants = Math.max(0, num(survivor.plants) - plantsAbsorbed);
+            const flowerish = String(survivor.stage || "").toLowerCase();
+            if (
+              flowerish === "flower" ||
+              flowerish === "partially harvested" ||
+              flowerish === "harvested"
+            ) {
+              survivor.plantsAtFlower = Math.max(
+                0,
+                num(survivor.plantsAtFlower ?? survivor.plants) - plantsAbsorbed,
+              );
+              recomputeDryCanopyForCultivationBatch(survivor, cultivationRooms);
+            }
+
+            delete pRestore.mergedIntoSnapshot;
+            pRestore.mergedIntoBatchId = undefined;
+            pRestore.status = "Active";
+            pRestore.stage = stageFinal;
+            pRestore.plants = plantsAbsorbed;
+            pRestore.completedAt = undefined;
+
+            s.completedCultivationBatches.splice(refreshedDoneIdx, 1);
+            s.cultivationBatches.unshift(pRestore);
+
+            const mergeData = {
+              uncombineBatches: true,
+              survivorBatchId: sid,
+              restoredBatchId: pid,
+              plantsRestoredToPartner: plantsAbsorbed,
+              stageRestored: stageFinal,
+              survivorPlantsAfter: survivor.plants,
+            };
+
+            const outSurvivor = `Uncombined ${pid} (${plantsAbsorbed} plants, ${stageFinal}). Survivor ${sid} plants now ${survivor.plants}.`;
+            const outPartner = `Restored active (${plantsAbsorbed} plants, ${stageFinal}) after uncombine from ${sid}.`;
+
+            s.logs.unshift(
+              withLoggedBy({
+                area: "Cultivation",
+                batch: sid,
+                task: "Uncombine Batches",
+                output: outSurvivor,
+                linkedBatch: pid,
+                data: mergeData,
+                time: nowIsoForLog(),
+              }),
+            );
+            s.logs.unshift(
+              withLoggedBy({
+                area: "Cultivation",
+                batch: pid,
+                task: "Uncombine Batches",
+                output: outPartner,
+                linkedBatch: sid,
+                data: mergeData,
+                time: nowIsoForLog(),
+              }),
+            );
+
+            forceRefresh();
+
+            try {
+              await createLog({
+                area: "Audit",
+                batch: sid,
+                task: "Uncombine Batches",
+                output: outSurvivor,
+                data: mergeData,
+              });
+            } catch (e) {
+              console.error("Could not persist uncombine audit log:", e);
+              showNotice(
+                "Log sync warning",
+                "Uncombine was saved locally, but the audit line may not have reached the server.",
+              );
+            }
+
+            showSyncMessageNotice("Saving uncombine to server…");
+            const okS = await saveRealCultivationBatch(survivor);
+            const okP = await saveRealCultivationBatch(pRestore);
+            showSyncMessageNotice(
+              okS && okP
+                ? "Uncombine saved to server."
+                : "Saved locally — server sync may have failed for one batch.",
+            );
+          } finally {
+            setUncombineBusyPartnerId(null);
+          }
+        })();
+      },
+    );
+  }
+
   async function saveEditVegBatchModal() {
     if (!editVegModalBatch || !canManageCultivationBatchPlacement()) return;
 
@@ -2583,6 +2795,85 @@ export default function Cultivation() {
     } finally {
       setEditVegModalBatch(null);
       setIsSavingEditVegModal(false);
+    }
+  }
+
+  async function saveEditCloneBatchModal() {
+    if (!editCloneModalBatch || !canManageCultivationBatchPlacement()) return;
+
+    const taskRequiredFields: { label: string; value: unknown; positive?: boolean }[] = [
+      { label: "Strain", value: editCloneStrain.trim() },
+      { label: "Strain acronym", value: editCloneAcronym.trim() },
+      { label: "Plants", value: editClonePlants, positive: true },
+    ];
+
+    if (!requireFieldsStyled(taskRequiredFields)) return;
+
+    setIsSavingEditCloneModal(true);
+    const b = editCloneModalBatch;
+    const before = {
+      strain: b.strain,
+      acronym: b.acronym,
+      cloneDate: b.cloneDate,
+      plants: b.plants,
+      batchNotes: b.batchNotes,
+    };
+
+    b.strain = editCloneStrain.trim();
+    b.acronym = editCloneAcronym.trim().toUpperCase();
+    b.cloneDate = editCloneDate.trim();
+    b.plants = num(editClonePlants);
+    b.batchNotes = editCloneBatchNotes.trim();
+
+    const after = {
+      strain: b.strain,
+      acronym: b.acronym,
+      cloneDate: b.cloneDate,
+      plants: b.plants,
+      batchNotes: b.batchNotes,
+    };
+
+    const output = `Edited Clone batch (${b.id}) | Plants: ${after.plants} | Strain: ${after.strain}`;
+    const loggedAtIso = new Date().toISOString();
+    const auditBase = {
+      area: "Audit",
+      batch: b.id,
+      task: "Batch Details Updated",
+      output: `Edited Clone batch fields (${b.id})`,
+      data: {
+        stage: "Clone",
+        before,
+        after,
+        editedAtIso: loggedAtIso,
+      },
+      time: nowIsoForLog(),
+    };
+    s.logs.unshift(withLoggedBy(auditBase));
+
+    forceRefresh();
+    try {
+      await createLog({
+        area: auditBase.area,
+        batch: auditBase.batch,
+        task: auditBase.task,
+        output,
+        data: auditBase.data,
+      });
+    } catch (e) {
+      console.error("Could not persist batch edit audit log:", e);
+      showNotice(
+        "Log sync warning",
+        "Batch was updated locally, but the audit line may not have saved to the server.",
+        "Refresh and check task history if needed.",
+      );
+    }
+    try {
+      showSyncMessageNotice("Saving batch to server…");
+      const ok = await saveRealCultivationBatch(b);
+      showSyncMessageNotice(ok ? "Batch saved to server." : "Saved locally — server sync failed.");
+    } finally {
+      setEditCloneModalBatch(null);
+      setIsSavingEditCloneModal(false);
     }
   }
 
@@ -2963,7 +3254,11 @@ export default function Cultivation() {
         }),
       );
 
-      finalizeMergedPartnerBatch(partner, survivorId);
+      finalizeMergedPartnerBatch(partner, survivorId, {
+        plantsAbsorbed: priorPartner,
+        stageBeforeMerge: String(partner.stage || "").trim() || "Clone",
+        statusBeforeMerge: String(partner.status || "Active").trim() || "Active",
+      });
 
       setPeople("");
       setMinutes("");
@@ -3585,6 +3880,22 @@ export default function Cultivation() {
                         Tasks
                       </button>
                     ) : null}
+                    {canManageCultivationBatchPlacement() &&
+                    selectedStage === "Clones" &&
+                    String(b.stage || "") === "Clone" ? (
+                      <button
+                        type="button"
+                        style={{
+                          ...buttonStyle,
+                          background: "#0f766e",
+                          border: "1px solid #14b8a6",
+                          color: "white",
+                        }}
+                        onClick={() => openEditCloneBatchModal(b)}
+                      >
+                        Edit
+                      </button>
+                    ) : null}
                     {canManageCultivationBatchPlacement() && selectedStage === "Veg" && b.stage === "Veg" ? (
                       <button
                         type="button"
@@ -3709,6 +4020,47 @@ export default function Cultivation() {
                 />
               </label>
 
+              {Array.isArray(editVegModalBatch.combinedFromBatchIds) &&
+              editVegModalBatch.combinedFromBatchIds.length > 0 ? (
+                <div
+                  style={{
+                    border: "1px solid rgba(251, 191, 36, 0.45)",
+                    borderRadius: 10,
+                    padding: "12px 14px",
+                    background: "rgba(30, 27, 75, 0.35)",
+                  }}
+                >
+                  <p style={{ color: "#fbbf24", margin: "0 0 10px 0", fontSize: 14, lineHeight: 1.45 }}>
+                    This batch absorbed others via <b>Combine Batches</b>. Uncombine restores a partner batch if the
+                    merge was wrong.
+                  </p>
+                  <ul style={{ margin: 0, paddingLeft: 18, color: "#e2e8f0", listStyle: "disc" }}>
+                    {editVegModalBatch.combinedFromBatchIds.map((mergedId: string) => (
+                      <li key={String(mergedId)} style={{ marginBottom: 8 }}>
+                        <span style={{ wordBreak: "break-all" as const }}>{String(mergedId)}</span>
+                        {" — "}
+                        <button
+                          type="button"
+                          style={{
+                            ...buttonStyle,
+                            background: "#9a3412",
+                            border: "1px solid #ea580c",
+                            color: "white",
+                            marginLeft: 4,
+                          }}
+                          disabled={isSavingEditVegModal || uncombineBusyPartnerId !== null}
+                          onClick={() =>
+                            promptUncombineMergedPartnerFromModal(editVegModalBatch, String(mergedId))
+                          }
+                        >
+                          {uncombineBusyPartnerId === String(mergedId) ? "Working…" : "Uncombine"}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
               <>
                 {cultivationRooms.vegRooms.length === 0 ? (
                   <p style={{ color: "#fbbf24", fontSize: 14, margin: 0, lineHeight: 1.5 }}>
@@ -3821,6 +4173,143 @@ export default function Cultivation() {
                 disabled={isSavingEditVegModal}
               >
                 {isSavingEditVegModal ? "Saving..." : "Save changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editCloneModalBatch ? (
+        <div style={modalOverlayStyle}>
+          <div style={{ ...modalStyle, maxWidth: 640 }}>
+            <h2 style={{ textAlign: "center", marginTop: 0 }}>Edit clone batch</h2>
+            <p style={{ textAlign: "center", color: "#cbd5e1", marginTop: 0 }}>
+              <b>{editCloneModalBatch.id}</b> — update plant count, strain, clone date, and notes (placement is set at
+              Clone → Veg).
+            </p>
+
+            <div style={formStyle}>
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Plants (clones remaining)
+                <input
+                  style={inputStyle}
+                  inputMode="numeric"
+                  value={editClonePlants}
+                  onChange={(e) => setEditClonePlants(e.target.value)}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Quick fill strain (optional)
+                <select
+                  style={inputStyle}
+                  value=""
+                  onChange={(e) => {
+                    const name = e.target.value;
+                    if (!name) return;
+                    const selectedCloneStrain = getCloneStrainByName(name, configStrains);
+                    setEditCloneStrain(getConfigStrainName(selectedCloneStrain || {}));
+                    setEditCloneAcronym(getConfigStrainAcronym(selectedCloneStrain || {}).toUpperCase());
+                  }}
+                >
+                  <option value="">Pick from configured strains…</option>
+                  {sortStrainsAlphabetically(configStrains).map((item) => (
+                    <option
+                      key={item.id || getConfigStrainAcronym(item) || getConfigStrainName(item)}
+                      value={getConfigStrainName(item)}
+                    >
+                      {getConfigStrainName(item)} ({getConfigStrainAcronym(item)})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Strain name
+                <input style={inputStyle} value={editCloneStrain} onChange={(e) => setEditCloneStrain(e.target.value)} />
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Strain acronym
+                <input
+                  style={inputStyle}
+                  value={editCloneAcronym}
+                  onChange={(e) => setEditCloneAcronym(e.target.value.toUpperCase())}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Clone date
+                <input
+                  style={inputStyle}
+                  type="date"
+                  value={editCloneDate}
+                  onChange={(e) => setEditCloneDate(e.target.value)}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                Batch notes (optional)
+                <textarea
+                  style={{ ...inputStyle, minHeight: 72, resize: "vertical" as const }}
+                  value={editCloneBatchNotes}
+                  onChange={(e) => setEditCloneBatchNotes(e.target.value)}
+                />
+              </label>
+
+              {Array.isArray(editCloneModalBatch.combinedFromBatchIds) &&
+              editCloneModalBatch.combinedFromBatchIds.length > 0 ? (
+                <div
+                  style={{
+                    border: "1px solid rgba(251, 191, 36, 0.45)",
+                    borderRadius: 10,
+                    padding: "12px 14px",
+                    background: "rgba(30, 27, 75, 0.35)",
+                  }}
+                >
+                  <p style={{ color: "#fbbf24", margin: "0 0 10px 0", fontSize: 14, lineHeight: 1.45 }}>
+                    This batch absorbed others via <b>Combine Batches</b>. Uncombine restores a partner batch if the merge
+                    was wrong.
+                  </p>
+                  <ul style={{ margin: 0, paddingLeft: 18, color: "#e2e8f0", listStyle: "disc" }}>
+                    {editCloneModalBatch.combinedFromBatchIds.map((mergedId: string) => (
+                      <li key={String(mergedId)} style={{ marginBottom: 8 }}>
+                        <span style={{ wordBreak: "break-all" as const }}>{String(mergedId)}</span>
+                        {" — "}
+                        <button
+                          type="button"
+                          style={{
+                            ...buttonStyle,
+                            background: "#9a3412",
+                            border: "1px solid #ea580c",
+                            color: "white",
+                            marginLeft: 4,
+                          }}
+                          disabled={isSavingEditCloneModal || uncombineBusyPartnerId !== null}
+                          onClick={() =>
+                            promptUncombineMergedPartnerFromModal(editCloneModalBatch, String(mergedId))
+                          }
+                        >
+                          {uncombineBusyPartnerId === String(mergedId) ? "Working…" : "Uncombine"}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+
+            <div style={modalButtonRowStyle}>
+              <button style={buttonStyle} type="button" onClick={closeEditCloneModal} disabled={isSavingEditCloneModal}>
+                Cancel
+              </button>
+              <button
+                style={primaryButtonStyle}
+                type="button"
+                onClick={() => void saveEditCloneBatchModal()}
+                disabled={isSavingEditCloneModal}
+              >
+                {isSavingEditCloneModal ? "Saving..." : "Save changes"}
               </button>
             </div>
           </div>
@@ -4730,6 +5219,23 @@ export default function Cultivation() {
               <button type="button" style={buttonStyle} onClick={() => setViewBatch(null)}>
                 Close
               </button>
+              {canManageCultivationBatchPlacement() && String(viewBatch.stage || "") === "Clone" ? (
+                <button
+                  type="button"
+                  style={{
+                    ...buttonStyle,
+                    background: "#0f766e",
+                    border: "1px solid #14b8a6",
+                    color: "white",
+                  }}
+                  onClick={() => {
+                    openEditCloneBatchModal(viewBatch);
+                    setViewBatch(null);
+                  }}
+                >
+                  Edit batch
+                </button>
+              ) : null}
               {canManageCultivationBatchPlacement() && String(viewBatch.stage || "") === "Veg" ? (
                 <button
                   type="button"
