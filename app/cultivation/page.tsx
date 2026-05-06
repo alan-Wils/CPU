@@ -329,6 +329,7 @@ const defaultFlowerTasks = [
   "Combine Batches",
   "Print harvest sheet",
   "Harvest",
+  "Finish batch",
 ];
 
 const dryFlowerTasks = [
@@ -901,6 +902,8 @@ export default function Cultivation() {
   const [harvestPlants, setHarvestPlants] = useState("");
   const [freshFrozenBundles, setFreshFrozenBundles] = useState("");
   const [freshFrozenGrams, setFreshFrozenGrams] = useState("");
+  /** Final live plant count when using Finish batch — must be 0 to close the batch. */
+  const [finishBatchPlantCount, setFinishBatchPlantCount] = useState("0");
 
   type HarvestSheetRowEdit = { tag: string; weightValue: string; unitGuess: string };
   type HarvestSheetPhoto = { id: string; storedPath: string; imageUrl: string };
@@ -2108,7 +2111,7 @@ export default function Cultivation() {
     });
   }
 
-  function moveBatchToCompleted(batch: any) {
+  function moveBatchToCompleted(batch: any, opts?: { skipAutoLog?: boolean }) {
     batch.status = "Complete";
     batch.stage = "Complete";
     batch.completedAt = nowIsoForLog();
@@ -2121,15 +2124,17 @@ export default function Cultivation() {
       s.completedCultivationBatches.unshift(batch);
     }
 
-    s.logs.unshift(withLoggedBy({
-      area: "Cultivation",
-      batch: batch.id,
-      task: "Batch Auto-Completed",
-      people: "",
-      minutes: "",
-      output: "All plants harvested",
-      time: nowIsoForLog(),
-    }))
+    if (!opts?.skipAutoLog) {
+      s.logs.unshift(withLoggedBy({
+        area: "Cultivation",
+        batch: batch.id,
+        task: "Batch Auto-Completed",
+        people: "",
+        minutes: "",
+        output: "All plants harvested",
+        time: nowIsoForLog(),
+      }));
+    }
 
     const nextActive = s.cultivationBatches.find(
       (b: any) => b.status !== "Complete"
@@ -2138,6 +2143,90 @@ export default function Cultivation() {
     if (nextActive) {
       selectBatch(nextActive);
     }
+  }
+
+  async function saveFinishBatch(lab: {
+    ok: true;
+    peopleStr: string;
+    minutesStr: string;
+    totalLaborMinutes: number;
+    laborDetail: Record<string, unknown>;
+    outputSuffix: string;
+  }) {
+    if (!canWriteRecords) {
+      showReadOnlyNotice();
+      return;
+    }
+    if (!selectedBatch) return;
+
+    const raw = finishBatchPlantCount.trim();
+    const finalPlants = Number(raw);
+    if (raw === "" || !Number.isFinite(finalPlants) || finalPlants < 0) {
+      showNotice("Invalid plant count", "Enter the final plant count on the batch (use 0 to finish).");
+      return;
+    }
+    if (finalPlants !== 0) {
+      showNotice(
+        "Cannot finish while plants remain",
+        "Enter 0 as the final plant count to close this batch. Harvest or merge plants first if the count should not be zero.",
+      );
+      return;
+    }
+
+    const stage = String(selectedBatch.stage || "");
+    if (stage !== "Flower" && stage !== "Partially Harvested") {
+      showNotice("Wrong stage", "Finish batch is only available for Flower or Partially Harvested batches.");
+      return;
+    }
+
+    selectedBatch.plants = 0;
+    selectedBatch.plantsAtFlower = 0;
+    recomputeDryCanopyForCultivationBatch(selectedBatch, cultivationRooms);
+
+    const notes = String(output || "").trim();
+    const noteSuffix = notes ? ` Notes: ${notes}` : "";
+
+    s.logs.unshift(
+      withLoggedBy({
+        area: "Cultivation",
+        batch: selectedBatch.id,
+        task: "Finish batch",
+        people: lab.peopleStr,
+        minutes: lab.minutesStr,
+        totalLaborMinutes: lab.totalLaborMinutes,
+        output: `Batch finished — plant count set to 0 and batch completed.${noteSuffix}${lab.outputSuffix}`,
+        data: {
+          ...lab.laborDetail,
+          totalLaborMinutes: lab.totalLaborMinutes,
+          finishBatchFinalPlants: 0,
+          ...(notes ? { finishBatchNotes: notes } : {}),
+        },
+        time: nowIsoForLog(),
+      }),
+    );
+
+    moveBatchToCompleted(selectedBatch, { skipAutoLog: true });
+
+    const synced = await saveRealCultivationBatch(selectedBatch);
+    if (!synced) {
+      showNotice(
+        "Save failed",
+        "Could not sync cultivation data after finishing the batch. Verify connectivity and try again.",
+      );
+      return;
+    }
+
+    setPeople("");
+    setMinutes("");
+    setLaborTimeMode("range");
+    setTaskLaborDate(getTodayYmdInCompanyTimezone());
+    setTaskStartTime("");
+    setTaskEndTime("");
+    setOutput("");
+    setFinishBatchPlantCount("0");
+    resetHarvestSheetForm();
+    setShowTaskWindow(false);
+    forceRefresh();
   }
 
   async function saveHarvest(
@@ -3133,6 +3222,7 @@ export default function Cultivation() {
     setTaskEndTime("");
     setPeople("");
     setMinutes("");
+    setFinishBatchPlantCount("0");
   }
 
   function resetHarvestSheetForm() {
@@ -3153,6 +3243,7 @@ export default function Cultivation() {
     setTaskEndTime("");
     setPeople("");
     setMinutes("");
+    setFinishBatchPlantCount("0");
     resetHarvestSheetForm();
     setShowTaskWindow(false);
   }
@@ -4766,6 +4857,15 @@ export default function Cultivation() {
     if (selectedTask === "Harvest") {
       try {
         await saveHarvest(lab);
+      } finally {
+        setIsSavingTask(false);
+      }
+      return;
+    }
+
+    if (selectedTask === "Finish batch") {
+      try {
+        await saveFinishBatch(lab);
       } finally {
         setIsSavingTask(false);
       }
@@ -6788,9 +6888,36 @@ export default function Cultivation() {
                 </>
               )}
 
+              {selectedTask === "Finish batch" && (
+                <>
+                  <p style={{ color: "#94a3b8", fontSize: 13, margin: 0, lineHeight: 1.5 }}>
+                    Set the <strong>final live plant count</strong> for this batch. Use <strong>0</strong> to record no
+                    remaining plants and <strong>move this batch to completed</strong>. Add optional notes below.
+                  </p>
+                  <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                    Final plant count (enter 0 to finish)
+                    <input
+                      style={inputStyle}
+                      inputMode="numeric"
+                      value={finishBatchPlantCount}
+                      onChange={(e) => setFinishBatchPlantCount(e.target.value)}
+                      onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                    />
+                  </label>
+                  <input
+                    style={inputStyle}
+                    placeholder="Optional notes (e.g. last plants culled, room cleared…)"
+                    value={output}
+                    onChange={(e) => setOutput(e.target.value)}
+                    onFocus={tryShowRewardsChallengeFromTaskInputFocus}
+                  />
+                </>
+              )}
+
               {selectedTask !== "Harvest" &&
                 selectedTask !== "Combine Batches" &&
-                selectedTask !== "Print harvest sheet" && (
+                selectedTask !== "Print harvest sheet" &&
+                selectedTask !== "Finish batch" && (
                 <input
                   style={inputStyle}
                   placeholder={
