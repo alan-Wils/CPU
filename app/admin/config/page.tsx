@@ -384,7 +384,42 @@ export default function ConfigPage() {
       }
 
       const data = await res.json();
-      setConfig(data);
+      setConfig({
+        ...emptyConfig,
+        ...data,
+        company: {
+          ...emptyConfig.company,
+          ...(data.company || {}),
+          metrc: {
+            ...emptyConfig.company.metrc,
+            ...(data.company?.metrc || {}),
+          },
+          settings: {
+            ...emptyConfig.company.settings,
+            ...(data.company?.settings || {}),
+          },
+        },
+        cultivation: {
+          ...emptyConfig.cultivation,
+          ...(data.cultivation || {}),
+          rooms: {
+            ...emptyConfig.cultivation.rooms,
+            ...(data.cultivation?.rooms || {}),
+            vegRooms: normalizeRoomsLayout((data.cultivation?.rooms as { vegRooms?: unknown } | undefined)?.vegRooms),
+            flowerRooms: normalizeRoomsLayout(
+              (data.cultivation?.rooms as { flowerRooms?: unknown } | undefined)?.flowerRooms,
+            ),
+          },
+        },
+        extraction: {
+          ...emptyConfig.extraction,
+          ...(data.extraction || {}),
+        },
+        packaging: {
+          ...emptyConfig.packaging,
+          ...(data.packaging || {}),
+        },
+      });
       syncCompanyTimezoneFromConfigPayload(data);
       setSaveSuccessModalOpen(true);
     } catch (error) {
@@ -1628,7 +1663,9 @@ export default function ConfigPage() {
             </h3>
             <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
               {cultivationFieldModal.kind === "addBay"
-                ? "Enter a label for this bay (often a letter). It appears when staff assign plants to flower locations."
+                ? cultivationFieldModal.suite === "flowerRooms"
+                  ? "Enter a label for this bay (often a letter). It appears when staff assign plants to flower locations."
+                  : "Enter a label for this bay (often a letter). It appears when staff assign plants to veg locations."
                 : "Name or number this table, then optional square footage over the table (use 0 if not tracking)."}
             </p>
 

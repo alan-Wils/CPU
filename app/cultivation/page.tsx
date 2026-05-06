@@ -62,10 +62,8 @@ type CultivationFlowerRoom = {
   bays: CultivationBayConfig[];
 };
 
-type CultivationVegRoom = {
-  id: string;
-  name: string;
-};
+/** Same structure as flower — bays and tables from Company Config. */
+type CultivationVegRoom = CultivationFlowerRoom;
 
 type CultivationRoomsConfig = {
   vegRooms: CultivationVegRoom[];
@@ -76,6 +74,36 @@ type StageModalKey = null | "Clones" | "Veg" | "Flower";
 
 const emptyCultivationRooms: CultivationRoomsConfig = { vegRooms: [], flowerRooms: [] };
 
+function normalizeCultivationRoomLayouts(rawRooms: unknown): CultivationFlowerRoom[] {
+  if (!Array.isArray(rawRooms)) return [];
+  return rawRooms.map((item: unknown) => {
+    const r = item as Record<string, unknown>;
+    return {
+      id: String(r?.id ?? ""),
+      name: String(r?.name ?? ""),
+      bays: Array.isArray(r?.bays)
+        ? (r.bays as unknown[]).map((bayItem: unknown) => {
+            const bay = bayItem as Record<string, unknown>;
+            return {
+              id: String(bay?.id ?? ""),
+              name: String(bay?.name ?? ""),
+              tables: Array.isArray(bay?.tables)
+                ? (bay.tables as unknown[]).map((tItem: unknown) => {
+                    const t = tItem as Record<string, unknown>;
+                    return {
+                      id: String(t?.id ?? ""),
+                      name: String(t?.name ?? ""),
+                      squareFeet: t?.squareFeet != null ? String(t.squareFeet) : "",
+                    };
+                  })
+                : [],
+            };
+          })
+        : [],
+    };
+  });
+}
+
 function pickCultivationRoomsFromConfigPayload(data: {
   cultivation?: { rooms?: unknown };
 }): CultivationRoomsConfig {
@@ -84,8 +112,8 @@ function pickCultivationRoomsFromConfigPayload(data: {
     return { ...emptyCultivationRooms };
   }
   const r = rooms as Record<string, unknown>;
-  const vegRooms = Array.isArray(r.vegRooms) ? (r.vegRooms as CultivationVegRoom[]) : [];
-  const flowerRooms = Array.isArray(r.flowerRooms) ? (r.flowerRooms as CultivationFlowerRoom[]) : [];
+  const vegRooms = normalizeCultivationRoomLayouts(r.vegRooms);
+  const flowerRooms = normalizeCultivationRoomLayouts(r.flowerRooms);
   return { vegRooms, flowerRooms };
 }
 
@@ -352,6 +380,18 @@ function formatFlowerTables(batchOrTables: any) {
   return tables.length > 0 ? tables.join(", ") : "—";
 }
 
+function formatVegTables(batchOrTables: any) {
+  const tables = Array.isArray(batchOrTables)
+    ? batchOrTables
+    : Array.isArray(batchOrTables?.vegTables)
+      ? batchOrTables.vegTables
+      : batchOrTables?.vegTable
+        ? [batchOrTables.vegTable]
+        : [];
+
+  return tables.length > 0 ? tables.join(", ") : "—";
+}
+
 function findCultivationParentBatch(store: any, sourceId: string) {
   const lists = [
     ...(store.cultivationBatches || []),
@@ -511,8 +551,10 @@ export default function Cultivation() {
   const [output, setOutput] = useState("");
   /** Cultivation batch id to merge into the currently selected batch (same stage grouping as Clones / Veg / Flower). */
   const [combinePartnerBatchId, setCombinePartnerBatchId] = useState("");
-  /** Destination veg room (config `cultivation.rooms.vegRooms`); required when that list is non-empty. */
+  /** Destination veg layout (config `cultivation.rooms.vegRooms`); required when that list is non-empty. */
   const [vegRoomId, setVegRoomId] = useState("");
+  const [vegBayId, setVegBayId] = useState("");
+  const [vegTableIds, setVegTableIds] = useState<string[]>([]);
   /** Flower layout from config — store ids in modal, persist names on batch/log. */
   const [flowerRoomId, setFlowerRoomId] = useState("");
   const [flowerBayId, setFlowerBayId] = useState("");
@@ -2158,16 +2200,26 @@ export default function Cultivation() {
     );
   }
 
+  function toggleVegTableId(tableId: string) {
+    setVegTableIds((current) =>
+      current.includes(tableId)
+        ? current.filter((id) => id !== tableId)
+        : [...current, tableId]
+    );
+  }
+
   function primeTaskModalLocationFields(rooms: CultivationRoomsConfig) {
     const veg = rooms.vegRooms || [];
-    if (veg.length === 1) {
-      setVegRoomId(veg[0].id);
-    }
-    else if (veg.length > 1) {
-      setVegRoomId(veg[0].id);
-    }
-    else {
+    if (veg.length === 0) {
       setVegRoomId("");
+      setVegBayId("");
+      setVegTableIds([]);
+    } else {
+      const vroom = veg[0];
+      setVegRoomId(vroom.id);
+      const firstVegBay = vroom.bays?.[0];
+      setVegBayId(firstVegBay?.id || "");
+      setVegTableIds([]);
     }
 
     const flowers = rooms.flowerRooms || [];
@@ -2192,6 +2244,19 @@ export default function Cultivation() {
   function primeTaskModalFromSelectedBatch(batch: any) {
     primeTaskModalLocationFields(cultivationRooms);
     setCombinePartnerBatchId("");
+    if (batch?.vegRoomId) {
+      setVegRoomId(String(batch.vegRoomId));
+      if (batch.vegBayId) setVegBayId(String(batch.vegBayId));
+      if (Array.isArray(batch.vegTableIds)) setVegTableIds([...batch.vegTableIds]);
+    } else if (batch?.vegRoom && typeof batch.vegRoom === "string") {
+      const byName = cultivationRooms.vegRooms.find((v) => v.name === batch.vegRoom);
+      if (byName) {
+        setVegRoomId(byName.id);
+        const b0 = byName.bays?.[0];
+        setVegBayId(b0?.id || "");
+        setVegTableIds([]);
+      }
+    }
     if (batch?.flowerRoomId) {
       setFlowerRoomId(String(batch.flowerRoomId));
       if (batch.flowerBayId) setFlowerBayId(String(batch.flowerBayId));
@@ -2243,6 +2308,18 @@ export default function Cultivation() {
     };
   }
 
+  function resolveVegSelectionLabels() {
+    const room = cultivationRooms.vegRooms.find((r) => r.id === vegRoomId);
+    const bay = room?.bays?.find((b) => b.id === vegBayId);
+    const tableNames =
+      bay?.tables.filter((t) => vegTableIds.includes(t.id)).map((t) => t.name) || [];
+    return {
+      roomName: room?.name || "",
+      bayName: bay?.name || "",
+      tableNames,
+    };
+  }
+
   async function save() {
     if (isSavingTask) return;
     if (!canWriteRecords) {
@@ -2269,6 +2346,17 @@ export default function Cultivation() {
       taskRequiredFields.push({ label: "Plants Moved to Veg", value: output, positive: true });
       if (cultivationRooms.vegRooms.length > 0) {
         taskRequiredFields.push({ label: "Veg room", value: vegRoomId });
+        const vegRoomObj = cultivationRooms.vegRooms.find((r) => r.id === vegRoomId);
+        if (vegRoomObj && vegRoomObj.bays.length > 0) {
+          taskRequiredFields.push({ label: "Veg bay", value: vegBayId });
+          const bayObj = vegRoomObj.bays.find((b) => b.id === vegBayId);
+          if (bayObj && bayObj.tables.length > 0) {
+            taskRequiredFields.push({
+              label: "Veg table(s)",
+              value: vegTableIds.length > 0 ? vegTableIds.join(",") : "",
+            });
+          }
+        }
       }
     }
 
@@ -2436,9 +2524,11 @@ export default function Cultivation() {
     let logTables: string[] | undefined;
 
     if (selectedTask === "Clone → Veg") {
-      const vegLabel =
-        cultivationRooms.vegRooms.find((v) => v.id === vegRoomId)?.name || "—";
-      taskOutput = `${output} plants moved to Veg | Veg room: ${vegLabel}`;
+      const vl = resolveVegSelectionLabels();
+      taskOutput = `${output} plants moved to Veg | Room: ${vl.roomName || "—"} | Bay: ${vl.bayName || "—"} | Tables: ${vl.tableNames.length ? vl.tableNames.join(", ") : "—"}`;
+      logRoom = vl.roomName || undefined;
+      logBay = vl.bayName || undefined;
+      logTables = vl.tableNames.length ? [...vl.tableNames] : undefined;
     }
 
     if (selectedTask === "Move to Flower") {
@@ -2465,7 +2555,13 @@ export default function Cultivation() {
     if (selectedTask === "Clone → Veg") {
       selectedBatch.stage = "Veg";
       selectedBatch.plants = Number(output || selectedBatch.plants || 0);
-      selectedBatch.vegRoom = cultivationRooms.vegRooms.find((v) => v.id === vegRoomId)?.name || "";
+      const vl = resolveVegSelectionLabels();
+      selectedBatch.vegRoomId = vegRoomId;
+      selectedBatch.vegBayId = vegBayId;
+      selectedBatch.vegTableIds = [...vegTableIds];
+      selectedBatch.vegRoom = vl.roomName;
+      selectedBatch.vegBay = vl.bayName;
+      selectedBatch.vegTables = [...vl.tableNames];
       setSelectedTask("Set Irrigation Up");
     }
 
@@ -2855,10 +2951,10 @@ export default function Cultivation() {
                     <b>{b.id}</b>
                     <br />
                     {b.strain} | Stage: {b.stage} | Plants Left: {b.plants} | Completed: {b.completedAt}
-                    {b.vegRoom && (
+                    {(b.vegRoom || b.vegBay || b.vegTable || b.vegTables) && (
                       <>
                         <br />
-                        Veg room: {b.vegRoom}
+                        Room: {b.vegRoom || "—"} | Bay: {b.vegBay || "—"} | Tables: {formatVegTables(b)}
                       </>
                     )}
                     {(b.flowerRoom || b.flowerBay || b.flowerTable || b.flowerTables) && (
@@ -2968,10 +3064,10 @@ export default function Cultivation() {
                     <b>{b.id}</b>
                     <br />
                     {b.strain} | Stage: {b.stage} | Plants Left: {b.plants}
-                    {b.stage === "Veg" && b.vegRoom && (
+                    {b.stage === "Veg" && (b.vegRoom || b.vegBay || b.vegTable || b.vegTables) && (
                       <>
                         <br />
-                        Veg room: {b.vegRoom}
+                        Room: {b.vegRoom || "—"} | Bay: {b.vegBay || "—"} | Tables: {formatVegTables(b)}
                       </>
                     )}
                     {b.stage === "Flower" && (b.flowerRoom || b.flowerBay || b.flowerTable || b.flowerTables) && (
@@ -3160,21 +3256,106 @@ export default function Cultivation() {
                 />
               )}
 
-              {selectedTask === "Clone → Veg" && cultivationRooms.vegRooms.length > 0 && (
-                <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
-                  Veg destination
-                  <select
-                    style={inputStyle}
-                    value={vegRoomId}
-                    onChange={(e) => setVegRoomId(e.target.value)}
-                  >
-                    {cultivationRooms.vegRooms.map((room) => (
-                      <option key={room.id} value={room.id}>
-                        {room.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+              {selectedTask === "Clone → Veg" && (
+                <>
+                  {cultivationRooms.vegRooms.length === 0 ? (
+                    <p style={{ color: "#fbbf24", fontSize: 14, margin: 0, lineHeight: 1.5 }}>
+                      No veg rooms are configured yet. An Admin can add them under{" "}
+                      <strong style={{ color: "#fef08a" }}>Admin → Company Config → Cultivation → Veg rooms</strong>.
+                    </p>
+                  ) : (
+                    <>
+                      <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                        Veg room
+                        <select
+                          style={inputStyle}
+                          value={vegRoomId}
+                          onChange={(e) => {
+                            const id = e.target.value;
+                            setVegRoomId(id);
+                            const room = cultivationRooms.vegRooms.find((r) => r.id === id);
+                            const b0 = room?.bays?.[0];
+                            setVegBayId(b0?.id || "");
+                            setVegTableIds([]);
+                          }}
+                        >
+                          {cultivationRooms.vegRooms.map((room) => (
+                            <option key={room.id} value={room.id}>
+                              {room.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      {(() => {
+                        const vegRoomObj = cultivationRooms.vegRooms.find((r) => r.id === vegRoomId);
+                        const bayObj = vegRoomObj?.bays?.find((b) => b.id === vegBayId);
+                        return (
+                          <>
+                            {vegRoomObj && vegRoomObj.bays.length > 0 ? (
+                              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                                Bay
+                                <select
+                                  style={inputStyle}
+                                  value={vegBayId}
+                                  onChange={(e) => {
+                                    setVegBayId(e.target.value);
+                                    setVegTableIds([]);
+                                  }}
+                                >
+                                  {vegRoomObj.bays.map((bay) => (
+                                    <option key={bay.id} value={bay.id}>
+                                      Bay {bay.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            ) : (
+                              <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                                This veg room has no bays yet—add bays in Company Config.
+                              </p>
+                            )}
+
+                            {bayObj && bayObj.tables.length > 0 ? (
+                              <div style={{ ...inputStyle, display: "grid", gap: 8 }}>
+                                <b>Tables</b>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                  {bayObj.tables.map((table) => (
+                                    <label
+                                      key={table.id}
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        border: "1px solid #334155",
+                                        borderRadius: 10,
+                                        padding: "8px 10px",
+                                        background: vegTableIds.includes(table.id) ? "#22c55e" : "#1e293b",
+                                        color: vegTableIds.includes(table.id) ? "black" : "white",
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={vegTableIds.includes(table.id)}
+                                        onChange={() => toggleVegTableId(table.id)}
+                                      />
+                                      Table {table.name}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : vegRoomObj && vegRoomObj.bays.length > 0 ? (
+                              <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                                No tables in this bay—add tables in Company Config.
+                              </p>
+                            ) : null}
+                          </>
+                        );
+                      })()}
+                    </>
+                  )}
+                </>
               )}
 
               {selectedTask === "Move to Flower" && (
