@@ -2761,7 +2761,12 @@ export default function Cultivation() {
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
                     {canWriteRecords ? (
                       <button
-                        style={primaryButtonStyle}
+                        style={{
+                          ...buttonStyle,
+                          background: "#2563eb",
+                          border: "1px solid #3b82f6",
+                          color: "white",
+                        }}
                         onClick={() => openTaskWindowForBatch(b)}
                       >
                         Tasks
@@ -2841,6 +2846,26 @@ export default function Cultivation() {
             <div style={formStyle}>
               <input style={inputStyle} value={selectedBatch.id} readOnly />
               <input style={inputStyle} value={selectedTask} readOnly />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                {currentTasks.length === 0 ? (
+                  <p style={{ color: "#cbd5e1", margin: 0 }}>No tasks available for this stage.</p>
+                ) : (
+                  currentTasks.map((t: string) => (
+                    <button
+                      key={t}
+                      onClick={() => setSelectedTask(t)}
+                      style={{
+                        ...buttonStyle,
+                        background: selectedTask === t ? "#22c55e" : "#334155",
+                        color: selectedTask === t ? "black" : "white",
+                        border: selectedTask === t ? "1px solid #22c55e" : "1px solid #475569",
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))
+                )}
+              </div>
 
               {selectedTask === "Harvest" && (
                 <>
