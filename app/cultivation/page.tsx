@@ -93,6 +93,7 @@ const defaultCloneTasks = [
   "Feed",
   "Burp",
   "Fill Pots",
+  "Combine Batches",
   "Clone → Veg",
 ];
 
@@ -100,6 +101,7 @@ const defaultVegTasks = [
   "Set Irrigation Up",
   "Plant Work",
   "IPM",
+  "Combine Batches",
   "Move to Flower",
 ];
 
@@ -108,6 +110,7 @@ const defaultFlowerTasks = [
   "Trellis",
   "Plant Work",
   "IPM",
+  "Combine Batches",
   "Harvest",
 ];
 
@@ -505,6 +508,8 @@ export default function Cultivation() {
   const [people, setPeople] = useState("");
   const [minutes, setMinutes] = useState("");
   const [output, setOutput] = useState("");
+  /** Cultivation batch id to merge into the currently selected batch (same stage grouping as Clones / Veg / Flower). */
+  const [combinePartnerBatchId, setCombinePartnerBatchId] = useState("");
   /** Destination veg room (config `cultivation.rooms.vegRooms`); required when that list is non-empty. */
   const [vegRoomId, setVegRoomId] = useState("");
   /** Flower layout from config — store ids in modal, persist names on batch/log. */
@@ -896,6 +901,15 @@ export default function Cultivation() {
     Flower: activeBatchesByStage.Flower.reduce((sum: number, b: any) => sum + num(b?.plants), 0),
   } as const;
 
+  const combinePartnerOptions = selectedBatch
+    ? activeBatches.filter(
+        (b: any) =>
+          b?.id &&
+          b.id !== selectedBatch.id &&
+          stageBucketFromBatchStage(b?.stage) === stageBucketFromBatchStage(selectedBatch?.stage),
+      )
+    : [];
+
   const selectedStageBatches = selectedStage ? activeBatchesByStage[selectedStage] : [];
   const selectedStageBatchesOldestFirst = [...selectedStageBatches].sort(
     compareBatchesByCloneDateOldestFirst
@@ -1065,6 +1079,8 @@ export default function Cultivation() {
       repeatTaskBypassRef.current = null;
       return true;
     }
+
+    if (taskName === "Combine Batches") return true;
 
     if (!hasTaskAlreadyBeenDone(batchId, taskName)) return true;
 
@@ -2172,10 +2188,31 @@ export default function Cultivation() {
 
   function primeTaskModalFromSelectedBatch(batch: any) {
     primeTaskModalLocationFields(cultivationRooms);
+    setCombinePartnerBatchId("");
     if (batch?.flowerRoomId) {
       setFlowerRoomId(String(batch.flowerRoomId));
       if (batch.flowerBayId) setFlowerBayId(String(batch.flowerBayId));
       if (Array.isArray(batch.flowerTableIds)) setFlowerTableIds([...batch.flowerTableIds]);
+    }
+  }
+
+  function closeCultivationTaskWindow() {
+    setCombinePartnerBatchId("");
+    setShowTaskWindow(false);
+  }
+
+  function finalizeMergedPartnerBatch(absorbed: any, survivorId: string) {
+    absorbed.status = "Complete";
+    absorbed.stage = "Complete";
+    absorbed.completedAt = nowIsoForLog();
+    absorbed.plants = 0;
+    absorbed.mergedIntoBatchId = survivorId;
+    const idx = s.cultivationBatches.findIndex((b: any) => b?.id === absorbed.id);
+    if (idx >= 0) {
+      s.cultivationBatches.splice(idx, 1);
+    }
+    if (!s.completedCultivationBatches.some((b: any) => b?.id === absorbed.id)) {
+      s.completedCultivationBatches.unshift(absorbed);
     }
   }
 
@@ -2218,6 +2255,13 @@ export default function Cultivation() {
       { label: "Minutes", value: minutes, positive: true },
     ];
 
+    if (selectedTask === "Combine Batches") {
+      taskRequiredFields.push({
+        label: "Other batch in this stage (to merge into the selected batch)",
+        value: combinePartnerBatchId.trim(),
+      });
+    }
+
     if (selectedTask === "Clone → Veg") {
       taskRequiredFields.push({ label: "Plants Moved to Veg", value: output, positive: true });
       if (cultivationRooms.vegRooms.length > 0) {
@@ -2256,6 +2300,130 @@ export default function Cultivation() {
     if (selectedTask === "Harvest") {
       saveHarvest();
       setIsSavingTask(false);
+      return;
+    }
+
+    if (selectedTask === "Combine Batches") {
+      const pid = combinePartnerBatchId.trim();
+      const partnerIdx = s.cultivationBatches.findIndex((b: any) => b?.id === pid);
+      const partner = partnerIdx >= 0 ? s.cultivationBatches[partnerIdx] : null;
+
+      if (!partner) {
+        showNotice("Merge failed", "Partner batch not found in active cultivation batches.");
+        setIsSavingTask(false);
+        return;
+      }
+      if (partner.id === selectedBatch.id) {
+        showNotice("Merge failed", "Select a different batch to merge.");
+        setIsSavingTask(false);
+        return;
+      }
+      if (partner.status === "Complete") {
+        showNotice("Merge failed", "That batch is already complete.");
+        setIsSavingTask(false);
+        return;
+      }
+      const bucketA = stageBucketFromBatchStage(selectedBatch.stage);
+      const bucketB = stageBucketFromBatchStage(partner.stage);
+      if (bucketA !== bucketB) {
+        showNotice(
+          "Merge failed",
+          "Both batches must be in the same stage group (Clones, Veg, or Flower / partial harvest).",
+        );
+        setIsSavingTask(false);
+        return;
+      }
+
+      const priorSurvivor = num(selectedBatch.plants);
+      const priorPartner = num(partner.plants);
+      const combinedTotal = priorSurvivor + priorPartner;
+      const notes = String(output || "").trim();
+      const survivorId = selectedBatch.id;
+      const partnerId = partner.id;
+
+      if (!Array.isArray(selectedBatch.combinedFromBatchIds)) {
+        selectedBatch.combinedFromBatchIds = [];
+      }
+      selectedBatch.combinedFromBatchIds.push(partnerId);
+      selectedBatch.plants = combinedTotal;
+      const flowerish = String(selectedBatch.stage || "").toLowerCase();
+      if (
+        flowerish === "flower" ||
+        flowerish === "partially harvested" ||
+        flowerish === "harvested"
+      ) {
+        selectedBatch.plantsAtFlower = combinedTotal;
+        recomputeDryCanopyForCultivationBatch(selectedBatch, cultivationRooms);
+      }
+
+      const survivorOutput = `Merged ${partnerId} (${priorPartner} plants) into ${survivorId} — total plants now ${combinedTotal}${
+        notes ? `. Notes: ${notes}` : ""
+      } | Strains: survivor ${selectedBatch.strain || "—"} ← partner ${partner.strain || "—"}`;
+
+      const partnerOutput = `Merged into survivor ${survivorId} (${priorSurvivor} + ${priorPartner} = ${combinedTotal} plants on survivor)${
+        notes ? `. Notes: ${notes}` : ""
+      }`;
+
+      const mergeData = {
+        combineBatches: true,
+        survivorBatchId: survivorId,
+        absorbedBatchId: partnerId,
+        plantsBeforeSurvivor: priorSurvivor,
+        plantsBeforePartner: priorPartner,
+        plantsAfterCombine: combinedTotal,
+        stageBucket: bucketA,
+        notes,
+      };
+
+      s.logs.unshift(
+        withLoggedBy({
+          area: "Cultivation",
+          batch: partnerId,
+          task: "Combine Batches",
+          people,
+          minutes,
+          output: partnerOutput,
+          linkedBatch: survivorId,
+          data: mergeData,
+          time: nowIsoForLog(),
+        }),
+      );
+
+      s.logs.unshift(
+        withLoggedBy({
+          area: "Cultivation",
+          batch: survivorId,
+          task: "Combine Batches",
+          people,
+          minutes,
+          output: survivorOutput,
+          linkedBatch: partnerId,
+          data: mergeData,
+          time: nowIsoForLog(),
+        }),
+      );
+
+      finalizeMergedPartnerBatch(partner, survivorId);
+
+      setPeople("");
+      setMinutes("");
+      setOutput("");
+      setCombinePartnerBatchId("");
+      closeCultivationTaskWindow();
+
+      primeTaskModalLocationFields(cultivationRooms);
+      forceRefresh();
+
+      try {
+        showSyncMessageNotice("Merge saved locally. Syncing to server...");
+        let ok = await saveRealCultivationBatch(selectedBatch);
+        ok = (await saveRealCultivationBatch(partner)) && ok;
+        showSyncMessageNotice(
+          ok ? "Merge synced to server." : "Merge saved locally — server sync failed (check connectivity).",
+        );
+      } finally {
+        setIsSavingTask(false);
+      }
       return;
     }
 
@@ -2326,6 +2494,7 @@ export default function Cultivation() {
     setPeople("");
     setMinutes("");
     setOutput("");
+    setCombinePartnerBatchId("");
     primeTaskModalLocationFields(cultivationRooms);
     setShowTaskWindow(false);
     forceRefresh();
@@ -2937,7 +3106,43 @@ export default function Cultivation() {
                 </>
               )}
 
-              {selectedTask !== "Harvest" && (
+              {selectedTask === "Combine Batches" && (
+                <>
+                  <p style={{ color: "#94a3b8", fontSize: 13, margin: 0, lineHeight: 1.5 }}>
+                    Plant counts add onto the batch you opened (survivor). The partner batch is completed and logged as
+                    merged into this survivor. Both rows receive <b>Combine Batches</b> task entries with linkage for
+                    Data Hub history.
+                  </p>
+                  <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                    Batch to absorb (same stage group)
+                    <select
+                      style={inputStyle}
+                      value={combinePartnerBatchId}
+                      onChange={(e) => setCombinePartnerBatchId(e.target.value)}
+                    >
+                      <option value="">Select batch…</option>
+                      {combinePartnerOptions.map((b: any) => (
+                        <option key={b.id} value={b.id}>
+                          {b.id} — {String(b.strain || "—")} ({num(b.plants)} plants)
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {combinePartnerOptions.length === 0 ? (
+                    <p style={{ color: "#fbbf24", fontSize: 13, margin: 0 }}>
+                      No other active batches in this stage group to combine with.
+                    </p>
+                  ) : null}
+                  <input
+                    style={inputStyle}
+                    placeholder="Optional merge notes (labels, racks, lineage, …)"
+                    value={output}
+                    onChange={(e) => setOutput(e.target.value)}
+                  />
+                </>
+              )}
+
+              {selectedTask !== "Harvest" && selectedTask !== "Combine Batches" && (
                 <input
                   style={inputStyle}
                   placeholder={
@@ -3076,7 +3281,7 @@ export default function Cultivation() {
             </div>
 
             <div style={modalButtonRowStyle}>
-              <button style={buttonStyle} onClick={() => setShowTaskWindow(false)}>
+              <button style={buttonStyle} onClick={closeCultivationTaskWindow}>
                 Cancel
               </button>
               <button style={primaryButtonStyle} onClick={save} disabled={isSavingTask}>
