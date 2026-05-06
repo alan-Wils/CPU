@@ -22,6 +22,7 @@ import {
 } from "@/lib/packagingApi";
 import { loadExtractionBatches } from "@/lib/extractionApi";
 import { createLog } from "@/lib/logsApi";
+import { formatLogDisplayTime, nowIsoForLog } from "@/lib/companyTimezone";
 
 const PACKAGING_TASKS = [
   "Label",
@@ -705,7 +706,7 @@ export default function Packaging() {
       packagingLogs: [firstLog],
       taskLogs: [],
       status: "In Progress",
-      startedPackagingAt: new Date().toLocaleString(),
+      startedPackagingAt: nowIsoForLog(),
       startedBy: firstLog.loggedBy || getLoggedBy(),
     };
 
@@ -725,7 +726,7 @@ export default function Packaging() {
     packageSet.sourceRemainingGrams = getRemainingGrams(sourceBatch);
     packageSet.status = "In Progress";
     packageSet.startedPackagingAt =
-      packageSet.startedPackagingAt || new Date().toLocaleString();
+      packageSet.startedPackagingAt || nowIsoForLog();
 
     s.inProgressPackagingBatches = s.inProgressPackagingBatches.map((b: any) =>
       b.id === packageSet.id ? packageSet : b
@@ -815,7 +816,7 @@ export default function Packaging() {
         packageSetId: packageSet.id,
         sourceBatchId: sourceBatch.id,
       },
-      time: new Date().toLocaleString(),
+      time: nowIsoForLog(),
     });
 
     const nextSelected =
@@ -889,9 +890,9 @@ export default function Packaging() {
       packagedBy,
       notes,
       loggedBy,
-      loggedAt: new Date().toLocaleString(),
+      loggedAt: nowIsoForLog(),
       loggedAtIso: new Date().toISOString(),
-      time: new Date().toLocaleString(),
+      time: nowIsoForLog(),
     };
 
     const matchingInProgressSets = getInProgressSetsForSource(selected.id);
@@ -980,7 +981,7 @@ export default function Packaging() {
       totalLaborMinutes,
       notes: taskNotes,
       loggedBy,
-      loggedAt: new Date().toLocaleString(),
+      loggedAt: nowIsoForLog(),
       loggedAtIso: new Date().toISOString(),
     });
 
@@ -989,7 +990,7 @@ export default function Packaging() {
 
     if (taskType === "Finish Package") {
       selectedInProgress.status = "Packaging Complete";
-      selectedInProgress.completedAt = new Date().toLocaleString();
+      selectedInProgress.completedAt = nowIsoForLog();
 
       const alreadyCompleted = s.completedPackagingBatches.some(
         (b: any) => b.id === selectedInProgress.id
@@ -1022,7 +1023,7 @@ export default function Packaging() {
           sourceBatchId: selectedInProgress.sourceBatchId || selectedInProgress.id,
           totalLaborMinutes: getTotalLaborMinutes(selectedInProgress),
         },
-        time: new Date().toLocaleString(),
+        time: nowIsoForLog(),
       });
 
       const nextInProgress =
@@ -1056,7 +1057,7 @@ export default function Packaging() {
           totalLaborMinutes,
           notes: taskNotes,
         },
-        time: new Date().toLocaleString(),
+        time: nowIsoForLog(),
       });
     }
 
@@ -1109,7 +1110,7 @@ export default function Packaging() {
         deletedBy: loggedBy,
         deletedAtIso: new Date().toISOString(),
       },
-      time: new Date().toLocaleString(),
+      time: nowIsoForLog(),
     });
 
     s.packagingBatches = s.packagingBatches.filter((b: any) => b.id !== batchId);
@@ -1744,7 +1745,7 @@ export default function Packaging() {
                     <div key={index} style={{ ...rowStyle, background: "#020617" }}>
                       <b>{log.packageType}</b> | Units: {log.units || 0} | Unit Size:{" "}
                       {log.unitSizeGrams || 0}g | Packaged: {log.packagedGrams || 0}g |
-                      By: {log.packagedBy || "—"} | Logged By: {formatLoggedBy(log.loggedBy)} | Time: {log.loggedAt || log.time || "—"}
+                      By: {log.packagedBy || "—"} | Logged By: {formatLoggedBy(log.loggedBy)} | Time: {formatLogDisplayTime(log)}
                       {log.notes ? ` | Notes: ${log.notes}` : ""}
                     </div>
                   ))
@@ -1766,7 +1767,7 @@ export default function Packaging() {
                       </b>{" "}
                       | People: {log.people || 0} | Time: {log.timeMinutes || 0} min |
                       Labor Time: {log.totalLaborMinutes || 0} min | Logged:{" "}
-                      {log.loggedAt || log.time} | Logged By: {formatLoggedBy(log.loggedBy)}
+                      {formatLogDisplayTime(log)} | Logged By: {formatLoggedBy(log.loggedBy)}
                       {log.notes ? ` | Notes: ${log.notes}` : ""}
                     </div>
                   ))
@@ -2137,7 +2138,7 @@ export default function Packaging() {
                   <b>{log.packageType || "Packaging Entry"}</b> | Units:{" "}
                   {log.units || 0} | Unit Size: {log.unitSizeGrams || 0}g |
                   Packaged: {log.packagedGrams || 0}g | By:{" "}
-                  {log.packagedBy || "—"} | Logged By: {formatLoggedBy(log.loggedBy)} | Time: {log.loggedAt || log.time || "—"}
+                  {log.packagedBy || "—"} | Logged By: {formatLoggedBy(log.loggedBy)} | Time: {formatLogDisplayTime(log)}
                   {log.notes ? ` | Notes: ${log.notes}` : ""}
                 </div>
               ))
@@ -2157,7 +2158,7 @@ export default function Packaging() {
                   </b>{" "}
                   | People: {log.people || 0} | Time: {log.timeMinutes || 0} min |
                   Labor Time: {log.totalLaborMinutes || 0} min | Logged:{" "}
-                  {log.loggedAt || log.time || "—"} | Logged By: {formatLoggedBy(log.loggedBy)}
+                  {formatLogDisplayTime(log)} | Logged By: {formatLoggedBy(log.loggedBy)}
                   {log.notes ? ` | Notes: ${log.notes}` : ""}
                 </div>
               ))

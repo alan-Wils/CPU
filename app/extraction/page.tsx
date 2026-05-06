@@ -28,6 +28,11 @@ import {
 import { createPackagingBatch } from "@/lib/packagingApi";
 import { createLog } from "@/lib/logsApi";
 import { apiRequest, suggestExtractionProductNames } from "@/lib/api";
+import {
+  formatLogDisplayTime,
+  nowIsoForLog,
+  syncCompanyTimezoneFromConfigPayload,
+} from "@/lib/companyTimezone";
 
 const sourceMaterialTypes = {
   freshFrozen: [
@@ -709,6 +714,7 @@ export default function Extraction() {
   async function loadBlendNameHistory() {
     try {
       const cfg = await apiRequest<any>("/api/config");
+      syncCompanyTimezoneFromConfigPayload(cfg);
       const rows = Array.isArray(cfg?.extraction?.blendNameHistory)
         ? cfg.extraction.blendNameHistory
         : [];
@@ -725,6 +731,7 @@ export default function Extraction() {
     if (!blendKey) return;
     const nowIso = new Date().toISOString();
     const cfg = await apiRequest<any>("/api/config");
+    syncCompanyTimezoneFromConfigPayload(cfg);
     const extractionCfg =
       cfg?.extraction && typeof cfg.extraction === "object" ? cfg.extraction : {};
     const current = Array.isArray(extractionCfg?.blendNameHistory)
@@ -1463,7 +1470,7 @@ export default function Extraction() {
         deletedBy: loggedBy,
         deletedAtIso: new Date().toISOString(),
       },
-      time: new Date().toLocaleString(),
+      time: nowIsoForLog(),
     });
 
     s.sourceBatches = s.sourceBatches.filter((b: any) => b.id !== batchId);
@@ -1524,7 +1531,7 @@ export default function Extraction() {
         deletedBy: loggedBy,
         deletedAtIso: new Date().toISOString(),
       },
-      time: new Date().toLocaleString(),
+      time: nowIsoForLog(),
     });
 
     s.completedSourceBatches = s.completedSourceBatches.filter(
@@ -1902,7 +1909,7 @@ export default function Extraction() {
       status: "Ready For Pack Socks Start",
       completedTasks: [],
       taskData: {},
-      createdAt: new Date().toLocaleString(),
+      createdAt: nowIsoForLog(),
     };
 
     let sourcesPersisted = false;
@@ -1946,7 +1953,7 @@ export default function Extraction() {
           s.completedSourceBatches.unshift({
             ...plan.updatedSource,
             status: "Complete",
-            completedAt: new Date().toLocaleString(),
+            completedAt: nowIsoForLog(),
           });
         }
       }
@@ -1956,7 +1963,7 @@ export default function Extraction() {
     setSelectedExt(batch);
 
     const loggedBy = getLoggedBy();
-    const loggedAt = new Date().toLocaleString();
+    const loggedAt = nowIsoForLog();
 
     saveLog({
       area: "Extraction",
@@ -1984,7 +1991,7 @@ export default function Extraction() {
     if (selectedTask === "Pack Socks Start") {
       return {
         startedAt: new Date().toISOString(),
-        startedAtDisplay: new Date().toLocaleString(),
+        startedAtDisplay: nowIsoForLog(),
         techCount: packSockTechCount,
         leadTechName: packSockTechNames[0] || "",
         techNames: packSockTechNames,
@@ -2007,7 +2014,7 @@ export default function Extraction() {
 
       return {
         stoppedAt: stoppedAt.toISOString(),
-        stoppedAtDisplay: stoppedAt.toLocaleString(),
+        stoppedAtDisplay: stoppedAt.toISOString(),
         totalSocksPacked: socks,
         sockWeightsGrams,
         averageGramsPerSock: +averageGramsPerSock.toFixed(2),
@@ -2182,7 +2189,7 @@ export default function Extraction() {
     setIsSavingTask(true);
 
     const loggedBy = getLoggedBy();
-    const loggedAt = new Date().toLocaleString();
+    const loggedAt = nowIsoForLog();
     const loggedAtIso = new Date().toISOString();
 
     const data = {
@@ -2403,7 +2410,7 @@ export default function Extraction() {
         deletedBy: loggedBy,
         deletedAtIso: new Date().toISOString(),
       },
-      time: new Date().toLocaleString(),
+      time: nowIsoForLog(),
     });
 
     s.extractionBatches = s.extractionBatches.filter(
@@ -3867,7 +3874,7 @@ export default function Extraction() {
                         <b>{log.task}</b>
                       </div>
                       <div>Output: {log.output || "—"}</div>
-                      <div>Time: {log.time}</div>
+                      <div>Time: {formatLogDisplayTime(log)}</div>
                       <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
                         Logged By: {formatLoggedBy(log.loggedBy || log.data?.loggedBy)}
                       </div>

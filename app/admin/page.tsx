@@ -25,6 +25,7 @@ import {
   setSelectedCompanyId,
 } from "@/lib/api";
 import { getAuthCompany, getAuthToken, getAuthUser } from "@/lib/auth";
+import { formatCompanyTimestamp } from "@/lib/companyTimezone";
 
 type AdminUser = {
   id: string;
@@ -2105,10 +2106,7 @@ export default function AdminPage() {
                           </div>
                           <div style={{ color: "#64748b", fontSize: 12 }}>
                             Expires:{" "}
-                            {new Date(inv.expiresAt).toLocaleString(undefined, {
-                              dateStyle: "medium",
-                              timeStyle: "short",
-                            })}
+                            {formatCompanyTimestamp(inv.expiresAt)}
                           </div>
                           {canManageUsers(currentUser?.role || "") && (
                             <div style={{ marginTop: 8 }}>
@@ -2803,7 +2801,7 @@ export default function AdminPage() {
                               <tr key={row.id} style={{ borderTop: "1px solid rgba(51,65,85,0.6)" }}>
                                 <td style={checkTdStyle}>
                                   {row.createdAt
-                                    ? new Date(row.createdAt).toLocaleString()
+                                    ? formatCompanyTimestamp(row.createdAt)
                                     : "—"}
                                 </td>
                                 <td style={checkTdStyle}>{row.payerName || "—"}</td>
@@ -3278,7 +3276,7 @@ export default function AdminPage() {
                         cashRows.map((row) => (
                           <tr key={row.id} style={{ borderTop: "1px solid rgba(51,65,85,0.6)" }}>
                             <td style={checkTdStyle}>
-                              {row.createdAt ? new Date(row.createdAt).toLocaleString() : "—"}
+                              {row.createdAt ? formatCompanyTimestamp(row.createdAt) : "—"}
                             </td>
                             <td style={checkTdStyle}>
                               {row.direction === "INCOMING" ? "In" : "Out"}
@@ -3289,7 +3287,7 @@ export default function AdminPage() {
                             <td style={checkTdStyle}>{formatCashDepartment(row.department)}</td>
                             <td style={checkTdStyle}>
                               {row.entryDate
-                                ? new Date(row.entryDate).toLocaleDateString()
+                                ? formatCompanyTimestamp(row.entryDate)
                                 : "—"}
                             </td>
                             <td style={checkTdStyle}>{row.memo || "—"}</td>

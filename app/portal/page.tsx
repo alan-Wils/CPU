@@ -16,6 +16,7 @@ import {
 
 type NexBatchInviteTier = "owner" | "nexbatch_admin" | "management" | "staff";
 import { loadBackendStore } from "@/lib/backendStore";
+import { formatCompanyTimestamp } from "@/lib/companyTimezone";
 
 type NexBatchStaffRow = {
   id: string;
@@ -297,7 +298,7 @@ function PortalBody() {
         },
       });
       setStaffOk(
-        `Invitation sent to ${out.email} (${out.roleLabel}). They will open the link in the email, set a password, and land on the NexBatch portal with access to ${out.companiesGranted} workspace(s). Expires ${new Date(out.expiresAt).toLocaleString()}.`,
+        `Invitation sent to ${out.email} (${out.roleLabel}). They will open the link in the email, set a password, and land on the NexBatch portal with access to ${out.companiesGranted} workspace(s). Expires ${formatCompanyTimestamp(out.expiresAt)}.`,
       );
       setStaffEmail("");
       setStaffTier("staff");

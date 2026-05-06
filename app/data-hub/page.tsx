@@ -30,6 +30,7 @@ import {
 import { deleteAllLogs, deleteLog as deleteTaskLogRemote } from "@/lib/logsApi";
 import { getLogs } from "@/lib/api";
 import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
+import { formatLogDisplayTime, nowIsoForLog } from "@/lib/companyTimezone";
 
 function show(value: any) {
   if (value === undefined || value === null || value === "") return "—";
@@ -1119,7 +1120,7 @@ export default function DataHub() {
           batch: "ALL_LOGS",
           task: "Deleted All Logs",
           output: `All logs deleted. Count deleted: ${result?.deletedCount ?? "—"}.`,
-          time: new Date().toLocaleString(),
+          time: nowIsoForLog(),
           loggedBy: getAuthUser(),
         },
       ];
@@ -1478,7 +1479,7 @@ export default function DataHub() {
                   <div><span style={labelStyle}>Minutes: </span>{show(log._laborMinutes || log.minutes)}</div>
                   <div><span style={labelStyle}>Labor Minutes: </span>{show(log._laborTotalMinutes)}</div>
                   <div><span style={labelStyle}>Cost: </span>{money((num(log._laborTotalMinutes) / 60) * num(c.hourlyRate))}</div>
-                  <div><span style={labelStyle}>Time: </span>{show(log.time)}</div>
+                  <div><span style={labelStyle}>Time: </span>{formatLogDisplayTime(log)}</div>
                   <div><span style={labelStyle}>Logged By: </span>{formatLoggedBy(getLoggedByFromLog(log))}</div>
                 </div>
               ))}
@@ -1575,7 +1576,7 @@ export default function DataHub() {
                   <div><span style={labelStyle}>Minutes: </span>{show(log._laborMinutes || log.minutes)}</div>
                   <div><span style={labelStyle}>Labor Minutes: </span>{show(log._laborTotalMinutes)}</div>
                   <div><span style={labelStyle}>Cost: </span>{money((num(log._laborTotalMinutes) / 60) * num(c.hourlyRate))}</div>
-                  <div><span style={labelStyle}>Time: </span>{show(log.time)}</div>
+                  <div><span style={labelStyle}>Time: </span>{formatLogDisplayTime(log)}</div>
                   <div><span style={labelStyle}>Logged By: </span>{formatLoggedBy(getLoggedByFromLog(log))}</div>
                 </div>
               ))}
@@ -1639,7 +1640,7 @@ export default function DataHub() {
               >
                 <div>
                   <span style={labelStyle}>Time: </span>
-                  {show(log.time)}
+                  {formatLogDisplayTime(log)}
                 </div>
 
                 <div>
@@ -1781,7 +1782,7 @@ export default function DataHub() {
                 <div key={i} style={rowStyle}>
                   <div>
                     <b>{show(l.area)}</b> | Batch: {show(l.batch)} | Task: {show(l.task)}
-                    <div style={{ color: "#94a3b8", marginTop: 4 }}>Output: {show(l.output)} | Time: {show(l.time)}</div>
+                    <div style={{ color: "#94a3b8", marginTop: 4 }}>Output: {show(l.output)} | Time: {formatLogDisplayTime(l)}</div>
                     <div style={{ color: "#94a3b8", marginTop: 4 }}>Logged By: {formatLoggedBy(getLoggedByFromLog(l))}</div>
                   </div>
 

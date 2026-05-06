@@ -44,6 +44,8 @@ const defaultConfig = {
     },
     settings: {
       companyWideNotes: "",
+      /** IANA zone for displaying timestamps app-wide (empty = browser default). */
+      displayTimezone: "",
     },
   },
 

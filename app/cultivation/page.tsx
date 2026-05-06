@@ -21,6 +21,11 @@ import { apiRequest } from "@/lib/api";
 import { createSourceBatch } from "@/lib/sourceBatchApi";
 import { createLog } from "@/lib/logsApi";
 import {
+  formatLogDisplayTime,
+  nowIsoForLog,
+  syncCompanyTimezoneFromConfigPayload,
+} from "@/lib/companyTimezone";
+import {
   computeAllocatedDryCanopySqFt,
   computeDryYieldGPerSqFt,
   sumTableSquareFeetFromIds,
@@ -464,6 +469,7 @@ export default function Cultivation() {
           cultivation?: { strains?: ConfigStrain[]; rooms?: unknown };
           strains?: ConfigStrain[] | string[];
         }>("/api/config");
+        syncCompanyTimezoneFromConfigPayload(data);
         const strains = normalizeStrainConfigList(pickStrainsFromConfigPayload(data));
         const rooms = pickCultivationRoomsFromConfigPayload(data);
 
@@ -675,15 +681,14 @@ export default function Cultivation() {
 
   function withLoggedBy(log: any) {
     const loggedBy = getLoggedBy();
-    const loggedAt = new Date().toLocaleString();
     const loggedAtIso = new Date().toISOString();
 
     const finalLog = {
       ...log,
       loggedBy,
-      loggedAt,
+      loggedAt: loggedAtIso,
       loggedAtIso,
-      time: log.time || loggedAt,
+      time: log.time || loggedAtIso,
       data: {
         ...(log.data || {}),
         people: log.people,
@@ -694,7 +699,7 @@ export default function Cultivation() {
         source: log.source,
         linkedBatch: log.linkedBatch,
         loggedBy,
-        loggedAt,
+        loggedAt: loggedAtIso,
         loggedAtIso,
       },
     };
@@ -843,7 +848,7 @@ export default function Cultivation() {
         0
       ),
       completedAt: batch.completedAt || "",
-      updatedAt: new Date().toLocaleString(),
+      updatedAt: nowIsoForLog(),
       packagingLogs: batch.packagingLogs || [],
     };
 
@@ -852,7 +857,7 @@ export default function Cultivation() {
     } else {
       s.packagingBatches.unshift({
         ...packagingData,
-        createdAt: new Date().toLocaleString(),
+        createdAt: nowIsoForLog(),
       });
     }
   }
@@ -987,7 +992,7 @@ export default function Cultivation() {
       people: clonePeople,
       minutes: cloneMinutes,
       output: `${cloneCount} clones taken`,
-      time: new Date().toLocaleString(),
+      time: nowIsoForLog(),
     }))
 
     setStrain("");
@@ -1051,7 +1056,7 @@ export default function Cultivation() {
         deletedLogCount,
         deletedAtIso: new Date().toISOString(),
       },
-      time: new Date().toLocaleString(),
+      time: nowIsoForLog(),
     }));
 
     if (selectedBatch?.id === batchId) {
@@ -1089,7 +1094,7 @@ export default function Cultivation() {
   function moveBatchToCompleted(batch: any) {
     batch.status = "Complete";
     batch.stage = "Complete";
-    batch.completedAt = new Date().toLocaleString();
+    batch.completedAt = nowIsoForLog();
 
     const alreadyCompleted = s.completedCultivationBatches.some(
       (b: any) => b.id === batch.id
@@ -1106,7 +1111,7 @@ export default function Cultivation() {
       people: "",
       minutes: "",
       output: "All plants harvested",
-      time: new Date().toLocaleString(),
+      time: nowIsoForLog(),
     }))
 
     const nextActive = s.cultivationBatches.find(
@@ -1173,7 +1178,7 @@ export default function Cultivation() {
         packagedAGradeLbs: 0,
         packagedPopcornLbs: 0,
         remainingPackableLbs: "",
-        createdAt: new Date().toLocaleString(),
+        createdAt: nowIsoForLog(),
       };
 
       s.dryFlowerBatches.unshift(dryBatch);
@@ -1188,7 +1193,7 @@ export default function Cultivation() {
         minutes,
         output: `${plantsHarvested} plants harvested for A Grade Flower. No weight recorded until bucking.`,
         linkedBatch: dryBatch.id,
-        time: new Date().toLocaleString(),
+        time: nowIsoForLog(),
       }))
     }
 
@@ -1211,7 +1216,7 @@ export default function Cultivation() {
         plantsHarvested,
         source: selectedBatch.id,
         status: "Available for Extraction",
-        createdAt: new Date().toLocaleString(),
+        createdAt: nowIsoForLog(),
       };
 
       s.sourceBatches.unshift(freshFrozenBatch);
@@ -1238,7 +1243,7 @@ export default function Cultivation() {
           freshFrozenBundles || 0
         } bundles / ${freshFrozenGrams || 0} grams`,
         linkedBatch: freshFrozenBatch.id,
-        time: new Date().toLocaleString(),
+        time: nowIsoForLog(),
       }))
     }
 
@@ -1283,7 +1288,7 @@ export default function Cultivation() {
         minutes: "",
         output: "Dry flower batch submitted to testing",
         source: batch.source,
-        time: new Date().toLocaleString(),
+        time: nowIsoForLog(),
       }))
     }
 
@@ -1371,7 +1376,7 @@ export default function Cultivation() {
         remainingPopcornLbs: weights.usablePopcornLbs,
         remainingPackableLbs: weights.usableTotalLbs,
         packagingLogs: [],
-        createdAt: new Date().toLocaleString(),
+        createdAt: nowIsoForLog(),
       });
     }
 
@@ -1383,7 +1388,7 @@ export default function Cultivation() {
       minutes: "",
       output: `Dry flower batch passed testing (lab THC ${thc}%) and is ready for packaging`,
       source: batch.source,
-      time: new Date().toLocaleString(),
+      time: nowIsoForLog(),
     }))
 
     setTestPassModalBatch(null);
@@ -1424,7 +1429,7 @@ export default function Cultivation() {
       minutes: "",
       output: failureReason || "No failure reason entered",
       source: failBatch.source,
-      time: new Date().toLocaleString(),
+      time: nowIsoForLog(),
     }))
 
     setFailBatch(null);
@@ -1505,7 +1510,7 @@ export default function Cultivation() {
         minutes: dryMinutes,
         output: `Bucked weight: ${enteredWeight} lbs`,
         source: selectedDryFlowerBatch.source,
-        time: new Date().toLocaleString(),
+        time: nowIsoForLog(),
       }))
     }
 
@@ -1529,7 +1534,7 @@ export default function Cultivation() {
         minutes: dryMinutes,
         output: `Total A Grade Flower: ${aGradeFlowerWeight} lbs | Total Popcorn: ${popcornWeight} lbs | Total Trim: ${totalTrimWeight} lbs`,
         source: selectedDryFlowerBatch.source,
-        time: new Date().toLocaleString(),
+        time: nowIsoForLog(),
       }))
 
       if (totalTrimWeight > 0) {
@@ -1544,7 +1549,7 @@ export default function Cultivation() {
           source: selectedDryFlowerBatch.id,
           parentCultivationBatch: selectedDryFlowerBatch.source,
           status: "Available for Extraction",
-          createdAt: new Date().toLocaleString(),
+          createdAt: nowIsoForLog(),
         };
 
         s.sourceBatches.unshift(trimBatch);
@@ -1570,7 +1575,7 @@ export default function Cultivation() {
           output: `${totalTrimWeight} lbs dry trim is available for extraction`,
           linkedBatch: trimBatch.id,
           source: selectedDryFlowerBatch.source,
-          time: new Date().toLocaleString(),
+          time: nowIsoForLog(),
         }))
       }
     }
@@ -1594,7 +1599,7 @@ export default function Cultivation() {
         minutes: dryMinutes,
         output: `Decon output weight: ${enteredWeight} lbs | Loss from previous stage: ${loss} lbs`,
         source: selectedDryFlowerBatch.source,
-        time: new Date().toLocaleString(),
+        time: nowIsoForLog(),
       }))
     }
 
@@ -1610,7 +1615,7 @@ export default function Cultivation() {
         output:
           dryOutput || "Burping jars / curing process ongoing",
         source: selectedDryFlowerBatch.source,
-        time: new Date().toLocaleString(),
+        time: nowIsoForLog(),
       }))
     }
 
@@ -1698,7 +1703,7 @@ export default function Cultivation() {
       if (!selectedDryFlowerBatch.packagingLogs) selectedDryFlowerBatch.packagingLogs = [];
 
       selectedDryFlowerBatch.packagingLogs.unshift({
-        time: new Date().toLocaleString(),
+        time: nowIsoForLog(),
         flowerType: dryPackageCategory,
         packageType: selectedDryFlowerBatch.type || "Dry Flower",
         packageMode: dryPackagingMode,
@@ -1717,7 +1722,7 @@ export default function Cultivation() {
       });
 
       if (isComplete) {
-        selectedDryFlowerBatch.completedAt = new Date().toLocaleString();
+        selectedDryFlowerBatch.completedAt = nowIsoForLog();
       }
 
       upsertDryFlowerPackagingBatch(selectedDryFlowerBatch);
@@ -1730,7 +1735,7 @@ export default function Cultivation() {
         minutes: dryMinutes,
         output: `Flower type: ${dryPackageCategory} | Mode: ${dryPackagingMode} | Units: ${actualPackageUnits} | Packaged: ${packagedThisRound} lbs | Total packaged: ${selectedDryFlowerBatch.packagedWeightLbs} lbs | A Grade remaining: ${selectedDryFlowerBatch.remainingAGradeLbs} lbs | Popcorn remaining: ${selectedDryFlowerBatch.remainingPopcornLbs} lbs`,
         source: selectedDryFlowerBatch.source,
-        time: new Date().toLocaleString(),
+        time: nowIsoForLog(),
       }))
 
       if (isComplete) {
@@ -1901,7 +1906,7 @@ export default function Cultivation() {
       room: logRoom,
       bay: logBay,
       tables: logTables,
-      time: new Date().toLocaleString(),
+      time: nowIsoForLog(),
     }))
 
     if (selectedTask === "Clone → Veg") {
@@ -2844,7 +2849,7 @@ export default function Cultivation() {
                     <div>Minutes: {log.minutes || "—"}</div>
                     <div>Output: {log.output || "—"}</div>
                     {log.linkedBatch && <div>Linked Batch: {log.linkedBatch}</div>}
-                    <div>Time: {log.time}</div>
+                    <div>Time: {formatLogDisplayTime(log)}</div>
                     <div style={{ color: "#94a3b8", fontSize: 13 }}>
                       Logged By: {formatLoggedBy(log.loggedBy || log.data?.loggedBy)}
                     </div>

@@ -112,11 +112,11 @@ function taskRowToLegacyLog(row) {
                 output: parsed.output ?? "",
                 people: data.people ?? "",
                 minutes: String(data.minutes ?? row.minutes ?? ""),
-                data: { ...data, loggedAt: data.loggedAt ?? row.createdAt.toLocaleString(), loggedAtIso },
+                data: { ...data, loggedAt: data.loggedAt ?? row.createdAt.toISOString(), loggedAtIso },
                 source: src,
                 linkedBatch: linked,
-                time: row.createdAt.toLocaleString(),
-                loggedAt: row.createdAt.toLocaleString(),
+                time: row.createdAt.toISOString(),
+                loggedAt: row.createdAt.toISOString(),
                 loggedAtIso
             };
         }
@@ -135,8 +135,8 @@ function taskRowToLegacyLog(row) {
         people: "",
         minutes: String(row.minutes ?? ""),
         data: {},
-        time: row.createdAt.toLocaleString(),
-        loggedAt: row.createdAt.toLocaleString(),
+        time: row.createdAt.toISOString(),
+        loggedAt: row.createdAt.toISOString(),
         loggedAtIso: row.createdAt.toISOString()
     };
 }

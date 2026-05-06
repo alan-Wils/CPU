@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import Nav from "@/components/Nav";
 import {
@@ -10,6 +10,12 @@ import {
   getSelectedCompanyId,
 } from "@/lib/api";
 import { getAuthToken } from "@/lib/auth";
+import {
+  formatCompanyTimestamp,
+  formatInCompanyTimezone,
+  setCompanyDisplayTimezone,
+  syncCompanyTimezoneFromConfigPayload,
+} from "@/lib/companyTimezone";
 
 type Strain = {
   id: string;
@@ -80,6 +86,8 @@ type AppConfig = {
     };
     settings: {
       companyWideNotes: string;
+      /** IANA time zone for every facility-facing timestamp. Empty = browser default. */
+      displayTimezone?: string;
     };
   };
   cultivation: {
@@ -117,6 +125,7 @@ const emptyConfig: AppConfig = {
     },
     settings: {
       companyWideNotes: "",
+      displayTimezone: "",
     },
   },
   cultivation: {
@@ -181,6 +190,35 @@ export default function ConfigPage() {
   const [fieldModalSquareFeet, setFieldModalSquareFeet] = useState("");
   const [fieldModalError, setFieldModalError] = useState("");
   const [saveSuccessModalOpen, setSaveSuccessModalOpen] = useState(false);
+  const [timeZoneModalOpen, setTimeZoneModalOpen] = useState(false);
+  const [displayTimezoneDraft, setDisplayTimezoneDraft] = useState("");
+  const [timeZoneFilter, setTimeZoneFilter] = useState("");
+
+  const ianaTimeZones = useMemo(() => {
+    if (typeof Intl !== "undefined" && typeof (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf === "function") {
+      try {
+        return (Intl as unknown as { supportedValuesOf: (k: string) => string[] }).supportedValuesOf("timeZone");
+      } catch {
+        /* fall through */
+      }
+    }
+    return [
+      "UTC",
+      "America/New_York",
+      "America/Chicago",
+      "America/Denver",
+      "America/Los_Angeles",
+      "America/Phoenix",
+      "America/Anchorage",
+      "Pacific/Honolulu",
+    ];
+  }, []);
+
+  const filteredTimeZones = useMemo(() => {
+    const q = timeZoneFilter.trim().toLowerCase();
+    if (!q) return ianaTimeZones;
+    return ianaTimeZones.filter((z) => z.toLowerCase().includes(q));
+  }, [ianaTimeZones, timeZoneFilter]);
 
   const [strainForm, setStrainForm] = useState({
     name: "",
@@ -273,6 +311,7 @@ export default function ConfigPage() {
           ...(data.packaging || {}),
         },
       });
+      syncCompanyTimezoneFromConfigPayload(raw);
     } catch (error) {
       console.error(error);
       alert("Could not load config. Make sure you are logged in as admin.");
@@ -307,6 +346,7 @@ export default function ConfigPage() {
 
       const data = await res.json();
       setConfig(data);
+      syncCompanyTimezoneFromConfigPayload(data);
       setSaveSuccessModalOpen(true);
     } catch (error) {
       console.error(error);
@@ -799,6 +839,49 @@ export default function ConfigPage() {
     );
   }
 
+  function previewFacilityTime(draft: string): string {
+    const d = new Date();
+    const z = draft.trim();
+    if (!z) {
+      try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        return new Intl.DateTimeFormat("en-US", {
+          timeZone: tz,
+          dateStyle: "short",
+          timeStyle: "medium",
+        }).format(d);
+      } catch {
+        return formatInCompanyTimezone(d);
+      }
+    }
+    try {
+      return new Intl.DateTimeFormat("en-US", {
+        timeZone: z,
+        dateStyle: "short",
+        timeStyle: "medium",
+      }).format(d);
+    } catch {
+      return "Invalid time zone";
+    }
+  }
+
+  function applyFacilityTimezoneFromModal() {
+    const trimmed = displayTimezoneDraft.trim();
+    setConfig((prev) => ({
+      ...prev,
+      company: {
+        ...prev.company,
+        settings: {
+          ...prev.company.settings,
+          displayTimezone: trimmed,
+        },
+      },
+    }));
+    setCompanyDisplayTimezone(trimmed);
+    setTimeZoneModalOpen(false);
+    setTimeZoneFilter("");
+  }
+
   return (
     <main style={styles.page}>
       <Nav />
@@ -817,7 +900,43 @@ export default function ConfigPage() {
       </div>
 
       <section style={styles.card}>
-        <h2 style={styles.sectionTitle}>1. Company</h2>
+        <div style={{ ...styles.inline, alignItems: "center", marginBottom: 4 }}>
+          <h2 style={{ ...styles.sectionTitle, marginBottom: 0 }}>1. Company</h2>
+          <button
+            type="button"
+            title="Facility time zone — applies to all timestamps in this workspace"
+            aria-label="Open facility time zone settings"
+            onClick={() => {
+              setDisplayTimezoneDraft(String(config.company.settings.displayTimezone ?? ""));
+              setTimeZoneFilter("");
+              setTimeZoneModalOpen(true);
+            }}
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: "9999px",
+              border: "1px solid #475569",
+              background: "#1e293b",
+              color: "#93c5fd",
+              cursor: "pointer",
+              fontSize: 18,
+              lineHeight: 1,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            🕐
+          </button>
+        </div>
+        <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 6, marginBottom: 14 }}>
+          Display time zone:{" "}
+          <b style={{ color: "#e2e8f0" }}>
+            {(config.company.settings.displayTimezone || "").trim() || "Browser default"}
+          </b>
+          . Use the clock button to change how dates and times appear everywhere.
+        </p>
 
         <div style={styles.grid}>
           <label style={styles.label}>
@@ -1243,7 +1362,7 @@ export default function ConfigPage() {
                   {item.lastUsedAt ? (
                     <span style={{ color: "#94a3b8" }}>
                       {" "}
-                      (Last used: {new Date(item.lastUsedAt).toLocaleString()})
+                      (Last used: {formatCompanyTimestamp(item.lastUsedAt)})
                     </span>
                   ) : null}
                 </span>
@@ -1398,6 +1517,99 @@ export default function ConfigPage() {
               </button>
               <button type="button" style={styles.saveButton} onClick={confirmCultivationFieldModal}>
                 {cultivationFieldModal.kind === "addBay" ? "Add bay" : "Add table"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {timeZoneModalOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="facility-tz-title"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 20003,
+            background: "rgba(2,6,23,0.88)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setTimeZoneModalOpen(false);
+          }}
+        >
+          <div
+            style={{
+              ...styles.card,
+              maxWidth: 520,
+              width: "100%",
+              margin: 0,
+              border: "1px solid #334155",
+              boxShadow: "0 24px 48px rgba(0,0,0,0.45)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="facility-tz-title" style={{ ...styles.sectionTitle, marginTop: 0, marginBottom: 8 }}>
+              Facility time zone
+            </h3>
+            <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
+              Choose the IANA time zone used for every timestamp in this company (activity logs, labor entries,
+              packaging history, and related screens). Times are still stored in UTC; this only affects display.
+            </p>
+
+            <label style={{ ...styles.label, marginTop: 14 }}>
+              Filter list
+              <input
+                style={styles.input}
+                value={timeZoneFilter}
+                onChange={(e) => setTimeZoneFilter(e.target.value)}
+                placeholder="e.g. Denver, New_York, Europe"
+                autoComplete="off"
+              />
+            </label>
+
+            <label style={{ ...styles.label, marginTop: 12 }}>
+              Time zone
+              <select
+                size={10}
+                style={{
+                  ...styles.input,
+                  width: "100%",
+                  minHeight: 200,
+                  fontFamily: "ui-monospace, monospace",
+                  fontSize: 13,
+                }}
+                value={displayTimezoneDraft}
+                onChange={(e) => setDisplayTimezoneDraft(e.target.value)}
+              >
+                <option value="">— Browser default (this device) —</option>
+                {filteredTimeZones.map((z) => (
+                  <option key={z} value={z}>
+                    {z}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <p style={{ color: "#cbd5e1", fontSize: 14, marginTop: 10 }}>
+              <b>Preview (now):</b> {previewFacilityTime(displayTimezoneDraft)}
+            </p>
+
+            <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 6 }}>
+              Click <b>Apply</b> to use this zone in the app immediately, then <b>Save Config</b> to store it for
+              everyone in this company.
+            </p>
+
+            <div style={{ ...styles.inline, justifyContent: "flex-end", marginTop: 20, flexWrap: "wrap" }}>
+              <button type="button" style={styles.deleteButton} onClick={() => setTimeZoneModalOpen(false)}>
+                Cancel
+              </button>
+              <button type="button" style={styles.saveButton} onClick={applyFacilityTimezoneFromModal}>
+                Apply
               </button>
             </div>
           </div>
