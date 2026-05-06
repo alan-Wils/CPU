@@ -43,6 +43,14 @@ export {
   type CheckParsedFlat
 } from "./checkCaptureParse.js";
 
+export {
+  computeAllocatedDryCanopySqFt,
+  computeDryYieldGPerSqFt,
+  meanFinite,
+  sumTableSquareFeetFromIds,
+  type FlowerRoomForSqFt,
+} from "./strainCanopyMath.js";
+
 export const ROLE_PERMISSIONS: Record<AppRole, string[]> = {
   OWNER: ["*"],
   ADMIN: ["users.manage", "workflow.manage", "audit.read", "finance.read", "config.manage"],

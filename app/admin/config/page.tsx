@@ -18,6 +18,11 @@ type Strain = {
   dominance: string;
   potency: string;
   averageYield: string;
+  /** Auto-computed from cultivation batches (Test Passed + lab THC / dry yield math). */
+  autoAvgPotencyPct?: number;
+  autoAvgDryYieldGPerSqFt?: number;
+  autoMetricsSampleCount?: number;
+  autoMetricsUpdatedAt?: string;
 };
 
 type Supply = {
@@ -994,6 +999,24 @@ export default function ConfigPage() {
               <span>
                 <strong>{strain.name}</strong> ({strain.acronym}) —{" "}
                 {strain.dominance}, {strain.potency}, {strain.averageYield} Yield
+                {(strain.autoAvgPotencyPct != null || strain.autoAvgDryYieldGPerSqFt != null) && (
+                  <span style={{ display: "block", marginTop: 6, color: "#94a3b8", fontSize: 13 }}>
+                    Auto avg:{" "}
+                    {strain.autoAvgPotencyPct != null
+                      ? `${strain.autoAvgPotencyPct}% THC`
+                      : "— potency"}
+                    {" · "}
+                    {strain.autoAvgDryYieldGPerSqFt != null
+                      ? `${strain.autoAvgDryYieldGPerSqFt} g/sq ft dry`
+                      : "— yield"}
+                    {strain.autoMetricsSampleCount != null
+                      ? ` (n=${strain.autoMetricsSampleCount})`
+                      : ""}
+                    {strain.autoMetricsUpdatedAt
+                      ? ` · updated ${strain.autoMetricsUpdatedAt.slice(0, 10)}`
+                      : ""}
+                  </span>
+                )}
               </span>
               <button style={styles.deleteButton} onClick={() => removeStrain(strain.id)}>
                 Remove

@@ -209,6 +209,15 @@ export default function Nav() {
               Data Hub
             </Link>
           )}
+
+          {canNavToPage("page.analytics") && (
+            <Link
+              href="/analytics"
+              style={navButtonStyle(pathname === "/analytics")}
+            >
+              Analytics
+            </Link>
+          )}
         </div>
       )}
 

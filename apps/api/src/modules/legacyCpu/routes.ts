@@ -12,12 +12,14 @@ import { requireRole } from "../../middleware/rbac.js";
 import { WorkflowService } from "../../services/workflowService.js";
 import { StoreService } from "../../services/storeService.js";
 import { TaskService } from "../../services/taskService.js";
+import { StrainMetricsService } from "../../services/strainMetricsService.js";
 import { logInfo } from "../../lib/logger.js";
 import { AppError } from "../../errors/AppError.js";
 export const legacyCpuRouter = Router();
 const workflowService = new WorkflowService();
 const storeService = new StoreService();
 const taskService = new TaskService();
+const strainMetricsService = new StrainMetricsService();
 function snapshotForStoreSave(snap) {
     return {
         cultivationBatches: snap.cultivationBatches ?? [],
@@ -577,6 +579,21 @@ legacyCpuRouter.put("/cultivation/:batchId", requireRole(cultivationWriteRoles),
         parentUpdateSucceeded: true,
         responseSummary: { id: mapped.id, stage: mapped.stage, status: mapped.status }
     });
+    const prevPctN = Number(prevUi.finalLabPotencyPct);
+    const nextPctN = Number(mergedUi.finalLabPotencyPct);
+    const nextOk = Number.isFinite(nextPctN);
+    const prevOk = Number.isFinite(prevPctN);
+    if (nextOk && (!prevOk || prevPctN !== nextPctN)) {
+        try {
+            await strainMetricsService.recomputeStrainAutoMetricsForCompany({
+                companyId,
+                actorUserId: req.auth.userId
+            });
+        }
+        catch (err) {
+            logInfo("[STRAIN_METRICS] rollup_failed", { companyId, message: String(err) });
+        }
+    }
     res.json(mapped);
 }));
 /** Matches `workflowRouter.delete("/cultivation-batches/:batchId")` — OWNER/ADMIN only. */

@@ -20,6 +20,11 @@ import {
 import { apiRequest } from "@/lib/api";
 import { createSourceBatch } from "@/lib/sourceBatchApi";
 import { createLog } from "@/lib/logsApi";
+import {
+  computeAllocatedDryCanopySqFt,
+  computeDryYieldGPerSqFt,
+  sumTableSquareFeetFromIds,
+} from "@cpu/shared";
 
 type ConfigStrain = {
   id?: string;
@@ -235,6 +240,28 @@ function formatFlowerTables(batchOrTables: any) {
   return tables.length > 0 ? tables.join(", ") : "—";
 }
 
+function findCultivationParentBatch(store: any, sourceId: string) {
+  const lists = [
+    ...(store.cultivationBatches || []),
+    ...(store.completedCultivationBatches || []),
+  ];
+  return lists.find((b: any) => b.id === sourceId) || null;
+}
+
+function recomputeDryCanopyForCultivationBatch(batch: any, rooms: CultivationRoomsConfig) {
+  if (!batch || typeof batch !== "object") return;
+  const total = sumTableSquareFeetFromIds(
+    rooms.flowerRooms,
+    String(batch.flowerRoomId || ""),
+    String(batch.flowerBayId || ""),
+    Array.isArray(batch.flowerTableIds) ? batch.flowerTableIds : []
+  );
+  const plantsAtFlower = Math.max(1, num(batch.plantsAtFlower));
+  const plantsDry = num(batch.plantsHarvestedDry);
+  batch.totalFlowerTableSqFt = total;
+  batch.dryCanopySqFt = computeAllocatedDryCanopySqFt(total, plantsAtFlower, plantsDry);
+}
+
 function getDryFlowerFinalWeights(batch: any) {
   const aGradeBeforeDecon = num(batch?.trimmedWeightLbs);
   const popcornBeforeDecon = num(batch?.popcornWeightLbs);
@@ -399,6 +426,10 @@ export default function Cultivation() {
 
   const [failBatch, setFailBatch] = useState<any>(null);
   const [failureReason, setFailureReason] = useState("");
+
+  /** Dry flower Test Passed → lab THC % modal; metrics are written on the parent cultivation batch. */
+  const [testPassModalBatch, setTestPassModalBatch] = useState<any>(null);
+  const [testPassThcPct, setTestPassThcPct] = useState("");
 
   const repeatTaskBypassRef = useRef<{ batchId: string; taskName: string } | null>(null);
 
@@ -1121,6 +1152,9 @@ export default function Cultivation() {
       remainingPlants > 0 ? "Partially Harvested" : "Harvested";
 
     if (harvestType === "A Grade Flower") {
+      selectedBatch.plantsHarvestedDry = num(selectedBatch.plantsHarvestedDry) + plantsHarvested;
+      recomputeDryCanopyForCultivationBatch(selectedBatch, cultivationRooms);
+
       const dryBatch = {
         id: `DRY-${selectedBatch.id}-${Date.now().toString().slice(-4)}`,
         name: `${selectedBatch.strain} A Grade Flower`,
@@ -1158,6 +1192,10 @@ export default function Cultivation() {
     }
 
     if (harvestType === "Fresh Frozen") {
+      selectedBatch.plantsHarvestedFreshFrozen =
+        num(selectedBatch.plantsHarvestedFreshFrozen) + plantsHarvested;
+      recomputeDryCanopyForCultivationBatch(selectedBatch, cultivationRooms);
+
       const gramsParsed = num(String(freshFrozenGrams ?? "").replace(/,/g, ""));
       const weightLbs = +(gramsParsed / 453.592).toFixed(4);
       const freshFrozenBatch = {
@@ -1224,6 +1262,12 @@ export default function Cultivation() {
       return;
     }
 
+    if (status === "Test Passed") {
+      setTestPassModalBatch(batch);
+      setTestPassThcPct("");
+      return;
+    }
+
     batch.testStatus = status;
 
     if (status === "Submitted to Testing") {
@@ -1241,58 +1285,99 @@ export default function Cultivation() {
       }))
     }
 
-    if (status === "Test Passed") {
-      batch.status = "Passed / Ready for Packaging";
-      batch.testFailureReason = "";
+    forceRefresh();
+  }
 
-      const alreadyInPackaging = s.packagingBatches.some(
-        (b: any) => b.id === batch.id
-      );
-
-      if (!alreadyInPackaging) {
-        const weights = getDryFlowerFinalWeights(batch);
-
-        s.packagingBatches.unshift({
-          id: batch.id,
-          name: batch.name,
-          type: batch.type || "Dry Flower",
-          productType: batch.type || "Dry Flower",
-          source: batch.source,
-          sourceBatchId: batch.id,
-          cultivationBatchId: batch.source,
-          originalBatchId: batch.source,
-          status: "Passed",
-          availableWeightLbs: num(batch.trimmedWeightLbs) + num(batch.popcornWeightLbs),
-          aGradeFlowerWeightLbs: num(batch.trimmedWeightLbs),
-          popcornWeightLbs: num(batch.popcornWeightLbs),
-          packagedAGradeLbs: 0,
-          packagedPopcornLbs: 0,
-          finalAGradeFlowerLbs: 0,
-          finalPopcornLbs: 0,
-          totalFinalPackagedLbs: 0,
-          packagedWeightLbs: 0,
-          packagedGrams: 0,
-          remainingAGradeLbs: weights.usableAGradeLbs,
-          remainingPopcornLbs: weights.usablePopcornLbs,
-          remainingPackableLbs: weights.usableTotalLbs,
-          packagingLogs: [],
-          createdAt: new Date().toLocaleString(),
-        });
-      }
-
-      s.logs.unshift(withLoggedBy({
-        area: "Cultivation",
-        batch: batch.id,
-        task: "Test Passed",
-        people: "",
-        minutes: "",
-        output: "Dry flower batch passed testing and is ready for packaging",
-        source: batch.source,
-        time: new Date().toLocaleString(),
-      }))
+  async function applyDryFlowerTestPassed(batch: any, labThcPct: number) {
+    if (!canWriteRecords) {
+      showReadOnlyNotice();
+      return;
+    }
+    if (!isPositiveNumber(labThcPct)) {
+      showNotice("Lab THC % required", "Enter a positive numeric lab THC % for this batch.");
+      return;
     }
 
+    batch.testStatus = "Test Passed";
+    batch.status = "Passed / Ready for Packaging";
+    batch.testFailureReason = "";
+    const thc = Number(labThcPct);
+    batch.finalLabPotencyPct = thc;
+    batch.finalLabPotencyAt = new Date().toISOString();
+
+    const parent = findCultivationParentBatch(s, batch.source);
+    if (parent) {
+      recomputeDryCanopyForCultivationBatch(parent, cultivationRooms);
+      const weights = getDryFlowerFinalWeights(batch);
+      const grams =
+        weights.totalFinalPackagedGrams > 0
+          ? weights.totalFinalPackagedGrams
+          : weights.usableTotalLbs * 453.592;
+      const canopy = num(parent.dryCanopySqFt);
+      const yld = computeDryYieldGPerSqFt(grams, canopy);
+      parent.finalLabPotencyPct = thc;
+      parent.finalLabPotencyAt = batch.finalLabPotencyAt;
+      parent.dryYieldGPerSqFt = +yld.toFixed(4);
+      parent.strainMetricsDryFlowerBatchId = batch.id;
+    }
+
+    const alreadyInPackaging = s.packagingBatches.some(
+      (b: any) => b.id === batch.id
+    );
+
+    if (!alreadyInPackaging) {
+      const weights = getDryFlowerFinalWeights(batch);
+
+      s.packagingBatches.unshift({
+        id: batch.id,
+        name: batch.name,
+        type: batch.type || "Dry Flower",
+        productType: batch.type || "Dry Flower",
+        source: batch.source,
+        sourceBatchId: batch.id,
+        cultivationBatchId: batch.source,
+        originalBatchId: batch.source,
+        status: "Passed",
+        availableWeightLbs: num(batch.trimmedWeightLbs) + num(batch.popcornWeightLbs),
+        aGradeFlowerWeightLbs: num(batch.trimmedWeightLbs),
+        popcornWeightLbs: num(batch.popcornWeightLbs),
+        packagedAGradeLbs: 0,
+        packagedPopcornLbs: 0,
+        finalAGradeFlowerLbs: 0,
+        finalPopcornLbs: 0,
+        totalFinalPackagedLbs: 0,
+        packagedWeightLbs: 0,
+        packagedGrams: 0,
+        remainingAGradeLbs: weights.usableAGradeLbs,
+        remainingPopcornLbs: weights.usablePopcornLbs,
+        remainingPackableLbs: weights.usableTotalLbs,
+        packagingLogs: [],
+        createdAt: new Date().toLocaleString(),
+      });
+    }
+
+    s.logs.unshift(withLoggedBy({
+      area: "Cultivation",
+      batch: batch.id,
+      task: "Test Passed",
+      people: "",
+      minutes: "",
+      output: `Dry flower batch passed testing (lab THC ${thc}%) and is ready for packaging`,
+      source: batch.source,
+      time: new Date().toLocaleString(),
+    }))
+
+    setTestPassModalBatch(null);
+    setTestPassThcPct("");
     forceRefresh();
+
+    if (parent) {
+      try {
+        await saveRealCultivationBatch(parent);
+      } catch (e) {
+        console.error("Could not sync cultivation metrics to server:", e);
+      }
+    }
   }
 
   function saveFailedTest() {
@@ -1688,6 +1773,15 @@ export default function Cultivation() {
     setFlowerTableIds([]);
   }
 
+  function primeTaskModalFromSelectedBatch(batch: any) {
+    primeTaskModalLocationFields(cultivationRooms);
+    if (batch?.flowerRoomId) {
+      setFlowerRoomId(String(batch.flowerRoomId));
+      if (batch.flowerBayId) setFlowerBayId(String(batch.flowerBayId));
+      if (Array.isArray(batch.flowerTableIds)) setFlowerTableIds([...batch.flowerTableIds]);
+    }
+  }
+
   function resolveFlowerSelectionLabels() {
     const room = cultivationRooms.flowerRooms.find((r) => r.id === flowerRoomId);
     const bay = room?.bays?.find((b) => b.id === flowerBayId);
@@ -1800,10 +1894,25 @@ export default function Cultivation() {
     if (selectedTask === "Move to Flower") {
       const fl = resolveFlowerSelectionLabels();
       selectedBatch.stage = "Flower";
-      selectedBatch.plants = Number(output || selectedBatch.plants || 0);
+      const movedPlants = Number(output || selectedBatch.plants || 0);
+      selectedBatch.plants = movedPlants;
+      selectedBatch.plantsAtFlower = movedPlants;
+      selectedBatch.flowerRoomId = flowerRoomId;
+      selectedBatch.flowerBayId = flowerBayId;
+      selectedBatch.flowerTableIds = [...flowerTableIds];
       selectedBatch.flowerRoom = fl.roomName;
       selectedBatch.flowerBay = fl.bayName;
       selectedBatch.flowerTables = [...fl.tableNames];
+      if (selectedBatch.plantsHarvestedDry === undefined || selectedBatch.plantsHarvestedDry === "") {
+        selectedBatch.plantsHarvestedDry = 0;
+      }
+      if (
+        selectedBatch.plantsHarvestedFreshFrozen === undefined ||
+        selectedBatch.plantsHarvestedFreshFrozen === ""
+      ) {
+        selectedBatch.plantsHarvestedFreshFrozen = 0;
+      }
+      recomputeDryCanopyForCultivationBatch(selectedBatch, cultivationRooms);
       setSelectedTask("Set Irrigation Up");
     }
 
@@ -2082,7 +2191,7 @@ export default function Cultivation() {
                     <button
                       style={primaryButtonStyle}
                       onClick={() => {
-                        primeTaskModalLocationFields(cultivationRooms);
+                        primeTaskModalFromSelectedBatch(selectedBatch);
                         setShowTaskWindow(true);
                       }}
                     >
@@ -2778,6 +2887,54 @@ export default function Cultivation() {
                 }
               >
                 {notificationModal.confirmText || "OK"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {testPassModalBatch && (
+        <div style={{ ...modalOverlayStyle, zIndex: 10000 }}>
+          <div
+            style={{
+              ...modalStyle,
+              maxWidth: 500,
+              border: "1px solid #22c55e",
+            }}
+          >
+            <h2 style={{ textAlign: "center", marginTop: 0 }}>
+              Test passed — lab THC %
+            </h2>
+            <p style={{ textAlign: "center", color: "#cbd5e1" }}>
+              Batch <b>{testPassModalBatch.id}</b>. Enter final lab THC % (numeric). This updates strain analytics and
+              company config rollups.
+            </p>
+            <input
+              type="number"
+              step="0.01"
+              min={0}
+              placeholder="e.g. 24.5"
+              value={testPassThcPct}
+              onChange={(e) => setTestPassThcPct(e.target.value)}
+              style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}
+            />
+            <div style={modalButtonRowStyle}>
+              <button
+                style={buttonStyle}
+                onClick={() => {
+                  setTestPassModalBatch(null);
+                  setTestPassThcPct("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                style={primaryButtonStyle}
+                onClick={() => {
+                  void applyDryFlowerTestPassed(testPassModalBatch, Number(testPassThcPct));
+                }}
+              >
+                Save and mark passed
               </button>
             </div>
           </div>
