@@ -2134,6 +2134,16 @@ export default function Cultivation() {
     }
   }
 
+  function openTaskWindowForBatch(batch: any) {
+    if (!batch) return;
+    selectBatch(batch);
+    const taskList = getTasksForStage(batch.stage || "Clone");
+    setSelectedTask(taskList[0] || "Maintenance");
+    primeTaskModalFromSelectedBatch(batch);
+    setShowTaskWindow(true);
+    setSelectedStage(null);
+  }
+
   function resolveFlowerSelectionLabels() {
     const room = cultivationRooms.flowerRooms.find((r) => r.id === flowerRoomId);
     const bay = room?.bays?.find((b) => b.id === flowerBayId);
@@ -2446,108 +2456,40 @@ export default function Cultivation() {
           )}
         </div>
 
-        <div style={gridStyle}>
-          <section style={cardStyle}>
-            <h3 style={sectionTitleStyle}>Active Cultivation Batches</h3>
+        <section style={cardStyle}>
+          <h3 style={sectionTitleStyle}>Active Cultivation Batches</h3>
 
-            {activeBatches.length === 0 ? (
-              <p style={{ textAlign: "center", color: "#cbd5e1" }}>No active cultivation batches.</p>
-            ) : (
-              <div style={stageCardsWrapStyle}>
-                {stageOrder.map((stageName) => (
-                  <button
-                    key={stageName}
-                    style={{
-                      ...buttonStyle,
-                      width: "100%",
-                      minHeight: 86,
-                      textAlign: "left",
-                      display: "flex",
-                      flexDirection: "column",
-                      justifyContent: "center",
-                      gap: 4,
-                      background: "#0f172a",
-                      border: "1px solid #334155",
-                    }}
-                    onClick={() => setSelectedStage(stageName)}
-                  >
-                    <span style={{ fontWeight: 900, fontSize: 16 }}>{stageName}</span>
-                    <span style={{ color: "#cbd5e1", fontWeight: 700 }}>
-                      {activeBatchesByStage[stageName].length} batch
-                      {activeBatchesByStage[stageName].length === 1 ? "" : "es"}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section style={cardStyle}>
-            <h3 style={sectionTitleStyle}>
-              {selectedBatch ? `${selectedBatch.stage} Stage Tasks` : "Stage Tasks"}
-            </h3>
-
-            {!selectedBatch || selectedBatch.status === "Complete" ? (
-              <p style={{ textAlign: "center", color: "#cbd5e1" }}>Select an active batch.</p>
-            ) : (
-              <>
-                <p style={{ textAlign: "center" }}>
-                  Selected: <b>{selectedBatch.id}</b>
-                </p>
-
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
-                  {currentTasks.length === 0 ? (
-                    <p>No tasks available for this stage.</p>
-                  ) : (
-                    currentTasks.map((t: string) => (
-                      <button
-                        key={t}
-                        onClick={() => setSelectedTask(t)}
-                        style={{
-                          ...buttonStyle,
-                          background: selectedTask === t ? "#22c55e" : "#334155",
-                          color: selectedTask === t ? "black" : "white",
-                          border: selectedTask === t ? "1px solid #22c55e" : "1px solid #475569",
-                        }}
-                      >
-                        {t}
-                      </button>
-                    ))
-                  )}
-                </div>
-
-                {canWriteRecords ? (
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "center",
-                      gap: 10,
-                      marginTop: 16,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <button
-                      style={primaryButtonStyle}
-                      onClick={() => {
-                        primeTaskModalFromSelectedBatch(selectedBatch);
-                        setShowTaskWindow(true);
-                      }}
-                    >
-                      Log Selected Task
-                    </button>
-                    <button style={buttonStyle} onClick={() => setShowAddTaskWindow(true)}>
-                      + Add Task
-                    </button>
-                  </div>
-                ) : (
-                  <p style={{ color: "#94a3b8", textAlign: "center", marginTop: 16 }}>
-                    Read Only Access: task logging is disabled for your account.
-                  </p>
-                )}
-              </>
-            )}
-          </section>
-        </div>
+          {activeBatches.length === 0 ? (
+            <p style={{ textAlign: "center", color: "#cbd5e1" }}>No active cultivation batches.</p>
+          ) : (
+            <div style={stageCardsWrapStyle}>
+              {stageOrder.map((stageName) => (
+                <button
+                  key={stageName}
+                  style={{
+                    ...buttonStyle,
+                    width: "100%",
+                    minHeight: 86,
+                    textAlign: "left",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "center",
+                    gap: 4,
+                    background: "#0f172a",
+                    border: "1px solid #334155",
+                  }}
+                  onClick={() => setSelectedStage(stageName)}
+                >
+                  <span style={{ fontWeight: 900, fontSize: 16 }}>{stageName}</span>
+                  <span style={{ color: "#cbd5e1", fontWeight: 700 }}>
+                    {activeBatchesByStage[stageName].length} batch
+                    {activeBatchesByStage[stageName].length === 1 ? "" : "es"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section style={{ ...cardStyle, marginTop: 18 }}>
           <h3 style={sectionTitleStyle}>Dry Flower / Burping Batches</h3>
@@ -2817,6 +2759,14 @@ export default function Cultivation() {
                   </div>
 
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    {canWriteRecords ? (
+                      <button
+                        style={primaryButtonStyle}
+                        onClick={() => openTaskWindowForBatch(b)}
+                      >
+                        Tasks
+                      </button>
+                    ) : null}
                     <button style={buttonStyle} onClick={() => setViewBatch(b)}>
                       View
                     </button>
