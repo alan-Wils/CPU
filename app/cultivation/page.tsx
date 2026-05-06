@@ -112,8 +112,55 @@ const dryFlowerTasks = [
   "Trimming",
   "Decontamination",
   "Burping",
+  "Testing",
   "Packaging",
 ];
+
+/** Same panel as extraction — tests submitted with dry flower to the lab. */
+const dryFlowerTestingOptions = [
+  "Metals",
+  "Microbial",
+  "Residual Solvents",
+  "Pesticides",
+  "Potency",
+  "Homogeneity",
+];
+
+function getBuckWholePlantLbs(batch: any): number {
+  if (!batch) return 0;
+  const w = num(batch.buckWholePlantLbs);
+  if (w > 0) return w;
+  return num(batch.buckedWeightLbs);
+}
+
+function getPreDeconFlowerLbs(batch: any): number {
+  return num(batch?.trimmedWeightLbs) + num(batch?.popcornWeightLbs);
+}
+
+function dryTaskPrereqMessage(task: string, batch: any): string | null {
+  if (!batch) return "Select a dry flower batch.";
+  const bucked = getBuckWholePlantLbs(batch) > 0;
+  const trimFlowerMass = getPreDeconFlowerLbs(batch) > 0;
+  const deconDone = num(batch.deconWeightLbs) > 0;
+  const testPass = batch.testStatus === "Test Passed";
+
+  if (task === "Trimming" && !bucked) {
+    return "Buck first: separate whole plant (to trim) from stem waste and log both weights.";
+  }
+  if (task === "Decontamination" && !trimFlowerMass) {
+    return "Log trimming (A-grade, popcorn, and trim) before decontamination.";
+  }
+  if (task === "Burping" && !trimFlowerMass) {
+    return "Complete trimming before burping.";
+  }
+  if (task === "Testing" && !deconDone) {
+    return "Complete decontamination before submitting for testing.";
+  }
+  if (task === "Packaging" && !testPass) {
+    return "This batch must pass lab testing (with THC %) before packaging.";
+  }
+  return null;
+}
 
 const ROLE_LEVELS: Record<string, number> = {
   VIEW_ONLY: 1,
@@ -425,6 +472,10 @@ export default function Cultivation() {
   const [dryPackagingMode, setDryPackagingMode] = useState("Single package by weight");
   const [dryPackageCategory, setDryPackageCategory] = useState("A Grade Flower");
   const [dryPackageCount, setDryPackageCount] = useState("");
+  const [dryBuckWholePlant, setDryBuckWholePlant] = useState("");
+  const [dryBuckStemWaste, setDryBuckStemWaste] = useState("");
+  const [dryTestingSelectedTests, setDryTestingSelectedTests] = useState<string[]>([]);
+  const [dryTestingDateSubmitted, setDryTestingDateSubmitted] = useState("");
   const [isSavingTask, setIsSavingTask] = useState(false);
   const [isSavingDryTask, setIsSavingDryTask] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
@@ -1169,6 +1220,8 @@ export default function Cultivation() {
         status: "Drying / Curing",
         testStatus: "Not Submitted",
         plantsHarvested,
+        buckWholePlantLbs: "",
+        buckStemWasteLbs: "",
         buckedWeightLbs: "",
         trimmedWeightLbs: "",
         totalTrimLbs: "",
@@ -1262,37 +1315,10 @@ export default function Cultivation() {
     forceRefresh();
   }
 
-  function setDryFlowerTestStatus(batch: any, status: string) {
-    if (!canWriteRecords) {
-      showReadOnlyNotice();
-      return;
-    }
-
-    if (status === "Test Passed") {
-      setTestPassModalBatch(batch);
-      setTestPassThcPct("");
-      setTestPassPotencyNote("");
-      return;
-    }
-
-    batch.testStatus = status;
-
-    if (status === "Submitted to Testing") {
-      batch.status = "Submitted to Testing";
-
-      s.logs.unshift(withLoggedBy({
-        area: "Cultivation",
-        batch: batch.id,
-        task: "Submitted to Testing",
-        people: "",
-        minutes: "",
-        output: "Dry flower batch submitted to testing",
-        source: batch.source,
-        time: nowIsoForLog(),
-      }))
-    }
-
-    forceRefresh();
+  function toggleDryFlowerTestOption(test: string) {
+    setDryTestingSelectedTests((prev) =>
+      prev.includes(test) ? prev.filter((t) => t !== test) : [...prev, test],
+    );
   }
 
   async function applyDryFlowerTestPassed(batch: any, labThcPct: number, potencyNote: string) {
@@ -1453,7 +1479,10 @@ export default function Cultivation() {
     ];
 
     if (selectedDryFlowerTask === "Bucking") {
-      dryRequiredFields.push({ label: "Bucked Weight", value: dryOutput, positive: true });
+      dryRequiredFields.push(
+        { label: "Whole plant weight (to trim)", value: dryBuckWholePlant, positive: true },
+        { label: "Stem / waste weight", value: dryBuckStemWaste, zeroOrPositive: true },
+      );
     }
 
     try {
@@ -1467,6 +1496,13 @@ export default function Cultivation() {
 
     if (selectedDryFlowerTask === "Decontamination") {
       dryRequiredFields.push({ label: "Decon Output Weight", value: dryOutput, positive: true });
+    }
+
+    if (selectedDryFlowerTask === "Testing") {
+      const ts = selectedDryFlowerBatch.testStatus;
+      if (!ts || ts === "Not Submitted") {
+        dryRequiredFields.push({ label: "Lab submission date", value: dryTestingDateSubmitted });
+      }
     }
 
     if (selectedDryFlowerTask === "Packaging") {
@@ -1483,7 +1519,29 @@ export default function Cultivation() {
       return;
     }
 
-    const shouldConfirmRepeatTask = selectedDryFlowerTask !== "Packaging";
+    const prereq = dryTaskPrereqMessage(selectedDryFlowerTask, selectedDryFlowerBatch);
+    if (prereq) {
+      showNotice("Complete the prior step", prereq);
+      return;
+    }
+
+    if (selectedDryFlowerTask === "Testing") {
+      const ts = selectedDryFlowerBatch.testStatus;
+      if (ts === "Submitted to Testing" || ts === "Test Passed" || ts === "Test Failed") {
+        showNotice(
+          "Use Pass or Failed",
+          "Results for this batch are already submitted, or testing is complete. Use the Pass / Failed actions when the lab results are back.",
+        );
+        return;
+      }
+      if (dryTestingSelectedTests.length === 0) {
+        showNotice("Select tests", "Choose at least one test type that was submitted to the lab (same options as extraction).");
+        return;
+      }
+    }
+
+    const shouldConfirmRepeatTask =
+      selectedDryFlowerTask !== "Packaging" && selectedDryFlowerTask !== "Testing";
 
     if (
       shouldConfirmRepeatTask &&
@@ -1499,7 +1557,11 @@ export default function Cultivation() {
         : num(dryOutput);
 
     if (selectedDryFlowerTask === "Bucking") {
-      selectedDryFlowerBatch.buckedWeightLbs = enteredWeight;
+      const wholePlant = num(dryBuckWholePlant);
+      const stemWaste = num(dryBuckStemWaste);
+      selectedDryFlowerBatch.buckWholePlantLbs = +wholePlant.toFixed(4);
+      selectedDryFlowerBatch.buckStemWasteLbs = +stemWaste.toFixed(4);
+      selectedDryFlowerBatch.buckedWeightLbs = +wholePlant.toFixed(4);
       selectedDryFlowerBatch.status = "Bucked";
 
       s.logs.unshift(withLoggedBy({
@@ -1508,7 +1570,7 @@ export default function Cultivation() {
         task: "Bucking",
         people: dryPeople,
         minutes: dryMinutes,
-        output: `Bucked weight: ${enteredWeight} lbs`,
+        output: `Whole plant (to trim): ${wholePlant} lbs | Stem / waste logged: ${stemWaste} lbs`,
         source: selectedDryFlowerBatch.source,
         time: nowIsoForLog(),
       }))
@@ -1518,6 +1580,15 @@ export default function Cultivation() {
       const aGradeFlowerWeight = enteredWeight;
       const popcornWeight = num(dryPopcornWeight);
       const totalTrimWeight = num(dryTrimWeight);
+      const cap = getBuckWholePlantLbs(selectedDryFlowerBatch);
+      const totalOut = aGradeFlowerWeight + popcornWeight + totalTrimWeight;
+      if (cap > 0 && totalOut > cap + 0.02) {
+        showNotice(
+          "Trim totals exceed bucked whole plant",
+          `A-grade (${aGradeFlowerWeight}) + popcorn (${popcornWeight}) + trim (${totalTrimWeight}) = ${totalOut.toFixed(2)} lbs, but whole plant after bucking was ${cap.toFixed(2)} lbs. Adjust your weights.`,
+        );
+        return;
+      }
       const totalPackableFlower = aGradeFlowerWeight + popcornWeight;
 
       selectedDryFlowerBatch.trimmedWeightLbs = aGradeFlowerWeight;
@@ -1581,10 +1652,16 @@ export default function Cultivation() {
     }
 
     if (selectedDryFlowerTask === "Decontamination") {
+      const preDecon = getPreDeconFlowerLbs(selectedDryFlowerBatch);
       const previousWeight =
-        num(selectedDryFlowerBatch.trimmedWeightLbs) +
-          num(selectedDryFlowerBatch.popcornWeightLbs) ||
-        num(selectedDryFlowerBatch.buckedWeightLbs);
+        preDecon > 0 ? preDecon : getBuckWholePlantLbs(selectedDryFlowerBatch);
+      if (preDecon > 0 && enteredWeight > preDecon + 0.02) {
+        showNotice(
+          "Decon weight too high",
+          `Decon output cannot exceed A-grade + popcorn going in (${preDecon.toFixed(2)} lbs). Trim is tracked separately for extraction.`,
+        );
+        return;
+      }
       const loss = Math.max(previousWeight - enteredWeight, 0);
 
       selectedDryFlowerBatch.deconWeightLbs = enteredWeight;
@@ -1619,12 +1696,25 @@ export default function Cultivation() {
       }))
     }
 
-    if (selectedDryFlowerTask === "Packaging") {
-      if (selectedDryFlowerBatch.testStatus !== "Test Passed") {
-        showNotice("Testing Required", "This batch must pass testing before packaging.");
-        return;
-      }
+    if (selectedDryFlowerTask === "Testing") {
+      selectedDryFlowerBatch.dryTestingTestsReceived = [...dryTestingSelectedTests];
+      selectedDryFlowerBatch.dryTestingDateSubmitted = dryTestingDateSubmitted.trim();
+      selectedDryFlowerBatch.testStatus = "Submitted to Testing";
+      selectedDryFlowerBatch.status = "Submitted to Testing";
 
+      s.logs.unshift(withLoggedBy({
+        area: "Cultivation",
+        batch: selectedDryFlowerBatch.id,
+        task: "Submitted to Testing",
+        people: dryPeople,
+        minutes: dryMinutes,
+        output: `Dry flower submitted for testing | Tests: ${dryTestingSelectedTests.join(", ")} | Lab submission date: ${dryTestingDateSubmitted}`,
+        source: selectedDryFlowerBatch.source,
+        time: nowIsoForLog(),
+      }))
+    }
+
+    if (selectedDryFlowerTask === "Packaging") {
       const availability = getDryFlowerPackagingAvailability(selectedDryFlowerBatch);
       const selectedAvailable =
         dryPackageCategory === "A Grade Flower"
@@ -1747,11 +1837,15 @@ export default function Cultivation() {
     setDryPeople("");
     setDryMinutes("");
     setDryOutput("");
+    setDryBuckWholePlant("");
+    setDryBuckStemWaste("");
     setDryTrimWeight("");
     setDryPopcornWeight("");
     setDryPackagingMode("Single package by weight");
     setDryPackageCategory("A Grade Flower");
     setDryPackageCount("");
+    setDryTestingSelectedTests([]);
+    setDryTestingDateSubmitted("");
     setShowDryTaskWindow(false);
     forceRefresh();
     } finally {
@@ -2257,27 +2351,16 @@ export default function Cultivation() {
                 >
                   <b>{b.id}</b> | {b.name}
                   <br />
-                  Status: {b.status} | Test: {b.testStatus || "Not Submitted"} | Bucked:{" "}
-                  {b.buckedWeightLbs || "—"} lbs | A Grade: {b.trimmedWeightLbs || "—"} lbs | Popcorn: {b.popcornWeightLbs || "—"} lbs | Trim:{" "}
+                  Status: {b.status} | Test: {b.testStatus || "Not Submitted"} | Whole plant (buck):{" "}
+                  {getBuckWholePlantLbs(b) || "—"} lbs | Stem waste:{" "}
+                  {b.buckStemWasteLbs !== undefined && b.buckStemWasteLbs !== "" ? b.buckStemWasteLbs : "—"} lbs | A
+                  Grade: {b.trimmedWeightLbs || "—"} lbs | Popcorn: {b.popcornWeightLbs || "—"} lbs | Trim:{" "}
                   {b.totalTrimLbs || "—"} lbs | Decon: {b.deconWeightLbs || "—"} lbs | Packaged:{" "}
                   {b.packagedWeightLbs || 0} lbs | Remaining:{" "}
                   {b.remainingPackableLbs === "" ? "—" : b.remainingPackableLbs} lbs | A Grade Available: {getDryFlowerPackagingAvailability(b).remainingAGradeLbs} lbs | Popcorn Available: {getDryFlowerPackagingAvailability(b).remainingPopcornLbs} lbs | Final A Grade: {b.finalAGradeFlowerLbs || "—"} lbs | Final Popcorn: {b.finalPopcornLbs || "—"} lbs
                 </div>
 
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                  {canWriteRecords && (
-                    <>
-                      <button style={buttonStyle} onClick={() => setDryFlowerTestStatus(b, "Submitted to Testing")}>
-                        Submitted
-                      </button>
-                      <button style={buttonStyle} onClick={() => setDryFlowerTestStatus(b, "Test Passed")}>
-                        Passed
-                      </button>
-                      <button style={buttonStyle} onClick={() => setFailBatch(b)}>
-                        Failed
-                      </button>
-                    </>
-                  )}
                   <button style={buttonStyle} onClick={() => setViewBatch(b)}>
                     View
                   </button>
@@ -2305,7 +2388,16 @@ export default function Cultivation() {
                 {dryFlowerTasks.map((task) => (
                   <button
                     key={task}
-                    onClick={() => setSelectedDryFlowerTask(task)}
+                    onClick={() => {
+                      setSelectedDryFlowerTask(task);
+                      if (task === "Testing" && selectedDryFlowerBatch) {
+                        const ts = selectedDryFlowerBatch.testStatus;
+                        if (!ts || ts === "Not Submitted") {
+                          setDryTestingDateSubmitted(new Date().toISOString().slice(0, 10));
+                          setDryTestingSelectedTests([]);
+                        }
+                      }
+                    }}
                     style={{
                       ...buttonStyle,
                       background: selectedDryFlowerTask === task ? "#22c55e" : "#334155",
@@ -2693,14 +2785,170 @@ export default function Cultivation() {
             <div style={formStyle}>
               <input style={inputStyle} value={selectedDryFlowerBatch.id} readOnly />
               <input style={inputStyle} value={selectedDryFlowerTask} readOnly />
+              {dryTaskPrereqMessage(selectedDryFlowerTask, selectedDryFlowerBatch) ? (
+                <p style={{ color: "#fbbf24", fontSize: 14, margin: 0, lineHeight: 1.5 }}>
+                  {dryTaskPrereqMessage(selectedDryFlowerTask, selectedDryFlowerBatch)}
+                </p>
+              ) : null}
               <input style={inputStyle} placeholder="People" value={dryPeople} onChange={(e) => setDryPeople(e.target.value)} />
               <input style={inputStyle} placeholder="Minutes" value={dryMinutes} onChange={(e) => setDryMinutes(e.target.value)} />
 
-              {selectedDryFlowerTask === "Trimming" ? (
+              {selectedDryFlowerTask === "Bucking" ? (
                 <>
+                  <input
+                    style={inputStyle}
+                    placeholder="Whole plant weight (to trim), lbs"
+                    value={dryBuckWholePlant}
+                    onChange={(e) => setDryBuckWholePlant(e.target.value)}
+                  />
+                  <input
+                    style={inputStyle}
+                    placeholder="Stem / waste weight, lbs (0 if none)"
+                    value={dryBuckStemWaste}
+                    onChange={(e) => setDryBuckStemWaste(e.target.value)}
+                  />
+                  <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                    Buck: separate floral whole-plant mass (sent to trim) from stems/waste. Waste is logged with this
+                    entry.
+                  </p>
+                </>
+              ) : selectedDryFlowerTask === "Trimming" ? (
+                <>
+                  <div
+                    style={{
+                      ...inputStyle,
+                      display: "grid",
+                      gap: 6,
+                      background: "#111827",
+                    }}
+                  >
+                    <b>From bucking (max for A + popcorn + trim)</b>
+                    <span>Whole plant to process: {getBuckWholePlantLbs(selectedDryFlowerBatch) || "—"} lbs</span>
+                    <span style={{ color: "#94a3b8", fontSize: 13 }}>
+                      Sum of A-grade, popcorn, and trim cannot exceed this weight.
+                    </span>
+                  </div>
                   <input style={inputStyle} placeholder="Total A Grade Flower in lbs" value={dryOutput} onChange={(e) => setDryOutput(e.target.value)} />
                   <input style={inputStyle} placeholder="Total Popcorn in lbs" value={dryPopcornWeight} onChange={(e) => setDryPopcornWeight(e.target.value)} />
                   <input style={inputStyle} placeholder="Total Trim in lbs" value={dryTrimWeight} onChange={(e) => setDryTrimWeight(e.target.value)} />
+                </>
+              ) : selectedDryFlowerTask === "Decontamination" ? (
+                <>
+                  <div
+                    style={{
+                      ...inputStyle,
+                      display: "grid",
+                      gap: 8,
+                      background: "#111827",
+                    }}
+                  >
+                    <b>Available for decontamination</b>
+                    <span>A-grade (pre-decon): {num(selectedDryFlowerBatch.trimmedWeightLbs).toFixed(2)} lbs</span>
+                    <span>Popcorn (pre-decon): {num(selectedDryFlowerBatch.popcornWeightLbs).toFixed(2)} lbs</span>
+                    <span style={{ color: "#94a3b8" }}>
+                      Trim to extraction: {num(selectedDryFlowerBatch.totalTrimLbs).toFixed(2)} lbs (not sent through
+                      decon)
+                    </span>
+                    <span>
+                      <b>Total flower mass for decon (A + popcorn):</b>{" "}
+                      {getPreDeconFlowerLbs(selectedDryFlowerBatch).toFixed(2)} lbs
+                    </span>
+                  </div>
+                  <input
+                    style={inputStyle}
+                    placeholder="Decon output weight in lbs"
+                    value={dryOutput}
+                    onChange={(e) => setDryOutput(e.target.value)}
+                  />
+                </>
+              ) : selectedDryFlowerTask === "Testing" ? (
+                <>
+                  {selectedDryFlowerBatch.testStatus === "Submitted to Testing" ? (
+                    <>
+                      <p style={{ color: "#cbd5e1", margin: 0 }}>
+                        Lab results are back. Record <b>pass</b> (you will enter lab THC % next) or <b>fail</b>.
+                      </p>
+                      <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                        Submitted tests: {(selectedDryFlowerBatch.dryTestingTestsReceived || []).join(", ") || "—"} | Date:{" "}
+                        {selectedDryFlowerBatch.dryTestingDateSubmitted || "—"}
+                      </p>
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 10,
+                          flexWrap: "wrap",
+                          justifyContent: "center",
+                          marginTop: 8,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          style={primaryButtonStyle}
+                          onClick={() => {
+                            setShowDryTaskWindow(false);
+                            setTestPassModalBatch(selectedDryFlowerBatch);
+                            setTestPassThcPct("");
+                            setTestPassPotencyNote("");
+                          }}
+                        >
+                          Passed — enter lab THC %
+                        </button>
+                        <button
+                          type="button"
+                          style={buttonStyle}
+                          onClick={() => {
+                            setShowDryTaskWindow(false);
+                            setFailBatch(selectedDryFlowerBatch);
+                          }}
+                        >
+                          Failed
+                        </button>
+                      </div>
+                    </>
+                  ) : selectedDryFlowerBatch.testStatus === "Test Passed" ||
+                    selectedDryFlowerBatch.testStatus === "Test Failed" ? (
+                    <p style={{ color: "#94a3b8", margin: 0 }}>
+                      Testing is complete for this batch ({selectedDryFlowerBatch.testStatus}).
+                    </p>
+                  ) : (
+                    <>
+                      <p style={{ color: "#94a3b8", fontSize: 14, margin: 0 }}>
+                        Select tests submitted to the lab (same panel as extraction). Save logs labor and sends the batch
+                        to testing.
+                      </p>
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr",
+                          gap: 8,
+                        }}
+                      >
+                        {dryFlowerTestingOptions.map((test) => (
+                          <button
+                            type="button"
+                            key={test}
+                            style={{
+                              ...buttonStyle,
+                              background: dryTestingSelectedTests.includes(test) ? "#22c55e" : "#334155",
+                              color: dryTestingSelectedTests.includes(test) ? "black" : "white",
+                            }}
+                            onClick={() => toggleDryFlowerTestOption(test)}
+                          >
+                            {test}
+                          </button>
+                        ))}
+                      </div>
+                      <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                        Date submitted to lab
+                        <input
+                          style={inputStyle}
+                          type="date"
+                          value={dryTestingDateSubmitted}
+                          onChange={(e) => setDryTestingDateSubmitted(e.target.value)}
+                        />
+                      </label>
+                    </>
+                  )}
                 </>
               ) : selectedDryFlowerTask === "Packaging" ? (
                 <>
@@ -2765,11 +3013,7 @@ export default function Cultivation() {
                 <input
                   style={inputStyle}
                   placeholder={
-                    selectedDryFlowerTask === "Bucking"
-                      ? "Bucked weight in lbs"
-                      : selectedDryFlowerTask === "Decontamination"
-                      ? "Decon output weight in lbs"
-                      : "Output / notes"
+                    selectedDryFlowerTask === "Burping" ? "Output / notes (optional)" : "Output / notes"
                   }
                   value={dryOutput}
                   onChange={(e) => setDryOutput(e.target.value)}
@@ -2784,7 +3028,13 @@ export default function Cultivation() {
               <button
                 style={primaryButtonStyle}
                 onClick={saveDryFlowerTask}
-                disabled={isSavingDryTask}
+                disabled={
+                  isSavingDryTask ||
+                  (selectedDryFlowerTask === "Testing" &&
+                    (selectedDryFlowerBatch.testStatus === "Submitted to Testing" ||
+                      selectedDryFlowerBatch.testStatus === "Test Passed" ||
+                      selectedDryFlowerBatch.testStatus === "Test Failed"))
+                }
               >
                 {isSavingDryTask ? "Saving..." : "Save Dry Flower Task"}
               </button>
