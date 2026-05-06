@@ -55,27 +55,85 @@ const STRAIN_COLORS = [
   "#94a3b8",
 ];
 
-function pivotByDate(
+/** One Recharts series per cultivation batch (strain acronym + batch id). */
+function seriesKeyForPoint(p: CultivationStrainMetricPoint) {
+  return `${p.strainAcronym.toUpperCase()}__${p.batchId}`;
+}
+
+function humanSeriesName(seriesKey: string) {
+  const i = seriesKey.indexOf("__");
+  if (i < 0) return seriesKey;
+  const ac = seriesKey.slice(0, i);
+  const id = seriesKey.slice(i + 2);
+  const tail = id.includes("-") ? (id.split("-").pop() ?? id) : id.slice(-6);
+  return `${ac} · ${tail}`;
+}
+
+/** Distinct x tick so same calendar day + same strain does not collapse multiple harvests. */
+function xTickForPoint(p: CultivationStrainMetricPoint) {
+  const id = p.batchId;
+  const tail = id.includes("-") ? (id.split("-").pop() ?? id.slice(-8)) : id.slice(-8);
+  return `${p.date} · ${tail}`;
+}
+
+/**
+ * Wide rows for Recharts: one row per API point, unique `xTick`, one numeric column per series key.
+ * (Old pivot-by-date-only dropped every batch but the last whenever two shared a lab result date.)
+ */
+function buildStrainMetricCharts(
   points: CultivationStrainMetricPoint[],
   acronyms: string[],
-  field: "potencyPct" | "dryYieldGPerSqFt",
-): Record<string, string | number>[] {
+): {
+  potencyRows: Record<string, string | number | undefined>[];
+  yieldRows: Record<string, string | number | undefined>[];
+  seriesKeys: string[];
+} {
   const want = new Set(acronyms.map((a) => a.toUpperCase()));
-  const byDate = new Map<string, Record<string, number | string>>();
+  const filtered = points
+    .filter((p) => want.size === 0 || want.has(p.strainAcronym.toUpperCase()))
+    .filter((p) => {
+      const pot = p.potencyPct != null && Number.isFinite(p.potencyPct);
+      const yld =
+        p.dryYieldGPerSqFt != null &&
+        Number.isFinite(p.dryYieldGPerSqFt) &&
+        p.dryYieldGPerSqFt > 0;
+      return pot || yld;
+    })
+    .sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) || a.batchId.localeCompare(b.batchId),
+    );
 
-  for (const p of points) {
-    const ac = p.strainAcronym.toUpperCase();
-    if (want.size > 0 && !want.has(ac)) continue;
-    const v = p[field];
-    if (v == null || !Number.isFinite(v)) continue;
-    const row = byDate.get(p.date) || { date: p.date };
-    row[ac] = v;
-    byDate.set(p.date, row);
+  const seriesKeys = [...new Set(filtered.map(seriesKeyForPoint))];
+
+  const potencyRows: Record<string, string | number | undefined>[] = [];
+  const yieldRows: Record<string, string | number | undefined>[] = [];
+
+  for (const p of filtered) {
+    const sk = seriesKeyForPoint(p);
+    const base = {
+      xTick: xTickForPoint(p),
+      date: p.date,
+      batchId: p.batchId,
+    };
+    const pr: Record<string, string | number | undefined> = { ...base };
+    const yr: Record<string, string | number | undefined> = { ...base };
+    for (const k of seriesKeys) {
+      pr[k] = undefined;
+      yr[k] = undefined;
+    }
+    if (p.potencyPct != null && Number.isFinite(p.potencyPct)) pr[sk] = p.potencyPct;
+    if (
+      p.dryYieldGPerSqFt != null &&
+      Number.isFinite(p.dryYieldGPerSqFt) &&
+      p.dryYieldGPerSqFt > 0
+    )
+      yr[sk] = p.dryYieldGPerSqFt;
+    potencyRows.push(pr);
+    yieldRows.push(yr);
   }
 
-  return [...byDate.values()].sort((a, b) =>
-    String(a.date).localeCompare(String(b.date)),
-  );
+  return { potencyRows, yieldRows, seriesKeys };
 }
 
 export default function AnalyticsPage() {
@@ -139,12 +197,8 @@ export default function AnalyticsPage() {
     return [...set];
   }, [points, selectedAcronyms]);
 
-  const potencyRows = useMemo(
-    () => pivotByDate(points, acronymsForChart, "potencyPct"),
-    [points, acronymsForChart],
-  );
-  const yieldRows = useMemo(
-    () => pivotByDate(points, acronymsForChart, "dryYieldGPerSqFt"),
+  const { potencyRows, yieldRows, seriesKeys: metricSeriesKeys } = useMemo(
+    () => buildStrainMetricCharts(points, acronymsForChart),
     [points, acronymsForChart],
   );
 
@@ -189,6 +243,7 @@ export default function AnalyticsPage() {
           <h1 style={{ textAlign: "center", marginBottom: 8 }}>Analytics</h1>
           <p style={{ textAlign: "center", color: "#94a3b8", marginTop: 0 }}>
             Cultivation strain metrics from batches with lab THC % and dry yield (g / sq ft allocated to dry harvest).
+            Multiple batches on the same lab date appear as separate points (date · batch id).
           </p>
 
           <section style={cardStyle}>
@@ -297,9 +352,17 @@ export default function AnalyticsPage() {
                 <h3 style={{ marginTop: 0 }}>Potency (lab THC %)</h3>
                 <div style={{ width: "100%", height: 360 }}>
                   <ResponsiveContainer>
-                    <LineChart data={potencyRows}>
+                    <LineChart data={potencyRows} margin={{ bottom: 28, left: 8, right: 8 }}>
                       <CartesianGrid stroke="#334155" strokeDasharray="3 3" />
-                      <XAxis dataKey="date" stroke="#94a3b8" />
+                      <XAxis
+                        dataKey="xTick"
+                        stroke="#94a3b8"
+                        interval={0}
+                        angle={-22}
+                        textAnchor="end"
+                        height={72}
+                        tick={{ fontSize: 11 }}
+                      />
                       <YAxis stroke="#94a3b8" domain={["auto", "auto"]} />
                       <Tooltip
                         contentStyle={{
@@ -309,11 +372,12 @@ export default function AnalyticsPage() {
                         }}
                       />
                       <Legend />
-                      {acronymsForChart.map((ac, i) => (
+                      {metricSeriesKeys.map((sk, i) => (
                         <Line
-                          key={ac}
+                          key={sk}
                           type="monotone"
-                          dataKey={ac}
+                          dataKey={sk}
+                          name={humanSeriesName(sk)}
                           stroke={STRAIN_COLORS[i % STRAIN_COLORS.length]}
                           dot={{ r: 3 }}
                           connectNulls
@@ -328,9 +392,17 @@ export default function AnalyticsPage() {
                 <h3 style={{ marginTop: 0 }}>Dry yield (g / sq ft)</h3>
                 <div style={{ width: "100%", height: 360 }}>
                   <ResponsiveContainer>
-                    <LineChart data={yieldRows}>
+                    <LineChart data={yieldRows} margin={{ bottom: 28, left: 8, right: 8 }}>
                       <CartesianGrid stroke="#334155" strokeDasharray="3 3" />
-                      <XAxis dataKey="date" stroke="#94a3b8" />
+                      <XAxis
+                        dataKey="xTick"
+                        stroke="#94a3b8"
+                        interval={0}
+                        angle={-22}
+                        textAnchor="end"
+                        height={72}
+                        tick={{ fontSize: 11 }}
+                      />
                       <YAxis stroke="#94a3b8" domain={["auto", "auto"]} />
                       <Tooltip
                         contentStyle={{
@@ -340,11 +412,12 @@ export default function AnalyticsPage() {
                         }}
                       />
                       <Legend />
-                      {acronymsForChart.map((ac, i) => (
+                      {metricSeriesKeys.map((sk, i) => (
                         <Line
-                          key={`y-${ac}`}
+                          key={`y-${sk}`}
                           type="monotone"
-                          dataKey={ac}
+                          dataKey={sk}
+                          name={humanSeriesName(sk)}
                           stroke={STRAIN_COLORS[i % STRAIN_COLORS.length]}
                           dot={{ r: 3 }}
                           connectNulls
