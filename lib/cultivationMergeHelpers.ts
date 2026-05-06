@@ -4,7 +4,8 @@ export type CombineMergeLogData = {
   combineBatches?: boolean;
   survivorBatchId?: string;
   absorbedBatchId?: string;
-  plantsBeforePartner?: number;
+  /** Persisted logs may coerce counts to strings depending on serialization. */
+  plantsBeforePartner?: number | string | null;
   plantsBeforeSurvivor?: number;
   plantsAfterCombine?: number;
   stageBucket?: string;
@@ -56,9 +57,12 @@ export function resolveAbsorbedPlantsAndStageForUncombine(
     stage = cultivationStageFromCombineBucket(logMatch.stageBucket);
   }
 
-  if (plants === undefined && logMatch && logMatch.plantsBeforePartner != null && logMatch.plantsBeforePartner !== "") {
-    const n = Number(logMatch.plantsBeforePartner);
-    if (Number.isFinite(n)) plants = n;
+  if (plants === undefined && logMatch != null) {
+    const raw = logMatch.plantsBeforePartner;
+    if (raw !== undefined && raw !== null && String(raw).trim() !== "") {
+      const n = Number(raw);
+      if (Number.isFinite(n)) plants = n;
+    }
   }
 
   if (plants === undefined) return null;
