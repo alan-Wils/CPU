@@ -44,6 +44,39 @@ function defaultDateRange() {
   return { from: iso(from), to: iso(to) };
 }
 
+/** API / JSON may return numeric fields as strings; Recharts needs real numbers for correct Y mapping. */
+function finiteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "")
+    return null;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeMetricPoints(raw: unknown[]): CultivationStrainMetricPoint[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CultivationStrainMetricPoint[] = [];
+  for (const row of raw) {
+    if (row == null || typeof row !== "object" || Array.isArray(row)) continue;
+    const r = row as Record<string, unknown>;
+    const batchId = String(r.batchId ?? "").trim();
+    const strain = String(r.strain ?? "").trim();
+    const strainAcronym = String(r.strainAcronym ?? "").trim();
+    const date = String(r.date ?? "").trim();
+    if (!batchId || !strainAcronym || !date) continue;
+    const potencyPct = finiteNumber(r.potencyPct);
+    const dryYieldGPerSqFt = finiteNumber(r.dryYieldGPerSqFt);
+    out.push({
+      batchId,
+      strain,
+      strainAcronym,
+      date,
+      potencyPct,
+      dryYieldGPerSqFt,
+    });
+  }
+  return out;
+}
+
 const STRAIN_COLORS = [
   "#22c55e",
   "#38bdf8",
@@ -55,18 +88,86 @@ const STRAIN_COLORS = [
   "#94a3b8",
 ];
 
-/** One Recharts series per cultivation batch (strain acronym + batch id). */
-function seriesKeyForPoint(p: CultivationStrainMetricPoint) {
-  return `${p.strainAcronym.toUpperCase()}__${p.batchId}`;
+type TooltipPayloadItem = {
+  dataKey?: string | number;
+  name?: string;
+  value?: string | number;
+  color?: string;
+  payload?: Record<string, unknown>;
+};
+
+function StrainMetricTooltip(props: {
+  active?: boolean;
+  label?: string;
+  payload?: TooltipPayloadItem[];
+  valueSuffix?: string;
+}) {
+  const { active, label, payload, valueSuffix = "" } = props;
+  if (!active || !payload?.length) return null;
+  const row = (payload[0]?.payload ?? {}) as Record<string, unknown>;
+  const batchId = row.batchId != null ? String(row.batchId) : "";
+  const entries = payload
+    .map((it) => {
+      const n = finiteNumber(it.value);
+      if (n == null) return null;
+      return { ...it, value: n };
+    })
+    .filter(Boolean) as Array<TooltipPayloadItem & { value: number }>;
+  if (entries.length === 0) return null;
+  return (
+    <div
+      style={{
+        background: "#0f172a",
+        border: "1px solid #334155",
+        borderRadius: 8,
+        padding: "10px 12px",
+        fontSize: 13,
+        color: "#e2e8f0",
+      }}
+    >
+      {label != null && label !== "" && (
+        <div style={{ marginBottom: 6, fontWeight: 700 }}>{label}</div>
+      )}
+      {batchId ? (
+        <div style={{ color: "#94a3b8", marginBottom: 8, fontSize: 12, wordBreak: "break-all" }}>
+          Batch <span style={{ color: "#e2e8f0" }}>{batchId}</span>
+        </div>
+      ) : null}
+      {entries.map((it) => (
+        <div key={String(it.dataKey)} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 99,
+              background: it.color ?? "#94a3b8",
+            }}
+          />
+          <span>
+            {it.name}:{" "}
+            <strong>
+              {Number.isInteger(it.value) ? String(it.value) : it.value.toFixed(1)}
+            </strong>
+            {valueSuffix}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
-function humanSeriesName(seriesKey: string) {
-  const i = seriesKey.indexOf("__");
-  if (i < 0) return seriesKey;
-  const ac = seriesKey.slice(0, i);
-  const id = seriesKey.slice(i + 2);
-  const tail = id.includes("-") ? (id.split("-").pop() ?? id) : id.slice(-6);
-  return `${ac} · ${tail}`;
+/** One Recharts series per strain so multiple batches form a connected line over time. */
+function seriesKeyForPoint(p: CultivationStrainMetricPoint) {
+  return p.strainAcronym.toUpperCase();
+}
+
+function displayNameForAcronym(
+  acronym: string,
+  fromPoints: CultivationStrainMetricPoint[],
+) {
+  const hit = fromPoints.find((p) => p.strainAcronym.toUpperCase() === acronym);
+  const name = String(hit?.strain ?? "").trim();
+  return name ? `${name} (${acronym})` : acronym;
 }
 
 /** Distinct x tick so same calendar day + same strain does not collapse multiple harvests. */
@@ -92,11 +193,10 @@ function buildStrainMetricCharts(
   const filtered = points
     .filter((p) => want.size === 0 || want.has(p.strainAcronym.toUpperCase()))
     .filter((p) => {
-      const pot = p.potencyPct != null && Number.isFinite(p.potencyPct);
-      const yld =
-        p.dryYieldGPerSqFt != null &&
-        Number.isFinite(p.dryYieldGPerSqFt) &&
-        p.dryYieldGPerSqFt > 0;
+      const potN = finiteNumber(p.potencyPct);
+      const yldN = finiteNumber(p.dryYieldGPerSqFt);
+      const pot = potN != null;
+      const yld = yldN != null && yldN > 0;
       return pot || yld;
     })
     .sort(
@@ -104,7 +204,7 @@ function buildStrainMetricCharts(
         a.date.localeCompare(b.date) || a.batchId.localeCompare(b.batchId),
     );
 
-  const seriesKeys = [...new Set(filtered.map(seriesKeyForPoint))];
+  const seriesKeys = [...new Set(filtered.map(seriesKeyForPoint))].sort();
 
   const potencyRows: Record<string, string | number | undefined>[] = [];
   const yieldRows: Record<string, string | number | undefined>[] = [];
@@ -122,13 +222,10 @@ function buildStrainMetricCharts(
       pr[k] = undefined;
       yr[k] = undefined;
     }
-    if (p.potencyPct != null && Number.isFinite(p.potencyPct)) pr[sk] = p.potencyPct;
-    if (
-      p.dryYieldGPerSqFt != null &&
-      Number.isFinite(p.dryYieldGPerSqFt) &&
-      p.dryYieldGPerSqFt > 0
-    )
-      yr[sk] = p.dryYieldGPerSqFt;
+    const potN = finiteNumber(p.potencyPct);
+    const yldN = finiteNumber(p.dryYieldGPerSqFt);
+    if (potN != null) pr[sk] = potN;
+    if (yldN != null && yldN > 0) yr[sk] = yldN;
     potencyRows.push(pr);
     yieldRows.push(yr);
   }
@@ -177,7 +274,7 @@ export default function AnalyticsPage() {
         to,
         strains: selectedAcronyms.length > 0 ? selectedAcronyms : undefined,
       });
-      setPoints(Array.isArray(out.points) ? out.points : []);
+      setPoints(normalizeMetricPoints(Array.isArray(out.points) ? out.points : []));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load analytics");
       setPoints([]);
@@ -201,6 +298,46 @@ export default function AnalyticsPage() {
     () => buildStrainMetricCharts(points, acronymsForChart),
     [points, acronymsForChart],
   );
+
+  const potencyYDomain = useMemo((): [number, number] | undefined => {
+    const vals: number[] = [];
+    for (const row of potencyRows) {
+      for (const sk of metricSeriesKeys) {
+        const n = finiteNumber(row[sk]);
+        if (n != null) vals.push(n);
+      }
+    }
+    if (vals.length === 0) return undefined;
+    let lo = Math.min(...vals);
+    let hi = Math.max(...vals);
+    if (lo === hi) {
+      lo -= 0.5;
+      hi += 0.5;
+    }
+    const span = hi - lo;
+    const pad = Math.max(0.25, span * 0.08);
+    return [Math.floor((lo - pad) * 10) / 10, Math.ceil((hi + pad) * 10) / 10];
+  }, [potencyRows, metricSeriesKeys]);
+
+  const yieldYDomain = useMemo((): [number, number] | undefined => {
+    const vals: number[] = [];
+    for (const row of yieldRows) {
+      for (const sk of metricSeriesKeys) {
+        const n = finiteNumber(row[sk]);
+        if (n != null && n > 0) vals.push(n);
+      }
+    }
+    if (vals.length === 0) return undefined;
+    let lo = Math.min(...vals);
+    let hi = Math.max(...vals);
+    if (lo === hi) {
+      lo = Math.max(0, lo * 0.92);
+      hi = hi * 1.08;
+    }
+    const span = hi - lo;
+    const pad = Math.max(span * 0.06, 0.01);
+    return [+Math.max(0, lo - pad).toFixed(3), +(hi + pad).toFixed(3)];
+  }, [yieldRows, metricSeriesKeys]);
 
   const pageStyle = {
     minHeight: "100vh",
@@ -244,7 +381,8 @@ export default function AnalyticsPage() {
           <p style={{ textAlign: "center", color: "#94a3b8", marginTop: 0 }}>
             Cultivation strain metrics from lab THC % and dry yield (g / sq ft) per dry flower batch when synced to the
             server; each point uses the lab result date saved at <strong>Test Passed</strong>. Multiple burping batches
-            share one parent cultivation id but plot as separate points (date · batch id).
+            share one parent cultivation id but plot as separate points (date · batch id). Lines connect batches of the
+            same strain in time order; hover a point for the full batch id.
           </p>
 
           <section style={cardStyle}>
@@ -364,23 +502,23 @@ export default function AnalyticsPage() {
                         height={72}
                         tick={{ fontSize: 11 }}
                       />
-                      <YAxis stroke="#94a3b8" domain={["auto", "auto"]} />
-                      <Tooltip
-                        contentStyle={{
-                          background: "#0f172a",
-                          border: "1px solid #334155",
-                          borderRadius: 8,
-                        }}
+                      <YAxis
+                        stroke="#94a3b8"
+                        domain={potencyYDomain ?? ["auto", "auto"]}
+                        tickFormatter={(v) => (typeof v === "number" ? v.toFixed(1) : String(v))}
+                        allowDataOverflow
                       />
+                      <Tooltip content={(tp) => <StrainMetricTooltip {...tp} valueSuffix=" %" />} />
                       <Legend />
                       {metricSeriesKeys.map((sk, i) => (
                         <Line
                           key={sk}
                           type="monotone"
                           dataKey={sk}
-                          name={humanSeriesName(sk)}
+                          name={displayNameForAcronym(sk, points)}
                           stroke={STRAIN_COLORS[i % STRAIN_COLORS.length]}
-                          dot={{ r: 3 }}
+                          strokeWidth={2}
+                          dot={{ r: 4 }}
                           connectNulls
                         />
                       ))}
@@ -404,23 +542,23 @@ export default function AnalyticsPage() {
                         height={72}
                         tick={{ fontSize: 11 }}
                       />
-                      <YAxis stroke="#94a3b8" domain={["auto", "auto"]} />
-                      <Tooltip
-                        contentStyle={{
-                          background: "#0f172a",
-                          border: "1px solid #334155",
-                          borderRadius: 8,
-                        }}
+                      <YAxis
+                        stroke="#94a3b8"
+                        domain={yieldYDomain ?? ["auto", "auto"]}
+                        tickFormatter={(v) => (typeof v === "number" ? v.toFixed(2) : String(v))}
+                        allowDataOverflow
                       />
+                      <Tooltip content={(tp) => <StrainMetricTooltip {...tp} valueSuffix=" g/sq ft" />} />
                       <Legend />
                       {metricSeriesKeys.map((sk, i) => (
                         <Line
                           key={`y-${sk}`}
                           type="monotone"
                           dataKey={sk}
-                          name={humanSeriesName(sk)}
+                          name={displayNameForAcronym(sk, points)}
                           stroke={STRAIN_COLORS[i % STRAIN_COLORS.length]}
-                          dot={{ r: 3 }}
+                          strokeWidth={2}
+                          dot={{ r: 4 }}
                           connectNulls
                         />
                       ))}
