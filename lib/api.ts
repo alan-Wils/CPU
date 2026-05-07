@@ -469,3 +469,55 @@ export async function saveCashLogEodPrefs(companyId: string, prefs: CashLogEodPr
     { method: "PUT", body: prefs, companyId },
   );
 }
+
+/** Autogrow MultiGrow readings (requires company Autogrow config + JWT roles). */
+
+export type AutogrowWeatherSnapshotDto = {
+  ok: boolean;
+  status: number;
+  metadata: Record<string, unknown> | null;
+  readings: Record<string, unknown> | null;
+  message?: string;
+};
+
+export type AutogrowCompSnapshotItemDto = {
+  compIndex: number;
+  ok: boolean;
+  status: number;
+  metadata: Record<string, unknown> | null;
+  readings: Record<string, unknown> | null;
+  message?: string;
+};
+
+export type AutogrowSnapshotSuccessDto = {
+  ok: true;
+  deviceUuid: string;
+  compLabels: Array<{ compIndex: number; label: string }>;
+  comps: AutogrowCompSnapshotItemDto[];
+  weather: AutogrowWeatherSnapshotDto;
+};
+
+export type AutogrowSnapshotFailureDto = {
+  ok: false;
+  status: number;
+  message: string;
+};
+
+export type AutogrowSnapshotDto = AutogrowSnapshotSuccessDto | AutogrowSnapshotFailureDto;
+
+export async function fetchAutogrowSnapshot(companyId?: string) {
+  return apiRequest<AutogrowSnapshotDto>("/api/autogrow/snapshot", { companyId });
+}
+
+/** Success body only; failures throw via apiRequest. */
+export type AutogrowCompDetailSuccess = {
+  deviceUuid: string;
+  compIndex: number;
+  metadata: Record<string, unknown> | null;
+  readings: Record<string, unknown>;
+};
+
+export async function fetchAutogrowCompReadings(compIndex: number, companyId?: string) {
+  const idx = encodeURIComponent(String(compIndex));
+  return apiRequest<AutogrowCompDetailSuccess>(`/api/autogrow/comps/${idx}`, { companyId });
+}

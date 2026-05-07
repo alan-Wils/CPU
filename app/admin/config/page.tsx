@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import Nav from "@/components/Nav";
+import { CollapsibleConfigSection } from "@/components/admin/CollapsibleConfigSection";
 import {
   API_BASE_URL,
   apiRequest,
@@ -23,6 +24,11 @@ import {
   resolveMetrcApiBaseUrl,
 } from "@/lib/metrcCompanyConfig";
 import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
+import {
+  defaultAutogrowCompanyConfig,
+  type AutogrowCompLabel,
+  type ClimateControlCompanyConfig,
+} from "@/lib/autogrowCompanyConfig";
 
 type Strain = {
   id: string;
@@ -84,6 +90,7 @@ type BlendNameHistoryRecord = {
 type AppConfig = {
   company: {
     metrc: MetrcCompanyConfig;
+    climateControl: ClimateControlCompanyConfig;
     settings: {
       companyWideNotes: string;
       /** IANA time zone for every facility-facing timestamp. Empty = browser default. */
@@ -157,6 +164,9 @@ type AppConfig = {
 const emptyConfig: AppConfig = {
   company: {
     metrc: { ...defaultMetrcCompanyConfig },
+    climateControl: {
+      autogrow: { ...defaultAutogrowCompanyConfig },
+    },
     settings: {
       companyWideNotes: "",
       displayTimezone: "",
@@ -235,6 +245,29 @@ function mergeRewardsSettings(
         Array.isArray(inc.taskChallenge?.tiers) && inc.taskChallenge!.tiers.length > 0
           ? inc.taskChallenge!.tiers
           : base.taskChallenge.tiers,
+    },
+  };
+}
+
+function mergeClimateControl(
+  incomingCompany: Partial<{ climateControl?: Partial<ClimateControlCompanyConfig> | null }> | null | undefined,
+): ClimateControlCompanyConfig {
+  const incRoot = incomingCompany?.climateControl;
+  const ag = incRoot?.autogrow;
+  return {
+    autogrow: {
+      ...defaultAutogrowCompanyConfig,
+      ...(ag || {}),
+      compLabels: Array.isArray(ag?.compLabels)
+        ? ag.compLabels.map((r) => ({
+            compIndex: Number((r as AutogrowCompLabel).compIndex),
+            label: String((r as AutogrowCompLabel).label ?? ""),
+          }))
+        : [...defaultAutogrowCompanyConfig.compLabels],
+      apiKey: String(ag?.apiKey ?? defaultAutogrowCompanyConfig.apiKey),
+      deviceUuid: String(ag?.deviceUuid ?? defaultAutogrowCompanyConfig.deviceUuid),
+      integrationEnabled: Boolean(ag?.integrationEnabled ?? false),
+      notes: String(ag?.notes ?? defaultAutogrowCompanyConfig.notes),
     },
   };
 }
@@ -364,6 +397,7 @@ export default function ConfigPage() {
   const [displayTimezoneDraft, setDisplayTimezoneDraft] = useState("");
   const [timeZoneFilter, setTimeZoneFilter] = useState("");
   const [showMetrcSecrets, setShowMetrcSecrets] = useState(false);
+  const [showAutogrowSecrets, setShowAutogrowSecrets] = useState(false);
   const [metrcConnectionTesting, setMetrcConnectionTesting] = useState(false);
   /** Last connection-test diagnostics (from API; keys never included). */
   const [metrcTestDiagnostics, setMetrcTestDiagnostics] = useState<{
@@ -494,6 +528,7 @@ export default function ConfigPage() {
             ...defaultMetrcCompanyConfig,
             ...(data.company?.metrc || {}),
           },
+          climateControl: mergeClimateControl(data.company),
           settings: {
             ...emptyConfig.company.settings,
             ...(data.company?.settings || {}),
@@ -572,6 +607,7 @@ export default function ConfigPage() {
             ...defaultMetrcCompanyConfig,
             ...(data.company?.metrc || {}),
           },
+          climateControl: mergeClimateControl(data.company),
           settings: {
             ...emptyConfig.company.settings,
             ...(data.company?.settings || {}),
@@ -1327,7 +1363,7 @@ export default function ConfigPage() {
         <div>
           <h1 style={styles.title}>Company Config</h1>
           <p style={styles.subtitle}>
-            Admin-only company settings for METRC, cultivation, extraction, and packaging.
+            Admin-only company settings — climate control (Autogrow), METRC, cultivation, extraction, and packaging.
           </p>
         </div>
 
@@ -1336,9 +1372,23 @@ export default function ConfigPage() {
         </button>
       </div>
 
-      <section style={styles.card}>
+      <CollapsibleConfigSection
+        sectionStyle={styles.card}
+        sectionNumber="1"
+        title="Company"
+        summaryCollapsed={
+          <>
+            METRC: <b style={{ color: "#e2e8f0" }}>{metrcConnectionBadge.label}</b>
+            {" · "}
+            Time zone:{" "}
+            <b style={{ color: "#e2e8f0" }}>
+              {(config.company.settings.displayTimezone || "").trim() || "Browser default"}
+            </b>
+          </>
+        }
+      >
         <div style={{ ...styles.inline, alignItems: "center", marginBottom: 4 }}>
-          <h2 style={{ ...styles.sectionTitle, marginBottom: 0 }}>1. Company</h2>
+          <h2 style={{ ...styles.sectionTitle, marginBottom: 0 }}>Facility &amp; METRC</h2>
           <button
             type="button"
             title="Facility time zone — applies to all timestamps in this workspace"
@@ -2838,11 +2888,289 @@ export default function ConfigPage() {
             + Add break / lunch window
           </button>
         </div>
-      </section>
+      </CollapsibleConfigSection>
 
-      <section style={styles.card}>
-        <h2 style={styles.sectionTitle}>2. Cultivation</h2>
+      <CollapsibleConfigSection
+        sectionStyle={{ ...styles.card, marginTop: 18 }}
+        sectionNumber="2"
+        title="Climate control"
+        summaryCollapsed={
+          <>
+            Autogrow:{" "}
+            <b style={{ color: "#e2e8f0" }}>
+              {config.company.climateControl.autogrow.integrationEnabled ? "enabled" : "disabled"}
+            </b>
+            {config.company.climateControl.autogrow.deviceUuid.trim()
+              ? ` · UUID …${config.company.climateControl.autogrow.deviceUuid.trim().slice(-8)}`
+              : ""}
+          </>
+        }
+      >
+        <h3 style={styles.subTitle}>Autogrow (MultiGrow)</h3>
+        <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14, lineHeight: 1.55 }}>
+          API key from{" "}
+          <a href="https://my.autogrow.com/" target="_blank" rel="noopener noreferrer" style={{ color: "#93c5fd" }}>
+            my.autogrow.com
+          </a>
+          ; device UUID from your MultiGrow controller. Readings are fetched server-side (~750 ms between compartments) —
+          enable only when configured.
+        </p>
 
+        <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <input
+            type="checkbox"
+            checked={config.company.climateControl.autogrow.integrationEnabled}
+            onChange={(e) =>
+              setConfig((prev) => ({
+                ...prev,
+                company: {
+                  ...prev.company,
+                  climateControl: {
+                    ...prev.company.climateControl,
+                    autogrow: {
+                      ...prev.company.climateControl.autogrow,
+                      integrationEnabled: e.target.checked,
+                    },
+                  },
+                },
+              }))
+            }
+          />
+          Enable Autogrow reads for cultivation room stats (server-side)
+        </label>
+
+        <div style={styles.grid}>
+          <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
+            MultiGrow device UUID
+            <input
+              style={styles.input}
+              placeholder="e.g. 4dca6b5579d9629db95db54764b3cd29"
+              spellCheck={false}
+              autoComplete="off"
+              value={config.company.climateControl.autogrow.deviceUuid}
+              onChange={(e) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    climateControl: {
+                      ...prev.company.climateControl,
+                      autogrow: { ...prev.company.climateControl.autogrow, deviceUuid: e.target.value },
+                    },
+                  },
+                }))
+              }
+            />
+          </label>
+        </div>
+
+        <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 10, marginBottom: 12, marginTop: 8 }}>
+          <input
+            type="checkbox"
+            checked={showAutogrowSecrets}
+            onChange={(e) => setShowAutogrowSecrets(e.target.checked)}
+          />
+          Show Autogrow API key on screen
+        </label>
+
+        <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
+          API key (Bearer)
+          {showAutogrowSecrets ? (
+            <textarea
+              style={{
+                ...styles.textarea,
+                minHeight: 72,
+                fontFamily: "ui-monospace, monospace",
+                wordBreak: "break-all",
+              }}
+              rows={3}
+              spellCheck={false}
+              autoComplete="off"
+              value={config.company.climateControl.autogrow.apiKey}
+              onChange={(e) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    climateControl: {
+                      ...prev.company.climateControl,
+                      autogrow: { ...prev.company.climateControl.autogrow, apiKey: e.target.value },
+                    },
+                  },
+                }))
+              }
+            />
+          ) : (
+            <input
+              style={styles.input}
+              type="password"
+              autoComplete="off"
+              value={config.company.climateControl.autogrow.apiKey}
+              onChange={(e) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    climateControl: {
+                      ...prev.company.climateControl,
+                      autogrow: { ...prev.company.climateControl.autogrow, apiKey: e.target.value },
+                    },
+                  },
+                }))
+              }
+            />
+          )}
+        </label>
+
+        <label style={{ ...styles.label, gridColumn: "1 / -1", marginTop: 8 }}>
+          Internal notes (not sent to Autogrow)
+          <textarea
+            style={{ ...styles.textarea, minHeight: 56 }}
+            value={config.company.climateControl.autogrow.notes}
+            onChange={(e) =>
+              setConfig((prev) => ({
+                ...prev,
+                company: {
+                  ...prev.company,
+                  climateControl: {
+                    ...prev.company.climateControl,
+                    autogrow: { ...prev.company.climateControl.autogrow, notes: e.target.value },
+                  },
+                },
+              }))
+            }
+          />
+        </label>
+
+        <h4 style={{ ...styles.subTitle, fontSize: 16, marginTop: 18 }}>Zone labels (`comps` index)</h4>
+        <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 10 }}>
+          Optional friendly names per compartment index for the Room stats pages.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {(config.company.climateControl.autogrow.compLabels || []).map((row, idx) => (
+            <div
+              key={`ag-cl-${idx}-${row.compIndex}`}
+              style={{ ...styles.grid, border: "1px solid #334155", borderRadius: 10, padding: 10, alignItems: "center" }}
+            >
+              <label style={styles.label}>
+                Comp #
+                <input
+                  style={styles.input}
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={row.compIndex}
+                  onChange={(e) => {
+                    const v = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                    setConfig((prev) => {
+                      const list = [...(prev.company.climateControl.autogrow.compLabels || [])];
+                      list[idx] = { ...list[idx], compIndex: v };
+                      return {
+                        ...prev,
+                        company: {
+                          ...prev.company,
+                          climateControl: {
+                            ...prev.company.climateControl,
+                            autogrow: { ...prev.company.climateControl.autogrow, compLabels: list },
+                          },
+                        },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <label style={{ ...styles.label, gridColumn: "span 2" }}>
+                Display name
+                <input
+                  style={styles.input}
+                  value={row.label}
+                  placeholder="Flower 3"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setConfig((prev) => {
+                      const list = [...(prev.company.climateControl.autogrow.compLabels || [])];
+                      list[idx] = { ...list[idx], label: v };
+                      return {
+                        ...prev,
+                        company: {
+                          ...prev.company,
+                          climateControl: {
+                            ...prev.company.climateControl,
+                            autogrow: { ...prev.company.climateControl.autogrow, compLabels: list },
+                          },
+                        },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                style={{ ...styles.deleteButton, justifySelf: "end" }}
+                onClick={() =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    company: {
+                      ...prev.company,
+                      climateControl: {
+                        ...prev.company.climateControl,
+                        autogrow: {
+                          ...prev.company.climateControl.autogrow,
+                          compLabels: (prev.company.climateControl.autogrow.compLabels || []).filter((_, i) => i !== idx),
+                        },
+                      },
+                    },
+                  }))
+                }
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            style={{ ...styles.addButton, alignSelf: "start" }}
+            onClick={() =>
+              setConfig((prev) => ({
+                ...prev,
+                company: {
+                  ...prev.company,
+                  climateControl: {
+                    ...prev.company.climateControl,
+                    autogrow: {
+                      ...prev.company.climateControl.autogrow,
+                      compLabels: [
+                        ...(prev.company.climateControl.autogrow.compLabels || []),
+                        { compIndex: 0, label: "" },
+                      ],
+                    },
+                  },
+                },
+              }))
+            }
+          >
+            + Add zone label
+          </button>
+        </div>
+
+        <h3 style={{ ...styles.subTitle, marginTop: 24, opacity: 0.85 }}>More climate systems</h3>
+        <p style={{ color: "#64748b", fontSize: 13, marginBottom: 0 }}>
+          Additional vendor integrations will appear here beside Autogrow.
+        </p>
+      </CollapsibleConfigSection>
+
+      <CollapsibleConfigSection
+        sectionStyle={{ ...styles.card, marginTop: 18 }}
+        sectionNumber="3"
+        title="Cultivation"
+        summaryCollapsed={
+          <>
+            {config.cultivation.strains.length} strain{config.cultivation.strains.length === 1 ? "" : "s"} ·{" "}
+            {config.cultivation.rooms.vegRooms.length} veg · {config.cultivation.rooms.flowerRooms.length} flower ·{" "}
+            {(config.cultivation.supplies || []).length} supply rows
+          </>
+        }
+      >
         <h3 style={styles.subTitle}>Strain List</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14 }}>
           When cultivation data is rolled up, <b>Potency</b> and <b>Average yield</b> on each strain update from lab
@@ -3150,11 +3478,20 @@ export default function ConfigPage() {
             </div>
           ))}
         </div>
-      </section>
+      </CollapsibleConfigSection>
 
-      <section style={styles.card}>
-        <h2 style={styles.sectionTitle}>3. Extraction</h2>
-
+      <CollapsibleConfigSection
+        sectionStyle={{ ...styles.card, marginTop: 18 }}
+        sectionNumber="4"
+        title="Extraction"
+        summaryCollapsed={
+          <>
+            {config.extraction.productNames.length} product name
+            {config.extraction.productNames.length === 1 ? "" : "s"} · {(config.extraction.supplies || []).length}{" "}
+            supplies
+          </>
+        }
+      >
         <div style={styles.inline}>
           <button type="button" style={styles.secondaryButton} onClick={() => void openAiPromptModal()}>
             Configure AI naming
@@ -3267,11 +3604,18 @@ export default function ConfigPage() {
           supplies={config.extraction.supplies}
           onRemove={(id) => removeSupply("extraction", id)}
         />
-      </section>
+      </CollapsibleConfigSection>
 
-      <section style={styles.card}>
-        <h2 style={styles.sectionTitle}>4. Packaging</h2>
-
+      <CollapsibleConfigSection
+        sectionStyle={{ ...styles.card, marginTop: 18 }}
+        sectionNumber="5"
+        title="Packaging"
+        summaryCollapsed={
+          <>
+            {(config.packaging.supplies || []).length} supply row{(config.packaging.supplies || []).length === 1 ? "" : "s"}
+          </>
+        }
+      >
         <h3 style={styles.subTitle}>Packaging Supplies & Cost</h3>
 
         <SupplyForm
@@ -3284,7 +3628,7 @@ export default function ConfigPage() {
           supplies={config.packaging.supplies}
           onRemove={(id) => removeSupply("packaging", id)}
         />
-      </section>
+      </CollapsibleConfigSection>
 
       {cultivationFieldModal.kind !== "closed" ? (
         <div

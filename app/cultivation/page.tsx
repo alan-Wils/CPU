@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import {
@@ -4984,7 +4985,7 @@ export default function Cultivation() {
     const n = Number(raw);
     if (raw === "" || !Number.isFinite(n) || n < 1) {
       return {
-        ok: null as const,
+        ok: null,
         tags: [] as string[],
         error: "",
         source: null as "metrc_inventory" | "local_sequence" | null,
@@ -6164,10 +6165,41 @@ export default function Cultivation() {
         <Nav />
 
         <div style={headerStyle}>
-          <h1 style={{ marginBottom: 6 }}>Cultivation</h1>
-          <p style={{ color: "#cbd5e1", margin: 0 }}>
-            Manage clone, veg, flower, dry flower, testing, packaging, and completed batch history.
-          </p>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 14,
+              width: "100%",
+            }}
+          >
+            <div>
+              <h1 style={{ marginBottom: 6 }}>Cultivation</h1>
+              <p style={{ color: "#cbd5e1", margin: 0 }}>
+                Manage clone, veg, flower, dry flower, testing, packaging, and completed batch history.
+              </p>
+            </div>
+            <Link
+              href="/cultivation/room-stats"
+              style={{
+                flexShrink: 0,
+                alignSelf: "center",
+                padding: "10px 16px",
+                borderRadius: 10,
+                border: "1px solid #0891b2",
+                background: "#0c4a6e",
+                color: "#a5f3fc",
+                fontWeight: 800,
+                fontSize: 14,
+                textDecoration: "none",
+                boxShadow: "0 0 0 1px rgba(6,182,212,0.25)",
+              }}
+            >
+              Room stats
+            </Link>
+          </div>
         </div>
 
         <div style={{ ...cardStyle, marginBottom: 18, textAlign: "center" }}>
