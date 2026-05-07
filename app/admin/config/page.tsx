@@ -1428,6 +1428,7 @@ export default function ConfigPage() {
           </>
         }
       >
+        <div style={styles.configSubCard}>
         <div style={{ ...styles.inline, alignItems: "center", marginBottom: 4 }}>
           <h2 style={{ ...styles.sectionTitle, marginBottom: 0 }}>Facility &amp; METRC</h2>
           <button
@@ -1738,7 +1739,9 @@ export default function ConfigPage() {
             </>
           )}
         </div>
+        </div>
 
+        <div style={styles.configSubCard}>
         <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 12, lineHeight: 1.55 }}>
           Credentials are saved per company in the database and used only by your server (e.g. Railway). They are not
           exposed to browsers except on this admin screen. Confirm API host patterns with your state&apos;s METRC
@@ -2048,8 +2051,10 @@ export default function ConfigPage() {
             }
           />
         </label>
+        </div>
 
-        <h3 style={styles.subTitle}>Staff rewards</h3>
+        <div style={styles.configSubCard}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Staff rewards</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
           Points are derived from task logs and batch data (informational). Turn off to hide Rewards everywhere.
           Managers enroll employees under Admin → Users.
@@ -2436,8 +2441,10 @@ export default function ConfigPage() {
             </label>
           </div>
         ))}
+        </div>
 
-        <h3 style={styles.subTitle}>Workflow — extra tasks & rewards</h3>
+        <div style={styles.configSubCard}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Workflow — extra tasks & rewards</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
           Add facility-specific tasks; they appear alongside built-in tasks in Cultivation, Extraction, and Packaging. For each
           row, choose whether staff rewards (fast-target bonus + tier challenge points) apply, and a multiplier for{" "}
@@ -2805,8 +2812,10 @@ export default function ConfigPage() {
             Add packaging task
           </button>
         </div>
+        </div>
 
-        <h3 style={styles.subTitle}>Labor — breaks & lunch (facility clock)</h3>
+        <div style={styles.configSubCardLast}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Labor — breaks & lunch (facility clock)</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
           When operators log cultivation tasks using <b>start / end time</b>, overlaps with these windows are subtracted
           from net labor (person-minutes). Use 24-hour times (e.g. lunch <code>12:00</code>–<code>13:00</code>). Same
@@ -2929,6 +2938,7 @@ export default function ConfigPage() {
             + Add break / lunch window
           </button>
         </div>
+        </div>
       </CollapsibleConfigSection>
 
       <CollapsibleConfigSection
@@ -2947,7 +2957,8 @@ export default function ConfigPage() {
           </>
         }
       >
-        <h3 style={styles.subTitle}>Autogrow (MultiGrow)</h3>
+        <div style={styles.configSubCard}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Autogrow (MultiGrow)</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14, lineHeight: 1.55 }}>
           API key from{" "}
           <a href="https://my.autogrow.com/" target="_blank" rel="noopener noreferrer" style={{ color: "#93c5fd" }}>
@@ -3082,8 +3093,10 @@ export default function ConfigPage() {
             }
           />
         </label>
+        </div>
 
-        <h4 style={{ ...styles.subTitle, fontSize: 16, marginTop: 18 }}>Zone labels (`comps` index)</h4>
+        <div style={styles.configSubCard}>
+        <h4 style={{ ...styles.subTitle, fontSize: 16, marginTop: 0 }}>Zone labels (`comps` index)</h4>
         <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 10 }}>
           Optional friendly names per compartment index for the Room stats pages.
         </p>
@@ -3193,11 +3206,14 @@ export default function ConfigPage() {
             + Add zone label
           </button>
         </div>
+        </div>
 
-        <h3 style={{ ...styles.subTitle, marginTop: 24, opacity: 0.85 }}>More climate systems</h3>
+        <div style={styles.configSubCardLast}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0, opacity: 0.85 }}>More climate systems</h3>
         <p style={{ color: "#64748b", fontSize: 13, marginBottom: 0 }}>
           Additional vendor integrations will appear here beside Autogrow.
         </p>
+        </div>
       </CollapsibleConfigSection>
 
       <CollapsibleConfigSection
@@ -3212,7 +3228,8 @@ export default function ConfigPage() {
           </>
         }
       >
-        <h3 style={styles.subTitle}>Strain List</h3>
+        <div style={styles.configSubCard}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Strain List</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14 }}>
           When cultivation data is rolled up, <b>Potency</b> and <b>Average yield</b> on each strain update from lab
           THC% and dry g/sq ft averages (defaults: THC under 16 = Low, 16–22 Medium, 22–28 High, 28+ Very High; yield
@@ -3348,8 +3365,10 @@ export default function ConfigPage() {
             </div>
           ))}
         </div>
+        </div>
 
-        <h3 style={styles.subTitle}>Cultivation Supplies & Cost</h3>
+        <div style={styles.configSubCard}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Cultivation Supplies & Cost</h3>
 
         <SupplyForm
           form={cultivationSupplyForm}
@@ -3361,8 +3380,10 @@ export default function ConfigPage() {
           supplies={config.cultivation.supplies}
           onRemove={(id) => removeSupply("cultivation", id)}
         />
+        </div>
 
-        <h3 style={styles.subTitle}>Veg Rooms / Bays / Tables</h3>
+        <div style={styles.configSubCard}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Veg Rooms / Bays / Tables</h3>
 
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
           Same layout as flower: use <strong style={{ color: "#e5e7eb" }}>Add room with layout</strong> to name a
@@ -3455,8 +3476,10 @@ export default function ConfigPage() {
             </div>
           ))}
         </div>
+        </div>
 
-        <h3 style={styles.subTitle}>Flower Rooms / Bays / Tables</h3>
+        <div style={styles.configSubCardLast}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Flower Rooms / Bays / Tables</h3>
 
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
           Use <strong style={{ color: "#e5e7eb" }}>Add room with layout</strong> to name a flower room and generate bays
@@ -3550,6 +3573,7 @@ export default function ConfigPage() {
             </div>
           ))}
         </div>
+        </div>
       </CollapsibleConfigSection>
 
       <CollapsibleConfigSection
@@ -3564,6 +3588,7 @@ export default function ConfigPage() {
           </>
         }
       >
+        <div style={styles.configSubCard}>
         <div style={styles.inline}>
           <button type="button" style={styles.secondaryButton} onClick={() => void openAiPromptModal()}>
             Configure AI naming
@@ -3572,8 +3597,10 @@ export default function ConfigPage() {
             {extractionAiNamingStatusLine(config.extraction)}
           </span>
         </div>
+        </div>
 
-        <h3 style={styles.subTitle}>Product Name Database</h3>
+        <div style={styles.configSubCard}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Product Name Database</h3>
 
         <div style={styles.grid}>
           <input
@@ -3620,8 +3647,10 @@ export default function ConfigPage() {
             </div>
           ))}
         </div>
+        </div>
 
-        <h3 style={styles.subTitle}>Previously Used Blend Names</h3>
+        <div style={styles.configSubCard}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Previously Used Blend Names</h3>
 
         <div style={styles.list}>
           {config.extraction.blendNameHistory.length === 0 ? (
@@ -3663,8 +3692,10 @@ export default function ConfigPage() {
             ))
           )}
         </div>
+        </div>
 
-        <h3 style={styles.subTitle}>Extraction Supplies & Cost</h3>
+        <div style={styles.configSubCardLast}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Extraction Supplies & Cost</h3>
 
         <SupplyForm
           form={extractionSupplyForm}
@@ -3676,6 +3707,7 @@ export default function ConfigPage() {
           supplies={config.extraction.supplies}
           onRemove={(id) => removeSupply("extraction", id)}
         />
+        </div>
       </CollapsibleConfigSection>
 
       <CollapsibleConfigSection
@@ -3688,7 +3720,8 @@ export default function ConfigPage() {
           </>
         }
       >
-        <h3 style={styles.subTitle}>Packaging Supplies & Cost</h3>
+        <div style={styles.configSubCardLast}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Packaging Supplies & Cost</h3>
 
         <SupplyForm
           form={packagingSupplyForm}
@@ -3700,6 +3733,7 @@ export default function ConfigPage() {
           supplies={config.packaging.supplies}
           onRemove={(id) => removeSupply("packaging", id)}
         />
+        </div>
       </CollapsibleConfigSection>
 
       {cultivationFieldModal.kind !== "closed" ? (
@@ -4325,5 +4359,19 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 12,
     padding: 12,
     marginTop: 10,
+  },
+  configSubCard: {
+    border: "1px solid #334155",
+    borderRadius: 14,
+    padding: "16px 18px",
+    marginBottom: 18,
+    background: "#020617",
+  },
+  configSubCardLast: {
+    border: "1px solid #334155",
+    borderRadius: 14,
+    padding: "16px 18px",
+    marginBottom: 0,
+    background: "#020617",
   },
 };
