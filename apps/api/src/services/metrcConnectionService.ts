@@ -1,6 +1,6 @@
 import { ConfigService } from "./configService.js";
 import { logWarn } from "../lib/logger.js";
-import { performMetrcAuthorizedGet } from "../lib/metrcPerformGet.js";
+import { isMetrcPerformGetFailure, performMetrcAuthorizedGet } from "../lib/metrcPerformGet.js";
 import { resolveMetrcApiBaseUrl } from "../lib/metrcResolveBaseUrl.js";
 import type { MetrcAttemptFailure, MetrcAuthModeUsed } from "../lib/metrcConnectionAttempts.js";
 import { parseLocationsPayload, toSampleLocation } from "../lib/metrcConnectionHelpers.js";
@@ -96,7 +96,7 @@ export class MetrcConnectionService {
       pathnameAndQuery: path,
     });
 
-    if (result.ok) {
+    if (!isMetrcPerformGetFailure(result)) {
       const locations = parseLocationsPayload(result.bodyJson);
       const sampleLocations = locations.slice(0, 5).map(toSampleLocation);
       const success: MetrcTestConnectionSuccess = {

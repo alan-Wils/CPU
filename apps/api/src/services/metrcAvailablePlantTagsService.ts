@@ -1,6 +1,6 @@
 import { ConfigService } from "./configService.js";
 import { logInfo } from "../lib/logger.js";
-import { performMetrcAuthorizedGet } from "../lib/metrcPerformGet.js";
+import { isMetrcPerformGetFailure, performMetrcAuthorizedGet } from "../lib/metrcPerformGet.js";
 import {
   resolveMetrcApiBaseUrl,
 } from "../lib/metrcResolveBaseUrl.js";
@@ -91,7 +91,7 @@ export class MetrcAvailablePlantTagsService {
       pathnameAndQuery: path,
     });
 
-    if (!inner.ok) {
+    if (isMetrcPerformGetFailure(inner)) {
       return {
         ok: false,
         status: inner.status,

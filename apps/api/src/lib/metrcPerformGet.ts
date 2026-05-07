@@ -62,6 +62,11 @@ export type MetrcPerformGetFailure = {
 
 export type MetrcPerformGetResult = MetrcPerformGetSuccess | MetrcPerformGetFailure;
 
+/** Works with `strict: false` where `!r.ok` does not narrow discriminated unions reliably. */
+export function isMetrcPerformGetFailure(r: MetrcPerformGetResult): r is MetrcPerformGetFailure {
+  return r.ok === false;
+}
+
 function summarizeAllAttemptsFailed(failures: MetrcAttemptFailure[]): string {
   if (!failures.length) return "METRC request failed.";
   const last = failures[failures.length - 1];
@@ -95,7 +100,7 @@ export async function performMetrcAuthorizedGet(input: {
 
   if (!baseUrl || !licenseNumber) {
     return {
-      ok: false,
+      ok: false as const,
       status: 400,
       message: "Bad request. Check license number, state, and base URL in Admin → METRC settings.",
       baseUrl: baseUrl || null,
@@ -107,7 +112,7 @@ export async function performMetrcAuthorizedGet(input: {
 
   if (!userKey) {
     return {
-      ok: false,
+      ok: false as const,
       status: 400,
       message: "User API key is required. Save a facility user key in Admin → METRC settings.",
       baseUrl,
@@ -120,7 +125,7 @@ export async function performMetrcAuthorizedGet(input: {
   const path = String(input.pathnameAndQuery || "").trim();
   if (!path.startsWith("/")) {
     return {
-      ok: false,
+      ok: false as const,
       status: 400,
       message: "Invalid METRC path.",
       baseUrl,
@@ -165,7 +170,7 @@ export async function performMetrcAuthorizedGet(input: {
           attemptsBeforeSuccess: failures.length + 1,
         });
         return {
-          ok: true,
+          ok: true as const,
           baseUrl,
           licenseNumber,
           authMode: mode,
@@ -190,7 +195,7 @@ export async function performMetrcAuthorizedGet(input: {
       lastStatus: status,
     });
     return {
-      ok: false,
+      ok: false as const,
       status,
       message: summarizeAllAttemptsFailed(failures),
       baseUrl,
@@ -205,7 +210,7 @@ export async function performMetrcAuthorizedGet(input: {
       error: error instanceof Error ? error.message : String(error),
     });
     return {
-      ok: false,
+      ok: false as const,
       status: 0,
       message: "Unable to reach METRC from the API server.",
       baseUrl,
