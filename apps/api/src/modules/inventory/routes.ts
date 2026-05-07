@@ -20,13 +20,21 @@ const leafLinkConfigWriteSchema = z.object({
   apiKey: z.string().max(2048).optional(),
   clearApiKey: z.boolean().optional(),
 });
+const leafLinkInventoryQuerySchema = z.object({
+  debug: z
+    .preprocess((v) => String(v ?? "").trim().toLowerCase(), z.enum(["", "0", "1", "true", "false"]).optional())
+    .optional(),
+});
 
 inventoryRouter.get(
   "/leaflink",
   requireRoleOrAppPermission(["OWNER", "ADMIN", "OPERATIONS_MANAGER"], "page.inventory"),
+  validate({ query: leafLinkInventoryQuerySchema }),
   asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
-    const out = await leafLinkInventoryService.fetchAvailableInventory(companyId);
+    const q = req.query as { debug?: string };
+    const debug = q?.debug === "1" || q?.debug === "true";
+    const out = await leafLinkInventoryService.fetchAvailableInventory(companyId, { debug });
     res.json(out);
   }),
 );

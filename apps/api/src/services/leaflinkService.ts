@@ -158,6 +158,14 @@ export type LeafLinkInventoryResponse = {
     categoriesCount: number;
   };
   lastSyncedAt: string;
+  debug?: {
+    endpoint: string;
+    authMode: string;
+    rootKeys: string[];
+    listSource: string;
+    rawRowCount: number;
+    firstRowKeys: string[];
+  };
 };
 
 function toNumber(v: unknown): number {
@@ -189,16 +197,21 @@ function pickPrice(row: Record<string, unknown>): number | null {
   return nestedVal > 0 ? nestedVal : null;
 }
 
-function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
+function pickListSource(raw: unknown): { list: unknown[]; source: string } {
   const root = asRecord(raw);
-  const list =
-    (Array.isArray(root.data) && root.data) ||
-    (Array.isArray(root.results) && root.results) ||
-    (Array.isArray(asRecord(root.content).results) && asRecord(root.content).results) ||
-    (Array.isArray(asRecord(root.content).products) && asRecord(root.content).products) ||
-    (Array.isArray(root.products) && root.products) ||
-    (Array.isArray(root.items) && root.items) ||
-    (Array.isArray(raw) ? raw : []);
+  if (Array.isArray(root.data)) return { list: root.data, source: "data" };
+  if (Array.isArray(root.results)) return { list: root.results, source: "results" };
+  const content = asRecord(root.content);
+  if (Array.isArray(content.results)) return { list: content.results, source: "content.results" };
+  if (Array.isArray(content.products)) return { list: content.products, source: "content.products" };
+  if (Array.isArray(root.products)) return { list: root.products, source: "products" };
+  if (Array.isArray(root.items)) return { list: root.items, source: "items" };
+  if (Array.isArray(raw)) return { list: raw, source: "raw_array" };
+  return { list: [], source: "none" };
+}
+
+function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
+  const { list } = pickListSource(raw);
   const out: LeafLinkInventoryItem[] = [];
   for (const item of list as unknown[]) {
     const row = asRecord(item);
@@ -348,7 +361,10 @@ async function fetchJsonWithRetry(url: string, init: RequestInit, timeoutMs: num
 export class LeafLinkInventoryService {
   leafLinkService = new LeafLinkService();
 
-  async fetchAvailableInventory(companyId: string): Promise<LeafLinkInventoryResponse> {
+  async fetchAvailableInventory(
+    companyId: string,
+    opts?: { debug?: boolean },
+  ): Promise<LeafLinkInventoryResponse> {
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
     if (!creds.integrationEnabled) {
       throw new AppError("LeafLink sync is disabled for this company.", 400, "LEAFLINK_DISABLED");
@@ -382,9 +398,18 @@ export class LeafLinkInventoryService {
     ];
 
     let payload: unknown = null;
+    let usedEndpoint = "";
+    let usedAuthMode = "";
     let lastErr: unknown = null;
     outer: for (const endpoint of endpointCandidates) {
       for (const authValue of authCandidates) {
+        const authMode = authValue.startsWith("App ")
+          ? "App"
+          : authValue.startsWith("Token ")
+            ? "Token"
+            : authValue.startsWith("Bearer ")
+              ? "Bearer"
+              : "Basic";
         try {
           payload = await fetchJsonWithRetry(
             endpoint,
@@ -402,6 +427,8 @@ export class LeafLinkInventoryService {
             },
             15_000,
           );
+          usedEndpoint = endpoint;
+          usedAuthMode = authMode;
           break outer;
         } catch (error) {
           lastErr = error;
@@ -428,6 +455,19 @@ export class LeafLinkInventoryService {
       );
     }
 
+    const root = asRecord(payload);
+    const { list, source: listSource } = pickListSource(payload);
+    const firstRowKeys =
+      list.length > 0 ? Object.keys(asRecord(list[0])).slice(0, 80) : [];
+    logInfo("[LEAFLINK] normalize_preview", {
+      endpoint: usedEndpoint,
+      authMode: usedAuthMode,
+      rootKeys: Object.keys(root).slice(0, 40),
+      listSource,
+      rawRowCount: list.length,
+      firstRowKeys,
+    });
+
     const items = normalizeRows(payload);
     const categories = new Set(items.map((x) => x.category).filter(Boolean));
     const totalInventoryUnits = items.reduce((sum, row) => sum + toNumber(row.availableQuantity), 0);
@@ -435,7 +475,7 @@ export class LeafLinkInventoryService {
       const p = row.price == null ? 0 : toNumber(row.price);
       return sum + p * toNumber(row.availableQuantity);
     }, 0);
-    return {
+    const response: LeafLinkInventoryResponse = {
       source: "leaflink",
       items,
       stats: {
@@ -446,6 +486,17 @@ export class LeafLinkInventoryService {
       },
       lastSyncedAt: new Date().toISOString(),
     };
+    if (opts?.debug) {
+      response.debug = {
+        endpoint: usedEndpoint,
+        authMode: usedAuthMode,
+        rootKeys: Object.keys(root).slice(0, 60),
+        listSource,
+        rawRowCount: list.length,
+        firstRowKeys,
+      };
+    }
+    return response;
   }
 }
 
