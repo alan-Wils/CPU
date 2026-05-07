@@ -2,6 +2,7 @@ import { ConfigService } from "./configService.js";
 import { logInfo, logWarn } from "../lib/logger.js";
 import { resolveMetrcApiBaseUrl } from "../lib/metrcResolveBaseUrl.js";
 import {
+  extractMetrcApiErrorSummary,
   messageForMetrcHttpFailure,
   parseLocationsPayload,
   toSampleLocation,
@@ -124,13 +125,16 @@ export class MetrcConnectionService {
         logInfo("Using METRC single-key fallback auth", { companyId: input.companyId });
       }
 
-      let { res, bodyJson } = await fetchMetrcActiveLocationsOnce(url, auth.authorization);
+      let lastAuthorization = auth.authorization;
+      let { res, bodyJson, bodyText } = await fetchMetrcActiveLocationsOnce(url, lastAuthorization);
 
       if (!res.ok && res.status === 401 && hadVendorKey) {
         logInfo("METRC dual-key rejected (401); retrying Bearer user key", { companyId: input.companyId });
-        const second = await fetchMetrcActiveLocationsOnce(url, `Bearer ${userKey}`);
+        lastAuthorization = `Bearer ${userKey}`;
+        const second = await fetchMetrcActiveLocationsOnce(url, lastAuthorization);
         res = second.res;
         bodyJson = second.bodyJson;
+        bodyText = second.bodyText;
       }
 
       if (!res.ok && res.status === 401) {
@@ -140,16 +144,31 @@ export class MetrcConnectionService {
             : "METRC Bearer rejected (401); retrying Basic with empty integrator field",
           { companyId: input.companyId },
         );
-        const basicUserOnly = `Basic ${Buffer.from(`:${userKey}`, "utf8").toString("base64")}`;
-        const third = await fetchMetrcActiveLocationsOnce(url, basicUserOnly);
+        lastAuthorization = `Basic ${Buffer.from(`:${userKey}`, "utf8").toString("base64")}`;
+        const third = await fetchMetrcActiveLocationsOnce(url, lastAuthorization);
         res = third.res;
         bodyJson = third.bodyJson;
+        bodyText = third.bodyText;
+      }
+
+      if (!res.ok && (res.status === 500 || res.status === 502 || res.status === 503)) {
+        logInfo("[METRC] transient server error; retrying request once", {
+          companyId: input.companyId,
+          status: res.status,
+        });
+        const backoffMs = process.env.VITEST === "true" ? 0 : 2000;
+        await new Promise((r) => setTimeout(r, backoffMs));
+        const again = await fetchMetrcActiveLocationsOnce(url, lastAuthorization);
+        res = again.res;
+        bodyJson = again.bodyJson;
+        bodyText = again.bodyText;
       }
 
       const status = res.status;
 
       if (!res.ok) {
-        const message = messageForMetrcHttpFailure(status);
+        const metrcDetail = extractMetrcApiErrorSummary(bodyJson, bodyText);
+        const message = messageForMetrcHttpFailure(status, metrcDetail);
         const fail: MetrcTestConnectionFailure = {
           ok: false,
           connected: false,
@@ -162,6 +181,7 @@ export class MetrcConnectionService {
         logWarn("[METRC] connection_test_failed", {
           companyId: input.companyId,
           status,
+          metrcErrorSummaryPresent: Boolean(metrcDetail),
         });
         await this.persistConnectionSnapshot(input.companyId, input.actorUserId, company, metrc, fail);
         return fail;

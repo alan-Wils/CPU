@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  extractMetrcApiErrorSummary,
   messageForMetrcHttpFailure,
   parseLocationsPayload,
   toSampleLocation,
@@ -42,6 +43,29 @@ describe("messageForMetrcHttpFailure", () => {
     expect(messageForMetrcHttpFailure(401)).toContain("Authentication failed");
     expect(messageForMetrcHttpFailure(403)).toContain("Permission denied");
     expect(messageForMetrcHttpFailure(400)).toContain("Bad request");
+  });
+
+  it("explains 500 and optional METRC detail", () => {
+    expect(messageForMetrcHttpFailure(500)).toContain("HTTP 500");
+    expect(messageForMetrcHttpFailure(500)).toContain("server error");
+    expect(messageForMetrcHttpFailure(500, "Internal")).toContain("(Internal)");
+  });
+});
+
+describe("extractMetrcApiErrorSummary", () => {
+  it("reads Message field", () => {
+    expect(extractMetrcApiErrorSummary({ Message: "License invalid" }, "")).toBe("License invalid");
+  });
+
+  it("reads Errors[0].Message", () => {
+    expect(
+      extractMetrcApiErrorSummary({ Errors: [{ Message: "Bad license" }] }, ""),
+    ).toBe("Bad license");
+  });
+
+  it("ignores long base64-like strings", () => {
+    const long = "x".repeat(50);
+    expect(extractMetrcApiErrorSummary({ Message: long }, "")).toBeNull();
   });
 });
 

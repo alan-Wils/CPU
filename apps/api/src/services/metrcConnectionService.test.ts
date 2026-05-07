@@ -160,4 +160,30 @@ describe("MetrcConnectionService", () => {
     expect(out.ok && out.connected).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("retries once on METRC HTTP 500 then succeeds", async () => {
+    let n = 0;
+    const fetchMock = vi.fn(async () => {
+      n += 1;
+      if (n === 1) {
+        return { ok: false, status: 500, text: async () => '{"Message":"Transient"}' };
+      }
+      return { ok: true, status: 200, text: async () => "[]" };
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    listMock.mockResolvedValue(
+      companyRow({
+        ...baseMetrc,
+        apiKey: "V",
+        userKey: "U",
+      }),
+    );
+
+    const svc = new MetrcConnectionService();
+    const out = await svc.runTestConnection({ companyId: "c1", actorUserId: "u1" });
+
+    expect(out.ok && out.connected).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
