@@ -241,42 +241,41 @@ export default function InventoryPage() {
                     <tbody>
                       {layoutMode === "flat"
                         ? pageItems.map((row) => <InventoryProductRow key={row.id} row={row} />)
-                        : pageGroups.map((g) =>
-                            g.rows.length === 1 ? (
-                              <InventoryProductRow key={g.key} row={g.rows[0]} />
-                            ) : (
-                              <Fragment key={g.key}>
-                                <tr style={{ borderTop: "1px solid rgba(51,65,85,0.6)", background: "rgba(15,23,42,0.5)" }}>
-                                  <td colSpan={8} style={{ ...tdStyle, paddingBottom: 4 }}>
-                                    <details open={g.rows.length <= 6} style={{ width: "100%" }}>
-                                      <summary
-                                        style={{
-                                          cursor: "pointer",
-                                          color: "#7dd3fc",
-                                          fontWeight: 800,
-                                          listStylePosition: "outside",
-                                        }}
-                                      >
-                                        Source package <span style={{ color: "#e2e8f0" }}>{g.key}</span>
-                                        <span style={{ color: "#94a3b8", fontWeight: 600, marginLeft: 8 }}>
-                                          — {g.rows.length} sizes / SKUs
-                                        </span>
-                                      </summary>
-                                      <div style={{ marginTop: 10, overflowX: "auto" }}>
-                                        <table style={{ ...tableStyle, minWidth: 720 }}>
-                                          <tbody>
-                                            {g.rows.map((row) => (
-                                              <InventoryProductRow key={row.id} row={row} nested />
-                                            ))}
-                                          </tbody>
-                                        </table>
-                                      </div>
-                                    </details>
-                                  </td>
-                                </tr>
-                              </Fragment>
-                            ),
-                          )}
+                        : pageGroups.map((g) => (
+                            <Fragment key={g.key}>
+                              <tr style={{ borderTop: "1px solid rgba(51,65,85,0.6)", background: "rgba(15,23,42,0.5)" }}>
+                                <td colSpan={8} style={{ ...tdStyle, paddingBottom: 4 }}>
+                                  <details open={g.rows.length <= 6} style={{ width: "100%" }}>
+                                    <summary
+                                      style={{
+                                        cursor: "pointer",
+                                        color: "#7dd3fc",
+                                        fontWeight: 800,
+                                        listStylePosition: "outside",
+                                      }}
+                                    >
+                                      Source package <span style={{ color: "#e2e8f0" }}>{g.key}</span>
+                                      <span style={{ color: "#94a3b8", fontWeight: 600, marginLeft: 8 }}>
+                                        —
+                                        {g.rows.length === 1
+                                          ? " 1 SKU"
+                                          : ` ${g.rows.length} sizes / SKUs`}
+                                      </span>
+                                    </summary>
+                                    <div style={{ marginTop: 10, overflowX: "auto" }}>
+                                      <table style={{ ...tableStyle, minWidth: 720 }}>
+                                        <tbody>
+                                          {g.rows.map((row) => (
+                                            <InventoryProductRow key={row.id} row={row} nested />
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </details>
+                                </td>
+                              </tr>
+                            </Fragment>
+                          ))}
                     </tbody>
                   </table>
                 </div>
