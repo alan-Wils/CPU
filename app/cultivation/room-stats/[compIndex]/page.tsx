@@ -10,7 +10,7 @@ import { labelForAutogrowComp } from "@/lib/autogrowCompanyConfig";
 
 function fmt(v: unknown): string {
   if (v == null || v === "") return "—";
-  if (typeof v === "number") return Number.isFinite(v) ? String(v) : "—";
+  if (typeof v === "number") return Number.isFinite(v) ? v.toFixed(2) : "—";
   if (typeof v === "boolean") return v ? "Yes" : "No";
   if (typeof v === "object") {
     try {

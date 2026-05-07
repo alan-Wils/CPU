@@ -9,7 +9,7 @@ import { labelForAutogrowComp } from "@/lib/autogrowCompanyConfig";
 
 function fmt(v: unknown): string {
   if (v == null || v === "") return "—";
-  if (typeof v === "number") return Number.isFinite(v) ? String(v) : "—";
+  if (typeof v === "number") return Number.isFinite(v) ? v.toFixed(2) : "—";
   if (typeof v === "boolean") return v ? "Yes" : "No";
   if (typeof v === "object") {
     try {
@@ -118,7 +118,7 @@ export default function CultivationRoomStatsPage() {
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
               {okSnap.comps
-                .filter((c) => c.ok && c.readings)
+                .filter((c) => c.ok && c.readings && c.compIndex !== 6 && c.compIndex !== 7)
                 .map((c) => {
                   const r = c.readings!;
                   const title = labelForAutogrowComp(c.compIndex, okSnap.compLabels);
