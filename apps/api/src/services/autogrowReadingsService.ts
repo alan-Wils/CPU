@@ -16,6 +16,23 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+/**
+ * Autogrow `/multigrow/:uuid/comps/:id` uses **1-based** `:id`; response `metadata.index` is often 0-based.
+ * Cultivation URLs and snapshots use **0-based** `compIndex` — use this helper for history/current paths where the vendor expects 1-based ids.
+ */
+function autogrowCompsRestId(compIndex: number): number {
+  return Math.floor(compIndex) + 1;
+}
+
+function autogrowErrorDetail(bodyJson: unknown): string | null {
+  const o = asRecord(bodyJson);
+  for (const k of ["message", "error", "detail", "Description"] as const) {
+    const s = String(o[k] ?? "").trim();
+    if (s) return s.slice(0, 400);
+  }
+  return null;
+}
+
 export type AutogrowCompSnapshotItem = {
   compIndex: number;
   ok: boolean;
@@ -194,7 +211,7 @@ export class AutogrowReadingsService {
     const comps: AutogrowCompSnapshotItem[] = [];
     for (let compIndex = 0; compIndex < MAX_COMP_PROBE; compIndex += 1) {
       if (compIndex > 0) await sleep(BETWEEN_COMP_MS);
-      const r = await fetchAutogrowPath(uuid, `/comps/${compIndex}`, apiKey);
+      const r = await fetchAutogrowPath(uuid, `/comps/${autogrowCompsRestId(compIndex)}`, apiKey);
       logInfo("[AUTOGROW] comp_probe", {
         companyId,
         compIndex,
@@ -258,7 +275,7 @@ export class AutogrowReadingsService {
     if (gate.valid === false) return { ok: false, status: gate.status, message: gate.message };
 
     const { apiKey, uuid } = gate;
-    const r = await fetchAutogrowPath(uuid, `/comps/${compIndex}`, apiKey);
+    const r = await fetchAutogrowPath(uuid, `/comps/${autogrowCompsRestId(compIndex)}`, apiKey);
     const parsed = readingsAndMeta(r.bodyJson);
 
     if (r.status === 200 && parsed.readings) {
@@ -273,7 +290,11 @@ export class AutogrowReadingsService {
 
     let message = `Autogrow returned HTTP ${r.status}`;
     if (r.status === 429) message = "Autogrow rate limited. Try again shortly.";
-    if (r.status === 402) message = "Device subscription required on Autogrow.";
+    else if (r.status === 402) message = "Device subscription required on Autogrow.";
+    else {
+      const hint = autogrowErrorDetail(r.bodyJson);
+      if (hint) message = `${message}: ${hint}`;
+    }
     return { ok: false, status: r.status, message };
   }
 
@@ -308,9 +329,10 @@ export class AutogrowReadingsService {
     if (gate.valid === false) return { ok: false, status: gate.status, message: gate.message };
 
     const { apiKey, uuid } = gate;
+    const compRestId = autogrowCompsRestId(compIndex);
     const r = await fetchAutogrowPath(
       uuid,
-      `/comps/${compIndex}/history/${Math.floor(fromEpoch)}/${Math.floor(toEpoch)}`,
+      `/comps/${compRestId}/history/${Math.floor(fromEpoch)}/${Math.floor(toEpoch)}`,
       apiKey,
     );
     if (r.status === 200) {
@@ -326,7 +348,11 @@ export class AutogrowReadingsService {
 
     let message = `Autogrow returned HTTP ${r.status}`;
     if (r.status === 429) message = "Autogrow rate limited. Try again shortly.";
-    if (r.status === 402) message = "Device subscription required on Autogrow.";
+    else if (r.status === 402) message = "Device subscription required on Autogrow.";
+    else {
+      const hint = autogrowErrorDetail(r.bodyJson);
+      if (hint) message = `${message}: ${hint}`;
+    }
     return { ok: false, status: r.status, message };
   }
 }

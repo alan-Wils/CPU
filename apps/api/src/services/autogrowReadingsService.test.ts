@@ -62,7 +62,7 @@ describe("AutogrowReadingsService", () => {
     expect(out.readings.air_temp).toBe(22.5);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(String(url)).toContain("/multigrow/dev-1/comps/0");
+    expect(String(url)).toContain("/multigrow/dev-1/comps/1");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer SECRET");
   });
 
@@ -107,6 +107,34 @@ describe("AutogrowReadingsService", () => {
     expect(out.comps).toHaveLength(0);
     expect(out.weather.ok).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("getCompHistory uses 1-based Autogrow comps id in path", async () => {
+    listMock.mockResolvedValue(
+      companyClimate({
+        apiKey: "k",
+        deviceUuid: "dev-uuid",
+        integrationEnabled: true,
+        compLabels: [],
+      }),
+    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          readings: [{ time: "2024-01-01T00:00:00Z", air_temp: 20, rh: 50 }],
+          metadata: {},
+        }),
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const svc = new AutogrowReadingsService();
+    const out = await svc.getCompHistory("c1", 0, 1_000_000_000, 1_000_008_640);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.points.length).toBeGreaterThan(0);
+    const url = String((fetchMock.mock.calls[0] as [string, RequestInit])[0]);
+    expect(url).toContain("/multigrow/dev-uuid/comps/1/history/");
   });
 
   it("getCompReadings returns message on non-200", async () => {
