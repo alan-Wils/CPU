@@ -8,7 +8,7 @@ export type MetrcEnvironment = "production" | "sandbox";
 export type MetrcLastConnectionStatus = "connected" | "not_connected";
 
 export type MetrcCompanyConfig = {
-  /** Software vendor / integrator API key from METRC */
+  /** Software vendor / integrator API key from METRC (optional; dual-key auth when set with user key). */
   apiKey: string;
   /** User API key (facility operator key from METRC) */
   userKey: string;

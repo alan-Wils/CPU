@@ -6,6 +6,7 @@ import {
   parseLocationsPayload,
   toSampleLocation,
 } from "../lib/metrcConnectionHelpers.js";
+import { buildMetrcAuthorization } from "../lib/metrcAuthHeaders.js";
 
 export type MetrcTestConnectionSuccess = {
   ok: true;
@@ -56,14 +57,13 @@ export class MetrcConnectionService {
     const apiKey = String(metrc.apiKey || "").trim();
     const userKey = String(metrc.userKey || "").trim();
 
-    if (!baseUrl || !licenseNumber || !apiKey || !userKey) {
+    if (!baseUrl || !licenseNumber) {
       const fail: MetrcTestConnectionFailure = {
         ok: false,
         connected: false,
         checkedAt,
         status: 400,
-        message:
-          "Bad request. Check license number, state, and base URL. Ensure integrator key, user key, and license are saved.",
+        message: "Bad request. Check license number, state, and base URL. Save settings before testing.",
         baseUrl: baseUrl || null,
         licenseNumber: licenseNumber || "",
       };
@@ -71,14 +71,34 @@ export class MetrcConnectionService {
       return fail;
     }
 
-    const authHeader = `Basic ${Buffer.from(`${apiKey}:${userKey}`, "utf8").toString("base64")}`;
+    const auth = buildMetrcAuthorization(apiKey, userKey);
+    if (!auth.ok) {
+      const fail: MetrcTestConnectionFailure = {
+        ok: false,
+        connected: false,
+        checkedAt,
+        status: auth.status,
+        message: auth.message,
+        baseUrl,
+        licenseNumber,
+      };
+      await this.persistConnectionSnapshot(input.companyId, input.actorUserId, company, metrc, fail);
+      return fail;
+    }
+
+    if (auth.authMode === "dual_key") {
+      logInfo("Using METRC dual-key auth", { companyId: input.companyId });
+    } else {
+      logInfo("Using METRC single-key fallback auth", { companyId: input.companyId });
+    }
+
     const url = `${baseUrl.replace(/\/+$/, "")}/locations/v2/active?licenseNumber=${encodeURIComponent(licenseNumber)}`;
 
     try {
       const res = await fetch(url, {
         method: "GET",
         headers: {
-          Authorization: authHeader,
+          Authorization: auth.authorization,
           Accept: "application/json",
           "User-Agent": "CPU-Platform/1.0",
         },

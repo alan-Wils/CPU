@@ -1668,8 +1668,8 @@ export default function ConfigPage() {
         </label>
 
         <div style={styles.grid}>
-          <label style={styles.label}>
-            Software vendor API key (integrator key from METRC)
+          <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
+            Software vendor API key (optional — integrator key from METRC)
             <input
               style={styles.input}
               type={showMetrcSecrets ? "text" : "password"}
@@ -1688,6 +1688,10 @@ export default function ConfigPage() {
                 }))
               }
             />
+            <span style={{ color: "#64748b", fontSize: 12, marginTop: 4, lineHeight: 1.45 }}>
+              Vendor key may be required for official production integrations. If you leave it empty, the API can
+              still test the connection using only the user key where your METRC environment allows that.
+            </span>
           </label>
 
           <label style={styles.label}>
