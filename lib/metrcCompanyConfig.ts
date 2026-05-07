@@ -5,6 +5,8 @@
 
 export type MetrcEnvironment = "production" | "sandbox";
 
+export type MetrcLastConnectionStatus = "connected" | "not_connected";
+
 export type MetrcCompanyConfig = {
   /** Software vendor / integrator API key from METRC */
   apiKey: string;
@@ -25,6 +27,13 @@ export type MetrcCompanyConfig = {
   apiBaseUrlOverride: string;
   /** When true, server may perform METRC calls for this company */
   integrationEnabled: boolean;
+  /** Last METRC connection test outcome (server-persisted; never includes secrets). */
+  metrcLastConnectionStatus?: MetrcLastConnectionStatus | "";
+  metrcLastConnectionCheckedAt?: string;
+  metrcLastConnectionMessage?: string;
+  /** HTTP status from the last METRC call when `not_connected` (0 = transport / timeout). */
+  metrcLastConnectionHttpStatus?: number | null;
+  metrcLastLocationCount?: number | null;
 };
 
 export const defaultMetrcCompanyConfig: MetrcCompanyConfig = {

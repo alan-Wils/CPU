@@ -19,6 +19,7 @@ import {
 import {
   defaultMetrcCompanyConfig,
   type MetrcCompanyConfig,
+  type MetrcLastConnectionStatus,
   resolveMetrcApiBaseUrl,
 } from "@/lib/metrcCompanyConfig";
 import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
@@ -273,6 +274,36 @@ type CultivationFieldModalState =
   | { kind: "addBay"; suite: "vegRooms" | "flowerRooms"; roomId: string }
   | { kind: "addTable"; suite: "vegRooms" | "flowerRooms"; roomId: string; bayId: string };
 
+type MetrcTestConnectionJson =
+  | {
+      ok: true;
+      connected: true;
+      checkedAt: string;
+      baseUrl: string;
+      licenseNumber: string;
+      locationCount: number;
+      sampleLocations?: { id?: unknown; name?: string; label?: string }[];
+    }
+  | {
+      ok: false;
+      connected: false;
+      checkedAt: string;
+      status: number;
+      message: string;
+      baseUrl: string | null;
+      licenseNumber: string;
+    };
+
+function userFacingMetrcTestFailureMessage(json: Extract<MetrcTestConnectionJson, { ok: false }>): string {
+  const s = Number(json.status);
+  if (s === 401) return "Authentication failed. Check METRC keys.";
+  if (s === 403) return "Permission denied. Check METRC user permissions and license access.";
+  if (s === 400) return "Bad request. Check license number, state, and base URL.";
+  if (s === 0) return "Unable to reach METRC from the API server.";
+  const m = String(json.message || "").trim();
+  return m || "METRC connection failed.";
+}
+
 function extractionAiNamingStatusLine(extraction: AppConfig["extraction"]): string {
   const md = String(extraction.productNameAiPromptMarkdown || "").trim();
   const intro = String(extraction.productNameAiGuidedIntro || "").trim();
@@ -312,6 +343,7 @@ export default function ConfigPage() {
   const [displayTimezoneDraft, setDisplayTimezoneDraft] = useState("");
   const [timeZoneFilter, setTimeZoneFilter] = useState("");
   const [showMetrcSecrets, setShowMetrcSecrets] = useState(false);
+  const [metrcConnectionTesting, setMetrcConnectionTesting] = useState(false);
 
   const ianaTimeZones = useMemo(() => {
     if (typeof Intl !== "undefined" && typeof (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf === "function") {
@@ -348,6 +380,16 @@ export default function ConfigPage() {
     () => resolveMetrcApiBaseUrl(config.company.metrc),
     [config.company.metrc],
   );
+
+  const metrcConnectionBadge = useMemo(() => {
+    if (metrcConnectionTesting) {
+      return { label: "Testing…", tone: "testing" as const };
+    }
+    const st = String(config.company.metrc.metrcLastConnectionStatus || "").trim() as MetrcLastConnectionStatus | "";
+    if (st === "connected") return { label: "Connected", tone: "connected" as const };
+    if (st === "not_connected") return { label: "Not connected", tone: "error" as const };
+    return { label: "Not tested", tone: "muted" as const };
+  }, [metrcConnectionTesting, config.company.metrc.metrcLastConnectionStatus]);
 
   const [strainForm, setStrainForm] = useState({
     name: "",
@@ -541,6 +583,104 @@ export default function ConfigPage() {
       alert("Could not save config");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function runMetrcConnectionTest() {
+    setMetrcConnectionTesting(true);
+    const checkedAtFallback = new Date().toISOString();
+    try {
+      const token = getAuthToken();
+      const companyId = getSelectedCompanyId().trim();
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+      };
+      if (companyId) {
+        headers["X-Company-Id"] = companyId;
+      }
+      const path = appendCompanyIdQuery("/api/metrc/test-connection", companyId);
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        method: "GET",
+        headers,
+      });
+      const text = await res.text();
+      let json: MetrcTestConnectionJson | null = null;
+      try {
+        json = text ? (JSON.parse(text) as MetrcTestConnectionJson) : null;
+      } catch {
+        json = null;
+      }
+
+      if (!res.ok || !json || typeof json !== "object") {
+        setConfig((prev) => ({
+          ...prev,
+          company: {
+            ...prev.company,
+            metrc: {
+              ...prev.company.metrc,
+              metrcLastConnectionStatus: "not_connected",
+              metrcLastConnectionCheckedAt: checkedAtFallback,
+              metrcLastConnectionMessage: "Unable to reach METRC from the API server.",
+              metrcLastConnectionHttpStatus: null,
+              metrcLastLocationCount: null,
+            },
+          },
+        }));
+        return;
+      }
+
+      if (json.ok && json.connected) {
+        setConfig((prev) => ({
+          ...prev,
+          company: {
+            ...prev.company,
+            metrc: {
+              ...prev.company.metrc,
+              metrcLastConnectionStatus: "connected",
+              metrcLastConnectionCheckedAt: json.checkedAt,
+              metrcLastConnectionMessage: "",
+              metrcLastConnectionHttpStatus: null,
+              metrcLastLocationCount: json.locationCount,
+            },
+          },
+        }));
+        return;
+      }
+
+      if (!json.ok) {
+        setConfig((prev) => ({
+          ...prev,
+          company: {
+            ...prev.company,
+            metrc: {
+              ...prev.company.metrc,
+              metrcLastConnectionStatus: "not_connected",
+              metrcLastConnectionCheckedAt: json.checkedAt,
+              metrcLastConnectionMessage: userFacingMetrcTestFailureMessage(json),
+              metrcLastConnectionHttpStatus:
+                typeof json.status === "number" && Number.isFinite(json.status) ? json.status : null,
+              metrcLastLocationCount: null,
+            },
+          },
+        }));
+      }
+    } catch {
+      setConfig((prev) => ({
+        ...prev,
+        company: {
+          ...prev.company,
+          metrc: {
+            ...prev.company.metrc,
+            metrcLastConnectionStatus: "not_connected",
+            metrcLastConnectionCheckedAt: checkedAtFallback,
+            metrcLastConnectionMessage: "Unable to reach METRC from the API server.",
+            metrcLastConnectionHttpStatus: null,
+            metrcLastLocationCount: null,
+          },
+        },
+      }));
+    } finally {
+      setMetrcConnectionTesting(false);
     }
   }
 
@@ -1190,7 +1330,222 @@ export default function ConfigPage() {
           . Use the clock button to change how dates and times appear everywhere.
         </p>
 
-        <h3 style={{ ...styles.subTitle, marginTop: 18 }}>METRC API (facility)</h3>
+        <div
+          style={{
+            ...styles.inline,
+            alignItems: "center",
+            marginTop: 18,
+            marginBottom: 8,
+            flexWrap: "wrap",
+            gap: 10,
+          }}
+        >
+          <h3 style={{ ...styles.subTitle, marginTop: 0 }}>METRC API (facility)</h3>
+          <span
+            title="METRC connection status (last test)"
+            style={{
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              padding: "5px 12px",
+              borderRadius: "999px",
+              border: "1px solid",
+              ...(metrcConnectionBadge.tone === "connected"
+                ? { color: "#bbf7d0", borderColor: "#166534", background: "#052e16" }
+                : metrcConnectionBadge.tone === "error"
+                  ? { color: "#fecaca", borderColor: "#991b1b", background: "#450a0a" }
+                  : metrcConnectionBadge.tone === "testing"
+                    ? { color: "#bae6fd", borderColor: "#0369a1", background: "#0c4a6e" }
+                    : { color: "#cbd5e1", borderColor: "#475569", background: "#1e293b" }),
+            }}
+          >
+            METRC: {metrcConnectionBadge.label}
+          </span>
+        </div>
+
+        <div
+          style={{
+            border: "1px solid #334155",
+            borderRadius: 14,
+            padding: 16,
+            marginBottom: 14,
+            background: "#020617",
+          }}
+        >
+          {metrcConnectionTesting ? (
+            <>
+              <div
+                style={{
+                  display: "inline-block",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  padding: "4px 10px",
+                  borderRadius: "999px",
+                  border: "1px solid #0369a1",
+                  color: "#bae6fd",
+                  background: "#0c4a6e",
+                  marginBottom: 10,
+                }}
+              >
+                Testing
+              </div>
+              <p style={{ color: "#e2e8f0", margin: 0, fontSize: 14 }}>Testing METRC connection…</p>
+              <p style={{ color: "#64748b", fontSize: 12, marginTop: 10, marginBottom: 0 }}>
+                This uses the last saved METRC settings. Save changes before testing.
+              </p>
+            </>
+          ) : String(config.company.metrc.metrcLastConnectionStatus || "") === "connected" ? (
+            <>
+              <div
+                style={{
+                  display: "inline-block",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  padding: "4px 10px",
+                  borderRadius: "999px",
+                  border: "1px solid #166534",
+                  color: "#bbf7d0",
+                  background: "#052e16",
+                  marginBottom: 10,
+                }}
+              >
+                Connected
+              </div>
+              <p style={{ color: "#e2e8f0", margin: "0 0 10px", fontSize: 14 }}>
+                Connected to METRC. Found{" "}
+                <strong>{Number(config.company.metrc.metrcLastLocationCount ?? 0)}</strong> active location
+                {Number(config.company.metrc.metrcLastLocationCount ?? 0) === 1 ? "" : "s"}.
+              </p>
+              <ul style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 12px", paddingLeft: 18, lineHeight: 1.5 }}>
+                <li>
+                  License: <span style={{ color: "#e2e8f0" }}>{config.company.metrc.licenseNumber || "—"}</span>
+                </li>
+                <li>
+                  Base URL: <span style={{ color: "#e2e8f0" }}>{metrcResolvedBaseUrl || "—"}</span>
+                </li>
+                <li>
+                  Last checked:{" "}
+                  <span style={{ color: "#e2e8f0" }}>
+                    {config.company.metrc.metrcLastConnectionCheckedAt
+                      ? formatCompanyTimestamp(config.company.metrc.metrcLastConnectionCheckedAt)
+                      : "—"}
+                  </span>
+                </li>
+              </ul>
+              <p style={{ color: "#64748b", fontSize: 12, marginTop: 0, marginBottom: 10 }}>
+                This uses the last saved METRC settings. Save changes before testing.
+              </p>
+              <button
+                type="button"
+                style={{ ...styles.saveButton, opacity: metrcConnectionTesting ? 0.6 : 1 }}
+                disabled={metrcConnectionTesting}
+                onClick={() => void runMetrcConnectionTest()}
+              >
+                Re-test connection
+              </button>
+            </>
+          ) : String(config.company.metrc.metrcLastConnectionStatus || "") === "not_connected" ? (
+            <>
+              <div
+                style={{
+                  display: "inline-block",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  padding: "4px 10px",
+                  borderRadius: "999px",
+                  border: "1px solid #991b1b",
+                  color: "#fecaca",
+                  background: "#450a0a",
+                  marginBottom: 10,
+                }}
+              >
+                Not connected
+              </div>
+              <p style={{ color: "#fecaca", margin: "0 0 10px", fontSize: 14 }}>
+                {String(config.company.metrc.metrcLastConnectionMessage || "").trim() ||
+                  "METRC connection failed."}
+              </p>
+              <ul style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 12px", paddingLeft: 18, lineHeight: 1.5 }}>
+                <li>
+                  Status:{" "}
+                  <span style={{ color: "#e2e8f0" }}>
+                    {typeof config.company.metrc.metrcLastConnectionHttpStatus === "number" &&
+                    config.company.metrc.metrcLastConnectionHttpStatus > 0
+                      ? config.company.metrc.metrcLastConnectionHttpStatus
+                      : "—"}
+                  </span>
+                </li>
+                <li>
+                  Base URL: <span style={{ color: "#e2e8f0" }}>{metrcResolvedBaseUrl || "—"}</span>
+                </li>
+                <li>
+                  License: <span style={{ color: "#e2e8f0" }}>{config.company.metrc.licenseNumber || "—"}</span>
+                </li>
+                <li>
+                  Last checked:{" "}
+                  <span style={{ color: "#e2e8f0" }}>
+                    {config.company.metrc.metrcLastConnectionCheckedAt
+                      ? formatCompanyTimestamp(config.company.metrc.metrcLastConnectionCheckedAt)
+                      : "—"}
+                  </span>
+                </li>
+              </ul>
+              <p style={{ color: "#64748b", fontSize: 12, marginTop: 0, marginBottom: 10 }}>
+                This uses the last saved METRC settings. Save changes before testing.
+              </p>
+              <button
+                type="button"
+                style={{ ...styles.saveButton, opacity: metrcConnectionTesting ? 0.6 : 1 }}
+                disabled={metrcConnectionTesting}
+                onClick={() => void runMetrcConnectionTest()}
+              >
+                Reconnect / Test again
+              </button>
+            </>
+          ) : (
+            <>
+              <div
+                style={{
+                  display: "inline-block",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  padding: "4px 10px",
+                  borderRadius: "999px",
+                  border: "1px solid #475569",
+                  color: "#cbd5e1",
+                  background: "#1e293b",
+                  marginBottom: 10,
+                }}
+              >
+                Not tested
+              </div>
+              <p style={{ color: "#94a3b8", margin: "0 0 12px", fontSize: 14, lineHeight: 1.55 }}>
+                Save your METRC settings, then test the connection.
+              </p>
+              <p style={{ color: "#64748b", fontSize: 12, marginTop: 0, marginBottom: 10 }}>
+                This uses the last saved METRC settings. Save changes before testing.
+              </p>
+              <button
+                type="button"
+                style={{ ...styles.saveButton, opacity: metrcConnectionTesting ? 0.6 : 1 }}
+                disabled={metrcConnectionTesting}
+                onClick={() => void runMetrcConnectionTest()}
+              >
+                Test connection
+              </button>
+            </>
+          )}
+        </div>
+
         <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 12, lineHeight: 1.55 }}>
           Credentials are saved per company in the database and used only by your server (e.g. Railway). They are not
           exposed to browsers except on this admin screen. Confirm API host patterns with your state&apos;s METRC

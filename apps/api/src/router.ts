@@ -22,6 +22,7 @@ import { nexbatchRouter } from "./modules/nexbatch/routes.js";
 import { extractionAssistRouter } from "./modules/extractionAssist/routes.js";
 import { harvestSheetRouter } from "./modules/harvestSheet/routes.js";
 import { internalJobsRouter } from "./modules/internal/jobsRoutes.js";
+import { metrcRouter } from "./modules/metrc/routes.js";
 export const appRouter = Router();
 appRouter.use("/auth", authRouter);
 /** Cron / worker hooks (Bearer CRON_SECRET) — must not run behind JWT. */
@@ -35,6 +36,7 @@ appRouter.use("/labor", laborRouter);
 appRouter.use("/audit", auditRouter);
 appRouter.use("/admin", adminRouter);
 appRouter.use("/config", configRouter);
+appRouter.use("/metrc", metrcRouter);
 appRouter.use("/tasks", tasksRouter);
 appRouter.use("/dashboard", dashboardRouter);
 appRouter.use("/data-hub", dataHubRouter);
