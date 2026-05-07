@@ -1,5 +1,5 @@
-/** Parse METRC JSON body: either a bare array or `{ Data: [...] }`. */
-export function parseLocationsPayload(bodyJson: unknown): Record<string, unknown>[] {
+/** Parse METRC JSON body: either a bare array or `{ Data: [...] }` of objects. */
+export function parseMetrcDataRecords(bodyJson: unknown): Record<string, unknown>[] {
   if (Array.isArray(bodyJson)) {
     return bodyJson.filter((x) => x && typeof x === "object") as Record<string, unknown>[];
   }
@@ -8,6 +8,29 @@ export function parseLocationsPayload(bodyJson: unknown): Record<string, unknown
     return data.filter((x) => x && typeof x === "object") as Record<string, unknown>[];
   }
   return [];
+}
+
+/** Parse METRC JSON body: either a bare array or `{ Data: [...] }`. */
+export function parseLocationsPayload(bodyJson: unknown): Record<string, unknown>[] {
+  return parseMetrcDataRecords(bodyJson);
+}
+
+/**
+ * Labels from GET /tags/v2/plant/available (bare array or `Data`).
+ * Uses `Label` per METRC docs; trims and drops blanks.
+ */
+export function parsePlantTagLabelsFromAvailableResponse(bodyJson: unknown): string[] {
+  const rows = parseMetrcDataRecords(bodyJson);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const raw = row.Label ?? row.label;
+    const s = typeof raw === "string" ? raw.trim() : String(raw ?? "").trim();
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
 }
 
 export type MetrcSampleLocation = {

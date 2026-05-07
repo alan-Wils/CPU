@@ -3,6 +3,7 @@ import {
   generateMetrcTagSequence,
   collectExistingPlantTagsFromCultivationBatches,
   findOverlappingTags,
+  resolveMoveToVegPlantTags,
   sumImmatureAvailableExcluding,
   allImmatureDepletedAfterMove,
   buildMetrcVegMovePayload,
@@ -69,6 +70,30 @@ describe("cultivationMetrcWorkflow", () => {
       3,
     );
     expect(notOk).toBe(false);
+  });
+
+  it("resolveMoveToVegPlantTags prefers METRC inventory slice", () => {
+    const r = resolveMoveToVegPlantTags({
+      moveCount: 2,
+      inventoryTags: ["A1", "A2", "A3"],
+      firstTagManual: "",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.source).toBe("metrc_inventory");
+    expect(r.tags).toEqual(["A1", "A2"]);
+  });
+
+  it("resolveMoveToVegPlantTags falls back to numeric sequence", () => {
+    const r = resolveMoveToVegPlantTags({
+      moveCount: 2,
+      inventoryTags: ["only_one"],
+      firstTagManual: "T09",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.source).toBe("local_sequence");
+    expect(r.tags).toEqual(["T09", "T10"]);
   });
 
   it("builds METRC payload array shape", () => {

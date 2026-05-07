@@ -2,9 +2,8 @@
  * METRC-aligned cultivation helpers: immature plant batches (grouped clone stage)
  * vs individual plant tags (veg transition).
  *
- * TODO: Integrate "Fetch Available METRC Plant Tags" from compliance API — tags must
- * come from METRC inventory; this module only validates format and generates sequential
- * previews from a user-supplied first tag.
+ * When `GET /api/metrc/available-plant-tags` returns ordered labels, operators can assign
+ * that slice directly. Otherwise sequential tags are derived from the first METRC-style tag string.
  */
 
 export const TASK_CREATE_IMMATURE_PLANT_BATCH = "Create Immature Plant Batch";
@@ -117,6 +116,36 @@ export function generateMetrcTagSequence(
   }
 
   return { ok: true, tags };
+}
+
+/** Prefer consecutive labels from METRC available-tag inventory when enough were fetched. */
+export function resolveMoveToVegPlantTags(params: {
+  moveCount: number;
+  inventoryTags: string[] | null | undefined;
+  firstTagManual: string;
+}):
+  | { ok: true; tags: string[]; source: "metrc_inventory" | "local_sequence" }
+  | { ok: false; error: string } {
+  const n = Number(params.moveCount);
+  if (!Number.isFinite(n) || n < 1) {
+    return { ok: false, error: "Number of plants / tags must be at least 1." };
+  }
+
+  const inv = Array.isArray(params.inventoryTags) ? params.inventoryTags : [];
+  if (inv.length >= n) {
+    const slice = inv.slice(0, n);
+    if (new Set(slice).size !== slice.length) {
+      return {
+        ok: false,
+        error: "Fetched METRC tag list contains duplicates in the requested range — refresh from METRC.",
+      };
+    }
+    return { ok: true, tags: slice, source: "metrc_inventory" };
+  }
+
+  const seq = generateMetrcTagSequence(params.firstTagManual.trim(), n);
+  if (!seq.ok) return seq;
+  return { ok: true, tags: seq.tags, source: "local_sequence" };
 }
 
 export function buildMetrcVegMovePayload(params: {

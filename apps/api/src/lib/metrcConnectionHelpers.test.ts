@@ -3,6 +3,7 @@ import {
   extractMetrcApiErrorSummary,
   messageForMetrcHttpFailure,
   parseLocationsPayload,
+  parsePlantTagLabelsFromAvailableResponse,
   toSampleLocation,
 } from "./metrcConnectionHelpers.js";
 import { resolveMetrcApiBaseUrl } from "./metrcResolveBaseUrl.js";
@@ -26,6 +27,31 @@ describe("parseLocationsPayload", () => {
   it("returns empty for invalid", () => {
     expect(parseLocationsPayload(null)).toEqual([]);
     expect(parseLocationsPayload({})).toEqual([]);
+  });
+});
+
+describe("parsePlantTagLabelsFromAvailableResponse", () => {
+  it("parses bare array with Label", () => {
+    expect(
+      parsePlantTagLabelsFromAvailableResponse([
+        { Label: "ABCDEF012345670000010001" },
+        { Label: "ABCDEF012345670000010002" },
+      ]),
+    ).toEqual(["ABCDEF012345670000010001", "ABCDEF012345670000010002"]);
+  });
+
+  it("parses Data wrapper", () => {
+    expect(
+      parsePlantTagLabelsFromAvailableResponse({
+        Data: [{ Label: "Z1" }, { label: "z2" }],
+      }),
+    ).toEqual(["Z1", "z2"]);
+  });
+
+  it("dedupes repeated labels", () => {
+    expect(
+      parsePlantTagLabelsFromAvailableResponse([{ Label: "A" }, { Label: "A" }, { Label: "B" }]),
+    ).toEqual(["A", "B"]);
   });
 });
 

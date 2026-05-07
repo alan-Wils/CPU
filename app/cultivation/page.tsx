@@ -67,8 +67,8 @@ import {
   buildMetrcVegMovePayload,
   collectExistingPlantTagsFromCultivationBatches,
   findOverlappingTags,
-  generateMetrcTagSequence,
   isMoveToVegTaskName,
+  resolveMoveToVegPlantTags,
   sumImmatureAvailableExcluding,
   type MetrcImmatureSyncStatus,
   TASK_CREATE_IMMATURE_PLANT_BATCH,
@@ -938,6 +938,10 @@ export default function Cultivation() {
   const [vegMoveNotes, setVegMoveNotes] = useState("");
   const [vegTagOverlapAck, setVegTagOverlapAck] = useState(false);
   const [vegSubmitConfirmAck, setVegSubmitConfirmAck] = useState(false);
+  /** Ordered labels from `GET /api/metrc/available-plant-tags` (cleared when the starting tag is edited manually). */
+  const [vegMetrcInventoryTags, setVegMetrcInventoryTags] = useState<string[]>([]);
+  const [vegMetrcFetchLoading, setVegMetrcFetchLoading] = useState(false);
+  const [vegMetrcFetchMessage, setVegMetrcFetchMessage] = useState("");
 
   type HarvestSheetRowEdit = { tag: string; weightValue: string; unitGuess: string };
   type HarvestSheetPhoto = { id: string; storedPath: string; imageUrl: string };
@@ -1010,6 +1014,7 @@ export default function Cultivation() {
     flowerTableIds: string[];
     immaturePlantBatchId?: string;
     generatedTags?: string[];
+    metrcPlantTagSource?: "metrc_inventory" | "local_sequence";
     vegSublocation?: string;
     immatureBatchName?: string;
   } | null>(null);
@@ -3859,6 +3864,7 @@ export default function Cultivation() {
                 metrcPreparedLocalOnly: true,
                 metrcPlantTags: tags,
                 immaturePlantBatchId: immatureId,
+                ...(pending.metrcPlantTagSource ? { metrcPlantTagSource: pending.metrcPlantTagSource } : {}),
                 ...laborData,
               },
             }),
@@ -3880,6 +3886,7 @@ export default function Cultivation() {
                 mergeFromBatchId: source.id,
                 plantsAdded: moved,
                 metrcPlantTags: tags,
+                ...(pending.metrcPlantTagSource ? { metrcPlantTagSource: pending.metrcPlantTagSource } : {}),
               },
             }),
           );
@@ -3943,6 +3950,7 @@ export default function Cultivation() {
                 metrcPreparedLocalOnly: true,
                 metrcPlantTags: tags,
                 immaturePlantBatchId: immatureId,
+                ...(pending.metrcPlantTagSource ? { metrcPlantTagSource: pending.metrcPlantTagSource } : {}),
                 ...laborData,
               },
             }),
@@ -3964,6 +3972,7 @@ export default function Cultivation() {
                 splitFromBatchId: source.id,
                 plantsReceived: moved,
                 metrcPlantTags: tags,
+                ...(pending.metrcPlantTagSource ? { metrcPlantTagSource: pending.metrcPlantTagSource } : {}),
               },
             }),
           );
@@ -4974,10 +4983,93 @@ export default function Cultivation() {
     const raw = vegMoveCount.trim();
     const n = Number(raw);
     if (raw === "" || !Number.isFinite(n) || n < 1) {
-      return { ok: null, tags: [] as string[], error: "" };
+      return {
+        ok: null as const,
+        tags: [] as string[],
+        error: "",
+        source: null as "metrc_inventory" | "local_sequence" | null,
+      };
     }
-    return generateMetrcTagSequence(vegFirstMetrcTag, n);
-  }, [vegFirstMetrcTag, vegMoveCount]);
+    const inv = vegMetrcInventoryTags.length > 0 ? vegMetrcInventoryTags : null;
+    const r = resolveMoveToVegPlantTags({
+      moveCount: n,
+      inventoryTags: inv,
+      firstTagManual: vegFirstMetrcTag,
+    });
+    if (!r.ok) {
+      return {
+        ok: false as const,
+        tags: [] as string[],
+        error: r.error,
+        source: null as "metrc_inventory" | "local_sequence" | null,
+      };
+    }
+    return {
+      ok: true as const,
+      tags: r.tags,
+      error: "",
+      source: r.source,
+    };
+  }, [vegFirstMetrcTag, vegMoveCount, vegMetrcInventoryTags]);
+
+  async function fetchMetrcAvailablePlantTagsForVeg() {
+    if (!canWriteRecords) {
+      showReadOnlyNotice();
+      return;
+    }
+    setVegMetrcFetchMessage("");
+    setVegMetrcFetchLoading(true);
+    try {
+      const moved = Number(String(vegMoveCount || "").trim());
+      const baseline = Number.isFinite(moved) && moved >= 1 ? moved + 32 : 120;
+      const lim = Math.min(500, Math.max(40, baseline));
+      type TagsResp =
+        | {
+            ok: true;
+            labels: string[];
+            parsedCount?: number;
+            totalReturned?: number;
+          }
+        | {
+            ok: false;
+            message?: string;
+            status?: number;
+          };
+      const json = await apiRequest<TagsResp>(
+        `/api/metrc/available-plant-tags?limit=${lim}`,
+      );
+      if (!json || typeof json !== "object") {
+        setVegMetrcFetchMessage("Unexpected response from server.");
+        return;
+      }
+      if (!("ok" in json) || json.ok !== true || !Array.isArray(json.labels)) {
+        const msg =
+          typeof (json as { message?: unknown }).message === "string"
+            ? (json as { message: string }).message
+            : "Could not load tags from METRC.";
+        setVegMetrcFetchMessage(msg);
+        setVegMetrcInventoryTags([]);
+        return;
+      }
+      const labels = json.labels.map((x) => String(x || "").trim()).filter(Boolean);
+      if (labels.length === 0) {
+        const hint =
+          typeof json.parsedCount === "number" && json.parsedCount === 0
+            ? "METRC returned no available plant tags (check license / tag inventory)."
+            : "No labels returned.";
+        setVegMetrcFetchMessage(hint);
+      }
+      setVegMetrcInventoryTags(labels);
+      if (labels.length > 0) {
+        setVegFirstMetrcTag(labels[0]);
+      }
+    } catch (e) {
+      setVegMetrcFetchMessage(e instanceof Error ? e.message : "Request failed.");
+      setVegMetrcInventoryTags([]);
+    } finally {
+      setVegMetrcFetchLoading(false);
+    }
+  }
 
   async function saveCreateImmaturePlantBatch(lab: {
     ok: true;
@@ -5086,6 +5178,7 @@ export default function Cultivation() {
     },
     tags: string[],
     imb: any,
+    metrcPlantTagSource?: "metrc_inventory" | "local_sequence",
   ) {
     if (!selectedBatch) return;
     const batch = selectedBatch;
@@ -5123,6 +5216,7 @@ export default function Cultivation() {
         flowerTableIds: [...flowerTableIds],
         immaturePlantBatchId: String(imb.id),
         generatedTags: tags,
+        metrcPlantTagSource,
         vegSublocation: vegSublocationDraft.trim(),
         immatureBatchName: String(imb.name || ""),
       };
@@ -5202,6 +5296,7 @@ export default function Cultivation() {
           metrcPreparedLocalOnly: true,
           immaturePlantBatchId: imb.id,
           metrcPlantTags: tags,
+          ...(metrcPlantTagSource ? { metrcPlantTagSource } : {}),
         },
       }),
     );
@@ -5216,6 +5311,8 @@ export default function Cultivation() {
     setOutput("");
     setVegMoveCount("");
     setVegFirstMetrcTag("");
+    setVegMetrcInventoryTags([]);
+    setVegMetrcFetchMessage("");
     setVegSublocationDraft("");
     setVegMoveNotes("");
     setVegTagOverlapAck(false);
@@ -5276,27 +5373,23 @@ export default function Cultivation() {
       return;
     }
 
-    if (!vegFirstMetrcTag.trim()) {
-      showNotice(
-        "Starting tag required",
-        "Enter the first METRC plant tag (existing tag from METRC inventory).",
-      );
+    const resolved = resolveMoveToVegPlantTags({
+      moveCount: moved,
+      inventoryTags: vegMetrcInventoryTags.length > 0 ? vegMetrcInventoryTags : null,
+      firstTagManual: vegFirstMetrcTag,
+    });
+    if (!resolved.ok) {
+      showNotice("Plant tags", resolved.error);
       return;
     }
 
-    const seq = generateMetrcTagSequence(vegFirstMetrcTag.trim(), moved);
-    if (!seq.ok) {
-      showNotice("Tag sequence", seq.error);
-      return;
-    }
-
-    if (new Set(seq.tags).size !== seq.tags.length) {
-      showNotice("Duplicate tags", "Generated list contains duplicates — check starting tag and count.");
+    if (new Set(resolved.tags).size !== resolved.tags.length) {
+      showNotice("Duplicate tags", "Tag list contains duplicates — check METRC fetch or starting tag.");
       return;
     }
 
     const existing = collectExistingPlantTagsFromCultivationBatches(s.cultivationBatches, selectedBatch.id);
-    const overlaps = findOverlappingTags(seq.tags, existing);
+    const overlaps = findOverlappingTags(resolved.tags, existing);
     if (overlaps.length > 0 && !vegTagOverlapAck) {
       showNotice(
         "Tags already recorded locally",
@@ -5318,7 +5411,7 @@ export default function Cultivation() {
       return;
     }
 
-    await commitMoveToVegFlow(lab, seq.tags, imb);
+    await commitMoveToVegFlow(lab, resolved.tags, imb, resolved.source);
   }
 
   async function save() {
@@ -7647,18 +7740,16 @@ export default function Cultivation() {
                       <option value="Failed">Failed</option>
                     </select>
                   </label>
-                  <p style={{ color: "#64748b", fontSize: 11, margin: 0, lineHeight: 1.45 }}>
-                    {/* TODO: Fetch Available METRC Plant Tags from compliance API — user-entered IDs only for now. */}
-                  </p>
                 </>
               )}
 
               {selectedTask === TASK_MOVE_TO_VEG_ASSIGN_TAGS && (
                 <>
                   <p style={{ color: "#94a3b8", fontSize: 13, margin: 0, lineHeight: 1.5 }}>
-                    Assign sequential <strong>existing</strong> METRC plant tags (you supply the first tag; the app
-                    previews the range). Growth phase is <strong>Vegetative</strong>.{" "}
-                    {/* TODO: Fetch Available METRC Plant Tags from METRC / compliance service instead of manual entry. */}
+                    Assign sequential <strong>existing</strong> METRC plant tags. Use{" "}
+                    <strong>Fetch tags from METRC</strong> to load the facility&apos;s next available inventory tags,
+                    or enter the starting tag manually (the app previews the range when tags follow a numeric suffix).{" "}
+                    Growth phase is <strong>Vegetative</strong>.
                   </p>
                   <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
                     Immature plant batch
@@ -7713,9 +7804,35 @@ export default function Cultivation() {
                     <input
                       style={inputStyle}
                       value={vegFirstMetrcTag}
-                      onChange={(e) => setVegFirstMetrcTag(e.target.value)}
+                      onChange={(e) => {
+                        setVegFirstMetrcTag(e.target.value);
+                        setVegMetrcInventoryTags([]);
+                        setVegMetrcFetchMessage("");
+                      }}
                       onFocus={tryShowRewardsChallengeFromTaskInputFocus}
                     />
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                      <button
+                        type="button"
+                        style={{
+                          ...inputStyle,
+                          cursor: vegMetrcFetchLoading || !canWriteRecords ? "not-allowed" : "pointer",
+                          opacity: vegMetrcFetchLoading || !canWriteRecords ? 0.55 : 1,
+                          width: "auto",
+                          padding: "8px 14px",
+                        }}
+                        disabled={vegMetrcFetchLoading || !canWriteRecords}
+                        onClick={() => void fetchMetrcAvailablePlantTagsForVeg()}
+                      >
+                        {vegMetrcFetchLoading ? "Loading METRC tags…" : "Fetch tags from METRC"}
+                      </button>
+                      <span style={{ color: "#94a3b8", fontSize: 12, maxWidth: 420, lineHeight: 1.4 }}>
+                        Uses your saved facility METRC keys (Admin → METRC). METRC may bill this as a premium read.
+                      </span>
+                    </div>
+                    {vegMetrcFetchMessage.trim() ? (
+                      <p style={{ color: "#fda4af", fontSize: 13, margin: 0 }}>{vegMetrcFetchMessage.trim()}</p>
+                    ) : null}
                   </label>
                   <input
                     style={{ ...inputStyle, opacity: 0.85 }}
@@ -7734,7 +7851,14 @@ export default function Cultivation() {
                         fontFamily: "ui-monospace, monospace",
                       }}
                     >
-                      <div style={{ color: "#93c5fd", marginBottom: 8 }}>Tag preview ({vegTagPreview.tags.length})</div>
+                      <div style={{ color: "#93c5fd", marginBottom: 8 }}>
+                        Tag preview ({vegTagPreview.tags.length})
+                        {vegTagPreview.source === "metrc_inventory" ? (
+                          <span style={{ color: "#6ee7b7", marginLeft: 8 }}>· from METRC inventory</span>
+                        ) : vegTagPreview.source === "local_sequence" ? (
+                          <span style={{ color: "#fcd34d", marginLeft: 8 }}>· from starting tag pattern</span>
+                        ) : null}
+                      </div>
                       {vegTagPreview.tags.map((t, i) => (
                         <div key={`${t}-${i}`}>{t}</div>
                       ))}
