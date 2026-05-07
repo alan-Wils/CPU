@@ -672,6 +672,10 @@ export type LeafLinkInventoryDto = {
     categoriesCount: number;
   };
   lastSyncedAt: string;
+  /** Present when the API returned Postgres snapshot without calling LeafLink. */
+  fromCache?: boolean;
+  /** How rows were produced: cache hit, full catalog pull, or merged incremental delta. */
+  syncMode?: "cache" | "full" | "incremental";
 };
 
 export type LeafLinkConfigDto = {
@@ -693,8 +697,9 @@ export type LeafLinkConfigUpsertInput = {
   clearApiKey?: boolean;
 };
 
-export async function fetchLeafLinkInventory(companyId?: string) {
-  return apiRequest<LeafLinkInventoryDto>("/api/inventory/leaflink", { companyId });
+export async function fetchLeafLinkInventory(companyId?: string, opts?: { refresh?: boolean }) {
+  const q = opts?.refresh ? "?refresh=1" : "";
+  return apiRequest<LeafLinkInventoryDto>(`/api/inventory/leaflink${q}`, { companyId });
 }
 
 export async function fetchLeafLinkConfig(companyId?: string) {

@@ -24,6 +24,9 @@ const leafLinkInventoryQuerySchema = z.object({
   debug: z
     .preprocess((v) => String(v ?? "").trim().toLowerCase(), z.enum(["", "0", "1", "true", "false"]).optional())
     .optional(),
+  refresh: z
+    .preprocess((v) => String(v ?? "").trim().toLowerCase(), z.enum(["", "0", "1", "true", "false"]).optional())
+    .optional(),
 });
 
 inventoryRouter.get(
@@ -32,9 +35,15 @@ inventoryRouter.get(
   validate({ query: leafLinkInventoryQuerySchema }),
   asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
-    const q = req.query as { debug?: string };
+    const q = req.query as { debug?: string; refresh?: string };
     const debug = q?.debug === "1" || q?.debug === "true";
-    const out = await leafLinkInventoryService.fetchAvailableInventory(companyId, { debug });
+    const refresh = q?.refresh === "1" || q?.refresh === "true";
+    const actorUserId = (req.auth as { userId?: string }).userId ?? "";
+    const out = await leafLinkInventoryService.fetchAvailableInventory(companyId, {
+      debug,
+      refresh,
+      actorUserId,
+    });
     res.json(out);
   }),
 );

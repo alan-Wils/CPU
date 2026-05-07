@@ -30,14 +30,18 @@ export default function InventoryPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(1);
   const [layoutMode, setLayoutMode] = useState<"flat" | "grouped">("grouped");
+  const [fromCache, setFromCache] = useState(false);
+  const [syncMode, setSyncMode] = useState<"" | "cache" | "full" | "incremental">("");
 
-  async function runSync() {
+  async function loadInventory(opts?: { refresh?: boolean }) {
     setLoading(true);
     setError("");
     try {
-      const out = await fetchLeafLinkInventory();
+      const out = await fetchLeafLinkInventory(undefined, opts);
       setItems(out.items || []);
       setLastSync(out.lastSyncedAt || new Date().toISOString());
+      setFromCache(Boolean(out.fromCache));
+      setSyncMode((out.syncMode as "" | "cache" | "full" | "incremental") || "");
       setPage(1);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Could not load inventory.");
@@ -47,7 +51,7 @@ export default function InventoryPage() {
   }
 
   useEffect(() => {
-    void runSync();
+    void loadInventory();
   }, []);
 
   const categories = useMemo(
@@ -128,10 +132,25 @@ export default function InventoryPage() {
               </p>
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <div style={{ color: "#64748b", fontSize: 12 }}>
-                Last sync: {lastSync ? new Date(lastSync).toLocaleString() : "Not synced yet"}
+              <div style={{ color: "#64748b", fontSize: 12, maxWidth: 420, lineHeight: 1.45 }}>
+                <div>
+                  Last sync: {lastSync ? new Date(lastSync).toLocaleString() : "Not synced yet"}
+                </div>
+                {fromCache ? (
+                  <div style={{ color: "#94a3b8", marginTop: 4 }}>
+                    Showing saved snapshot (fast). Use &quot;Sync / Refresh&quot; to pull changes from LeafLink.
+                  </div>
+                ) : syncMode === "incremental" ? (
+                  <div style={{ color: "#86efac", marginTop: 4, fontSize: 11 }}>
+                    Merged incremental updates from LeafLink.
+                  </div>
+                ) : syncMode === "full" ? (
+                  <div style={{ color: "#86efac", marginTop: 4, fontSize: 11 }}>
+                    Full catalog pull from LeafLink.
+                  </div>
+                ) : null}
               </div>
-              <button onClick={() => void runSync()} style={syncButtonStyle} disabled={loading}>
+              <button onClick={() => void loadInventory({ refresh: true })} style={syncButtonStyle} disabled={loading}>
                 {loading ? "Syncing..." : "Sync / Refresh"}
               </button>
             </div>

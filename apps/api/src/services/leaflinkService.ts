@@ -1,6 +1,7 @@
 import { env } from "../config/env.js";
 import { AppError } from "../errors/AppError.js";
 import { logInfo, logWarn } from "../lib/logger.js";
+import { ConfigRepository } from "../repositories/configRepository.js";
 import { ConfigService } from "./configService.js";
 
 const DEFAULT_BASE_URL = "https://app.leaflink.com/api";
@@ -164,6 +165,10 @@ export type LeafLinkInventoryResponse = {
     categoriesCount: number;
   };
   lastSyncedAt: string;
+  /** True when served from Postgres company config without calling LeafLink. */
+  fromCache?: boolean;
+  /** How this payload was produced. */
+  syncMode?: "cache" | "full" | "incremental";
   debug?: {
     endpoint: string;
     authMode: string;
@@ -173,6 +178,51 @@ export type LeafLinkInventoryResponse = {
     firstRowKeys: string[];
   };
 };
+
+const LEAFLINK_INVENTORY_CACHE_KEY = "leaflink_inventory_snapshot";
+
+type LeafLinkPersistedInventory = {
+  items: LeafLinkInventoryItem[];
+  lastSyncedAt: string;
+};
+
+function appendModifiedGteFilter(endpointUrl: string, iso?: string): string {
+  if (!iso?.trim()) return endpointUrl;
+  try {
+    const u = new URL(endpointUrl);
+    u.searchParams.set("modified__gte", iso.trim());
+    return u.href;
+  }
+  catch {
+    return endpointUrl;
+  }
+}
+
+function mergeLeafLinkSnapshots(
+  previous: LeafLinkInventoryItem[] | undefined,
+  incoming: LeafLinkInventoryItem[],
+): LeafLinkInventoryItem[] {
+  if (!previous?.length) return incoming;
+  if (!incoming.length) return previous;
+  const map = new Map(previous.map((x) => [x.id, x]));
+  for (const row of incoming) map.set(row.id, row);
+  return Array.from(map.values());
+}
+
+function buildLeafLinkStats(items: LeafLinkInventoryItem[]) {
+  const categories = new Set(items.map((x) => x.category).filter(Boolean));
+  const totalInventoryUnits = items.reduce((sum, row) => sum + toNumber(row.availableQuantity), 0);
+  const totalInventoryValue = items.reduce((sum, row) => {
+    const p = row.price == null ? 0 : toNumber(row.price);
+    return sum + p * toNumber(row.availableQuantity);
+  }, 0);
+  return {
+    totalSkus: items.length,
+    totalInventoryUnits,
+    totalInventoryValue,
+    categoriesCount: categories.size,
+  };
+}
 
 function toNumber(v: unknown): number {
   const n = typeof v === "number" ? v : Number(v);
@@ -541,12 +591,186 @@ async function fetchJsonWithRetry(url: string, init: RequestInit, timeoutMs: num
   throw lastErr instanceof Error ? lastErr : new Error("LeafLink request failed");
 }
 
+async function fetchLeafLinkInventoryFromApi(
+  creds: LeafLinkRuntimeCredentials,
+  modifiedGte: string | undefined,
+  debug: boolean,
+): Promise<{
+  items: LeafLinkInventoryItem[];
+  usedEndpoint: string;
+  usedAuthMode: string;
+  mergedListSourceTag: string;
+  rawRowCount: number;
+  firstPageCount: number;
+  firstRowKeys: string[];
+  firstRootKeys: string[];
+}> {
+  const base = creds.baseUrl.replace(/\/+$/, "");
+  const hasCompanyScope = Boolean(creds.companyId || creds.companySlug);
+  const endpointCandidates = [
+    creds.companyId ? `${base}/v2/companies/${encodeURIComponent(creds.companyId)}/products/` : "",
+    creds.companyId ? `${base}/v2/products/?company=${encodeURIComponent(creds.companyId)}` : "",
+    creds.companyId ? `${base}/products/?company=${encodeURIComponent(creds.companyId)}` : "",
+    creds.companySlug ? `${base}/v2/products/?company_slug=${encodeURIComponent(creds.companySlug)}` : "",
+    creds.companySlug ? `${base}/products/?company_slug=${encodeURIComponent(creds.companySlug)}` : "",
+    ...(hasCompanyScope ? [] : [`${base}/v2/products/`, `${base}/products/`]),
+  ]
+    .filter(Boolean)
+    .map((endpointUrl) => {
+      let u = withListingPagingHint(String(endpointUrl));
+      if (modifiedGte) u = appendModifiedGteFilter(u, modifiedGte);
+      return u;
+    });
+  const basicAuth = creds.username ? Buffer.from(`${creds.username}:${creds.apiKey}`).toString("base64") : "";
+  const authCandidates = [
+    `App ${creds.apiKey}`,
+    `Token ${creds.apiKey}`,
+    `Bearer ${creds.apiKey}`,
+    ...(basicAuth ? [`Basic ${basicAuth}`] : []),
+  ];
+
+  let payload: unknown = null;
+  let usedEndpoint = "";
+  let usedAuthMode = "";
+  let successInit: RequestInit | null = null;
+  let lastErr: unknown = null;
+  outer: for (const endpoint of endpointCandidates) {
+    for (const authValue of authCandidates) {
+      const authMode = authValue.startsWith("App ")
+        ? "App"
+        : authValue.startsWith("Token ")
+          ? "Token"
+          : authValue.startsWith("Bearer ")
+            ? "Bearer"
+            : "Basic";
+      const leafLinkInit: RequestInit = {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: authValue,
+          "X-API-KEY": creds.apiKey,
+          "x-api-key": creds.apiKey,
+          "X-Company-Slug": creds.companySlug,
+          "X-LeafLink-Company-Id": creds.companyId,
+          "X-LeafLink-Username": creds.username,
+        },
+      };
+      try {
+        payload = await fetchJsonWithRetry(endpoint, leafLinkInit, 15_000);
+        usedEndpoint = endpoint;
+        usedAuthMode = authMode;
+        successInit = leafLinkInit;
+        break outer;
+      } catch (error) {
+        lastErr = error;
+        const code = error instanceof AppError ? error.code : "";
+        if (
+          code === "LEAFLINK_INVALID_CREDENTIALS" ||
+          code === "LEAFLINK_REQUEST_FAILED" ||
+          code === "LEAFLINK_NON_JSON_RESPONSE" ||
+          code === "LEAFLINK_HTML_ERROR"
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+  if (payload == null || successInit == null) {
+    if (lastErr instanceof AppError) throw lastErr;
+    throw new AppError("LeafLink inventory request failed for all endpoint/auth combinations.", 502, "LEAFLINK_REQUEST_FAILED");
+  }
+
+  const firstRoot = asRecord(payload);
+  const firstPageCount = pickListSource(payload).list.length;
+  const merged = await fetchAllLeafLinkPagedRows(usedEndpoint, successInit, 15_000, payload);
+  const mergedPayload = { results: merged.rows };
+  const { source: mergedListSourceTag } = pickListSource(mergedPayload);
+
+  const firstRowKeys =
+    merged.rows.length > 0 ? Object.keys(asRecord(merged.rows[0])).slice(0, 80) : [];
+  logInfo("[LEAFLINK] normalize_preview", {
+    endpoint: usedEndpoint,
+    endpointFinalHint: merged.finalUrl.slice(0, 220),
+    authMode: usedAuthMode,
+    rootKeys: Object.keys(firstRoot).slice(0, 40),
+    listSource: mergedListSourceTag,
+    rawRowCount: merged.rows.length,
+    rawRowCountFirstPage: firstPageCount,
+    firstRowKeys,
+    modifiedGte: modifiedGte || null,
+  });
+
+  const items = normalizeRows(mergedPayload);
+  if (debug) {
+    logInfo("[LEAFLINK] pull_complete", {
+      itemCount: items.length,
+      modifiedGte: modifiedGte || null,
+    });
+  }
+  return {
+    items,
+    usedEndpoint,
+    usedAuthMode,
+    mergedListSourceTag,
+    rawRowCount: merged.rows.length,
+    firstPageCount,
+    firstRowKeys,
+    firstRootKeys: Object.keys(firstRoot).slice(0, 60),
+  };
+}
+
 export class LeafLinkInventoryService {
   leafLinkService = new LeafLinkService();
+  configService = new ConfigService();
+  configRepo = new ConfigRepository();
+
+  private async loadPersistedInventory(companyId: string): Promise<LeafLinkPersistedInventory | null> {
+    const row = await this.configRepo.getConfigRaw(companyId, LEAFLINK_INVENTORY_CACHE_KEY);
+    if (!row?.valueJson) return null;
+    try {
+      const v = JSON.parse(row.valueJson) as LeafLinkPersistedInventory;
+      if (!Array.isArray(v.items)) return null;
+      return v;
+    }
+    catch {
+      return null;
+    }
+  }
+
+  private async persistInventorySnapshot(
+    companyId: string,
+    snapshot: LeafLinkPersistedInventory,
+    actorUserId: string,
+  ): Promise<void> {
+    await this.configService.upsert({
+      companyId,
+      actorUserId: actorUserId || "system",
+      key: LEAFLINK_INVENTORY_CACHE_KEY,
+      value: snapshot,
+    });
+  }
+
+  private responseFromItems(
+    items: LeafLinkInventoryItem[],
+    lastSyncedAt: string,
+    extra: Partial<LeafLinkInventoryResponse>,
+    debugPayload?: LeafLinkInventoryResponse["debug"],
+  ): LeafLinkInventoryResponse {
+    const out: LeafLinkInventoryResponse = {
+      source: "leaflink",
+      items,
+      stats: buildLeafLinkStats(items),
+      lastSyncedAt,
+      ...extra,
+    };
+    if (debugPayload) out.debug = debugPayload;
+    return out;
+  }
 
   async fetchAvailableInventory(
     companyId: string,
-    opts?: { debug?: boolean },
+    opts?: { debug?: boolean; refresh?: boolean; actorUserId?: string },
   ): Promise<LeafLinkInventoryResponse> {
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
     if (!creds.integrationEnabled) {
@@ -560,139 +784,75 @@ export class LeafLinkInventoryService {
       );
     }
 
-    const base = creds.baseUrl.replace(/\/+$/, "");
-    const hasCompanyScope = Boolean(creds.companyId || creds.companySlug);
-    /** Unscoped `/products/` succeeds too easily and returns the wrong company's page — omit when slug/id configured. */
-    const endpointCandidates = [
-      creds.companyId ? `${base}/v2/companies/${encodeURIComponent(creds.companyId)}/products/` : "",
-      creds.companyId ? `${base}/v2/products/?company=${encodeURIComponent(creds.companyId)}` : "",
-      creds.companyId ? `${base}/products/?company=${encodeURIComponent(creds.companyId)}` : "",
-      creds.companySlug ? `${base}/v2/products/?company_slug=${encodeURIComponent(creds.companySlug)}` : "",
-      creds.companySlug ? `${base}/products/?company_slug=${encodeURIComponent(creds.companySlug)}` : "",
-      ...(hasCompanyScope ? [] : [`${base}/v2/products/`, `${base}/products/`]),
-    ]
-      .filter(Boolean)
-      .map((endpointUrl) => withListingPagingHint(String(endpointUrl)));
-    const basicAuth = creds.username
-      ? Buffer.from(`${creds.username}:${creds.apiKey}`).toString("base64")
-      : "";
-    const authCandidates = [
-      `App ${creds.apiKey}`,
-      `Token ${creds.apiKey}`,
-      `Bearer ${creds.apiKey}`,
-      ...(basicAuth ? [`Basic ${basicAuth}`] : []),
-    ];
+    const refresh = Boolean(opts?.refresh);
+    const debug = Boolean(opts?.debug);
+    const actorUserId = String(opts?.actorUserId || "").trim();
 
-    let payload: unknown = null;
-    let usedEndpoint = "";
-    let usedAuthMode = "";
-    let successInit: RequestInit | null = null;
-    let lastErr: unknown = null;
-    outer: for (const endpoint of endpointCandidates) {
-      for (const authValue of authCandidates) {
-        const authMode = authValue.startsWith("App ")
-          ? "App"
-          : authValue.startsWith("Token ")
-            ? "Token"
-            : authValue.startsWith("Bearer ")
-              ? "Bearer"
-              : "Basic";
-        const leafLinkInit: RequestInit = {
-          method: "GET",
-          headers: {
-            Accept: "application/json",
-            Authorization: authValue,
-            "X-API-KEY": creds.apiKey,
-            "x-api-key": creds.apiKey,
-            "X-Company-Slug": creds.companySlug,
-            "X-LeafLink-Company-Id": creds.companyId,
-            "X-LeafLink-Username": creds.username,
-          },
-        };
-        try {
-          payload = await fetchJsonWithRetry(endpoint, leafLinkInit, 15_000);
-          usedEndpoint = endpoint;
-          usedAuthMode = authMode;
-          successInit = leafLinkInit;
-          break outer;
-        } catch (error) {
-          lastErr = error;
-          const code = error instanceof AppError ? error.code : "";
-          // Try alternate endpoint/auth format before surfacing the failure.
-          if (
-            code === "LEAFLINK_INVALID_CREDENTIALS" ||
-            code === "LEAFLINK_REQUEST_FAILED" ||
-            code === "LEAFLINK_NON_JSON_RESPONSE" ||
-            code === "LEAFLINK_HTML_ERROR"
-          ) {
-            continue;
-          }
-          throw error;
-        }
+    const persisted = await this.loadPersistedInventory(companyId);
+    if (!refresh && persisted?.items?.length) {
+      return this.responseFromItems(persisted.items, persisted.lastSyncedAt, {
+        fromCache: true,
+        syncMode: "cache",
+      });
+    }
+
+    const incrementalSince =
+      refresh && persisted?.items?.length && persisted.lastSyncedAt ? persisted.lastSyncedAt : undefined;
+
+    const runPull = (modifiedGte: string | undefined) =>
+      fetchLeafLinkInventoryFromApi(creds, modifiedGte, debug);
+
+    let pull: Awaited<ReturnType<typeof fetchLeafLinkInventoryFromApi>>;
+    let usedIncremental = Boolean(incrementalSince);
+    try {
+      pull = await runPull(incrementalSince);
+    }
+    catch (firstErr) {
+      if (incrementalSince) {
+        logWarn("[LEAFLINK] incremental_pull_failed_fallback_full", {
+          message: firstErr instanceof Error ? firstErr.message : String(firstErr),
+        });
+        pull = await runPull(undefined);
+        usedIncremental = false;
+      }
+      else {
+        throw firstErr;
       }
     }
-    if (payload == null || successInit == null) {
-      if (lastErr instanceof AppError) throw lastErr;
-      throw new AppError(
-        "LeafLink inventory request failed for all endpoint/auth combinations.",
-        502,
-        "LEAFLINK_REQUEST_FAILED",
-      );
+
+    if (usedIncremental && pull.items.length === 0 && persisted?.items?.length) {
+      const now = new Date().toISOString();
+      await this.persistInventorySnapshot(companyId, { items: persisted.items, lastSyncedAt: now }, actorUserId);
+      return this.responseFromItems(persisted.items, now, {
+        fromCache: false,
+        syncMode: "incremental",
+      });
     }
 
-    const firstRoot = asRecord(payload);
-    const firstPageCount = pickListSource(payload).list.length;
-    const merged = await fetchAllLeafLinkPagedRows(
-      usedEndpoint,
-      successInit,
-      15_000,
-      payload,
-    );
-    const mergedPayload = { results: merged.rows };
-    const { source: mergedListSourceTag } = pickListSource(mergedPayload);
+    const mergedItems =
+      usedIncremental && persisted?.items?.length
+        ? mergeLeafLinkSnapshots(persisted.items, pull.items)
+        : pull.items;
 
-    const firstRowKeys =
-      merged.rows.length > 0 ? Object.keys(asRecord(merged.rows[0])).slice(0, 80) : [];
-    logInfo("[LEAFLINK] normalize_preview", {
-      endpoint: usedEndpoint,
-      endpointFinalHint: merged.finalUrl.slice(0, 220),
-      authMode: usedAuthMode,
-      rootKeys: Object.keys(firstRoot).slice(0, 40),
-      listSource: mergedListSourceTag,
-      rawRowCount: merged.rows.length,
-      rawRowCountFirstPage: firstPageCount,
-      firstRowKeys,
-    });
+    const lastSyncedAt = new Date().toISOString();
+    await this.persistInventorySnapshot(companyId, { items: mergedItems, lastSyncedAt }, actorUserId);
 
-    const items = normalizeRows(mergedPayload);
-    const categories = new Set(items.map((x) => x.category).filter(Boolean));
-    const totalInventoryUnits = items.reduce((sum, row) => sum + toNumber(row.availableQuantity), 0);
-    const totalInventoryValue = items.reduce((sum, row) => {
-      const p = row.price == null ? 0 : toNumber(row.price);
-      return sum + p * toNumber(row.availableQuantity);
-    }, 0);
-    const response: LeafLinkInventoryResponse = {
-      source: "leaflink",
-      items,
-      stats: {
-        totalSkus: items.length,
-        totalInventoryUnits,
-        totalInventoryValue,
-        categoriesCount: categories.size,
-      },
-      lastSyncedAt: new Date().toISOString(),
-    };
-    if (opts?.debug) {
-      response.debug = {
-        endpoint: usedEndpoint,
-        authMode: usedAuthMode,
-        rootKeys: Object.keys(firstRoot).slice(0, 60),
-        listSource: mergedListSourceTag,
-        rawRowCount: merged.rows.length,
-        firstRowKeys,
-      };
-    }
-    return response;
+    const debugBlock =
+      debug
+        ? {
+            endpoint: pull.usedEndpoint,
+            authMode: pull.usedAuthMode,
+            rootKeys: pull.firstRootKeys,
+            listSource: pull.mergedListSourceTag,
+            rawRowCount: pull.rawRowCount,
+            firstRowKeys: pull.firstRowKeys,
+          }
+        : undefined;
+
+    return this.responseFromItems(mergedItems, lastSyncedAt, {
+      fromCache: false,
+      syncMode: usedIncremental ? "incremental" : "full",
+    }, debugBlock);
   }
 }
 
