@@ -9,9 +9,14 @@ export type UsageCostProviderRow = {
     displayName: string;
     usageSummary: string;
     usageMetrics: UsageCostMetric[];
+    displayCost: number;
     estimatedCost: number;
+    vendorTotalCost: number | null;
     currency: "USD";
-    status: string;
+    status: "connected" | "missing_token" | "sync_failed" | "unsupported" | "estimated_only";
+    statusLabel: string;
+    allocationMethod: "exact_internal" | "vendor_allocated" | "estimated";
+    lastSyncedAt: string | null;
     notes: string;
 };
 
@@ -22,6 +27,7 @@ export type CompanyUsageCostsResult = {
     monthStart: string;
     monthEnd: string;
     totalEstimatedCost: number;
+    totalDisplayCost: number;
     projectedMonthlyCost: number | null;
     lastUpdated: string | null;
     providers: UsageCostProviderRow[];
@@ -38,7 +44,7 @@ const PROVIDER_ORDER: UsageProvider[] = [
 
 const PROVIDER_META: Record<
     UsageProvider,
-    { displayName: string; notes: string }
+    { displayName: string; notes: string; exactInternalPreferred?: boolean }
 > = {
     vercel: {
         displayName: "Vercel Frontend",
@@ -54,15 +60,18 @@ const PROVIDER_META: Record<
     },
     resend: {
         displayName: "Resend Email",
-        notes: "Outbound mail attempts logged after transport success.",
+        notes: "Vendor totals are project-level; company amount uses exact email events when present.",
+        exactInternalPreferred: true,
     },
     cloudflare_r2: {
         displayName: "Cloudflare R2 Storage",
-        notes: "Uploads when S3-compatible storage is enabled.",
+        notes: "Vendor totals are project-level; company amount uses exact storage events when present.",
+        exactInternalPreferred: true,
     },
     ai: {
         displayName: "AI Data Analysis",
-        notes: "OpenAI calls for naming, harvest extraction, etc.",
+        notes: "Vendor totals are project-level; company amount uses exact token/call events when present.",
+        exactInternalPreferred: true,
     },
 };
 
@@ -111,17 +120,31 @@ export class UsageCostService {
 
         const now = new Date();
         const { monthStart, nextMonthStart, label } = utcMonthRange(now);
-
-        const events = await prisma.usageEvent.findMany({
-            where: {
-                companyId: id,
-                createdAt: {
-                    gte: monthStart,
-                    lt: nextMonthStart,
+        const [events, allProviderAgg, snapshots] = await Promise.all([
+            prisma.usageEvent.findMany({
+                where: {
+                    companyId: id,
+                    createdAt: {
+                        gte: monthStart,
+                        lt: nextMonthStart,
+                    },
                 },
-            },
-            orderBy: { createdAt: "asc" },
-        });
+                orderBy: { createdAt: "asc" },
+            }),
+            prisma.usageEvent.groupBy({
+                by: ["provider"],
+                where: {
+                    createdAt: {
+                        gte: monthStart,
+                        lt: nextMonthStart,
+                    },
+                },
+                _sum: { estimatedCost: true, units: true },
+            }),
+            prisma.vendorBillingSnapshot.findMany({
+                where: { month: label },
+            }),
+        ]);
 
         let totalEstimatedCost = 0;
         let lastUpdated: Date | null = null;
@@ -132,6 +155,15 @@ export class UsageCostService {
             maxCreated: Date | null;
         };
         const agg = new Map<UsageProvider, Agg>();
+        const globalAgg = new Map<UsageProvider, { estimatedCost: number; units: number }>();
+        const snapshotByProvider = new Map(snapshots.map((s) => [s.provider, s]));
+
+        for (const row of allProviderAgg) {
+            globalAgg.set(row.provider, {
+                estimatedCost: row._sum.estimatedCost ?? 0,
+                units: row._sum.units ?? 0,
+            });
+        }
 
         for (const e of events) {
             totalEstimatedCost += e.estimatedCost;
@@ -165,6 +197,36 @@ export class UsageCostService {
             const meta = PROVIDER_META[provider];
             const a = agg.get(provider);
             const estimatedCost = a?.cost ?? 0;
+            const global = globalAgg.get(provider) ?? { estimatedCost: 0, units: 0 };
+            const snapshot = snapshotByProvider.get(provider);
+            const snapshotStatus =
+                (snapshot?.status as UsageCostProviderRow["status"] | undefined) ??
+                "estimated_only";
+            const vendorTotalCost =
+                snapshot &&
+                (snapshotStatus === "connected" || snapshotStatus === "unsupported") &&
+                Number.isFinite(snapshot.totalCost)
+                    ? snapshot.totalCost
+                    : null;
+            let displayCost = estimatedCost;
+            let allocationMethod: UsageCostProviderRow["allocationMethod"] = "estimated";
+
+            // Vendor APIs return project-level totals only; allocate by provider share from UsageEvent rows.
+            const totalWeight =
+                global.estimatedCost > 0 ? global.estimatedCost : Math.max(0, global.units);
+            const companyWeight =
+                estimatedCost > 0
+                    ? estimatedCost
+                    : Math.max(0, Array.from(a?.byUnit.values() ?? []).reduce((s, n) => s + n, 0));
+
+            if (meta.exactInternalPreferred && estimatedCost > 0) {
+                displayCost = estimatedCost;
+                allocationMethod = "exact_internal";
+            }
+            else if (vendorTotalCost != null && totalWeight > 0) {
+                displayCost = vendorTotalCost * (companyWeight / totalWeight);
+                allocationMethod = "vendor_allocated";
+            }
 
             const usageMetrics: UsageCostMetric[] = [];
             if (a && a.byUnit.size > 0) {
@@ -179,15 +241,21 @@ export class UsageCostService {
                 usageMetrics.push({ label: "Logged units (MTD)", value: "0" });
             }
 
-            const usageSummary =
-                estimatedCost > 0
-                    ? `${usageMetrics.map((m) => `${m.label}: ${m.value}`).join(" · ")} · Est. ${formatUsd(estimatedCost)}`
-                    : "No usage logged this month for this provider.";
+            const usageSummary = estimatedCost > 0
+                ? `${usageMetrics.map((m) => `${m.label}: ${m.value}`).join(" · ")} · Event est. ${formatUsd(estimatedCost)}`
+                : "No usage logged this month for this provider.";
 
-            let status = "No activity";
-            if (a?.maxCreated) {
-                const ageH = (now.getTime() - a.maxCreated.getTime()) / (60 * 60 * 1000);
-                status = ageH < 48 ? "Recent activity" : "Stale — last event > 48h ago";
+            let statusLabel = "Estimated from app usage only";
+            if (snapshotStatus === "connected")
+                statusLabel = "Live vendor synced";
+            else if (snapshotStatus === "missing_token")
+                statusLabel = "Missing token";
+            else if (snapshotStatus === "sync_failed")
+                statusLabel = "Sync failed";
+            else if (snapshotStatus === "unsupported")
+                statusLabel = "Connected, billing endpoint unsupported";
+            if (meta.exactInternalPreferred && estimatedCost > 0) {
+                statusLabel = "Estimated from app usage (exact internal events)";
             }
 
             return {
@@ -195,14 +263,20 @@ export class UsageCostService {
                 displayName: meta.displayName,
                 usageSummary,
                 usageMetrics,
+                displayCost,
                 estimatedCost,
+                vendorTotalCost,
                 currency: "USD" as const,
-                status,
+                status: snapshotStatus,
+                statusLabel,
+                allocationMethod,
+                lastSyncedAt: snapshot?.syncedAt ? snapshot.syncedAt.toISOString() : null,
                 notes: meta.notes,
             };
         });
 
         const monthEnd = new Date(nextMonthStart.getTime() - 1);
+        const totalDisplayCost = providers.reduce((sum, row) => sum + (row.displayCost || 0), 0);
 
         return {
             companyId: company.id,
@@ -211,6 +285,7 @@ export class UsageCostService {
             monthStart: monthStart.toISOString(),
             monthEnd: monthEnd.toISOString(),
             totalEstimatedCost,
+            totalDisplayCost,
             projectedMonthlyCost,
             lastUpdated: lastUpdated ? lastUpdated.toISOString() : null,
             providers,

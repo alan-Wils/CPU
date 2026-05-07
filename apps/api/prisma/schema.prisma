@@ -166,6 +166,26 @@ model UsageEvent {
   @@index([companyId, provider, createdAt])
 }
 
+/// Monthly vendor totals synced with backend-only API tokens.
+/// Provider totals are project-level and may be allocated to companies using UsageEvent share.
+model VendorBillingSnapshot {
+  id           String        @id @default(cuid())
+  provider     UsageProvider
+  /// UTC month key: YYYY-MM.
+  month        String
+  totalCost    Float         @default(0)
+  currency     String        @default("USD")
+  rawUsageJson Json?
+  /// connected | missing_token | sync_failed | unsupported | estimated_only
+  status       String
+  syncedAt     DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([provider, month])
+  @@index([month, provider])
+}
+
 model User {
   id           String  @id @default(cuid())
   /// Optional “home” company row; access to tenant data is driven by `CompanyMembership`.

@@ -114,6 +114,11 @@ const envSchema = z
         const t = v.trim().replace(/\/+$/, "");
         return t === "" ? undefined : t;
     }, z.string().url().optional()),
+    /** Backend-only vendor billing integrations. */
+    RAILWAY_API_TOKEN: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().optional()),
+    VERCEL_API_TOKEN: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().optional()),
+    CLOUDFLARE_API_TOKEN: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().optional()),
+    NEON_API_KEY: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().optional()),
     /**
      * Bearer secret for `POST /api/internal/jobs/*` when called by Railway Cron
      * (cash log digest job). Minimum 16 characters. Must be set identically as

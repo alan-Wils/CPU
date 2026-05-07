@@ -6,9 +6,11 @@ import { adminUserIdParam, adminUserStatusSchema, adminUserUpdateSchema, inviteC
 import { AdminService } from "../../services/adminService.js";
 import { requirePlatformRoles, requireRole } from "../../middleware/rbac.js";
 import { UsageCostService } from "../../services/usageCostService.js";
+import { VendorBillingSyncService } from "../../services/vendorBillingSyncService.js";
 export const adminRouter = Router();
 const adminService = new AdminService();
 const usageCostService = new UsageCostService();
+const vendorBillingSyncService = new VendorBillingSyncService();
 
 adminRouter.get(
     "/companies/:companyId/usage-costs",
@@ -16,6 +18,14 @@ adminRouter.get(
     asyncHandler(async (req, res) => {
         const companyId = String(req.params.companyId || "").trim();
         const out = await usageCostService.getCompanyUsageCosts(companyId);
+        res.json(out);
+    }),
+);
+adminRouter.post(
+    "/usage-costs/sync",
+    requirePlatformRoles(["nexbatch_admin", "owner"]),
+    asyncHandler(async (_req, res) => {
+        const out = await vendorBillingSyncService.syncCurrentMonthAllProviders();
         res.json(out);
     }),
 );

@@ -547,9 +547,14 @@ export type UsageCostProviderDto = {
   displayName: string;
   usageSummary: string;
   usageMetrics: { label: string; value: string }[];
+  displayCost: number;
   estimatedCost: number;
+  vendorTotalCost: number | null;
   currency: "USD";
-  status: string;
+  status: "connected" | "missing_token" | "sync_failed" | "unsupported" | "estimated_only";
+  statusLabel: string;
+  allocationMethod: "exact_internal" | "vendor_allocated" | "estimated";
+  lastSyncedAt: string | null;
   notes: string;
 };
 
@@ -560,6 +565,7 @@ export type CompanyUsageCostsDto = {
   monthStart: string;
   monthEnd: string;
   totalEstimatedCost: number;
+  totalDisplayCost: number;
   projectedMonthlyCost: number | null;
   lastUpdated: string | null;
   providers: UsageCostProviderDto[];
@@ -569,5 +575,21 @@ export async function fetchCompanyUsageCosts(companyId: string) {
   return apiRequest<CompanyUsageCostsDto>(
     `/api/admin/companies/${encodeURIComponent(companyId)}/usage-costs`,
     { omitCompanyHeader: true },
+  );
+}
+
+export type VendorSyncSummaryDto = {
+  provider: string;
+  status: "connected" | "missing_token" | "sync_failed" | "unsupported" | "estimated_only";
+  totalCost: number | null;
+  currency: string;
+  syncedAt: string | null;
+  message: string | null;
+};
+
+export async function syncVendorUsageCosts() {
+  return apiRequest<{ month: string; results: VendorSyncSummaryDto[] }>(
+    "/api/admin/usage-costs/sync",
+    { method: "POST", omitCompanyHeader: true },
   );
 }

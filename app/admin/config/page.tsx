@@ -305,7 +305,8 @@ function normalizeRoomsLayout(raw: unknown): RoomWithBayLayout[] {
 type CultivationFieldModalState =
   | { kind: "closed" }
   | { kind: "addBay"; suite: "vegRooms" | "flowerRooms"; roomId: string }
-  | { kind: "addTable"; suite: "vegRooms" | "flowerRooms"; roomId: string; bayId: string };
+  | { kind: "addTable"; suite: "vegRooms" | "flowerRooms"; roomId: string; bayId: string }
+  | { kind: "editTable"; suite: "vegRooms" | "flowerRooms"; roomId: string; bayId: string; tableId: string };
 
 type MetrcTestConnectionJson =
   | {
@@ -1097,7 +1098,9 @@ export default function ConfigPage() {
     if (cultivationFieldModal.kind === "closed") return;
 
     const suite =
-      cultivationFieldModal.kind === "addBay" || cultivationFieldModal.kind === "addTable"
+      cultivationFieldModal.kind === "addBay" ||
+      cultivationFieldModal.kind === "addTable" ||
+      cultivationFieldModal.kind === "editTable"
         ? cultivationFieldModal.suite
         : null;
     if (!suite) return;
@@ -1138,7 +1141,7 @@ export default function ConfigPage() {
       return;
     }
 
-    if (cultivationFieldModal.kind !== "addTable") return;
+    if (cultivationFieldModal.kind !== "addTable" && cultivationFieldModal.kind !== "editTable") return;
 
     const tableName = fieldModalTableName.trim();
     const squareFeet = fieldModalSquareFeet.trim();
@@ -1147,6 +1150,9 @@ export default function ConfigPage() {
       return;
     }
     const { roomId, bayId } = cultivationFieldModal;
+    const editingTableId =
+      cultivationFieldModal.kind === "editTable" ? cultivationFieldModal.tableId : null;
+
     setConfig((prev) => ({
       ...prev,
       cultivation: {
@@ -1161,14 +1167,18 @@ export default function ConfigPage() {
                     bay.id === bayId
                       ? {
                           ...bay,
-                          tables: [
-                            ...bay.tables,
-                            {
-                              id: makeId("table"),
-                              name: tableName,
-                              squareFeet,
-                            },
-                          ],
+                          tables: editingTableId
+                            ? bay.tables.map((t) =>
+                                t.id === editingTableId ? { ...t, name: tableName, squareFeet } : t,
+                              )
+                            : [
+                                ...bay.tables,
+                                {
+                                  id: makeId("table"),
+                                  name: tableName,
+                                  squareFeet,
+                                },
+                              ],
                         }
                       : bay,
                   ),
@@ -1217,6 +1227,21 @@ export default function ConfigPage() {
     setFieldModalTableName("");
     setFieldModalSquareFeet("");
     setCultivationFieldModal({ kind: "addTable", suite, roomId, bayId });
+  }
+
+  function openEditTableModal(
+    suite: "vegRooms" | "flowerRooms",
+    roomId: string,
+    bayId: string,
+    tableId: string,
+  ) {
+    const room = config.cultivation.rooms[suite].find((r) => r.id === roomId);
+    const bay = room?.bays.find((b) => b.id === bayId);
+    const table = bay?.tables.find((t) => t.id === tableId);
+    setFieldModalError("");
+    setFieldModalTableName(table?.name ?? "");
+    setFieldModalSquareFeet(table != null ? String(table.squareFeet ?? "").trim() : "");
+    setCultivationFieldModal({ kind: "editTable", suite, roomId, bayId, tableId });
   }
 
   function removeTable(
@@ -3460,6 +3485,7 @@ export default function ConfigPage() {
           onOpenAddBay={(roomId) => openAddBayModal("vegRooms", roomId)}
           onRemoveRoom={removeVegRoom}
           onOpenAddTable={(roomId, bayId) => openAddTableModal("vegRooms", roomId, bayId)}
+          onEditTable={(roomId, bayId, tableId) => openEditTableModal("vegRooms", roomId, bayId, tableId)}
           onRemoveBay={(roomId, bayId) => removeBay("vegRooms", roomId, bayId)}
           onRemoveTable={(roomId, bayId, tableId) => removeTable("vegRooms", roomId, bayId, tableId)}
         />
@@ -3524,6 +3550,7 @@ export default function ConfigPage() {
           onOpenAddBay={(roomId) => openAddBayModal("flowerRooms", roomId)}
           onRemoveRoom={removeFlowerRoom}
           onOpenAddTable={(roomId, bayId) => openAddTableModal("flowerRooms", roomId, bayId)}
+          onEditTable={(roomId, bayId, tableId) => openEditTableModal("flowerRooms", roomId, bayId, tableId)}
           onRemoveBay={(roomId, bayId) => removeBay("flowerRooms", roomId, bayId)}
           onRemoveTable={(roomId, bayId, tableId) =>
             removeTable("flowerRooms", roomId, bayId, tableId)
@@ -3726,14 +3753,20 @@ export default function ConfigPage() {
               id="cultivation-field-modal-title"
               style={{ ...styles.sectionTitle, marginBottom: 8, marginTop: 0 }}
             >
-              {cultivationFieldModal.kind === "addBay" ? "Add bay" : "Add table"}
+              {cultivationFieldModal.kind === "addBay"
+                ? "Add bay"
+                : cultivationFieldModal.kind === "editTable"
+                  ? "Edit table"
+                  : "Add table"}
             </h3>
             <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
               {cultivationFieldModal.kind === "addBay"
                 ? cultivationFieldModal.suite === "flowerRooms"
                   ? "Enter a label for this bay (often a letter). It appears when staff assign plants to flower locations."
                   : "Enter a label for this bay (often a letter). It appears when staff assign plants to veg locations."
-                : "Name or number this table, then optional square footage over the table (use 0 if not tracking)."}
+                : cultivationFieldModal.kind === "editTable"
+                  ? "Update the label and square footage for this table. Use 0 for sq ft when not tracking area."
+                  : "Name or number this table, then optional square footage over the table (use 0 if not tracking)."}
             </p>
 
             {fieldModalError ? (
@@ -3792,7 +3825,11 @@ export default function ConfigPage() {
                 Cancel
               </button>
               <button type="button" style={styles.saveButton} onClick={confirmCultivationFieldModal}>
-                {cultivationFieldModal.kind === "addBay" ? "Add bay" : "Add table"}
+                {cultivationFieldModal.kind === "addBay"
+                  ? "Add bay"
+                  : cultivationFieldModal.kind === "editTable"
+                    ? "Save changes"
+                    : "Add table"}
               </button>
             </div>
           </div>
@@ -4172,6 +4209,7 @@ function CultivationRoomAccordionList({
   onOpenAddBay,
   onRemoveRoom,
   onOpenAddTable,
+  onEditTable,
   onRemoveBay,
   onRemoveTable,
 }: {
@@ -4179,6 +4217,7 @@ function CultivationRoomAccordionList({
   onOpenAddBay: (roomId: string) => void;
   onRemoveRoom: (roomId: string) => void;
   onOpenAddTable: (roomId: string, bayId: string) => void;
+  onEditTable: (roomId: string, bayId: string, tableId: string) => void;
   onRemoveBay: (roomId: string, bayId: string) => void;
   onRemoveTable: (roomId: string, bayId: string, tableId: string) => void;
 }) {
@@ -4269,13 +4308,23 @@ function CultivationRoomAccordionList({
                             <span style={{ fontSize: 13 }}>
                               T{table.name} · {table.squareFeet} sq ft
                             </span>
-                            <button
-                              type="button"
-                              style={styles.cultivationBtnDelete}
-                              onClick={() => onRemoveTable(room.id, bay.id, table.id)}
-                            >
-                              Remove
-                            </button>
+                            <span style={{ ...styles.inlineSmall, gap: 6 }}>
+                              <button
+                                type="button"
+                                title="Edit table"
+                                style={styles.cultivationBtnSecondary}
+                                onClick={() => onEditTable(room.id, bay.id, table.id)}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                style={styles.cultivationBtnDelete}
+                                onClick={() => onRemoveTable(room.id, bay.id, table.id)}
+                              >
+                                Remove
+                              </button>
+                            </span>
                           </div>
                         ))
                       )}

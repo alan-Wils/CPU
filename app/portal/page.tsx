@@ -6,6 +6,7 @@ import {
   apiRequest,
   fetchCompanyUsageCosts,
   setSelectedCompanyId,
+  syncVendorUsageCosts,
   type CompanyUsageCostsDto,
 } from "@/lib/api";
 import {
@@ -46,36 +47,77 @@ function fmtUsd(n: number): string {
 function UsageCostsModal({
   companyName,
   companyId,
+  canSyncVendors,
   onClose,
 }: {
   companyName: string;
   companyId: string;
+  canSyncVendors: boolean;
   onClose: () => void;
 }) {
   const [data, setData] = useState<CompanyUsageCostsDto | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncNote, setSyncNote] = useState("");
   const [err, setErr] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
+  const loadUsage = useCallback(async (mode: "initial" | "refresh" = "initial") => {
+    if (mode === "initial") setLoading(true);
+    else setRefreshing(true);
     setErr("");
-    setData(null);
-    void fetchCompanyUsageCosts(companyId)
-      .then((d) => {
-        if (!cancelled) setData(d);
-      })
-      .catch((e: unknown) => {
-        if (!cancelled)
-          setErr(e instanceof Error ? e.message : "Could not load usage and costs.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const d = await fetchCompanyUsageCosts(companyId);
+      setData(d);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Could not load usage and costs.");
+    } finally {
+      if (mode === "initial") setLoading(false);
+      else setRefreshing(false);
+    }
   }, [companyId]);
+
+  useEffect(() => {
+    void loadUsage("initial");
+  }, [loadUsage]);
+
+  const onSyncVendors = useCallback(async () => {
+    if (!canSyncVendors) return;
+    setSyncing(true);
+    setSyncNote("");
+    try {
+      const out = await syncVendorUsageCosts();
+      const connected = out.results.filter((r) => r.status === "connected").length;
+      const missing = out.results.filter((r) => r.status === "missing_token").length;
+      const failed = out.results.filter((r) => r.status === "sync_failed").length;
+      setSyncNote(`Synced ${out.month}. Connected: ${connected}, Missing token: ${missing}, Failed: ${failed}.`);
+      await loadUsage("refresh");
+    } catch (e: unknown) {
+      setSyncNote(e instanceof Error ? e.message : "Vendor sync failed.");
+    } finally {
+      setSyncing(false);
+    }
+  }, [canSyncVendors, loadUsage]);
+
+  const onRefresh = useCallback(async () => {
+    await loadUsage("refresh");
+  }, [loadUsage]);
+
+  const badgeForProviderStatus = useCallback((status: CompanyUsageCostsDto["providers"][number]["status"]) => {
+    if (status === "connected") return { text: "Live vendor synced", color: "#22d3ee" };
+    if (status === "missing_token") return { text: "Missing token", color: "#f97316" };
+    if (status === "sync_failed") return { text: "Sync failed", color: "#f87171" };
+    if (status === "unsupported") return { text: "Connected (unsupported billing endpoint)", color: "#a78bfa" };
+    return { text: "Estimated from app usage", color: "#86efac" };
+  }, []);
+
+  const totalCost = data?.totalDisplayCost ?? 0;
+
+  useEffect(() => {
+    return () => {
+      setSyncNote("");
+    };
+  }, []);
 
   const backdropStyle: React.CSSProperties = {
     position: "fixed",
@@ -127,9 +169,45 @@ function UsageCostsModal({
           </button>
         </div>
         <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: 13, lineHeight: 1.5 }}>
-          Month-to-date estimates from in-app <strong style={{ color: "#94a3b8" }}>UsageEvent</strong> logs (provider billing APIs not required).
-          Costs are approximate placeholders until finance connects live invoicing.
+          Vendor totals are project-level; company values are allocated by each company&apos;s provider usage share unless exact per-company events exist.
         </p>
+        <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+          <button
+            type="button"
+            onClick={() => void onRefresh()}
+            disabled={loading || refreshing || syncing}
+            style={{
+              border: "1px solid rgba(148,163,184,0.45)",
+              borderRadius: 10,
+              padding: "6px 12px",
+              background: "#020617",
+              color: "#cbd5e1",
+              fontWeight: 700,
+              cursor: loading || refreshing || syncing ? "wait" : "pointer",
+            }}
+          >
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+          {canSyncVendors ? (
+            <button
+              type="button"
+              onClick={() => void onSyncVendors()}
+              disabled={loading || refreshing || syncing}
+              style={{
+                border: "1px solid rgba(34,197,94,0.5)",
+                borderRadius: 10,
+                padding: "6px 12px",
+                background: "rgba(22, 163, 74, 0.2)",
+                color: "#bbf7d0",
+                fontWeight: 800,
+                cursor: loading || refreshing || syncing ? "wait" : "pointer",
+              }}
+            >
+              {syncing ? "Syncing vendor costs…" : "Sync vendor costs"}
+            </button>
+          ) : null}
+        </div>
+        {syncNote ? <p style={{ margin: "0 0 12px", color: "#93c5fd", fontSize: 12 }}>{syncNote}</p> : null}
 
         {loading ? (
           <p style={{ color: "#93c5fd", fontWeight: 700 }}>Loading usage…</p>
@@ -161,7 +239,7 @@ function UsageCostsModal({
             >
               <div style={{ fontSize: 13, color: "#94a3b8", fontWeight: 700 }}>Current month ({data.monthLabel}, UTC)</div>
               <div style={{ fontSize: 28, fontWeight: 900, color: "#f0f9ff" }}>
-                Total estimated (MTD): {fmtUsd(data.totalEstimatedCost)}
+                Total MTD cost: {fmtUsd(totalCost)}
               </div>
               <div style={{ fontSize: 14, color: "#cbd5e1" }}>
                 Projected month-end:{" "}
@@ -189,7 +267,7 @@ function UsageCostsModal({
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
                     <strong style={{ color: "#bae6fd", fontSize: 15 }}>{p.displayName}</strong>
-                    <span style={{ color: "#fcd34d", fontWeight: 800 }}>{fmtUsd(p.estimatedCost)}</span>
+                    <span style={{ color: "#fcd34d", fontWeight: 800 }}>{fmtUsd(p.displayCost ?? p.estimatedCost)}</span>
                   </div>
                   <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>{p.usageSummary}</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 14px", marginBottom: 8 }}>
@@ -200,7 +278,14 @@ function UsageCostsModal({
                     ))}
                   </div>
                   <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>
-                    <span style={{ color: "#86efac", fontWeight: 700 }}>{p.status}</span>
+                    <span style={{ color: badgeForProviderStatus(p.status).color, fontWeight: 700 }}>
+                      {badgeForProviderStatus(p.status).text}
+                    </span>
+                    {p.lastSyncedAt ? (
+                      <>
+                        {" · "}Last synced {new Date(p.lastSyncedAt).toLocaleString()}
+                      </>
+                    ) : null}
                     {" · "}
                     {p.notes}
                   </div>
@@ -1087,6 +1172,7 @@ function PortalBody() {
         <UsageCostsModal
           companyId={usageCostsCompanyId}
           companyName={usageCostsCompanyName || "Company"}
+          canSyncVendors={canCreate}
           onClose={() => {
             setUsageCostsCompanyId(null);
             setUsageCostsCompanyName("");
