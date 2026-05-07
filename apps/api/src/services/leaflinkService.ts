@@ -1,5 +1,6 @@
 import { env } from "../config/env.js";
 import { AppError } from "../errors/AppError.js";
+import { logInfo, logWarn } from "../lib/logger.js";
 import { ConfigService } from "./configService.js";
 
 const DEFAULT_BASE_URL = "https://app.leaflink.com/api";
@@ -234,9 +235,26 @@ async function fetchJsonWithRetry(url: string, init: RequestInit, timeoutMs: num
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
+      logInfo("[LEAFLINK] request_start", {
+        url,
+        method: init.method || "GET",
+        attempt: i + 1,
+      });
       const res = await fetch(url, { ...init, signal: ctrl.signal });
       const text = await res.text();
-      const json = text ? JSON.parse(text) : {};
+      const contentType = String(res.headers.get("content-type") || "").toLowerCase();
+      const trimmed = String(text || "").trim();
+      const isJsonByHeader = contentType.includes("application/json") || contentType.includes("+json");
+      const isJsonByBody = trimmed.startsWith("{") || trimmed.startsWith("[");
+      const isJson = isJsonByHeader || isJsonByBody;
+      const isHtml = contentType.includes("text/html") || /^<(?:!doctype|html|head|body)\b/i.test(trimmed);
+      logInfo("[LEAFLINK] response_meta", {
+        url,
+        status: res.status,
+        contentType,
+        isJson,
+        isHtml,
+      });
       if (!res.ok) {
         if (res.status >= 500 && i === 0) {
           lastErr = new AppError("LeafLink temporary server error. Retrying.", 502, "LEAFLINK_TEMPORARY");
@@ -245,15 +263,57 @@ async function fetchJsonWithRetry(url: string, init: RequestInit, timeoutMs: num
         if (res.status === 401 || res.status === 403) {
           throw new AppError("LeafLink credentials are invalid for this company.", 401, "LEAFLINK_INVALID_CREDENTIALS");
         }
+        if (isHtml) {
+          throw new AppError(
+            "LeafLink returned an HTML error response instead of JSON.",
+            502,
+            "LEAFLINK_HTML_ERROR",
+            {
+              status: res.status,
+              contentType,
+              preview: trimmed.slice(0, 220),
+            },
+          );
+        }
         throw new AppError(`LeafLink request failed (${res.status}).`, 502, "LEAFLINK_REQUEST_FAILED");
       }
-      return json;
+      if (!isJson) {
+        throw new AppError(
+          "LeafLink returned a non-JSON response.",
+          502,
+          "LEAFLINK_NON_JSON_RESPONSE",
+          {
+            status: res.status,
+            contentType,
+            preview: trimmed.slice(0, 220),
+          },
+        );
+      }
+      try {
+        return trimmed ? JSON.parse(trimmed) : {};
+      } catch {
+        throw new AppError(
+          "LeafLink returned invalid JSON.",
+          502,
+          "LEAFLINK_INVALID_JSON",
+          {
+            status: res.status,
+            contentType,
+            preview: trimmed.slice(0, 220),
+          },
+        );
+      }
     } catch (error) {
       lastErr = error;
       const isAbort = error instanceof Error && error.name === "AbortError";
       if (isAbort) {
         throw new AppError("LeafLink request timed out.", 504, "LEAFLINK_TIMEOUT");
       }
+      logWarn("[LEAFLINK] request_failed", {
+        url,
+        attempt: i + 1,
+        error: error instanceof Error ? error.message : String(error),
+      });
       if (i === 1) throw error;
     } finally {
       clearTimeout(timeout);

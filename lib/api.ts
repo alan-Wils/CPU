@@ -45,6 +45,11 @@ export function clearSelectedCompanyId() {
 
 const API_FAIL_FALLBACK = "API request failed";
 
+function looksLikeHtml(text: string): boolean {
+  const t = String(text || "").trim().toLowerCase();
+  return t.startsWith("<!doctype") || t.startsWith("<html") || t.startsWith("<head") || t.startsWith("<body");
+}
+
 function coerceUnknownToMessage(value: unknown): string | null {
   if (value == null) return null;
   if (typeof value === "string") return value.trim() || null;
@@ -192,11 +197,28 @@ export async function apiRequest<T = any>(
   }
 
   const text = await res.text();
+  const contentType = String(res.headers.get("content-type") || "").toLowerCase();
 
   let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
+  const hasBody = Boolean(String(text || "").trim());
+  const jsonByHeader =
+    contentType.includes("application/json") || contentType.includes("+json");
+  const jsonByBody = String(text || "").trim().startsWith("{") || String(text || "").trim().startsWith("[");
+  const shouldParseJson = hasBody && (jsonByHeader || jsonByBody);
+  if (!hasBody) {
+    data = null;
+  } else if (shouldParseJson) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (looksLikeHtml(text)) {
+        throw new Error(
+          `API returned HTML instead of JSON at ${requestUrl}. Check NEXT_PUBLIC_API_URL/proxy and API route deployment.`,
+        );
+      }
+      throw new Error(`API returned invalid JSON at ${requestUrl}.`);
+    }
+  } else {
     data = text;
   }
 
@@ -221,6 +243,12 @@ export async function apiRequest<T = any>(
       }
     }
     throw new Error(stringifyApiFailureBody(data));
+  }
+
+  if (!shouldParseJson && looksLikeHtml(String(data || ""))) {
+    throw new Error(
+      `API returned HTML instead of JSON at ${requestUrl}. Check NEXT_PUBLIC_API_URL/proxy and API route deployment.`,
+    );
   }
 
   return data;

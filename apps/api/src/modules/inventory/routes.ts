@@ -53,3 +53,10 @@ inventoryRouter.put(
   }),
 );
 
+inventoryRouter.use((_req, res) => {
+  res.status(404).json({
+    message: "Inventory API route not found",
+    error: { code: "INVENTORY_ROUTE_NOT_FOUND" },
+  });
+});
+
