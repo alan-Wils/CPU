@@ -4,6 +4,7 @@ import { AppError } from "../errors/AppError.js";
 import { resolvePublicWebBaseUrl } from "../config/publicWebUrl.js";
 import { logInfo } from "../lib/logger.js";
 import { sendInviteEmail } from "../lib/mailer.js";
+import { recordUsageEventSafe } from "./usageEventRecord.js";
 import {
     canCreateCompanyAsPlatform,
     nexBatchInviteTierToPlatformRole,
@@ -69,13 +70,31 @@ export class NexBatchStaffService {
         const inviteUrl = `${baseUrl}/accept-nexbatch-invite?token=${encodeURIComponent(rawToken)}`;
         const roleLabel = nexBatchPlatformRoleInviteLabel(platformRole);
 
+        const primaryCompanyForUsage = companyIds[0] ?? "";
+
         void sendInviteEmail({
             to: email,
             inviteUrl,
             companyName: "NexBatch portal",
             role: roleLabel,
         }).then(
-            () => logInfo("nexbatch_staff_invite_email_sent", { to: email }),
+            async () => {
+                logInfo("nexbatch_staff_invite_email_sent", { to: email });
+                if (primaryCompanyForUsage) {
+                    await recordUsageEventSafe({
+                        companyId: primaryCompanyForUsage,
+                        provider: "resend",
+                        feature: "nexbatch_staff_invite_email",
+                        unitType: "email_sent",
+                        units: 1,
+                        estimatedCost: 0.0004,
+                        metadata: {
+                            scope: "platform_invite",
+                            companiesAttached: companyIds.length,
+                        },
+                    });
+                }
+            },
             (err) => {
                 console.error("[mail] Failed to send NexBatch staff invite email:", err);
             },

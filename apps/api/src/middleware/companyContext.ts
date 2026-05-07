@@ -21,6 +21,9 @@ function allowsMissingCompany(req: Request): boolean {
         return true;
     if (method === "POST" && /\/nexbatch\/staff\/invite$/.test(path))
         return true;
+    /** NexBatch portal: usage/cost modal calls without an active tenant JWT company id. */
+    if (method === "GET" && /\/admin\/companies\/[^/]+\/usage-costs$/.test(path))
+        return true;
     return false;
 }
 

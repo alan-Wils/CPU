@@ -3,6 +3,7 @@ import { AppError } from "../errors/AppError.js";
 import { logInfo } from "../lib/logger.js";
 import { sendInviteEmail } from "../lib/mailer.js";
 import { mergeCashLogEodPrefs } from "../lib/cashLogEodPrefs.js";
+import { recordUsageEventSafe } from "./usageEventRecord.js";
 import { AdminRepository } from "../repositories/adminRepository.js";
 import { mayAdminEnableOwnerDigestEmails } from "./adminDigestPolicy.js";
 import { AuditService } from "./auditService.js";
@@ -68,7 +69,17 @@ export class AdminService {
             role: String(input.role)
         };
         void sendInviteEmail(mailOpts).then(
-            () => console.log(`[mail] invite sent to ${input.email}`),
+            async () => {
+                console.log(`[mail] invite sent to ${input.email}`);
+                await recordUsageEventSafe({
+                    companyId: input.companyId,
+                    provider: "resend",
+                    feature: "admin_invite_email",
+                    unitType: "email_sent",
+                    units: 1,
+                    estimatedCost: 0.0004,
+                });
+            },
             (err: unknown) => console.error("[mail] Failed to send invite email:", err)
         );
 

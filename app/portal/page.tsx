@@ -2,7 +2,12 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { apiRequest, setSelectedCompanyId } from "@/lib/api";
+import {
+  apiRequest,
+  fetchCompanyUsageCosts,
+  setSelectedCompanyId,
+  type CompanyUsageCostsDto,
+} from "@/lib/api";
 import {
   canCreatePlatformCompanies,
   getAuthUser,
@@ -28,6 +33,188 @@ type NexBatchStaffRow = {
   companiesGranted: number;
   createdAt: string;
 };
+
+function fmtUsd(n: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(n) ? n : 0);
+}
+
+function UsageCostsModal({
+  companyName,
+  companyId,
+  onClose,
+}: {
+  companyName: string;
+  companyId: string;
+  onClose: () => void;
+}) {
+  const [data, setData] = useState<CompanyUsageCostsDto | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setErr("");
+    setData(null);
+    void fetchCompanyUsageCosts(companyId)
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled)
+          setErr(e instanceof Error ? e.message : "Could not load usage and costs.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId]);
+
+  const backdropStyle: React.CSSProperties = {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.72)",
+    zIndex: 1000,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    overflowY: "auto",
+  };
+
+  const panelStyle: React.CSSProperties = {
+    width: "100%",
+    maxWidth: 640,
+    maxHeight: "90vh",
+    overflowY: "auto",
+    background: "rgba(15, 23, 42, 0.98)",
+    border: "1px solid rgba(148, 163, 184, 0.35)",
+    borderRadius: 16,
+    padding: "22px 22px 26px",
+    boxShadow: "0 30px 80px rgba(0,0,0,0.55)",
+    color: "#e2e8f0",
+  };
+
+  return (
+    <div style={backdropStyle} role="presentation" onMouseDown={onClose}>
+      <div style={panelStyle} role="dialog" aria-modal="true" aria-labelledby="usage-costs-title" onMouseDown={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
+          <h2 id="usage-costs-title" style={{ margin: 0, fontSize: 22, fontWeight: 900, color: "#67e8f9", lineHeight: 1.25 }}>
+            Usage & Costs — {companyName}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              flexShrink: 0,
+              border: "1px solid rgba(148,163,184,0.45)",
+              borderRadius: 10,
+              padding: "6px 12px",
+              background: "#020617",
+              color: "#94a3b8",
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Close
+          </button>
+        </div>
+        <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: 13, lineHeight: 1.5 }}>
+          Month-to-date estimates from in-app <strong style={{ color: "#94a3b8" }}>UsageEvent</strong> logs (provider billing APIs not required).
+          Costs are approximate placeholders until finance connects live invoicing.
+        </p>
+
+        {loading ? (
+          <p style={{ color: "#93c5fd", fontWeight: 700 }}>Loading usage…</p>
+        ) : err ? (
+          <div
+            style={{
+              padding: 12,
+              borderRadius: 12,
+              background: "rgba(127, 29, 29, 0.45)",
+              border: "1px solid rgba(248, 113, 113, 0.45)",
+              color: "#fecaca",
+              fontWeight: 600,
+            }}
+          >
+            {err}
+          </div>
+        ) : data ? (
+          <>
+            <div
+              style={{
+                display: "grid",
+                gap: 12,
+                marginBottom: 18,
+                padding: 14,
+                borderRadius: 12,
+                border: "1px solid rgba(34, 211, 238, 0.35)",
+                background: "#020617",
+              }}
+            >
+              <div style={{ fontSize: 13, color: "#94a3b8", fontWeight: 700 }}>Current month ({data.monthLabel}, UTC)</div>
+              <div style={{ fontSize: 28, fontWeight: 900, color: "#f0f9ff" }}>
+                Total estimated (MTD): {fmtUsd(data.totalEstimatedCost)}
+              </div>
+              <div style={{ fontSize: 14, color: "#cbd5e1" }}>
+                Projected month-end:{" "}
+                <strong style={{ color: "#fcd34d" }}>
+                  {data.projectedMonthlyCost != null ? fmtUsd(data.projectedMonthlyCost) : "— (need a few days of data)"}
+                </strong>
+              </div>
+              <div style={{ fontSize: 12, color: "#64748b" }}>
+                Last updated (latest event):{" "}
+                {data.lastUpdated ? new Date(data.lastUpdated).toLocaleString() : "— No events this month"}
+              </div>
+            </div>
+
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#94a3b8", marginBottom: 10 }}>By provider</div>
+            <div style={{ display: "grid", gap: 10 }}>
+              {data.providers.map((p) => (
+                <div
+                  key={p.provider}
+                  style={{
+                    borderRadius: 12,
+                    border: "1px solid rgba(51, 65, 85, 0.85)",
+                    padding: "12px 14px",
+                    background: "#0f172a",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+                    <strong style={{ color: "#bae6fd", fontSize: 15 }}>{p.displayName}</strong>
+                    <span style={{ color: "#fcd34d", fontWeight: 800 }}>{fmtUsd(p.estimatedCost)}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>{p.usageSummary}</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 14px", marginBottom: 8 }}>
+                    {p.usageMetrics.slice(0, 8).map((m) => (
+                      <span key={m.label} style={{ fontSize: 12, color: "#cbd5e1" }}>
+                        <span style={{ color: "#64748b" }}>{m.label}:</span> {m.value}
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>
+                    <span style={{ color: "#86efac", fontWeight: 700 }}>{p.status}</span>
+                    {" · "}
+                    {p.notes}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p style={{ color: "#64748b" }}>No data.</p>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function codeToSlug(code: string): string {
   return code
@@ -88,6 +275,8 @@ function PortalBody() {
   const [staffEditById, setStaffEditById] = useState<
     Record<string, { tier: NexBatchInviteTier; active: boolean }>
   >({});
+  const [usageCostsCompanyId, setUsageCostsCompanyId] = useState<string | null>(null);
+  const [usageCostsCompanyName, setUsageCostsCompanyName] = useState("");
 
   const fetchAccessibleList = useCallback(async (): Promise<CpuCompany[]> => {
     const raw = await apiRequest<{ companies: CpuCompany[] }>(
@@ -446,55 +635,94 @@ function PortalBody() {
           ) : (
             companies.map((c) => (
               <li key={c.id} style={{ marginBottom: 12 }}>
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={() => onPick(c.id)}
+                <div
                   style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "16px 18px",
                     borderRadius: 12,
                     border: "1px solid rgba(148, 163, 184, 0.35)",
                     background: "#020617",
-                    color: "white",
-                    fontWeight: 800,
-                    fontSize: 18,
-                    cursor: loading ? "wait" : "pointer",
+                    overflow: "hidden",
                   }}
                 >
-                  <span
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => onPick(c.id)}
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 12,
-                      flexWrap: "wrap",
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "16px 18px",
+                      borderRadius: 0,
+                      border: "none",
+                      background: "transparent",
+                      color: "white",
+                      fontWeight: 800,
+                      fontSize: 18,
+                      cursor: loading ? "wait" : "pointer",
                     }}
                   >
-                    <span>
-                      {c.name}{" "}
-                      <span style={{ color: "#64748b", fontWeight: 600 }}>
-                        ({c.code})
+                    <span
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <span>
+                        {c.name}{" "}
+                        <span style={{ color: "#64748b", fontWeight: 600 }}>
+                          ({c.code})
+                        </span>
                       </span>
+                      {c.lifecycleStatus === "invited" ? (
+                        <span
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 800,
+                            padding: "4px 10px",
+                            borderRadius: 999,
+                            background: "rgba(251, 191, 36, 0.2)",
+                            border: "1px solid rgba(251, 191, 36, 0.55)",
+                            color: "#fde68a",
+                          }}
+                        >
+                          Invited
+                        </span>
+                      ) : null}
                     </span>
-                    {c.lifecycleStatus === "invited" ? (
-                      <span
+                  </button>
+                  {canCreate ? (
+                    <div
+                      style={{
+                        padding: "10px 14px",
+                        borderTop: "1px solid rgba(148, 163, 184, 0.2)",
+                        display: "flex",
+                        justifyContent: "flex-end",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUsageCostsCompanyId(c.id);
+                          setUsageCostsCompanyName(c.name);
+                        }}
                         style={{
-                          fontSize: 13,
+                          border: "1px solid rgba(56, 189, 248, 0.55)",
+                          borderRadius: 10,
+                          padding: "8px 14px",
+                          background: "rgba(14, 116, 144, 0.35)",
+                          color: "#e0f2fe",
                           fontWeight: 800,
-                          padding: "4px 10px",
-                          borderRadius: 999,
-                          background: "rgba(251, 191, 36, 0.2)",
-                          border: "1px solid rgba(251, 191, 36, 0.55)",
-                          color: "#fde68a",
+                          fontSize: 13,
+                          cursor: "pointer",
                         }}
                       >
-                        Invited
-                      </span>
-                    ) : null}
-                  </span>
-                </button>
+                        Usage & Costs
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </li>
             ))
           )}
@@ -855,6 +1083,16 @@ function PortalBody() {
           </section>
         )}
       </div>
+      {usageCostsCompanyId ? (
+        <UsageCostsModal
+          companyId={usageCostsCompanyId}
+          companyName={usageCostsCompanyName || "Company"}
+          onClose={() => {
+            setUsageCostsCompanyId(null);
+            setUsageCostsCompanyName("");
+          }}
+        />
+      ) : null}
     </main>
   );
 }

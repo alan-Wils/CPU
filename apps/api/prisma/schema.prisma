@@ -106,11 +106,23 @@ enum CashLogDepartment {
   GENERAL
 }
 
+/// Third-party / infra usage for NexBatch admin cost visibility (app-estimated from logged events).
+enum UsageProvider {
+  vercel
+  railway
+  neon
+  resend
+  cloudflare_r2
+  ai
+}
+
 model Company {
   id                String @id @default(cuid())
   name              String
   slug              String @unique
   nextChainSequence Int    @default(1)
+  /// `invited` until the OWNER invite is accepted; then `active`.
+  lifecycleStatus   String @default("invited")
 
   users        User[]
   memberships CompanyMembership[]
@@ -132,9 +144,26 @@ model Company {
   storeSnapshots      CompanyStore[]
   checkCaptures       CheckCapture[]
   cashLogEntries      CashLogEntry[]
+  usageEvents         UsageEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model UsageEvent {
+  id            String        @id @default(cuid())
+  companyId     String
+  company       Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  provider      UsageProvider
+  feature       String
+  unitType      String
+  units         Float
+  estimatedCost Float         @default(0)
+  metadata      Json?
+  createdAt     DateTime      @default(now())
+
+  @@index([companyId, createdAt])
+  @@index([companyId, provider, createdAt])
 }
 
 model User {

@@ -64,6 +64,132 @@ async function upsertConfig(companyId: string, key: string, value: unknown) {
   });
 }
 
+/** Demo rows for NexBatch portal “Usage & Costs” modal (current UTC month). */
+async function seedDemoUsageEvents(budId: string, demoId: string) {
+  await prisma.usageEvent.deleteMany({
+    where: { companyId: { in: [budId, demoId] } },
+  });
+
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const day = Math.min(Math.max(now.getUTCDate(), 2), 28);
+  const at = (d: number, h = 10) => new Date(Date.UTC(y, m, d, h, 0, 0));
+
+  await prisma.usageEvent.createMany({
+    data: [
+      {
+        companyId: budId,
+        provider: "vercel",
+        feature: "edge_requests",
+        unitType: "page_views",
+        units: 14200,
+        estimatedCost: 5.12,
+        createdAt: at(day - 2),
+      },
+      {
+        companyId: budId,
+        provider: "railway",
+        feature: "api_service",
+        unitType: "gb_hours",
+        units: 22.4,
+        estimatedCost: 14.8,
+        createdAt: at(day - 1, 14),
+      },
+      {
+        companyId: budId,
+        provider: "neon",
+        feature: "postgres",
+        unitType: "rows_written",
+        units: 185000,
+        estimatedCost: 3.25,
+        createdAt: at(day - 1),
+      },
+      {
+        companyId: budId,
+        provider: "resend",
+        feature: "transactional",
+        unitType: "email_sent",
+        units: 820,
+        estimatedCost: 0.33,
+        createdAt: at(day - 3),
+      },
+      {
+        companyId: budId,
+        provider: "cloudflare_r2",
+        feature: "object_storage",
+        unitType: "gb_month",
+        units: 48.2,
+        estimatedCost: 1.1,
+        createdAt: at(day - 2, 16),
+      },
+      {
+        companyId: budId,
+        provider: "ai",
+        feature: "openai_chat",
+        unitType: "tokens_estimated",
+        units: 2400000,
+        estimatedCost: 18.6,
+        createdAt: at(day - 1, 9),
+      },
+      {
+        companyId: demoId,
+        provider: "vercel",
+        feature: "edge_requests",
+        unitType: "page_views",
+        units: 2100,
+        estimatedCost: 0.72,
+        createdAt: at(day - 2, 11),
+      },
+      {
+        companyId: demoId,
+        provider: "railway",
+        feature: "api_service",
+        unitType: "gb_hours",
+        units: 4.1,
+        estimatedCost: 2.65,
+        createdAt: at(day - 2),
+      },
+      {
+        companyId: demoId,
+        provider: "neon",
+        feature: "postgres",
+        unitType: "rows_written",
+        units: 12000,
+        estimatedCost: 0.45,
+        createdAt: at(day - 3),
+      },
+      {
+        companyId: demoId,
+        provider: "resend",
+        feature: "transactional",
+        unitType: "email_sent",
+        units: 45,
+        estimatedCost: 0.02,
+        createdAt: at(day - 1),
+      },
+      {
+        companyId: demoId,
+        provider: "cloudflare_r2",
+        feature: "object_storage",
+        unitType: "gb_month",
+        units: 3.2,
+        estimatedCost: 0.08,
+        createdAt: at(day - 4),
+      },
+      {
+        companyId: demoId,
+        provider: "ai",
+        feature: "openai_chat",
+        unitType: "tokens_estimated",
+        units: 95000,
+        estimatedCost: 0.85,
+        createdAt: at(day - 2, 15),
+      },
+    ],
+  });
+}
+
 async function main() {
   const budFox = await upsertCompanyWithUsers({
     name: "BudFox",
@@ -272,6 +398,7 @@ async function main() {
 
   await backfillMembershipsFromPrimaryCompany();
   await seedNexBatchPlatformOperators(prisma, budFox.id, demoCompany.id);
+  await seedDemoUsageEvents(budFox.id, demoCompany.id);
 
   console.log("Seed complete: BudFox + Demo Company initialized with operational Data Hub + workflow baseline.");
 }

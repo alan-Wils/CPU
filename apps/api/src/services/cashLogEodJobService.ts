@@ -6,6 +6,7 @@ import { CashLogService } from "./cashLogService.js";
 import { CheckCaptureService } from "./checkCaptureService.js";
 import { sendHtmlEmail } from "../lib/mailer.js";
 import { logInfo, logWarn } from "../lib/logger.js";
+import { recordUsageEventSafe } from "./usageEventRecord.js";
 
 const cashService = new CashLogService();
 const checkService = new CheckCaptureService();
@@ -719,6 +720,15 @@ export async function runCashLogEodJob(options?: {
         subject,
         html,
         logContext: `cash_log_eod:${m.companyId}`,
+      });
+
+      await recordUsageEventSafe({
+        companyId: m.companyId,
+        provider: "resend",
+        feature: "cash_log_eod_digest",
+        unitType: "email_sent",
+        units: 1,
+        estimatedCost: 0.0004,
       });
 
       // Marker only after transport success (Resend/SMTP resolved without throw).

@@ -4,9 +4,21 @@ import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { adminUserIdParam, adminUserStatusSchema, adminUserUpdateSchema, inviteCreateSchema, inviteIdParam } from "../../validation/schemas.js";
 import { AdminService } from "../../services/adminService.js";
-import { requireRole } from "../../middleware/rbac.js";
+import { requirePlatformRoles, requireRole } from "../../middleware/rbac.js";
+import { UsageCostService } from "../../services/usageCostService.js";
 export const adminRouter = Router();
 const adminService = new AdminService();
+const usageCostService = new UsageCostService();
+
+adminRouter.get(
+    "/companies/:companyId/usage-costs",
+    requirePlatformRoles(["nexbatch_admin", "owner"]),
+    asyncHandler(async (req, res) => {
+        const companyId = String(req.params.companyId || "").trim();
+        const out = await usageCostService.getCompanyUsageCosts(companyId);
+        res.json(out);
+    }),
+);
 adminRouter.get("/users", requireRole(["OWNER", "ADMIN"]), asyncHandler(async (req, res) => {
     const users = await adminService.listUsers({ companyId: getScopedCompanyId(req) });
     res.json({ users });

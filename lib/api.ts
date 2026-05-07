@@ -540,3 +540,34 @@ export async function fetchAutogrowCompHistory(
   const qs = `from=${encodeURIComponent(String(Math.floor(fromEpoch)))}&to=${encodeURIComponent(String(Math.floor(toEpoch)))}`;
   return apiRequest<AutogrowCompHistoryDto>(`/api/autogrow/comps/${idx}/history?${qs}`, { companyId });
 }
+
+/** NexBatch portal — platform admins only (`omitCompanyHeader` + JWT platform role). */
+export type UsageCostProviderDto = {
+  provider: string;
+  displayName: string;
+  usageSummary: string;
+  usageMetrics: { label: string; value: string }[];
+  estimatedCost: number;
+  currency: "USD";
+  status: string;
+  notes: string;
+};
+
+export type CompanyUsageCostsDto = {
+  companyId: string;
+  companyName: string;
+  monthLabel: string;
+  monthStart: string;
+  monthEnd: string;
+  totalEstimatedCost: number;
+  projectedMonthlyCost: number | null;
+  lastUpdated: string | null;
+  providers: UsageCostProviderDto[];
+};
+
+export async function fetchCompanyUsageCosts(companyId: string) {
+  return apiRequest<CompanyUsageCostsDto>(
+    `/api/admin/companies/${encodeURIComponent(companyId)}/usage-costs`,
+    { omitCompanyHeader: true },
+  );
+}

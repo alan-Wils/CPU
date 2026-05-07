@@ -4,6 +4,7 @@ import { AppError } from "../errors/AppError.js";
 import { isPlatformOperator } from "../lib/nexbatchRoles.js";
 import { logInfo } from "../lib/logger.js";
 import { sendInviteEmail } from "../lib/mailer.js";
+import { recordUsageEventSafe } from "./usageEventRecord.js";
 import { CompanyRepository } from "../repositories/companyRepository.js";
 import { AuditService } from "./auditService.js";
 export class CompanyService {
@@ -44,7 +45,17 @@ export class CompanyService {
             inviteUrl,
             companyName: company.name,
             role: "Application Owner"
-        }).then(() => logInfo("company_owner_invite_email_sent", { to: email }), (err) => {
+        }).then(async () => {
+            logInfo("company_owner_invite_email_sent", { to: email });
+            await recordUsageEventSafe({
+                companyId: company.id,
+                provider: "resend",
+                feature: "company_owner_invite_email",
+                unitType: "email_sent",
+                units: 1,
+                estimatedCost: 0.0004,
+            });
+        }, (err) => {
             console.error("[mail] Failed to send company owner invite email:", err);
         });
         return {

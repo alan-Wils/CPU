@@ -106,6 +106,16 @@ enum CashLogDepartment {
   GENERAL
 }
 
+/// Third-party / infra usage for NexBatch admin cost visibility (app-estimated from logged events).
+enum UsageProvider {
+  vercel
+  railway
+  neon
+  resend
+  cloudflare_r2
+  ai
+}
+
 model Company {
   id                String @id @default(cuid())
   name              String
@@ -134,9 +144,26 @@ model Company {
   storeSnapshots      CompanyStore[]
   checkCaptures       CheckCapture[]
   cashLogEntries      CashLogEntry[]
+  usageEvents         UsageEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model UsageEvent {
+  id            String        @id @default(cuid())
+  companyId     String
+  company       Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  provider      UsageProvider
+  feature       String
+  unitType      String
+  units         Float
+  estimatedCost Float         @default(0)
+  metadata      Json?
+  createdAt     DateTime      @default(now())
+
+  @@index([companyId, createdAt])
+  @@index([companyId, provider, createdAt])
 }
 
 model User {
@@ -170,16 +197,17 @@ model CompanyMembership {
   companyId String
   company   Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
   role      NexBatchCompanyRole
-  /// JSON string[] of app permission ids (e.g. `page.cultivation`). `null` = use role defaults.
+  /// JSON string[] of `AppPermissionId` (e.g. `page.cultivation`). `null` = use role defaults.
   appPermissions Json?
   /// Staff rewards program opt-in for this company (Admin Edit user).
   rewardsEnrolled Boolean @default(false)
-  /// Optional per-user schedule for cash / financial log digest email.
+  /// Optional per-user schedule for cash / financial log digest email (see `cashLogEodPrefsSchema`).
   cashLogEodPrefs      Json?
+  /// Last successful EOD digest send (dedupe + ops); optional.
   cashLogEodLastSentAt DateTime?
-  /// Bumped whenever digest prefs are saved — changing send time resets duplicate lock for today.
-  cashLogEodScheduleGeneration           Int @default(0)
-  /// Last successful digest was for this generation; null = nothing mailed for current prefs revision yet.
+  /// Bumped whenever digest schedule JSON is saved (UI/admin). Used with `cashLogEodDigestSentScheduleGeneration`.
+  cashLogEodScheduleGeneration Int @default(0)
+  /// Generation value that last successful digest matched; duplicates same calendar day suppressed only when equals `cashLogEodScheduleGeneration`.
   cashLogEodDigestSentScheduleGeneration Int?
   createdAt DateTime            @default(now())
   updatedAt DateTime            @updatedAt
@@ -523,8 +551,10 @@ model CashLogEntry {
   createdByUser   User               @relation("CashLogCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   direction       CashLogDirection
   amount          Float
+  /** Incoming: counterparty / payor company name. */
   payeeCompany    String?
   invoiceNumber   String?
+  /** Outgoing: which internal department received the spend. */
   department      CashLogDepartment?
   memo            String?
   entryDate       DateTime?
@@ -552,11 +582,9 @@ model InviteToken {
   @@index([companyId, email])
 }
 
-/// NexBatch portal operator invite (email + accept link); `companyIds` JSON array snapshot at invite time.
 model PlatformStaffInvite {
   id             String    @id @default(cuid())
   email          String
-  /// Prisma `NexBatchPlatformRole` value (e.g. owner, nexbatch_admin, management, admin for “staff”).
   platformRole   String
   companyIds     Json
   tokenHash      String    @unique

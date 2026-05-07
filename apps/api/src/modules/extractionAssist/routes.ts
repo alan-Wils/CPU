@@ -10,6 +10,7 @@ import {
 } from "../../services/extractionNameSuggestService.js";
 import { ConfigService } from "../../services/configService.js";
 import { AppError } from "../../errors/AppError.js";
+import { recordUsageEventSafe } from "../../services/usageEventRecord.js";
 
 const extractionWriteRoles = [
     "EXTRACTION",
@@ -50,12 +51,12 @@ extractionAssistRouter.post(
     requireRoleOrAppPermission(extractionWriteRoles, "page.extraction"),
     validate({ body: suggestBodySchema }),
     asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
         const strains = req.body.strains as string[];
         let promptTemplateMarkdown: string | undefined;
         let guidedIntro: string | undefined;
         let guidedExtraRules: string | undefined;
         try {
-            const companyId = getScopedCompanyId(req);
             const rows = await configService.list(companyId);
             const extractionVal = rows.find((r) => r.key === "extraction")?.value as Record<string, unknown> | undefined;
             if (extractionVal && typeof extractionVal === "object" && !Array.isArray(extractionVal)) {
@@ -86,6 +87,14 @@ extractionAssistRouter.post(
                 promptTemplateMarkdown,
                 guidedIntro,
                 guidedExtraRules,
+            });
+            void recordUsageEventSafe({
+                companyId,
+                provider: "ai",
+                feature: "extraction_product_name_suggest",
+                unitType: "openai_requests",
+                units: 1,
+                estimatedCost: 0.008,
             });
             res.json({ suggestions });
         }

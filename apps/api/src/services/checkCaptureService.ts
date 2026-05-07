@@ -12,6 +12,8 @@ import {
     requirePersistentUploadsInProduction,
     uploadsUseS3
 } from "../lib/uploadStorage.js";
+import { recordUsageEventSafe } from "./usageEventRecord.js";
+
 function extForMime(mimeType) {
     if (mimeType === "image/png")
         return "png";
@@ -198,6 +200,14 @@ export class CheckCaptureService {
             const key = objectKeyFromParts("checks", input.companyId, safeName);
             const mime = input.mimeType === "image/png" ? "image/png" : input.mimeType === "image/webp" ? "image/webp" : "image/jpeg";
             await putUploadObject(key, buffer, mime);
+            void recordUsageEventSafe({
+                companyId: input.companyId,
+                provider: "cloudflare_r2",
+                feature: "check_image_upload",
+                unitType: "upload_bytes",
+                units: buffer.length,
+                estimatedCost: Math.max(0.0005, (buffer.length / (1024 * 1024)) * 0.02),
+            });
             return {
                 imageUrl: `${input.origin}/uploads/checks/${input.companyId}/${safeName}`,
                 bytes: buffer.length

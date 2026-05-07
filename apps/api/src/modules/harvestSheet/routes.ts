@@ -10,6 +10,7 @@ import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { validate } from "../../middleware/validate.js";
 import { requireRole } from "../../middleware/rbac.js";
 import { extractHarvestSheetFromImageBuffer } from "../../services/harvestSheetExtractService.js";
+import { recordUsageEventSafe } from "../../services/usageEventRecord.js";
 
 export const harvestSheetRouter = Router();
 
@@ -210,6 +211,15 @@ harvestSheetRouter.post(
         if (paths.length > 1) {
             warnings.push(`Merged extraction from ${paths.length} photos — confirm rows are complete and not duplicated.`);
         }
+
+        void recordUsageEventSafe({
+            companyId,
+            provider: "ai",
+            feature: "harvest_sheet_vision_extract",
+            unitType: "image_calls",
+            units: paths.length,
+            estimatedCost: 0.015 * paths.length,
+        });
 
         res.json({
             rows: allRows,

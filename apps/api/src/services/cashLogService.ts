@@ -12,6 +12,7 @@ import {
     requirePersistentUploadsInProduction,
     uploadsUseS3
 } from "../lib/uploadStorage.js";
+import { recordUsageEventSafe } from "./usageEventRecord.js";
 
 function extForReceiptMime(mimeType: string) {
     if (mimeType === "image/png")
@@ -98,6 +99,14 @@ export class CashLogService {
         if (uploadsUseS3()) {
             const key = objectKeyFromParts("cash-receipts", input.companyId, safeName);
             await putUploadObject(key, buffer, mime);
+            void recordUsageEventSafe({
+                companyId: input.companyId,
+                provider: "cloudflare_r2",
+                feature: "cash_receipt_upload",
+                unitType: "upload_bytes",
+                units: buffer.length,
+                estimatedCost: Math.max(0.0005, (buffer.length / (1024 * 1024)) * 0.02),
+            });
             return {
                 imageUrl: `${input.origin}/uploads/cash-receipts/${input.companyId}/${safeName}`,
                 bytes: buffer.length
@@ -125,7 +134,7 @@ export class CashLogService {
         receiptImageUrl?: string | null;
     }) {
         const incoming = input.direction === "INCOMING";
-        return prisma.cashLogEntry.create({
+        const row = await prisma.cashLogEntry.create({
             data: {
                 companyId: input.companyId,
                 createdByUserId: input.createdByUserId,
@@ -158,6 +167,15 @@ export class CashLogService {
                 updatedAt: true
             }
         });
+        void recordUsageEventSafe({
+            companyId: input.companyId,
+            provider: "neon",
+            feature: "cash_log_entry_create",
+            unitType: "rows_written",
+            units: 1,
+            estimatedCost: 0.00002,
+        });
+        return row;
     }
     async updateById(companyId: string, id: string, patch: {
         amount?: number;
