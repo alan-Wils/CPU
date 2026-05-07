@@ -11,6 +11,7 @@ import {
   type LeafLinkInventoryItemDto,
 } from "@/lib/api";
 import { getAuthToken } from "@/lib/auth";
+import { downloadInventoryExcel, openInventoryPrintWindow } from "@/lib/inventoryExport";
 import { groupInventoryBySourcePackage } from "@/lib/leafLinkInventoryDisplay";
 import { resolveInventoryCategoryLabel, type CategoryLabelOverride } from "@/lib/productCategoryLabels";
 
@@ -328,6 +329,77 @@ export default function InventoryPage() {
                 <option value="flat">View: every SKU (flat)</option>
                 <option value="grouped">View: by source package</option>
               </select>
+              <div
+                style={{
+                  gridColumn: "1 / -1",
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "stretch",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  marginTop: 4,
+                  paddingTop: 12,
+                  borderTop: "1px solid rgba(148,163,184,0.15)",
+                }}
+              >
+                <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", minHeight: 40 }}>
+                  <span style={{ color: "#64748b", fontSize: 12 }}>
+                    {loading ? "Loading…" : `${filtered.length} SKU${filtered.length === 1 ? "" : "s"} match current filters`}
+                  </span>
+                </div>
+                <details style={exportDetailsStyle}>
+                  <summary style={exportSummaryStyle}>Export current filter</summary>
+                  <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <button
+                      type="button"
+                      style={exportActionButtonStyle}
+                      disabled={loading || filtered.length === 0}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        downloadInventoryExcel(filtered, categoryLabels, {
+                          query,
+                          categoryFilter,
+                          subcategoryFilter,
+                          brandFilter,
+                          statusFilter,
+                          availabilityFilter,
+                          sortBy,
+                          sortDir,
+                          layoutMode,
+                        });
+                      }}
+                    >
+                      Download Excel (.xlsx)
+                    </button>
+                    <button
+                      type="button"
+                      style={exportActionButtonStyle}
+                      disabled={loading || filtered.length === 0}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        openInventoryPrintWindow(filtered, categoryLabels, {
+                          query,
+                          categoryFilter,
+                          subcategoryFilter,
+                          brandFilter,
+                          statusFilter,
+                          availabilityFilter,
+                          sortBy,
+                          sortDir,
+                          layoutMode,
+                        });
+                      }}
+                    >
+                      Printable menu (print / PDF)
+                    </button>
+                  </div>
+                  {filtered.length === 0 && !loading ? (
+                    <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 8, maxWidth: 320 }}>
+                      Nothing to export yet — widen filters or sync inventory from LeafLink.
+                    </div>
+                  ) : null}
+                </details>
+              </div>
             </div>
 
             {loading ? (
@@ -609,5 +681,28 @@ const errorStyle: React.CSSProperties = {
   background: "rgba(127,29,29,0.5)",
   border: "1px solid rgba(248,113,113,0.45)",
   color: "#fecaca",
+};
+const exportDetailsStyle: React.CSSProperties = {
+  border: "1px solid rgba(56,189,248,0.35)",
+  borderRadius: 12,
+  padding: "10px 14px",
+  background: "rgba(8,47,73,0.45)",
+  color: "#bae6fd",
+  maxWidth: "100%",
+};
+const exportSummaryStyle: React.CSSProperties = {
+  cursor: "pointer",
+  fontWeight: 800,
+  fontSize: 13,
+};
+const exportActionButtonStyle: React.CSSProperties = {
+  border: "1px solid rgba(148,163,184,0.4)",
+  borderRadius: 10,
+  padding: "8px 12px",
+  background: "#020617",
+  color: "#e2e8f0",
+  fontWeight: 700,
+  fontSize: 13,
+  cursor: "pointer",
 };
 
