@@ -42,26 +42,47 @@ function finiteNumber(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function dateInputUtcStartEpoch(dateYmd: string): number {
-  const s = String(dateYmd || "").trim();
-  if (!s) return 0;
-  const d = new Date(`${s}T00:00:00.000Z`);
-  return Number.isFinite(d.getTime()) ? Math.floor(d.getTime() / 1000) : 0;
+/** `YYYY-MM-DD` from `<input type="date">` — use local calendar day, not UTC (avoids "tomorrow" presets west of UTC). */
+function ymdLocalFromDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
-function dateInputUtcEndEpoch(dateYmd: string): number {
+function parseYmdParts(dateYmd: string): [number, number, number] | null {
   const s = String(dateYmd || "").trim();
-  if (!s) return 0;
-  const d = new Date(`${s}T23:59:59.000Z`);
-  return Number.isFinite(d.getTime()) ? Math.floor(d.getTime() / 1000) : 0;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null;
+  return [y, mo, d];
 }
 
+function dateInputLocalStartEpoch(dateYmd: string): number {
+  const parts = parseYmdParts(dateYmd);
+  if (!parts) return 0;
+  const [y, mo, d] = parts;
+  const dt = new Date(y, mo - 1, d, 0, 0, 0, 0);
+  return Number.isFinite(dt.getTime()) ? Math.floor(dt.getTime() / 1000) : 0;
+}
+
+function dateInputLocalEndEpoch(dateYmd: string): number {
+  const parts = parseYmdParts(dateYmd);
+  if (!parts) return 0;
+  const [y, mo, d] = parts;
+  const dt = new Date(y, mo - 1, d, 23, 59, 59, 999);
+  return Number.isFinite(dt.getTime()) ? Math.floor(dt.getTime() / 1000) : 0;
+}
+
+/** Preset: local today through seven calendar days prior (inclusive span of 8 local days unless you shorten). */
 function defaultRangeYmd() {
   const to = new Date();
-  const from = new Date();
+  const from = new Date(to);
   from.setDate(from.getDate() - 7);
-  const asYmd = (d: Date) => d.toISOString().slice(0, 10);
-  return { fromYmd: asYmd(from), toYmd: asYmd(to) };
+  return { fromYmd: ymdLocalFromDate(from), toYmd: ymdLocalFromDate(to) };
 }
 
 /** Autogrow-friendly: avoid tight polling; refresh when tab visible. */
@@ -156,8 +177,8 @@ export default function CultivationRoomStatsDetailPage() {
   const loadHistory = useCallback(
     async (opts?: { silent?: boolean }) => {
       if (compIndexNum == null) return;
-      const fromEpoch = dateInputUtcStartEpoch(fromYmd);
-      const toEpoch = dateInputUtcEndEpoch(toYmd);
+      const fromEpoch = dateInputLocalStartEpoch(fromYmd);
+      const toEpoch = dateInputLocalEndEpoch(toYmd);
       if (!fromEpoch || !toEpoch || fromEpoch >= toEpoch) {
         setHistoryErr("Choose a valid From/To range.");
         return;
