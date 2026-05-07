@@ -23,9 +23,16 @@ export async function syncOpenAIMonth(monthStart: Date, nextMonthStart: Date): P
         const startTime = toUnixSeconds(monthStart);
         const endTime = toUnixSeconds(nextMonthStart);
         const url = `${base}/organization/costs?start_time=${encodeURIComponent(String(startTime))}&end_time=${encodeURIComponent(String(endTime))}`;
-        const res = await fetch(url, {
-            headers: { Authorization: `Bearer ${token}` },
-        });
+        const headers: Record<string, string> = {
+            Authorization: `Bearer ${token}`,
+        };
+        const orgId = String(env.OPENAI_ORG_ID ?? "").trim();
+        if (orgId)
+            headers["OpenAI-Organization"] = orgId;
+        const projectId = String(env.OPENAI_PROJECT_ID ?? "").trim();
+        if (projectId)
+            headers["OpenAI-Project"] = projectId;
+        const res = await fetch(url, { headers });
         const rawText = await res.text();
         if (!res.ok) {
             return {

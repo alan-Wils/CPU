@@ -114,6 +114,20 @@ const envSchema = z
         const t = v.trim().replace(/\/+$/, "");
         return t === "" ? undefined : t;
     }, z.string().url().optional()),
+    /** Optional: required for Costs API when the key spans orgs (`OpenAI-Organization` header). */
+    OPENAI_ORG_ID: z.preprocess((v) => {
+        if (typeof v !== "string")
+            return undefined;
+        const t = v.trim();
+        return t === "" ? undefined : t;
+    }, z.string().min(1).optional()),
+    /** Optional: project-scoped keys (`OpenAI-Project` header). */
+    OPENAI_PROJECT_ID: z.preprocess((v) => {
+        if (typeof v !== "string")
+            return undefined;
+        const t = v.trim();
+        return t === "" ? undefined : t;
+    }, z.string().min(1).optional()),
     LEAFLINK_BASE_URL: z.preprocess((v) => {
         if (typeof v !== "string")
             return undefined;
