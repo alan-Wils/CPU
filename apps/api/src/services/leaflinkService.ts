@@ -139,7 +139,10 @@ export type LeafLinkInventoryItem = {
   strain: string;
   /** Human-readable category (LeafLink often sends a numeric id in `category`). */
   category: string;
+  /** Concentrates / Edibles / … — same as historical `product_type` column from LeafLink. */
   productType: string;
+  /** Finer bucket: Live Sugar Wax, Disposable, Pre-Roll, … (explicit subcategory or product type when distinct from category). */
+  subcategory: string;
   brand: string;
   availableQuantity: number;
   unit: string;
@@ -351,12 +354,56 @@ async function fetchAllLeafLinkPagedRows(
   return { rows: aggregated, finalUrl: url || firstUrl, lastPayload };
 }
 
+function extractMoneyScalar(v: unknown): number | null {
+  if (v == null)
+    return null;
+  if (typeof v === "number" && Number.isFinite(v))
+    return v;
+  if (typeof v === "string") {
+    const t = v.trim();
+    if (!t)
+      return null;
+    const n = Number.parseFloat(t.replace(/[^0-9.-]/g, ""));
+    return Number.isFinite(n) ? n : null;
+  }
+  if (typeof v === "object" && !Array.isArray(v)) {
+    const o = asRecord(v);
+    return extractMoneyScalar(o.amount ?? o.value ?? o.price ?? o.wholesale ?? o.unit_amount);
+  }
+  return null;
+}
+
 function pickPrice(row: Record<string, unknown>): number | null {
-  const direct = pickNumber(row, ["price", "unit_price", "sale_price", "wholesale_price"]);
-  if (direct > 0) return direct;
-  const nested = asRecord(row.price);
-  const nestedVal = pickNumber(nested, ["amount", "value"]);
-  return nestedVal > 0 ? nestedVal : null;
+  const keys = [
+    "wholesale_price",
+    "unit_price",
+    "sale_price",
+    "price",
+    "retail_price",
+    "minimum_price",
+    "maximum_price",
+    "listed_price",
+    "product_price",
+    "display_price",
+  ];
+  for (const k of keys) {
+    const n = extractMoneyScalar(row[k]);
+    if (n != null && n > 0)
+      return n;
+  }
+  const nestedPrice = asRecord(row.price);
+  if (Object.keys(nestedPrice).length > 0) {
+    const n = extractMoneyScalar(nestedPrice.amount ?? nestedPrice.value ?? nestedPrice);
+    if (n != null && n > 0)
+      return n;
+  }
+  const pricing = asRecord(row.pricing);
+  if (Object.keys(pricing).length > 0) {
+    const n = extractMoneyScalar(pricing.wholesale ?? pricing.unit_price ?? pricing.price ?? pricing.retail);
+    if (n != null && n > 0)
+      return n;
+  }
+  return null;
 }
 
 function isDigitsOnly(s: string): boolean {
@@ -406,12 +453,43 @@ function pickCategoryDisplay(row: Record<string, unknown>): string {
     (rawId && isDigitsOnly(rawId)) ||
     (flat && isDigitsOnly(flat));
   if (idLike) {
-    if (typeGuess && !isDigitsOnly(typeGuess)) return typeGuess;
     const id = categoryString && isDigitsOnly(categoryString) ? categoryString : rawId || flat;
+    /** Keep numeric categories as `Category #id` so product_type can surface as subcategory. */
     return id ? `Category #${id}` : typeGuess;
   }
   const direct = pickString(row, ["category", "category_name"]);
   return direct || typeGuess;
+}
+
+/**
+ * Product-style bucket under the menu category (LeafLink product_type / explicit subcategory fields).
+ */
+function pickSubcategoryDisplay(row: Record<string, unknown>, categoryDisplay: string): string {
+  const explicit = pickString(row, [
+    "subcategory",
+    "sub_category",
+    "product_subcategory",
+    "subtype",
+    "variety",
+    "segment",
+  ]);
+  if (explicit)
+    return explicit;
+  const typeGuess = pickString(row, [
+    "product_type",
+    "type",
+    "product_type_display",
+    "product_type_name",
+    "product_class",
+    "item_category",
+  ]);
+  if (!typeGuess)
+    return "";
+  const catNorm = categoryDisplay.trim().toLowerCase();
+  const typNorm = typeGuess.trim().toLowerCase();
+  if (catNorm && typNorm === catNorm)
+    return "";
+  return typeGuess;
 }
 
 /**
@@ -471,13 +549,17 @@ function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
     if (explicitlyUnavailable && availableQuantity <= 0) continue;
     const productName = pickString(row, ["product_name", "name", "title"]);
     const sku = pickString(row, ["sku", "product_sku"]);
+    const categoryDisplay = pickCategoryDisplay(row);
+    const productTypeStr = pickString(row, ["product_type", "type"]);
+    const subcategoryDisplay = pickSubcategoryDisplay(row, categoryDisplay);
     out.push({
       id,
       productName,
       sku,
       strain: pickString(row, ["strain", "strain_name"]),
-      category: pickCategoryDisplay(row),
-      productType: pickString(row, ["product_type", "type"]),
+      category: categoryDisplay,
+      productType: productTypeStr,
+      subcategory: subcategoryDisplay || productTypeStr,
       brand: pickString(row, ["brand", "brand_name", "vendor_name"]),
       availableQuantity,
       unit: pickString(row, ["unit", "unit_of_measure", "sell_in_unit_of_measure", "uom"]),

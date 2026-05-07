@@ -35,6 +35,7 @@ export default function InventoryPage() {
   const [lastSync, setLastSync] = useState<string>("");
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [subcategoryFilter, setSubcategoryFilter] = useState("all");
   const [brandFilter, setBrandFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("Available");
   /** Default: only rows with quantity available for sale (matches typical “available” inventory). */
@@ -98,6 +99,10 @@ export default function InventoryPage() {
     void loadInventory();
   }, []);
 
+  useEffect(() => {
+    setSubcategoryFilter("all");
+  }, [categoryFilter]);
+
   const categories = useMemo(
     () =>
       Array.from(
@@ -113,6 +118,18 @@ export default function InventoryPage() {
     () => Array.from(new Set(items.map((x) => (x.brand || "").trim()).filter(Boolean))).sort(),
     [items],
   );
+  const subcategoriesInScope = useMemo(() => {
+    const scoped = items.filter((row) => {
+      if (categoryFilter === "all") return true;
+      const displayCat = resolveInventoryCategoryLabel((row.category || "").trim(), categoryLabels);
+      return displayCat === categoryFilter;
+    });
+    const raw = scoped.map((x) => (x.subcategory || x.productType || "").trim()).filter(Boolean);
+    return Array.from(new Set(raw)).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" }),
+    );
+  }, [items, categoryFilter, categoryLabels]);
+
   const statuses = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of LEAFLINK_STATUS_PRESETS)
@@ -133,6 +150,10 @@ export default function InventoryPage() {
       if (availabilityFilter === "in_stock" && !(Number(row.availableQuantity) > 0)) return false;
       const displayCat = resolveInventoryCategoryLabel((row.category || "").trim(), categoryLabels);
       if (categoryFilter !== "all" && displayCat !== categoryFilter) return false;
+      if (subcategoryFilter !== "all") {
+        const sub = (row.subcategory || row.productType || "").trim().toLowerCase();
+        if (sub !== subcategoryFilter.trim().toLowerCase()) return false;
+      }
       if (brandFilter !== "all" && row.brand !== brandFilter) return false;
       if (statusFilter !== "all") {
         const a = (row.status || "").trim().toLowerCase();
@@ -148,6 +169,7 @@ export default function InventoryPage() {
         displayCat,
         row.brand,
         row.productType,
+        row.subcategory,
       ]
         .join(" ")
         .toLowerCase()
@@ -162,7 +184,7 @@ export default function InventoryPage() {
       return a.productName.localeCompare(b.productName) * mul;
     });
     return arr;
-  }, [items, query, availabilityFilter, categoryFilter, brandFilter, statusFilter, sortBy, sortDir, categoryLabels]);
+  }, [items, query, availabilityFilter, categoryFilter, subcategoryFilter, brandFilter, statusFilter, sortBy, sortDir, categoryLabels]);
 
   const packageGroups = useMemo(() => groupInventoryBySourcePackage(filtered), [filtered]);
 
@@ -199,7 +221,11 @@ export default function InventoryPage() {
               <p style={{ color: "#94a3b8", marginTop: 10, marginBottom: 0 }}>
                 Live available-for-sale inventory synced from LeafLink via backend company-scoped credentials. Category
                 display names can be overridden under{" "}
-                <b style={{ color: "#cbd5e1" }}>Admin → Company Config → Sales → LeafLink category names</b>.
+                <b style={{ color: "#cbd5e1" }}>Admin → Company Config → Sales → LeafLink category names</b>.{" "}
+                <span style={{ color: "#64748b" }}>
+                  Total inventory value uses each line&apos;s wholesale/unit price from LeafLink when present; run{" "}
+                  <b style={{ color: "#94a3b8" }}>Sync / Refresh</b> after catalog changes.
+                </span>
               </p>
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -255,6 +281,10 @@ export default function InventoryPage() {
               <select style={inputStyle} value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setPage(1); }}>
                 <option value="all">All categories</option>
                 {categories.map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+              <select style={inputStyle} value={subcategoryFilter} onChange={(e) => { setSubcategoryFilter(e.target.value); setPage(1); }}>
+                <option value="all">All subcategories</option>
+                {subcategoriesInScope.map((x) => <option key={x} value={x}>{x}</option>)}
               </select>
               <select style={inputStyle} value={brandFilter} onChange={(e) => { setBrandFilter(e.target.value); setPage(1); }}>
                 <option value="all">All brands</option>
@@ -314,6 +344,7 @@ export default function InventoryPage() {
                         <th style={thStyle}>SKU</th>
                         <th style={thStyle}>Strain</th>
                         <th style={thStyle}>Category</th>
+                        <th style={thStyle}>Subcategory</th>
                         <th style={thStyle}>Qty</th>
                         <th style={thStyle}>Package</th>
                         <th style={thStyle}>Price</th>
@@ -328,7 +359,7 @@ export default function InventoryPage() {
                         : pageGroups.map((g) => (
                             <Fragment key={g.key}>
                               <tr style={{ borderTop: "1px solid rgba(51,65,85,0.6)", background: "rgba(15,23,42,0.5)" }}>
-                                <td colSpan={8} style={{ ...tdStyle, paddingBottom: 4 }}>
+                                <td colSpan={9} style={{ ...tdStyle, paddingBottom: 4 }}>
                                   <details style={{ width: "100%" }}>
                                     <summary
                                       style={{
@@ -445,6 +476,7 @@ function InventoryProductRow({
       <td style={pad}>{row.sku || "—"}</td>
       <td style={pad}>{row.strain || "—"}</td>
       <td style={pad}>{categoryDisplay || "—"}</td>
+      <td style={pad}>{(row.subcategory || row.productType || "—").trim() || "—"}</td>
       <td style={pad}>
         {row.availableQuantity} {row.unit || ""}
       </td>

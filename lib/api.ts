@@ -650,6 +650,8 @@ export type LeafLinkInventoryItemDto = {
   strain: string;
   category: string;
   productType: string;
+  /** Live resin, sugar wax, disposable, etc. — filters independently from top-level category. */
+  subcategory?: string;
   brand: string;
   availableQuantity: number;
   unit: string;
