@@ -53,3 +53,16 @@ nexbatchRouter.patch(
         res.json(out);
     }),
 );
+
+nexbatchRouter.delete(
+    "/staff/invites/:inviteId",
+    requirePlatformRoles(["nexbatch_admin", "owner"]),
+    asyncHandler(async (req, res) => {
+        const out = await nexbatchStaffService.revokePendingStaffInvite({
+            actorUserId: req.auth.userId,
+            actorPlatformRole: req.auth.platformRole ?? null,
+            inviteId: String(req.params.inviteId || ""),
+        });
+        res.json(out);
+    }),
+);

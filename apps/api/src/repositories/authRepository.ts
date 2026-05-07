@@ -129,6 +129,21 @@ export class AuthRepository extends TenantRepository {
             },
         });
     }
+    /** Open invites (`acceptedAt` null); includes expired rows until revoked or accepted. */
+    async listOpenPlatformStaffInvites() {
+        return this.db.platformStaffInvite.findMany({
+            where: { acceptedAt: null },
+            orderBy: { createdAt: "desc" },
+            select: {
+                id: true,
+                email: true,
+                platformRole: true,
+                companyIds: true,
+                expiresAt: true,
+                createdAt: true,
+            },
+        });
+    }
     async acceptInviteCreateUser(inviteId, data) {
         return this.db.$transaction(async (tx) => {
             const nexRole = data.nexCompanyRole;

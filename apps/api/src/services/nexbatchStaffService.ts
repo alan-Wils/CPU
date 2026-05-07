@@ -15,6 +15,12 @@ import { AuthRepository } from "../repositories/authRepository.js";
 import { CompanyRepository } from "../repositories/companyRepository.js";
 import { recordNexbatchPlatformUsageSplitAcrossCompaniesSafe } from "./nexbatchCompanyUsageLogRecord.js";
 
+function parseInviteCompanyIds(value: unknown): number {
+    if (!Array.isArray(value))
+        return 0;
+    return value.filter((x): x is string => typeof x === "string" && x.length > 0).length;
+}
+
 export class NexBatchStaffService {
     private authRepo = new AuthRepository();
     private companyRepo = new CompanyRepository();
@@ -151,6 +157,23 @@ export class NexBatchStaffService {
                 },
             },
         });
+        const now = new Date();
+        const openInvites = await this.authRepo.listOpenPlatformStaffInvites();
+        const pendingInvites = openInvites.map((inv) => {
+            const pr = String(inv.platformRole || "admin");
+            return {
+                id: inv.id,
+                email: inv.email,
+                platformRole: pr,
+                tier: platformRoleToNexBatchInviteUiTier(pr),
+                roleLabel: nexBatchPlatformRoleInviteLabel(pr),
+                companiesGranted: parseInviteCompanyIds(inv.companyIds),
+                expiresAt: inv.expiresAt.toISOString(),
+                invitedAt: inv.createdAt.toISOString(),
+                status: inv.expiresAt > now ? ("pending" as const) : ("expired" as const),
+            };
+        });
+
         return {
             staff: users.map((u) => ({
                 id: u.id,
@@ -162,7 +185,36 @@ export class NexBatchStaffService {
                 companiesGranted: u.memberships.length,
                 createdAt: u.createdAt.toISOString(),
             })),
+            pendingInvites,
         };
+    }
+
+    async revokePendingStaffInvite(input: {
+        actorUserId: string;
+        actorPlatformRole: string | null | undefined;
+        inviteId: string;
+    }) {
+        if (!canCreateCompanyAsPlatform(input.actorPlatformRole)) {
+            throw new AppError("Forbidden", 403);
+        }
+        const actorPr = String(input.actorPlatformRole || "").trim();
+        const inviteId = String(input.inviteId || "").trim();
+        if (!inviteId) {
+            throw new AppError("Missing invite id", 400);
+        }
+        const inv = await this.authRepo.db.platformStaffInvite.findFirst({
+            where: { id: inviteId, acceptedAt: null },
+            select: { id: true, platformRole: true },
+        });
+        if (!inv) {
+            throw new AppError("Pending invite not found", 404);
+        }
+        const invRole = (inv.platformRole || "admin") as NexBatchPlatformRole;
+        if (invRole === "owner" && actorPr !== "owner") {
+            throw new AppError("Only a NexBatch owner can revoke an Owner (full platform) invite.", 403);
+        }
+        await this.authRepo.db.platformStaffInvite.delete({ where: { id: inv.id } });
+        return { ok: true };
     }
 
     async updateStaff(input: {

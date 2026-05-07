@@ -37,6 +37,18 @@ type NexBatchStaffRow = {
   createdAt: string;
 };
 
+type NexBatchPendingInviteRow = {
+  id: string;
+  email: string;
+  platformRole: string;
+  tier: NexBatchInviteTier;
+  roleLabel: string;
+  companiesGranted: number;
+  expiresAt: string;
+  invitedAt: string;
+  status: "pending" | "expired";
+};
+
 function fmtUsd(n: number): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -400,9 +412,11 @@ function PortalBody() {
   const [staffErr, setStaffErr] = useState("");
   const [staffOk, setStaffOk] = useState<string | null>(null);
   const [staffRows, setStaffRows] = useState<NexBatchStaffRow[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<NexBatchPendingInviteRow[]>([]);
   const [staffListLoading, setStaffListLoading] = useState(false);
   const [staffListErr, setStaffListErr] = useState("");
   const [staffSavingId, setStaffSavingId] = useState<string | null>(null);
+  const [revokingInviteId, setRevokingInviteId] = useState<string | null>(null);
   const [staffEditById, setStaffEditById] = useState<
     Record<string, { tier: NexBatchInviteTier; active: boolean }>
   >({});
@@ -446,12 +460,13 @@ function PortalBody() {
     setStaffListLoading(true);
     setStaffListErr("");
     try {
-      const out = await apiRequest<{ staff: NexBatchStaffRow[] }>(
-        "/api/nexbatch/staff",
-        { omitCompanyHeader: true },
-      );
+      const out = await apiRequest<{
+        staff: NexBatchStaffRow[];
+        pendingInvites?: NexBatchPendingInviteRow[];
+      }>("/api/nexbatch/staff", { omitCompanyHeader: true });
       const rows = out.staff || [];
       setStaffRows(rows);
+      setPendingInvites(Array.isArray(out.pendingInvites) ? out.pendingInvites : []);
       setStaffEditById(
         rows.reduce(
           (acc, row) => {
@@ -629,6 +644,24 @@ function PortalBody() {
       );
     } finally {
       setStaffBusy(false);
+    }
+  }
+
+  async function onRevokePendingInvite(inviteId: string) {
+    setRevokingInviteId(inviteId);
+    setStaffErr("");
+    setStaffOk(null);
+    try {
+      await apiRequest<{ ok: boolean }>(`/api/nexbatch/staff/invites/${encodeURIComponent(inviteId)}`, {
+        method: "DELETE",
+        omitCompanyHeader: true,
+      });
+      setStaffOk("Invitation revoked — the link in the email will no longer work.");
+      await fetchStaffRows();
+    } catch (err: unknown) {
+      setStaffErr(err instanceof Error ? err.message : "Could not revoke invitation.");
+    } finally {
+      setRevokingInviteId(null);
     }
   }
 
@@ -973,7 +1006,7 @@ function PortalBody() {
               }}
             >
               <h3 style={{ margin: "0 0 10px", fontSize: 18, fontWeight: 800 }}>
-                Current NexBatch staff
+                Pending invitations
               </h3>
               {staffListErr ? (
                 <p style={{ color: "#fca5a5", fontSize: 13, margin: "6px 0 10px" }}>
@@ -982,12 +1015,82 @@ function PortalBody() {
               ) : null}
               {staffListLoading ? (
                 <p style={{ color: "#94a3b8", fontSize: 13, margin: "6px 0 10px" }}>
-                  Loading staff list…
+                  Loading…
                 </p>
-              ) : null}
+              ) : pendingInvites.length === 0 ? (
+                <p style={{ color: "#64748b", fontSize: 13, margin: "6px 0 14px", fontStyle: "italic" }}>
+                  No pending NexBatch staff invitations.
+                </p>
+              ) : (
+                <div style={{ display: "grid", gap: 10, marginBottom: 18 }}>
+                  {pendingInvites.map((inv) => {
+                    const revoking = revokingInviteId === inv.id;
+                    const expired = inv.status === "expired";
+                    return (
+                      <div
+                        key={inv.id}
+                        style={{
+                          border: `1px solid ${expired ? "rgba(251, 191, 36, 0.45)" : "rgba(56, 189, 248, 0.4)"}`,
+                          borderRadius: 12,
+                          padding: 12,
+                          background: "#020617",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            flexWrap: "wrap",
+                            alignItems: "center",
+                          }}
+                        >
+                          <strong>{inv.email}</strong>
+                          <span
+                            style={{
+                              color: expired ? "#fdba74" : "#7dd3fc",
+                              fontSize: 12,
+                              fontWeight: 800,
+                            }}
+                          >
+                            {expired ? "EXPIRED (not accepted)" : "INVITED"}
+                          </span>
+                        </div>
+                        <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 12 }}>
+                          {inv.roleLabel} · {inv.companiesGranted} workspace(s) · Sent{" "}
+                          {new Date(inv.invitedAt).toLocaleString()} · Expires{" "}
+                          {formatCompanyTimestamp(inv.expiresAt)}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => void onRevokePendingInvite(inv.id)}
+                          disabled={revoking}
+                          style={{
+                            marginTop: 10,
+                            border: "1px solid rgba(248, 113, 113, 0.5)",
+                            borderRadius: 10,
+                            padding: "8px 12px",
+                            background: revoking ? "#475569" : "rgba(127, 29, 29, 0.35)",
+                            color: "#fecaca",
+                            fontWeight: 800,
+                            fontSize: 13,
+                            cursor: revoking ? "wait" : "pointer",
+                          }}
+                        >
+                          {revoking ? "Revoking…" : "Revoke invitation"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <h3 style={{ margin: "18px 0 10px", fontSize: 18, fontWeight: 800 }}>
+                Active NexBatch staff
+              </h3>
               {!staffListLoading && staffRows.length === 0 ? (
                 <p style={{ color: "#94a3b8", fontSize: 13, margin: "6px 0 10px" }}>
-                  No NexBatch staff users yet.
+                  No active NexBatch staff accounts yet (they appear after the invite is accepted).
                 </p>
               ) : (
                 <div style={{ display: "grid", gap: 10 }}>
