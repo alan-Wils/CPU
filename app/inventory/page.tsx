@@ -26,6 +26,8 @@ export default function InventoryPage() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [brandFilter, setBrandFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  /** Default: only rows with quantity available for sale (matches typical “available” inventory). */
+  const [availabilityFilter, setAvailabilityFilter] = useState<"in_stock" | "all">("in_stock");
   const [sortBy, setSortBy] = useState<"name" | "qty" | "price" | "updated">("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(1);
@@ -70,6 +72,7 @@ export default function InventoryPage() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const arr = items.filter((row) => {
+      if (availabilityFilter === "in_stock" && !(Number(row.availableQuantity) > 0)) return false;
       if (categoryFilter !== "all" && row.category !== categoryFilter) return false;
       if (brandFilter !== "all" && row.brand !== brandFilter) return false;
       if (statusFilter !== "all" && row.status !== statusFilter) return false;
@@ -95,7 +98,7 @@ export default function InventoryPage() {
       return a.productName.localeCompare(b.productName) * mul;
     });
     return arr;
-  }, [items, query, categoryFilter, brandFilter, statusFilter, sortBy, sortDir]);
+  }, [items, query, availabilityFilter, categoryFilter, brandFilter, statusFilter, sortBy, sortDir]);
 
   const packageGroups = useMemo(() => groupInventoryBySourcePackage(filtered), [filtered]);
 
@@ -193,6 +196,17 @@ export default function InventoryPage() {
                 <option value="all">All status</option>
                 {statuses.map((x) => <option key={x} value={x}>{x}</option>)}
               </select>
+              <select
+                style={inputStyle}
+                value={availabilityFilter}
+                onChange={(e) => {
+                  setAvailabilityFilter(e.target.value as "in_stock" | "all");
+                  setPage(1);
+                }}
+              >
+                <option value="in_stock">Availability: In stock</option>
+                <option value="all">Availability: All SKUs</option>
+              </select>
               <select style={inputStyle} value={sortBy} onChange={(e) => setSortBy(e.target.value as any)}>
                 <option value="name">Sort: Name</option>
                 <option value="qty">Sort: Quantity</option>
@@ -245,7 +259,7 @@ export default function InventoryPage() {
                             <Fragment key={g.key}>
                               <tr style={{ borderTop: "1px solid rgba(51,65,85,0.6)", background: "rgba(15,23,42,0.5)" }}>
                                 <td colSpan={8} style={{ ...tdStyle, paddingBottom: 4 }}>
-                                  <details open={g.rows.length <= 6} style={{ width: "100%" }}>
+                                  <details style={{ width: "100%" }}>
                                     <summary
                                       style={{
                                         cursor: "pointer",
