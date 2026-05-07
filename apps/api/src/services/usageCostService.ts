@@ -1,4 +1,5 @@
 import type { UsageProvider } from "@prisma/client";
+import { estimateStorageMbFromRowsWritten } from "../config/neonUsagePricing.js";
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../errors/AppError.js";
 
@@ -287,13 +288,20 @@ export class UsageCostService {
                     metrics?: Record<string, unknown>;
                 } | null;
                 const neonStatus = String(raw?.neonStatus || "").trim();
-                const m = raw?.metrics || {};
-                const dbReads = Number(m.db_read ?? (a?.byUnit.get("db_read") ?? 0));
-                const dbWrites = Number(m.db_write ?? (a?.byUnit.get("db_write") ?? 0));
-                const rowsWritten = Number(m.rows_written ?? (a?.byUnit.get("rows_written") ?? 0));
-                const rowsRead = Number(m.rows_read ?? (a?.byUnit.get("rows_read") ?? 0));
-                const queries = Number(m.query ?? (a?.byUnit.get("query") ?? 0));
-                const storageMb = Number(m.storage_mb ?? (a?.byUnit.get("storage_mb") ?? 0));
+                /**
+                 * Snapshot `raw.metrics` is project-wide (all tenants on one Postgres).
+                 * This endpoint is company-scoped: only surface UsageEvent totals for `companyId`.
+                 */
+                const tenantUnit = (key: string) =>
+                    Number(a?.byUnit.get(key) ?? 0);
+                const dbReads = tenantUnit("db_read");
+                const dbWrites = tenantUnit("db_write");
+                const rowsWritten = tenantUnit("rows_written");
+                const rowsRead = tenantUnit("rows_read");
+                const queries = tenantUnit("query");
+                let storageMb = tenantUnit("storage_mb");
+                if (storageMb <= 0 && rowsWritten > 0)
+                    storageMb = estimateStorageMbFromRowsWritten(rowsWritten);
                 usageMetrics.splice(0, usageMetrics.length, ...[
                     { label: "db reads", value: formatUnits(dbReads) },
                     { label: "db writes", value: formatUnits(dbWrites) },
