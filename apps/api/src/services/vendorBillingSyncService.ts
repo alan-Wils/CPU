@@ -84,6 +84,14 @@ export class VendorBillingSyncService {
 
         const mapped: VendorSyncSummaryRow[] = [];
         for (const row of results) {
+            if (row.provider === "resend") {
+                logInfo("[VENDOR_SYNC] resend_probe_complete", {
+                    month: label,
+                    status: row.status,
+                    message: row.message ?? null,
+                    syncedAt: row.syncedAt ? row.syncedAt.toISOString() : null,
+                });
+            }
             try {
                 await persistSnapshot(label, row);
             } catch (error) {

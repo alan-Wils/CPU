@@ -241,14 +241,26 @@ export class UsageCostService {
                 usageMetrics.push({ label: "Logged units (MTD)", value: "0" });
             }
 
-            let usageSummary = estimatedCost > 0
-                ? `${usageMetrics.map((m) => `${m.label}: ${m.value}`).join(" · ")} · Event est. ${formatUsd(estimatedCost)}`
-                : "No usage logged this month for this provider.";
-
             const hasCompanyActivity = estimatedCost > 0 || (a?.byUnit.size ?? 0) > 0;
+            const hasResendUnitEvents = provider === "resend" && (a?.byUnit.size ?? 0) > 0;
+
+            let usageSummary =
+                estimatedCost > 0 || hasResendUnitEvents
+                    ? `${usageMetrics.map((m) => `${m.label}: ${m.value}`).join(
+                        " · ",
+                    )} · Event est. ${formatUsd(provider === "resend" ? displayCost : estimatedCost)}`
+                    : "No usage logged this month for this provider.";
+
             let effectiveStatus: UsageCostProviderRow["status"] = snapshotStatus;
             if (!hasCompanyActivity && (snapshotStatus === "estimated_only" || !snapshot)) {
                 effectiveStatus = "no_activity";
+            }
+
+            /** Resend: tenant attribution is UsageEvent-backed; unhealthy vendor probes should not eclipse internal activity */
+            const resendSnapshotDown =
+                snapshotStatus === "sync_failed" || snapshotStatus === "missing_token";
+            if (provider === "resend" && hasCompanyActivity && resendSnapshotDown) {
+                effectiveStatus = "estimated_only";
             }
 
             let statusLabel = "Estimated from app usage only";
@@ -262,6 +274,12 @@ export class UsageCostService {
                 statusLabel = "No activity";
             if (meta.exactInternalPreferred && estimatedCost > 0) {
                 statusLabel = "Estimated from app usage (exact internal events)";
+            }
+            if (provider === "resend" && hasCompanyActivity && resendSnapshotDown) {
+                statusLabel =
+                    snapshotStatus === "missing_token"
+                        ? "Estimated from internal email events (RESEND_API_KEY missing — vendor diagnostics only)"
+                        : "Estimated from internal email events (Resend probe failed — check API key)";
             }
             if (provider === "neon") {
                 const raw = (snapshot?.rawUsageJson ?? null) as {
