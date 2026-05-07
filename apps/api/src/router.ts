@@ -24,6 +24,7 @@ import { harvestSheetRouter } from "./modules/harvestSheet/routes.js";
 import { internalJobsRouter } from "./modules/internal/jobsRoutes.js";
 import { metrcRouter } from "./modules/metrc/routes.js";
 import { autogrowRouter } from "./modules/autogrow/routes.js";
+import { inventoryRouter } from "./modules/inventory/routes.js";
 export const appRouter = Router();
 appRouter.use("/auth", authRouter);
 /** Cron / worker hooks (Bearer CRON_SECRET) — must not run behind JWT. */
@@ -39,6 +40,7 @@ appRouter.use("/admin", adminRouter);
 appRouter.use("/config", configRouter);
 appRouter.use("/metrc", metrcRouter);
 appRouter.use("/autogrow", autogrowRouter);
+appRouter.use("/inventory", inventoryRouter);
 appRouter.use("/tasks", tasksRouter);
 appRouter.use("/dashboard", dashboardRouter);
 appRouter.use("/data-hub", dataHubRouter);

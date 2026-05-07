@@ -114,6 +114,12 @@ const envSchema = z
         const t = v.trim().replace(/\/+$/, "");
         return t === "" ? undefined : t;
     }, z.string().url().optional()),
+    LEAFLINK_BASE_URL: z.preprocess((v) => {
+        if (typeof v !== "string")
+            return undefined;
+        const t = v.trim().replace(/\/+$/, "");
+        return t === "" ? undefined : t;
+    }, z.string().url().optional()),
     /** Backend-only vendor billing integrations. */
     RAILWAY_API_TOKEN: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().optional()),
     VERCEL_API_TOKEN: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().optional()),

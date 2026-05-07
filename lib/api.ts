@@ -593,3 +593,67 @@ export async function syncVendorUsageCosts() {
     { method: "POST", omitCompanyHeader: true },
   );
 }
+
+export type LeafLinkInventoryItemDto = {
+  id: string;
+  productName: string;
+  sku: string;
+  strain: string;
+  category: string;
+  productType: string;
+  brand: string;
+  availableQuantity: number;
+  unit: string;
+  packageSize: string;
+  price: number | null;
+  status: string;
+  updatedAt: string;
+  imageUrl: string;
+};
+
+export type LeafLinkInventoryDto = {
+  source: "leaflink";
+  items: LeafLinkInventoryItemDto[];
+  stats: {
+    totalSkus: number;
+    totalInventoryUnits: number;
+    totalInventoryValue: number;
+    categoriesCount: number;
+  };
+  lastSyncedAt: string;
+};
+
+export type LeafLinkConfigDto = {
+  integrationEnabled: boolean;
+  companySlug: string;
+  companyId: string;
+  username: string;
+  baseUrl: string;
+  hasApiKey: boolean;
+};
+
+export type LeafLinkConfigUpsertInput = {
+  integrationEnabled: boolean;
+  companySlug: string;
+  companyId: string;
+  username: string;
+  baseUrl: string;
+  apiKey?: string;
+  clearApiKey?: boolean;
+};
+
+export async function fetchLeafLinkInventory(companyId?: string) {
+  return apiRequest<LeafLinkInventoryDto>("/api/inventory/leaflink", { companyId });
+}
+
+export async function fetchLeafLinkConfig(companyId?: string) {
+  return apiRequest<LeafLinkConfigDto>("/api/inventory/leaflink/config", { companyId });
+}
+
+export async function saveLeafLinkConfig(input: LeafLinkConfigUpsertInput, companyId?: string) {
+  return apiRequest<LeafLinkConfigDto>("/api/inventory/leaflink/config", {
+    method: "PUT",
+    body: input,
+    companyId,
+  });
+}

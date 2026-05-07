@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import Nav from "@/components/Nav";
 import { CollapsibleConfigSection } from "@/components/admin/CollapsibleConfigSection";
+import { LeafLinkConfigCard } from "@/components/admin/LeafLinkConfigCard";
 import {
   API_BASE_URL,
   apiRequest,
@@ -2963,6 +2964,7 @@ export default function ConfigPage() {
             + Add break / lunch window
           </button>
         </div>
+        <LeafLinkConfigCard />
         </div>
       </CollapsibleConfigSection>
 
