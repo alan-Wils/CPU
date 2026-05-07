@@ -339,22 +339,63 @@ export class LeafLinkInventoryService {
     }
 
     const base = creds.baseUrl.replace(/\/+$/, "");
-    const endpoint = `${base}/inventories?company_id=${encodeURIComponent(creds.companyId)}&available=true`;
-    const payload = await fetchJsonWithRetry(
-      endpoint,
-      {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${creds.apiKey}`,
-          "X-API-KEY": creds.apiKey,
-          "x-api-key": creds.apiKey,
-          "X-Company-Slug": creds.companySlug,
-          "X-LeafLink-Company-Id": creds.companyId,
-        },
-      },
-      15_000,
-    );
+    const endpointCandidates = [
+      creds.companyId ? `${base}/v2/companies/${encodeURIComponent(creds.companyId)}/products/` : "",
+      creds.companyId ? `${base}/v2/products/?company=${encodeURIComponent(creds.companyId)}` : "",
+      creds.companyId ? `${base}/products/?company=${encodeURIComponent(creds.companyId)}` : "",
+      creds.companySlug ? `${base}/v2/products/?company_slug=${encodeURIComponent(creds.companySlug)}` : "",
+      creds.companySlug ? `${base}/products/?company_slug=${encodeURIComponent(creds.companySlug)}` : "",
+    ].filter(Boolean);
+    const authCandidates = [
+      `App ${creds.apiKey}`,
+      `Bearer ${creds.apiKey}`,
+    ];
+
+    let payload: unknown = null;
+    let lastErr: unknown = null;
+    outer: for (const endpoint of endpointCandidates) {
+      for (const authValue of authCandidates) {
+        try {
+          payload = await fetchJsonWithRetry(
+            endpoint,
+            {
+              method: "GET",
+              headers: {
+                Accept: "application/json",
+                Authorization: authValue,
+                "X-API-KEY": creds.apiKey,
+                "x-api-key": creds.apiKey,
+                "X-Company-Slug": creds.companySlug,
+                "X-LeafLink-Company-Id": creds.companyId,
+              },
+            },
+            15_000,
+          );
+          break outer;
+        } catch (error) {
+          lastErr = error;
+          const code = error instanceof AppError ? error.code : "";
+          // Try alternate endpoint/auth format before surfacing the failure.
+          if (
+            code === "LEAFLINK_INVALID_CREDENTIALS" ||
+            code === "LEAFLINK_REQUEST_FAILED" ||
+            code === "LEAFLINK_NON_JSON_RESPONSE" ||
+            code === "LEAFLINK_HTML_ERROR"
+          ) {
+            continue;
+          }
+          throw error;
+        }
+      }
+    }
+    if (payload == null) {
+      if (lastErr instanceof AppError) throw lastErr;
+      throw new AppError(
+        "LeafLink inventory request failed for all endpoint/auth combinations.",
+        502,
+        "LEAFLINK_REQUEST_FAILED",
+      );
+    }
 
     const items = normalizeRows(payload);
     const categories = new Set(items.map((x) => x.category).filter(Boolean));
