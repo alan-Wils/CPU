@@ -345,10 +345,17 @@ export class LeafLinkInventoryService {
       creds.companyId ? `${base}/products/?company=${encodeURIComponent(creds.companyId)}` : "",
       creds.companySlug ? `${base}/v2/products/?company_slug=${encodeURIComponent(creds.companySlug)}` : "",
       creds.companySlug ? `${base}/products/?company_slug=${encodeURIComponent(creds.companySlug)}` : "",
+      `${base}/v2/products/`,
+      `${base}/products/`,
     ].filter(Boolean);
+    const basicAuth = creds.username
+      ? Buffer.from(`${creds.username}:${creds.apiKey}`).toString("base64")
+      : "";
     const authCandidates = [
       `App ${creds.apiKey}`,
+      `Token ${creds.apiKey}`,
       `Bearer ${creds.apiKey}`,
+      ...(basicAuth ? [`Basic ${basicAuth}`] : []),
     ];
 
     let payload: unknown = null;
@@ -367,6 +374,7 @@ export class LeafLinkInventoryService {
                 "x-api-key": creds.apiKey,
                 "X-Company-Slug": creds.companySlug,
                 "X-LeafLink-Company-Id": creds.companyId,
+                "X-LeafLink-Username": creds.username,
               },
             },
             15_000,
