@@ -17,8 +17,12 @@ import { registerUploadStreamRoutes, uploadsUseS3 } from "./lib/uploadStorage.js
 import { runCashLogEodJob } from "./services/cashLogEodJobService.js";
 const app = express();
 app.use(helmet());
+const corsOrigins = [env.CORS_ORIGIN, env.APP_URL ?? ""]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(",");
 app.use(cors({
-    origin: createCorsOriginResolver(env.CORS_ORIGIN),
+    origin: createCorsOriginResolver(corsOrigins),
     allowedHeaders: ["Content-Type", "Authorization", "X-Company-Id"],
 }));
 app.use(express.json({ limit: "15mb" }));
@@ -169,7 +173,7 @@ async function start() {
                 upload_storage: uploadsUseS3() ? "s3" : "local_disk",
                 mail_resend: Boolean(env.RESEND_API_KEY?.trim()),
                 mail_smtp: Boolean(env.SMTP_HOST && env.SMTP_PORT && env.SMTP_USER && env.SMTP_PASS),
-                cors_allowlist: describeCorsAllowlist(env.CORS_ORIGIN),
+                cors_allowlist: describeCorsAllowlist(corsOrigins),
             });
             startInternalCashLogEodSchedulerIfEnabled();
         });
