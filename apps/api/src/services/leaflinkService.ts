@@ -462,6 +462,29 @@ function pickCategoryDisplay(row: Record<string, unknown>): string {
 }
 
 /**
+ * When LeafLink sends the same `product_type` as the menu category (e.g. every line is "Live Resin Oil"),
+ * real variants (510 thread vs disposable) often only appear in the merchandising title.
+ */
+function inferSubcategoryFromProductTitle(productName: string): string {
+  const t = productName || "";
+  if (!t.trim())
+    return "";
+  if (/\(\s*510\s*thread\s*\)|\b510\s*thread\b/i.test(t))
+    return "510 thread";
+  if (/\(\s*disposable\s*\)|\bdisposable\b/i.test(t))
+    return "Disposable";
+  if (/\*\s*New\s*Ceramic\s*\*/i.test(t) || /\(\s*ceramic\s*\)/i.test(t))
+    return "Ceramic";
+  if (/\bcartridge\b/i.test(t) && !/\b510\b/i.test(t))
+    return "Cartridge";
+  if (/\bpod\b/i.test(t))
+    return "Pod";
+  if (/\bpre[\s-]?rolls?\b/i.test(t))
+    return "Pre-roll";
+  return "";
+}
+
+/**
  * Product-style bucket under the menu category (LeafLink product_type / explicit subcategory fields).
  */
 function pickSubcategoryDisplay(row: Record<string, unknown>, categoryDisplay: string): string {
@@ -552,6 +575,9 @@ function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
     const categoryDisplay = pickCategoryDisplay(row);
     const productTypeStr = pickString(row, ["product_type", "type"]);
     const subcategoryDisplay = pickSubcategoryDisplay(row, categoryDisplay);
+    const titleVariant = inferSubcategoryFromProductTitle(productName);
+    const apiBlend = (subcategoryDisplay || productTypeStr).trim();
+    const subcategoryResolved = titleVariant || apiBlend;
     out.push({
       id,
       productName,
@@ -559,7 +585,7 @@ function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
       strain: pickString(row, ["strain", "strain_name"]),
       category: categoryDisplay,
       productType: productTypeStr,
-      subcategory: subcategoryDisplay || productTypeStr,
+      subcategory: subcategoryResolved,
       brand: pickString(row, ["brand", "brand_name", "vendor_name"]),
       availableQuantity,
       unit: pickString(row, ["unit", "unit_of_measure", "sell_in_unit_of_measure", "uom"]),

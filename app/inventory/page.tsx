@@ -378,7 +378,20 @@ export default function InventoryPage() {
                                       </span>
                                     </summary>
                                     <div style={{ marginTop: 10, overflowX: "auto" }}>
-                                      <table style={{ ...tableStyle, minWidth: 720 }}>
+                                      <table style={{ ...tableStyle, minWidth: 800 }}>
+                                        <thead>
+                                          <tr>
+                                            <th style={nestedThStyle}>Product</th>
+                                            <th style={nestedThStyle}>SKU</th>
+                                            <th style={nestedThStyle}>Strain</th>
+                                            <th style={nestedThStyle}>Category</th>
+                                            <th style={nestedThStyle}>Subcategory</th>
+                                            <th style={nestedThStyle}>Qty</th>
+                                            <th style={nestedThStyle}>Package</th>
+                                            <th style={nestedThStyle}>Price</th>
+                                            <th style={nestedThStyle}>Status</th>
+                                          </tr>
+                                        </thead>
                                         <tbody>
                                           {g.rows.map((row) => (
                                             <InventoryProductRow
@@ -468,7 +481,7 @@ function InventoryProductRow({
           <div>
             <div style={{ color: "#e2e8f0", fontWeight: 700 }}>{row.productName || "Unnamed product"}</div>
             <div style={{ color: "#64748b", fontSize: nested ? 11 : 12 }}>
-              {row.brand || "—"} · {row.productType || "—"}
+              {row.brand || "—"} · {(row.subcategory || row.productType) || "—"}
             </div>
           </div>
         </div>
@@ -566,6 +579,12 @@ const thStyle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 800,
   padding: "10px 8px",
+};
+const nestedThStyle: React.CSSProperties = {
+  ...thStyle,
+  fontSize: 11,
+  padding: "8px 6px",
+  whiteSpace: "nowrap",
 };
 const tdStyle: React.CSSProperties = {
   color: "#cbd5e1",
