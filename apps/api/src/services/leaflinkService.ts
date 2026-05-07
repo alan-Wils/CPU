@@ -189,6 +189,112 @@ function pickNumber(row: Record<string, unknown>, keys: string[]): number {
   return 0;
 }
 
+/** Prefer first present key — including legitimate `0` inventory (don't skip zeros). */
+function pickInventoryQuantity(row: Record<string, unknown>, keys: string[]): number {
+  for (const k of keys) {
+    if (!(k in row))
+      continue;
+    const raw = row[k];
+    if (raw === undefined || raw === null)
+      continue;
+    const n = toNumber(raw);
+    if (Number.isFinite(n))
+      return n;
+  }
+  return 0;
+}
+
+function coerceTotalCount(raw: unknown): number | null {
+  if (typeof raw === "number" && Number.isFinite(raw))
+    return raw >= 0 ? raw : null;
+  if (typeof raw === "string" && raw.trim() !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0)
+      return Math.floor(n);
+  }
+  return null;
+}
+
+function normalizeNextLeafLinkUrl(requestUrl: string, nextRaw: unknown): string | null {
+  const s = typeof nextRaw === "string" ? nextRaw.trim() : "";
+  if (!s)
+    return null;
+  try {
+    if (/^https?:\/\//i.test(s))
+      return s;
+    const base = new URL(requestUrl);
+    if (s.startsWith("/"))
+      return `${base.origin}${s}`;
+    return new URL(s, base.href).href;
+  }
+  catch {
+    return null;
+  }
+}
+
+function incrementPageQueryParam(pageUrl: string): string | null {
+  try {
+    const u = new URL(pageUrl);
+    const cur = Number.parseInt(u.searchParams.get("page") || "1", 10);
+    const next = Number.isFinite(cur) && cur > 0 ? cur + 1 : 2;
+    u.searchParams.set("page", String(next));
+    const ps = Number.parseInt(u.searchParams.get("page_size") || "", 10);
+    if (!Number.isFinite(ps) || ps <= 0)
+      u.searchParams.set("page_size", "500");
+    return u.href;
+  }
+  catch {
+    return null;
+  }
+}
+
+/** Prefer max page_size (LeafLink list APIs default smaller pages). */
+function withListingPagingHint(endpointUrl: string): string {
+  try {
+    const u = new URL(endpointUrl);
+    if (!u.searchParams.has("page_size"))
+      u.searchParams.set("page_size", "500");
+    if (!u.searchParams.has("page"))
+      u.searchParams.set("page", "1");
+    return u.href;
+  }
+  catch {
+    return endpointUrl;
+  }
+}
+
+async function fetchAllLeafLinkPagedRows(
+  firstUrl: string,
+  init: RequestInit,
+  timeoutMs: number,
+  firstPayload?: unknown,
+): Promise<{ rows: unknown[]; finalUrl: string; lastPayload: unknown }> {
+  const aggregated: unknown[] = [];
+  let url: string | null = firstUrl;
+  let lastPayload: unknown = null;
+  const maxPages = 200;
+  for (let pg = 0; pg < maxPages && url; pg++) {
+    const payload =
+      pg === 0 && firstPayload != null ? firstPayload : await fetchJsonWithRetry(url, init, timeoutMs);
+    lastPayload = payload;
+    const root = asRecord(payload);
+    const { list } = pickListSource(payload);
+    aggregated.push(...list);
+
+    let nextUrl = normalizeNextLeafLinkUrl(url, root.next);
+
+    const total = coerceTotalCount(root.count);
+    if (!nextUrl && total != null && aggregated.length < total && list.length > 0)
+      nextUrl = incrementPageQueryParam(url);
+
+    if (!nextUrl || nextUrl === url)
+      break;
+
+    url = nextUrl;
+  }
+  return { rows: aggregated, finalUrl: url || firstUrl, lastPayload };
+}
+
 function pickPrice(row: Record<string, unknown>): number | null {
   const direct = pickNumber(row, ["price", "unit_price", "sale_price", "wholesale_price"]);
   if (direct > 0) return direct;
@@ -217,7 +323,7 @@ function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
     const row = asRecord(item);
     const id = pickString(row, ["id", "inventory_id", "product_id", "sku"]);
     if (!id) continue;
-    const availableQuantity = pickNumber(row, [
+    const availableQuantity = pickInventoryQuantity(row, [
       "available_inventory",
       "available_quantity",
       "quantity_available",
@@ -378,15 +484,18 @@ export class LeafLinkInventoryService {
     }
 
     const base = creds.baseUrl.replace(/\/+$/, "");
+    const hasCompanyScope = Boolean(creds.companyId || creds.companySlug);
+    /** Unscoped `/products/` succeeds too easily and returns the wrong company's page — omit when slug/id configured. */
     const endpointCandidates = [
       creds.companyId ? `${base}/v2/companies/${encodeURIComponent(creds.companyId)}/products/` : "",
       creds.companyId ? `${base}/v2/products/?company=${encodeURIComponent(creds.companyId)}` : "",
       creds.companyId ? `${base}/products/?company=${encodeURIComponent(creds.companyId)}` : "",
       creds.companySlug ? `${base}/v2/products/?company_slug=${encodeURIComponent(creds.companySlug)}` : "",
       creds.companySlug ? `${base}/products/?company_slug=${encodeURIComponent(creds.companySlug)}` : "",
-      `${base}/v2/products/`,
-      `${base}/products/`,
-    ].filter(Boolean);
+      ...(hasCompanyScope ? [] : [`${base}/v2/products/`, `${base}/products/`]),
+    ]
+      .filter(Boolean)
+      .map((endpointUrl) => withListingPagingHint(String(endpointUrl)));
     const basicAuth = creds.username
       ? Buffer.from(`${creds.username}:${creds.apiKey}`).toString("base64")
       : "";
@@ -400,6 +509,7 @@ export class LeafLinkInventoryService {
     let payload: unknown = null;
     let usedEndpoint = "";
     let usedAuthMode = "";
+    let successInit: RequestInit | null = null;
     let lastErr: unknown = null;
     outer: for (const endpoint of endpointCandidates) {
       for (const authValue of authCandidates) {
@@ -410,25 +520,23 @@ export class LeafLinkInventoryService {
             : authValue.startsWith("Bearer ")
               ? "Bearer"
               : "Basic";
+        const leafLinkInit: RequestInit = {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            Authorization: authValue,
+            "X-API-KEY": creds.apiKey,
+            "x-api-key": creds.apiKey,
+            "X-Company-Slug": creds.companySlug,
+            "X-LeafLink-Company-Id": creds.companyId,
+            "X-LeafLink-Username": creds.username,
+          },
+        };
         try {
-          payload = await fetchJsonWithRetry(
-            endpoint,
-            {
-              method: "GET",
-              headers: {
-                Accept: "application/json",
-                Authorization: authValue,
-                "X-API-KEY": creds.apiKey,
-                "x-api-key": creds.apiKey,
-                "X-Company-Slug": creds.companySlug,
-                "X-LeafLink-Company-Id": creds.companyId,
-                "X-LeafLink-Username": creds.username,
-              },
-            },
-            15_000,
-          );
+          payload = await fetchJsonWithRetry(endpoint, leafLinkInit, 15_000);
           usedEndpoint = endpoint;
           usedAuthMode = authMode;
+          successInit = leafLinkInit;
           break outer;
         } catch (error) {
           lastErr = error;
@@ -446,7 +554,7 @@ export class LeafLinkInventoryService {
         }
       }
     }
-    if (payload == null) {
+    if (payload == null || successInit == null) {
       if (lastErr instanceof AppError) throw lastErr;
       throw new AppError(
         "LeafLink inventory request failed for all endpoint/auth combinations.",
@@ -455,20 +563,31 @@ export class LeafLinkInventoryService {
       );
     }
 
-    const root = asRecord(payload);
-    const { list, source: listSource } = pickListSource(payload);
+    const firstRoot = asRecord(payload);
+    const firstPageCount = pickListSource(payload).list.length;
+    const merged = await fetchAllLeafLinkPagedRows(
+      usedEndpoint,
+      successInit,
+      15_000,
+      payload,
+    );
+    const mergedPayload = { results: merged.rows };
+    const { source: mergedListSourceTag } = pickListSource(mergedPayload);
+
     const firstRowKeys =
-      list.length > 0 ? Object.keys(asRecord(list[0])).slice(0, 80) : [];
+      merged.rows.length > 0 ? Object.keys(asRecord(merged.rows[0])).slice(0, 80) : [];
     logInfo("[LEAFLINK] normalize_preview", {
       endpoint: usedEndpoint,
+      endpointFinalHint: merged.finalUrl.slice(0, 220),
       authMode: usedAuthMode,
-      rootKeys: Object.keys(root).slice(0, 40),
-      listSource,
-      rawRowCount: list.length,
+      rootKeys: Object.keys(firstRoot).slice(0, 40),
+      listSource: mergedListSourceTag,
+      rawRowCount: merged.rows.length,
+      rawRowCountFirstPage: firstPageCount,
       firstRowKeys,
     });
 
-    const items = normalizeRows(payload);
+    const items = normalizeRows(mergedPayload);
     const categories = new Set(items.map((x) => x.category).filter(Boolean));
     const totalInventoryUnits = items.reduce((sum, row) => sum + toNumber(row.availableQuantity), 0);
     const totalInventoryValue = items.reduce((sum, row) => {
@@ -490,9 +609,9 @@ export class LeafLinkInventoryService {
       response.debug = {
         endpoint: usedEndpoint,
         authMode: usedAuthMode,
-        rootKeys: Object.keys(root).slice(0, 60),
-        listSource,
-        rawRowCount: list.length,
+        rootKeys: Object.keys(firstRoot).slice(0, 60),
+        listSource: mergedListSourceTag,
+        rawRowCount: merged.rows.length,
         firstRowKeys,
       };
     }
