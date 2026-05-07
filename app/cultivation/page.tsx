@@ -4755,14 +4755,48 @@ export default function Cultivation() {
     setEditFlowerModalBatch(null);
   }
 
-  async function saveEditFlowerBatchModal() {
+  function saveEditFlowerBatchModal() {
+    if (!editFlowerModalBatch || !canManageCultivationBatchPlacement()) return;
+
+    const newPlants = num(editFlowerPlants);
+    const prevPlants = num(editFlowerModalBatch.plants);
+    const stage = String(editFlowerModalBatch.stage || "").trim();
+
+    if (stage === "Partially Harvested" && prevPlants > 0 && newPlants === 0) {
+      showConfirm(
+        "Finish batch?",
+        "Are you sure? This clears the remaining plants and finishes the batch.",
+        () => void persistEditFlowerBatchModal({ finishPartialHarvest: true, previousPlantCount: prevPlants }),
+        "Same as ending a partial harvest with nothing left to pick — those plants drop from the batch.",
+      );
+      return;
+    }
+
+    void persistEditFlowerBatchModal({ finishPartialHarvest: false, previousPlantCount: prevPlants });
+  }
+
+  async function persistEditFlowerBatchModal(opts: {
+    finishPartialHarvest: boolean;
+    previousPlantCount: number;
+  }) {
     if (!editFlowerModalBatch || !canManageCultivationBatchPlacement()) return;
 
     const fr = cultivationRooms.flowerRooms || [];
-    const taskRequiredFields: { label: string; value: unknown; positive?: boolean }[] = [
+    const batchStage = String(editFlowerModalBatch.stage || "").trim();
+    const plantsField =
+      batchStage === "Partially Harvested"
+        ? ({ label: "Plants", value: editFlowerPlants, zeroOrPositive: true } as const)
+        : ({ label: "Plants", value: editFlowerPlants, positive: true } as const);
+
+    const taskRequiredFields: {
+      label: string;
+      value: unknown;
+      positive?: boolean;
+      zeroOrPositive?: boolean;
+    }[] = [
       { label: "Strain", value: editFlowerStrain.trim() },
       { label: "Strain acronym", value: editFlowerAcronym.trim() },
-      { label: "Plants", value: editFlowerPlants, positive: true },
+      plantsField,
     ];
 
     if (fr.length > 0) {
@@ -4797,6 +4831,7 @@ export default function Cultivation() {
       flowerBay: b.flowerBay,
       flowerTables: Array.isArray(b.flowerTables) ? [...b.flowerTables] : undefined,
       batchNotes: b.batchNotes,
+      stage: b.stage,
     };
 
     b.strain = editFlowerStrain.trim();
@@ -4819,6 +4854,29 @@ export default function Cultivation() {
       recomputeDryCanopyForCultivationBatch(b, cultivationRooms);
     }
 
+    if (opts.finishPartialHarvest) {
+      b.plants = 0;
+      b.plantsAtFlower = 0;
+      recomputeDryCanopyForCultivationBatch(b, cultivationRooms);
+      moveBatchToCompleted(b, { skipAutoLog: true });
+      const cleared = Math.max(0, opts.previousPlantCount);
+      s.logs.unshift(
+        withLoggedBy({
+          area: "Cultivation",
+          batch: b.id,
+          task: "Finish batch",
+          people: "",
+          minutes: "",
+          output:
+            cleared > 0
+              ? `Batch finished from batch edit — ${cleared} remaining plant${cleared === 1 ? "" : "s"} cleared after partial harvest.`
+              : "Batch finished from batch edit — partial harvest closed with zero plants remaining.",
+          data: { source: "batch_edit", previousPlantCount: opts.previousPlantCount },
+          time: nowIsoForLog(),
+        }),
+      );
+    }
+
     const after = {
       strain: b.strain,
       acronym: b.acronym,
@@ -4832,6 +4890,7 @@ export default function Cultivation() {
       flowerBay: b.flowerBay,
       flowerTables: b.flowerTables,
       batchNotes: b.batchNotes,
+      stage: b.stage,
     };
 
     const output =
@@ -4849,6 +4908,7 @@ export default function Cultivation() {
         before,
         after,
         editedAtIso: loggedAtIso,
+        ...(opts.finishPartialHarvest ? { finishPartialHarvestViaEdit: true as const } : {}),
       },
       time: nowIsoForLog(),
     };
@@ -4874,7 +4934,13 @@ export default function Cultivation() {
     try {
       showSyncMessageNotice("Saving batch to server…");
       const ok = await saveRealCultivationBatch(b);
-      showSyncMessageNotice(ok ? "Batch saved to server." : "Saved locally — server sync failed.");
+      showSyncMessageNotice(
+        ok
+          ? opts.finishPartialHarvest
+            ? "Batch finished and saved."
+            : "Batch saved to server."
+          : "Saved locally — server sync failed.",
+      );
     } finally {
       setEditFlowerModalBatch(null);
       setIsSavingEditFlowerModal(false);
@@ -7005,6 +7071,12 @@ export default function Cultivation() {
                   value={editFlowerPlants}
                   onChange={(e) => setEditFlowerPlants(e.target.value)}
                 />
+                {String(editFlowerModalBatch.stage || "").trim() === "Partially Harvested" ? (
+                  <span style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.45 }}>
+                    Set to <b style={{ color: "#cbd5e1" }}>0</b> if nothing is left to harvest — you will be asked to
+                    confirm before the batch is finished.
+                  </span>
+                ) : null}
               </label>
 
               <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
