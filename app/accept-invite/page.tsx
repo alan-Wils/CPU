@@ -67,7 +67,7 @@ function AcceptInvitePageInner() {
         padding: 24,
       }}
     >
-      <BrandLogo height={72} maxWidth={400} />
+      <BrandLogo height={120} maxWidth={560} />
       <form
         onSubmit={submit}
         style={{
@@ -81,8 +81,27 @@ function AcceptInvitePageInner() {
       >
         <h1 style={{ marginTop: 0, fontSize: 34 }}>Accept Invite</h1>
 
-        <p style={{ color: "#94a3b8" }}>
+        <p style={{ color: "#94a3b8", marginBottom: 12 }}>
           Create your password to finish setting up your account.
+        </p>
+
+        <p
+          style={{
+            margin: "0 0 18px",
+            padding: "14px 16px",
+            borderRadius: 12,
+            border: "1px solid rgba(56, 189, 248, 0.35)",
+            background: "rgba(14, 116, 144, 0.18)",
+            color: "#bae6fd",
+            fontSize: 15,
+            lineHeight: 1.55,
+          }}
+        >
+          When you return to the login page, sign in with your{" "}
+          <strong style={{ color: "#f0f9ff" }}>“Company code”</strong>, your{" "}
+          <strong style={{ color: "#f0f9ff" }}>email</strong>, and{" "}
+          <strong style={{ color: "#f0f9ff" }}>this new password</strong>{" "}
+          (enter the same password in both fields below, then use it on the login screen).
         </p>
 
         {error && (

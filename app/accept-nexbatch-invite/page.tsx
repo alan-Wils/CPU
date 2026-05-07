@@ -72,7 +72,7 @@ function AcceptNexBatchInviteInner() {
         padding: 24,
       }}
     >
-      <BrandLogo height={72} maxWidth={400} />
+      <BrandLogo height={120} maxWidth={560} />
       <form
         onSubmit={submit}
         style={{
@@ -86,8 +86,25 @@ function AcceptNexBatchInviteInner() {
       >
         <h1 style={{ marginTop: 0, fontSize: 30 }}>NexBatch staff invite</h1>
 
-        <p style={{ color: "#94a3b8" }}>
+        <p style={{ color: "#94a3b8", marginBottom: 12 }}>
           Set your password to finish activating your NexBatch portal account.
+        </p>
+
+        <p
+          style={{
+            margin: "0 0 18px",
+            padding: "14px 16px",
+            borderRadius: 12,
+            border: "1px solid rgba(56, 189, 248, 0.35)",
+            background: "rgba(14, 116, 144, 0.18)",
+            color: "#bae6fd",
+            fontSize: 15,
+            lineHeight: 1.55,
+          }}
+        >
+          After activation, open the <strong style={{ color: "#f0f9ff" }}>NexBatch portal</strong> and sign in with your{" "}
+          <strong style={{ color: "#f0f9ff" }}>email</strong> and this{" "}
+          <strong style={{ color: "#f0f9ff" }}>same password</strong>.
         </p>
 
         {error && (
