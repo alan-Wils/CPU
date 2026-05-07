@@ -56,9 +56,20 @@ export default function InventoryPage() {
       const path = appendCompanyIdQuery("/api/config", companyId);
       const res = await fetch(`${API_BASE_URL}${path}`, { headers });
       if (!res.ok) return;
-      const data = (await res.json()) as { products?: { categoryLabels?: CategoryLabelOverride[] } };
-      const list = data.products?.categoryLabels;
-      setCategoryLabels(Array.isArray(list) ? list : []);
+      const data = (await res.json()) as {
+        sales?: { leafLinkCategoryLabels?: CategoryLabelOverride[] };
+        products?: { categoryLabels?: CategoryLabelOverride[] };
+      };
+      if (
+        data.sales &&
+        "leafLinkCategoryLabels" in data.sales &&
+        Array.isArray(data.sales.leafLinkCategoryLabels)
+      ) {
+        setCategoryLabels(data.sales.leafLinkCategoryLabels);
+        return;
+      }
+      const legacy = data.products?.categoryLabels;
+      setCategoryLabels(Array.isArray(legacy) ? legacy : []);
     } catch {
       /* non-fatal */
     }
@@ -188,7 +199,7 @@ export default function InventoryPage() {
               <p style={{ color: "#94a3b8", marginTop: 10, marginBottom: 0 }}>
                 Live available-for-sale inventory synced from LeafLink via backend company-scoped credentials. Category
                 display names can be overridden under{" "}
-                <b style={{ color: "#cbd5e1" }}>Admin → Company Config → Products</b>.
+                <b style={{ color: "#cbd5e1" }}>Admin → Company Config → Sales → LeafLink category names</b>.
               </p>
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>

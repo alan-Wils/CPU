@@ -160,7 +160,7 @@ type AppConfig = {
       tierPointsMultiplier: number;
     }>;
   };
-  /** Wholesale / ops contact and policy text (reference for staff; not sent to LeafLink). */
+  /** Wholesale / ops contact, LeafLink category display names, and policy text (not sent to LeafLink). */
   sales: {
     primaryContactName: string;
     primaryContactEmail: string;
@@ -168,10 +168,11 @@ type AppConfig = {
     defaultPaymentTerms: string;
     fulfillmentNotes: string;
     wholesalePortalUrl: string;
+    /** Map LeafLink category ids (e.g. 5, Category #5) to labels shown in Inventory. */
+    leafLinkCategoryLabels: Array<{ id: string; displayName: string }>;
   };
-  /** Merchandising & catalog display (e.g. map LeafLink category ids to friendly names). */
+  /** Merchandising notes (internal). */
   products: {
-    categoryLabels: Array<{ id: string; displayName: string }>;
     notes: string;
   };
 };
@@ -236,12 +237,37 @@ const emptyConfig: AppConfig = {
     defaultPaymentTerms: "",
     fulfillmentNotes: "",
     wholesalePortalUrl: "",
+    leafLinkCategoryLabels: [],
   },
   products: {
-    categoryLabels: [],
     notes: "",
   },
 };
+
+type LeafLinkCategoryLabelRow = { id: string; displayName: string };
+
+/**
+ * Prefer `sales.leafLinkCategoryLabels` when that key exists (including `[]`).
+ * Otherwise fall back to legacy `products.categoryLabels`.
+ */
+function mergeLeafLinkCategoryLabelsFromPayload(data: {
+  sales?: { leafLinkCategoryLabels?: unknown; categoryLabels?: unknown };
+  products?: { categoryLabels?: unknown };
+}): LeafLinkCategoryLabelRow[] {
+  const sales = data.sales;
+  if (sales && "leafLinkCategoryLabels" in sales && Array.isArray(sales.leafLinkCategoryLabels)) {
+    return sales.leafLinkCategoryLabels as LeafLinkCategoryLabelRow[];
+  }
+  const legacySalesKey = data.sales?.categoryLabels;
+  if (Array.isArray(legacySalesKey) && legacySalesKey.length > 0) {
+    return legacySalesKey as LeafLinkCategoryLabelRow[];
+  }
+  const legacyProducts = data.products?.categoryLabels;
+  if (Array.isArray(legacyProducts)) {
+    return legacyProducts as LeafLinkCategoryLabelRow[];
+  }
+  return [];
+}
 
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
@@ -598,13 +624,13 @@ export default function ConfigPage() {
         sales: {
           ...emptyConfig.sales,
           ...(data.sales || {}),
+          leafLinkCategoryLabels: mergeLeafLinkCategoryLabelsFromPayload({
+            sales: data.sales,
+            products: data.products as { categoryLabels?: unknown; notes?: string },
+          }),
         },
         products: {
-          ...emptyConfig.products,
-          ...(data.products || {}),
-          categoryLabels: Array.isArray((data.products as { categoryLabels?: unknown } | undefined)?.categoryLabels)
-            ? ((data.products as { categoryLabels: AppConfig["products"]["categoryLabels"] }).categoryLabels)
-            : [],
+          notes: String((data.products as { notes?: string } | undefined)?.notes || ""),
         },
       });
       syncCompanyTimezoneFromConfigPayload(raw);
@@ -690,13 +716,13 @@ export default function ConfigPage() {
         sales: {
           ...emptyConfig.sales,
           ...(data.sales || {}),
+          leafLinkCategoryLabels: mergeLeafLinkCategoryLabelsFromPayload({
+            sales: data.sales,
+            products: data.products as { categoryLabels?: unknown; notes?: string },
+          }),
         },
         products: {
-          ...emptyConfig.products,
-          ...(data.products || {}),
-          categoryLabels: Array.isArray((data.products as { categoryLabels?: unknown } | undefined)?.categoryLabels)
-            ? ((data.products as { categoryLabels: AppConfig["products"]["categoryLabels"] }).categoryLabels)
-            : [],
+          notes: String((data.products as { notes?: string } | undefined)?.notes || ""),
         },
       });
       syncCompanyTimezoneFromConfigPayload(data);
@@ -3030,6 +3056,9 @@ export default function ConfigPage() {
             {(config.sales.primaryContactEmail || "").trim()
               ? ` · ${(config.sales.primaryContactEmail || "").trim()}`
               : ""}
+            {" · "}
+            LeafLink categories mapped:{" "}
+            <b style={{ color: "#e2e8f0" }}>{config.sales.leafLinkCategoryLabels.length}</b>
           </>
         }
       >
@@ -3125,29 +3154,15 @@ export default function ConfigPage() {
               />
             </label>
           </div>
-        </div>
-      </CollapsibleConfigSection>
 
-      <CollapsibleConfigSection
-        sectionStyle={{ ...styles.card, marginTop: 18 }}
-        sectionNumber="3"
-        title="Products"
-        summaryCollapsed={
-          <>
-            Category label overrides:{" "}
-            <b style={{ color: "#e2e8f0" }}>{config.products.categoryLabels.length}</b>
-            {(config.products.notes || "").trim() ? " · Notes set" : ""}
-          </>
-        }
-      >
-        <div style={styles.configSubCard}>
+          <h3 style={{ ...styles.subTitle, marginTop: 22, marginBottom: 8 }}>LeafLink category names</h3>
           <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14, lineHeight: 1.55 }}>
-            Map LeafLink category ids (e.g. <b style={{ color: "#cbd5e1" }}>5</b> or{" "}
-            <b style={{ color: "#cbd5e1" }}>Category #5</b>) to names your team recognizes. Overrides apply on the
-            Inventory page after you save config and refresh.
+            LeafLink often sends numeric category ids (shown as <b style={{ color: "#cbd5e1" }}>Category #5</b> in
+            Inventory). Map each id to the real category name (Flower, Concentrates, …). Save config, then refresh
+            Inventory to see the names in filters and the table.
           </p>
           <div style={{ display: "grid", gap: 10 }}>
-            {(config.products.categoryLabels || []).map((row, idx) => (
+            {(config.sales.leafLinkCategoryLabels || []).map((row, idx) => (
               <div
                 key={`${row.id}-${idx}`}
                 style={{
@@ -3161,15 +3176,15 @@ export default function ConfigPage() {
                   LeafLink category id
                   <input
                     style={styles.input}
-                    placeholder="e.g. 5"
+                    placeholder="e.g. 5 or Category #5"
                     value={row.id}
                     onChange={(e) => {
                       const v = e.target.value;
                       setConfig((prev) => ({
                         ...prev,
-                        products: {
-                          ...prev.products,
-                          categoryLabels: prev.products.categoryLabels.map((r, i) =>
+                        sales: {
+                          ...prev.sales,
+                          leafLinkCategoryLabels: prev.sales.leafLinkCategoryLabels.map((r, i) =>
                             i === idx ? { ...r, id: v } : r,
                           ),
                         },
@@ -3187,9 +3202,9 @@ export default function ConfigPage() {
                       const v = e.target.value;
                       setConfig((prev) => ({
                         ...prev,
-                        products: {
-                          ...prev.products,
-                          categoryLabels: prev.products.categoryLabels.map((r, i) =>
+                        sales: {
+                          ...prev.sales,
+                          leafLinkCategoryLabels: prev.sales.leafLinkCategoryLabels.map((r, i) =>
                             i === idx ? { ...r, displayName: v } : r,
                           ),
                         },
@@ -3203,9 +3218,9 @@ export default function ConfigPage() {
                   onClick={() =>
                     setConfig((prev) => ({
                       ...prev,
-                      products: {
-                        ...prev.products,
-                        categoryLabels: prev.products.categoryLabels.filter((_, i) => i !== idx),
+                      sales: {
+                        ...prev.sales,
+                        leafLinkCategoryLabels: prev.sales.leafLinkCategoryLabels.filter((_, i) => i !== idx),
                       },
                     }))
                   }
@@ -3220,30 +3235,54 @@ export default function ConfigPage() {
               onClick={() =>
                 setConfig((prev) => ({
                   ...prev,
-                  products: {
-                    ...prev.products,
-                    categoryLabels: [...(prev.products.categoryLabels || []), { id: "", displayName: "" }],
+                  sales: {
+                    ...prev.sales,
+                    leafLinkCategoryLabels: [
+                      ...prev.sales.leafLinkCategoryLabels,
+                      { id: "", displayName: "" },
+                    ],
                   },
                 }))
               }
             >
-              + Add category label
+              + Add LeafLink category mapping
             </button>
-            <label style={{ ...styles.label, marginTop: 8 }}>
-              Product / merchandising notes (internal)
-              <textarea
-                style={{ ...styles.input, minHeight: 88, resize: "vertical" as const }}
-                placeholder="Optional context for SKUs, naming conventions, etc."
-                value={config.products.notes}
-                onChange={(e) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    products: { ...prev.products, notes: e.target.value },
-                  }))
-                }
-              />
-            </label>
           </div>
+        </div>
+      </CollapsibleConfigSection>
+
+      <CollapsibleConfigSection
+        sectionStyle={{ ...styles.card, marginTop: 18 }}
+        sectionNumber="3"
+        title="Products"
+        summaryCollapsed={
+          <>
+            Merchandising notes:{" "}
+            <b style={{ color: "#e2e8f0" }}>
+              {(config.products.notes || "").trim() ? "set" : "—"}
+            </b>
+          </>
+        }
+      >
+        <div style={styles.configSubCard}>
+          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14, lineHeight: 1.55 }}>
+            Internal notes for SKUs, naming, or merchandising. LeafLink category display names are configured under{" "}
+            <b style={{ color: "#cbd5e1" }}>Sales</b>.
+          </p>
+          <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
+            Product / merchandising notes (internal)
+            <textarea
+              style={{ ...styles.input, minHeight: 88, resize: "vertical" as const }}
+              placeholder="Optional context for SKUs, naming conventions, etc."
+              value={config.products.notes}
+              onChange={(e) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  products: { ...prev.products, notes: e.target.value },
+                }))
+              }
+            />
+          </label>
         </div>
       </CollapsibleConfigSection>
 
