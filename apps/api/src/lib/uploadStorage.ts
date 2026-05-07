@@ -49,10 +49,10 @@ function getS3Client(): S3Client {
     return s3Client;
 }
 
-export type UploadKind = "checks" | "cash-receipts";
+export type UploadKind = "checks" | "cash-receipts" | "company-logos";
 
 export function parseUploadsPath(pathname: string): { kind: UploadKind; companyId: string; fileName: string } | null {
-    const m = String(pathname || "").match(/^\/uploads\/(checks|cash-receipts)\/([^/]+)\/([^/]+)$/);
+    const m = String(pathname || "").match(/^\/uploads\/(checks|cash-receipts|company-logos)\/([^/]+)\/([^/]+)$/);
     if (!m)
         return null;
     const kind = m[1] as UploadKind;
@@ -228,4 +228,5 @@ export function registerUploadStreamRoutes(app: Express): void {
 
     app.get("/uploads/checks/:companyId/:fileName", handler("checks"));
     app.get("/uploads/cash-receipts/:companyId/:fileName", handler("cash-receipts"));
+    app.get("/uploads/company-logos/:companyId/:fileName", handler("company-logos"));
 }

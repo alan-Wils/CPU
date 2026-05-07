@@ -15,6 +15,69 @@ export type InventoryFilterState = {
   layoutMode: string;
 };
 
+export const INVENTORY_EXPORT_COLUMN_ORDER = [
+  "product",
+  "brand",
+  "sku",
+  "strain",
+  "category",
+  "subcategory",
+  "qty",
+  "package",
+  "price",
+  "status",
+  "sourcePackage",
+] as const;
+
+export type InventoryExportColumnId = (typeof INVENTORY_EXPORT_COLUMN_ORDER)[number];
+
+export const INVENTORY_EXPORT_COLUMN_LABELS: Record<InventoryExportColumnId, string> = {
+  product: "Product",
+  brand: "Brand",
+  sku: "SKU",
+  strain: "Strain",
+  category: "Category",
+  subcategory: "Subcategory",
+  qty: "Qty",
+  package: "Package",
+  price: "Price",
+  status: "Status",
+  sourcePackage: "Source package",
+};
+
+export const DEFAULT_INVENTORY_EXPORT_COLUMNS: InventoryExportColumnId[] = [...INVENTORY_EXPORT_COLUMN_ORDER];
+
+const COLUMN_ID_SET = new Set<string>(INVENTORY_EXPORT_COLUMN_ORDER);
+
+/** Keep only known ids, preserve table order; if empty, return full default set. */
+export function normalizeInventoryExportColumns(selected: unknown): InventoryExportColumnId[] {
+  if (!Array.isArray(selected)) return [...DEFAULT_INVENTORY_EXPORT_COLUMNS];
+  const picked = new Set(
+    selected.filter((x): x is InventoryExportColumnId => typeof x === "string" && COLUMN_ID_SET.has(x)),
+  );
+  if (picked.size === 0) return [...DEFAULT_INVENTORY_EXPORT_COLUMNS];
+  return INVENTORY_EXPORT_COLUMN_ORDER.filter((id) => picked.has(id));
+}
+
+export function clampInventoryLogoMaxWidthPx(n: unknown): number {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return 160;
+  return Math.min(400, Math.max(48, Math.round(x)));
+}
+
+export type InventoryPrintBranding = {
+  logoUrl: string;
+  logoMaxWidthPx: number;
+};
+
+export type InventoryExportOptions = {
+  columns: InventoryExportColumnId[];
+  /** Shown on printable sheet only (Excel does not embed images). */
+  printBranding?: InventoryPrintBranding;
+  /** API origin (e.g. from `NEXT_PUBLIC_API_URL`) so `/uploads/...` logos load in print preview. */
+  apiBaseUrl?: string;
+};
+
 function usd(n: number): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -38,48 +101,72 @@ export function describeInventoryFilters(state: InventoryFilterState): string[] 
   );
   lines.push(`Sort: ${state.sortBy} (${state.sortDir})`);
   lines.push(
-    state.layoutMode === "grouped" ? "Screen view: grouped by source package (export is full flat list)" : "Screen view: flat list",
+    state.layoutMode === "grouped"
+      ? "Screen view: grouped by source package (export is full flat list)"
+      : "Screen view: flat list",
   );
   return lines;
 }
 
-const EXCEL_HEADERS = [
-  "Product",
-  "Brand",
-  "SKU",
-  "Strain",
-  "Category",
-  "Subcategory",
-  "Quantity",
-  "Unit",
-  "Package",
-  "Price",
-  "Status",
-  "Source package",
-] as const;
+/** Resolve stored logo URL (absolute or `/uploads/...`) for use in `<img src>`. */
+export function resolveAssetUrlForPrint(url: string, apiBaseUrl: string): string {
+  const u = (url || "").trim();
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u)) return u;
+  const base = (apiBaseUrl || "").replace(/\/+$/, "");
+  if (!base) return u;
+  if (u.startsWith("/")) return `${base}${u}`;
+  return `${base}/${u}`;
+}
 
-function itemToExcelRow(
+type RowStrings = Record<InventoryExportColumnId, string>;
+
+function rowDisplayStrings(
   row: LeafLinkInventoryItemDto,
   categoryLabels: CategoryLabelOverride[] | undefined,
-): (string | number)[] {
+): RowStrings {
   const categoryDisplay = resolveInventoryCategoryLabel((row.category || "").trim(), categoryLabels);
   const sub = (row.subcategory || row.productType || "").trim();
+  const pkg = inferSourcePackageGroup(row);
+  const priceStr = row.price == null ? "—" : usd(row.price);
+  const qtyStr = `${Number(row.availableQuantity) || 0} ${(row.unit || "").trim()}`.trim();
+  return {
+    product: row.productName || "—",
+    brand: row.brand || "—",
+    sku: row.sku || "—",
+    strain: row.strain || "—",
+    category: categoryDisplay || "—",
+    subcategory: sub || "—",
+    qty: qtyStr,
+    package: row.packageSize || "—",
+    price: priceStr,
+    status: row.status || "—",
+    sourcePackage: pkg,
+  };
+}
+
+function rowExcelValues(
+  row: LeafLinkInventoryItemDto,
+  categoryLabels: CategoryLabelOverride[] | undefined,
+): Record<InventoryExportColumnId, string | number> {
+  const categoryDisplay = resolveInventoryCategoryLabel((row.category || "").trim(), categoryLabels);
+  const sub = (row.subcategory || row.productType || "").trim();
+  const pkg = inferSourcePackageGroup(row);
   const qty = Number(row.availableQuantity);
   const price = row.price == null ? "" : Number(row.price);
-  return [
-    row.productName || "",
-    row.brand || "",
-    row.sku || "",
-    row.strain || "",
-    categoryDisplay || "",
-    sub || "",
-    Number.isFinite(qty) ? qty : 0,
-    row.unit || "",
-    row.packageSize || "",
+  return {
+    product: row.productName || "",
+    brand: row.brand || "",
+    sku: row.sku || "",
+    strain: row.strain || "",
+    category: categoryDisplay || "",
+    subcategory: sub || "",
+    qty: Number.isFinite(qty) ? qty : 0,
+    package: row.packageSize || "",
     price,
-    row.status || "",
-    inferSourcePackageGroup(row),
-  ];
+    status: row.status || "",
+    sourcePackage: pkg,
+  };
 }
 
 function excelFilename(): string {
@@ -92,20 +179,27 @@ export function downloadInventoryExcel(
   items: LeafLinkInventoryItemDto[],
   categoryLabels: CategoryLabelOverride[] | undefined,
   state: InventoryFilterState,
+  options: InventoryExportOptions,
 ): void {
   if (items.length === 0) return;
 
+  const cols = normalizeInventoryExportColumns(options.columns);
   const filterLines = describeInventoryFilters(state);
+  const colTitles = cols.map((id) => INVENTORY_EXPORT_COLUMN_LABELS[id]).join(", ");
   const preamble: (string | number)[][] = [
     ["LeafLink inventory export"],
     [`Generated: ${new Date().toLocaleString()}`],
     [`SKU count: ${items.length}`],
     [`Filters — ${filterLines.join(" · ")}`],
+    [`Columns — ${colTitles}`],
     [],
   ];
 
-  const headerRow = [...EXCEL_HEADERS];
-  const dataRows = items.map((row) => itemToExcelRow(row, categoryLabels));
+  const headerRow = cols.map((id) => INVENTORY_EXPORT_COLUMN_LABELS[id]);
+  const dataRows = items.map((row) => {
+    const cells = rowExcelValues(row, categoryLabels);
+    return cols.map((id) => cells[id]);
+  });
   const aoa: (string | number)[][] = [...preamble, headerRow, ...dataRows];
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -122,38 +216,44 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function buildTableHeaderHtml(cols: InventoryExportColumnId[]): string {
+  return cols.map((id) => `<th>${escapeHtml(INVENTORY_EXPORT_COLUMN_LABELS[id])}</th>`).join("");
+}
+
+function buildTableRowHtml(row: LeafLinkInventoryItemDto, categoryLabels: CategoryLabelOverride[] | undefined, cols: InventoryExportColumnId[]): string {
+  const cells = rowDisplayStrings(row, categoryLabels);
+  const tds = cols
+    .map((id) => {
+      const cls = id === "qty" || id === "price" ? ' class="num"' : "";
+      return `<td${cls}>${escapeHtml(cells[id])}</td>`;
+    })
+    .join("");
+  return `<tr>${tds}</tr>`;
+}
+
 /** Opens a print-friendly window with the full filtered list and triggers the browser print dialog. */
 export function openInventoryPrintWindow(
   items: LeafLinkInventoryItemDto[],
   categoryLabels: CategoryLabelOverride[] | undefined,
   state: InventoryFilterState,
+  options: InventoryExportOptions,
 ): void {
   if (items.length === 0) return;
 
+  const cols = normalizeInventoryExportColumns(options.columns);
   const filterLines = describeInventoryFilters(state);
   const filterHtml = filterLines.map((line) => `<li>${escapeHtml(line)}</li>`).join("");
 
-  const rowsHtml = items
-    .map((row) => {
-      const categoryDisplay = resolveInventoryCategoryLabel((row.category || "").trim(), categoryLabels);
-      const sub = (row.subcategory || row.productType || "").trim();
-      const pkg = inferSourcePackageGroup(row);
-      const priceStr = row.price == null ? "—" : usd(row.price);
-      return `<tr>
-  <td>${escapeHtml(row.productName || "—")}</td>
-  <td>${escapeHtml(row.brand || "—")}</td>
-  <td>${escapeHtml(row.sku || "—")}</td>
-  <td>${escapeHtml(row.strain || "—")}</td>
-  <td>${escapeHtml(categoryDisplay || "—")}</td>
-  <td>${escapeHtml(sub || "—")}</td>
-  <td class="num">${escapeHtml(`${Number(row.availableQuantity) || 0} ${(row.unit || "").trim()}`.trim())}</td>
-  <td>${escapeHtml(row.packageSize || "—")}</td>
-  <td class="num">${escapeHtml(priceStr)}</td>
-  <td>${escapeHtml(row.status || "—")}</td>
-  <td>${escapeHtml(pkg)}</td>
-</tr>`;
-    })
-    .join("");
+  const branding = options.printBranding;
+  const rawLogo = (branding?.logoUrl || "").trim();
+  const logoResolved = rawLogo ? resolveAssetUrlForPrint(rawLogo, options.apiBaseUrl || "") : "";
+  const showLogo = Boolean(logoResolved && /^https?:\/\//i.test(logoResolved));
+  const logoW = branding ? clampInventoryLogoMaxWidthPx(branding.logoMaxWidthPx) : 160;
+  const logoBlock = showLogo
+    ? `<div class="print-logo-wrap"><img class="print-logo" src="${escapeHtml(logoResolved)}" alt="" width="${logoW}" style="width:${logoW}px;max-width:${logoW}px;height:auto;object-fit:contain;" /></div>`
+    : "";
+
+  const rowsHtml = items.map((row) => buildTableRowHtml(row, categoryLabels, cols)).join("");
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -168,6 +268,18 @@ export function openInventoryPrintWindow(
       margin: 0;
       padding: 24px;
       background: #fff;
+    }
+    .print-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 8px;
+    }
+    .print-top-main { flex: 1; min-width: 0; }
+    .print-logo-wrap {
+      flex-shrink: 0;
+      max-width: 45%;
     }
     h1 {
       font-size: 1.75rem;
@@ -222,15 +334,21 @@ export function openInventoryPrintWindow(
     @media print {
       body { padding: 12px; }
       .filters { break-inside: avoid; }
+      .print-top { break-inside: avoid; }
       thead { display: table-header-group; }
       tr { break-inside: avoid; }
     }
   </style>
 </head>
 <body>
-  <h1>Inventory menu</h1>
-  <div class="meta">
-    Generated ${escapeHtml(new Date().toLocaleString())} · ${items.length} SKU${items.length === 1 ? "" : "s"} · LeafLink inventory
+  <div class="print-top">
+    <div class="print-top-main">
+      <h1>Inventory menu</h1>
+      <div class="meta">
+        Generated ${escapeHtml(new Date().toLocaleString())} · ${items.length} SKU${items.length === 1 ? "" : "s"} · LeafLink inventory
+      </div>
+    </div>
+    ${logoBlock}
   </div>
   <div class="filters">
     <h2>Current filters</h2>
@@ -238,19 +356,7 @@ export function openInventoryPrintWindow(
   </div>
   <table>
     <thead>
-      <tr>
-        <th>Product</th>
-        <th>Brand</th>
-        <th>SKU</th>
-        <th>Strain</th>
-        <th>Category</th>
-        <th>Subcategory</th>
-        <th>Qty</th>
-        <th>Package</th>
-        <th>Price</th>
-        <th>Status</th>
-        <th>Source package</th>
-      </tr>
+      <tr>${buildTableHeaderHtml(cols)}</tr>
     </thead>
     <tbody>${rowsHtml}</tbody>
   </table>

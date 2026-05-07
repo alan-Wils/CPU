@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import Nav from "@/components/Nav";
 import { CollapsibleConfigSection } from "@/components/admin/CollapsibleConfigSection";
@@ -24,6 +24,7 @@ import {
   type MetrcLastConnectionStatus,
   resolveMetrcApiBaseUrl,
 } from "@/lib/metrcCompanyConfig";
+import { clampInventoryLogoMaxWidthPx, resolveAssetUrlForPrint } from "@/lib/inventoryExport";
 import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
 import {
   defaultAutogrowCompanyConfig,
@@ -170,6 +171,10 @@ type AppConfig = {
     wholesalePortalUrl: string;
     /** Map LeafLink category ids (e.g. 5, Category #5) to labels shown in Inventory. */
     leafLinkCategoryLabels: Array<{ id: string; displayName: string }>;
+    /** Shown on the printable inventory menu (upload stores file; URL saved with Save Config). */
+    inventoryPrintLogoUrl: string;
+    /** Max width in pixels for the logo on the print layout (48–400). */
+    inventoryPrintLogoMaxWidthPx: number;
   };
   /** Merchandising notes (internal). */
   products: {
@@ -238,6 +243,8 @@ const emptyConfig: AppConfig = {
     fulfillmentNotes: "",
     wholesalePortalUrl: "",
     leafLinkCategoryLabels: [],
+    inventoryPrintLogoUrl: "",
+    inventoryPrintLogoMaxWidthPx: 160,
   },
   products: {
     notes: "",
@@ -271,6 +278,34 @@ function mergeLeafLinkCategoryLabelsFromPayload(data: {
 
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+}
+
+type LogoMime = "image/jpeg" | "image/png" | "image/webp";
+
+function normalizeLogoMime(raw: string): LogoMime | null {
+  const m = String(raw || "").toLowerCase();
+  if (m === "image/jpg" || m === "image/jpeg") return "image/jpeg";
+  if (m === "image/png") return "image/png";
+  if (m === "image/webp") return "image/webp";
+  return null;
+}
+
+async function fileToLogoUploadPayload(file: File): Promise<{ mimeType: LogoMime; dataBase64: string }> {
+  const mimeType = normalizeLogoMime(file.type);
+  if (!mimeType) {
+    throw new Error("Use a JPEG, PNG, or WebP image.");
+  }
+  const dataUrl: string = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Could not read the image file."));
+    reader.readAsDataURL(file);
+  });
+  const stripped = dataUrl.replace(/^data:[^;]+;base64,/, "");
+  if (!stripped || stripped.length < 20) {
+    throw new Error("Invalid image data.");
+  }
+  return { mimeType, dataBase64: stripped };
 }
 
 function mergeRewardsSettings(
@@ -464,6 +499,8 @@ export default function ConfigPage() {
       metrcSnippet?: string | null;
     }>;
   } | null>(null);
+  const [companyLogoUploading, setCompanyLogoUploading] = useState(false);
+  const companyLogoFileRef = useRef<HTMLInputElement | null>(null);
 
   const ianaTimeZones = useMemo(() => {
     if (typeof Intl !== "undefined" && typeof (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf === "function") {
@@ -624,6 +661,9 @@ export default function ConfigPage() {
         sales: {
           ...emptyConfig.sales,
           ...(data.sales || {}),
+          inventoryPrintLogoMaxWidthPx: clampInventoryLogoMaxWidthPx(
+            (data.sales as { inventoryPrintLogoMaxWidthPx?: unknown } | undefined)?.inventoryPrintLogoMaxWidthPx,
+          ),
           leafLinkCategoryLabels: mergeLeafLinkCategoryLabelsFromPayload({
             sales: data.sales,
             products: data.products as { categoryLabels?: unknown; notes?: string },
@@ -642,6 +682,44 @@ export default function ConfigPage() {
     }
   }
 
+  async function uploadInventoryPrintLogo(file: File) {
+    setCompanyLogoUploading(true);
+    try {
+      const { mimeType, dataBase64 } = await fileToLogoUploadPayload(file);
+      const token = getAuthToken();
+      const companyId = getSelectedCompanyId().trim();
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      };
+      if (companyId) {
+        headers["X-Company-Id"] = companyId;
+      }
+      const path = appendCompanyIdQuery("/api/config/upload-company-logo", companyId);
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ mimeType, dataBase64 }),
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        throw new Error(text.slice(0, 500) || "Upload failed");
+      }
+      const json = JSON.parse(text) as { imageUrl?: string };
+      if (!json.imageUrl) {
+        throw new Error("No image URL returned");
+      }
+      setConfig((prev) => ({
+        ...prev,
+        sales: { ...prev.sales, inventoryPrintLogoUrl: json.imageUrl! },
+      }));
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Could not upload logo");
+    } finally {
+      setCompanyLogoUploading(false);
+    }
+  }
+
   async function saveConfig() {
     setSaving(true);
 
@@ -656,10 +734,17 @@ export default function ConfigPage() {
         headers["X-Company-Id"] = companyId;
       }
       const path = appendCompanyIdQuery("/api/config", companyId);
+      const payload = {
+        ...config,
+        sales: {
+          ...config.sales,
+          inventoryPrintLogoMaxWidthPx: clampInventoryLogoMaxWidthPx(config.sales.inventoryPrintLogoMaxWidthPx),
+        },
+      };
       const res = await fetch(`${API_BASE_URL}${path}`, {
         method: "PUT",
         headers,
-        body: JSON.stringify(config),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -716,6 +801,9 @@ export default function ConfigPage() {
         sales: {
           ...emptyConfig.sales,
           ...(data.sales || {}),
+          inventoryPrintLogoMaxWidthPx: clampInventoryLogoMaxWidthPx(
+            (data.sales as { inventoryPrintLogoMaxWidthPx?: unknown } | undefined)?.inventoryPrintLogoMaxWidthPx,
+          ),
           leafLinkCategoryLabels: mergeLeafLinkCategoryLabelsFromPayload({
             sales: data.sales,
             products: data.products as { categoryLabels?: unknown; notes?: string },
@@ -3059,6 +3147,12 @@ export default function ConfigPage() {
             {" · "}
             LeafLink categories mapped:{" "}
             <b style={{ color: "#e2e8f0" }}>{config.sales.leafLinkCategoryLabels.length}</b>
+            {(config.sales.inventoryPrintLogoUrl || "").trim() ? (
+              <>
+                {" · "}
+                Print logo: <b style={{ color: "#86efac" }}>set</b>
+              </>
+            ) : null}
           </>
         }
       >
@@ -3153,6 +3247,87 @@ export default function ConfigPage() {
                 }
               />
             </label>
+          </div>
+
+          <h3 style={{ ...styles.subTitle, marginTop: 22, marginBottom: 8 }}>Inventory print branding</h3>
+          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14, lineHeight: 1.55 }}>
+            Optional logo for the <b style={{ color: "#cbd5e1" }}>Printable menu</b> on the Inventory page. Upload
+            adds the file on the API server; click <b style={{ color: "#cbd5e1" }}>Save Config</b> below to store the
+            URL in company settings. In production, persistent object storage (S3/R2) must be configured on the API.
+          </p>
+          <div style={{ ...styles.grid, marginBottom: 8 }}>
+            <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
+              Logo max width on print (px, 48–400)
+              <input
+                style={styles.input}
+                type="number"
+                min={48}
+                max={400}
+                step={8}
+                value={config.sales.inventoryPrintLogoMaxWidthPx}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    sales: {
+                      ...prev.sales,
+                      inventoryPrintLogoMaxWidthPx: clampInventoryLogoMaxWidthPx(Number(e.target.value)),
+                    },
+                  }))
+                }
+              />
+            </label>
+            <div style={{ gridColumn: "1 / -1", display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+              <input
+                ref={companyLogoFileRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (f) void uploadInventoryPrintLogo(f);
+                }}
+              />
+              <button
+                type="button"
+                style={styles.saveButton}
+                disabled={companyLogoUploading}
+                onClick={() => companyLogoFileRef.current?.click()}
+              >
+                {companyLogoUploading ? "Uploading…" : "Upload logo image"}
+              </button>
+              <button
+                type="button"
+                style={styles.deleteButton}
+                disabled={!(config.sales.inventoryPrintLogoUrl || "").trim()}
+                onClick={() =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    sales: { ...prev.sales, inventoryPrintLogoUrl: "" },
+                  }))
+                }
+              >
+                Clear logo URL
+              </button>
+            </div>
+            {(config.sales.inventoryPrintLogoUrl || "").trim() ? (
+              <div style={{ gridColumn: "1 / -1" }}>
+                <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 8 }}>Preview</div>
+                <img
+                  src={resolveAssetUrlForPrint(
+                    (config.sales.inventoryPrintLogoUrl || "").trim(),
+                    API_BASE_URL,
+                  )}
+                  alt="Company logo preview"
+                  style={{
+                    maxWidth: Math.min(320, config.sales.inventoryPrintLogoMaxWidthPx * 2),
+                    height: "auto",
+                    borderRadius: 8,
+                    border: "1px solid rgba(148,163,184,0.35)",
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
 
           <h3 style={{ ...styles.subTitle, marginTop: 22, marginBottom: 8 }}>LeafLink category names</h3>

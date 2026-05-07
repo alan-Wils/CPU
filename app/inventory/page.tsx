@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import {
@@ -11,7 +11,16 @@ import {
   type LeafLinkInventoryItemDto,
 } from "@/lib/api";
 import { getAuthToken } from "@/lib/auth";
-import { downloadInventoryExcel, openInventoryPrintWindow } from "@/lib/inventoryExport";
+import {
+  clampInventoryLogoMaxWidthPx,
+  DEFAULT_INVENTORY_EXPORT_COLUMNS,
+  downloadInventoryExcel,
+  INVENTORY_EXPORT_COLUMN_LABELS,
+  INVENTORY_EXPORT_COLUMN_ORDER,
+  normalizeInventoryExportColumns,
+  openInventoryPrintWindow,
+  type InventoryExportColumnId,
+} from "@/lib/inventoryExport";
 import { groupInventoryBySourcePackage } from "@/lib/leafLinkInventoryDisplay";
 import { resolveInventoryCategoryLabel, type CategoryLabelOverride } from "@/lib/productCategoryLabels";
 
@@ -25,6 +34,7 @@ function usd(n: number): string {
 }
 
 const PAGE_SIZE = 50;
+const EXPORT_COLUMNS_STORAGE_KEY = "cpu.inventory.exportColumns";
 
 /** LeafLink-style listing states; keeps the status dropdown valid before first sync. */
 const LEAFLINK_STATUS_PRESETS = ["Archived", "Available", "Internal", "Unavailable"] as const;
@@ -50,6 +60,42 @@ export default function InventoryPage() {
   const [categoryLabels, setCategoryLabels] = useState<CategoryLabelOverride[]>([]);
   /** Grouped view: which source-package rows are expanded (same table as thead — no nested table shift). */
   const [openSourcePackages, setOpenSourcePackages] = useState<Record<string, boolean>>({});
+  const [exportColumns, setExportColumns] = useState<InventoryExportColumnId[]>(DEFAULT_INVENTORY_EXPORT_COLUMNS);
+  const [printBrandingLogoUrl, setPrintBrandingLogoUrl] = useState("");
+  const [printBrandingLogoMaxWidthPx, setPrintBrandingLogoMaxWidthPx] = useState(160);
+
+  useEffect(() => {
+    try {
+      const raw = typeof window !== "undefined" ? window.localStorage.getItem(EXPORT_COLUMNS_STORAGE_KEY) : null;
+      if (raw) {
+        const parsed = JSON.parse(raw) as unknown;
+        setExportColumns(normalizeInventoryExportColumns(parsed));
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(EXPORT_COLUMNS_STORAGE_KEY, JSON.stringify(exportColumns));
+    } catch {
+      /* ignore */
+    }
+  }, [exportColumns]);
+
+  const toggleExportColumn = useCallback((id: InventoryExportColumnId) => {
+    setExportColumns((prev) => {
+      const set = new Set(prev);
+      if (set.has(id)) {
+        if (set.size <= 1) return prev;
+        set.delete(id);
+      } else {
+        set.add(id);
+      }
+      return INVENTORY_EXPORT_COLUMN_ORDER.filter((k) => set.has(k));
+    });
+  }, []);
 
   async function loadProductsConfig() {
     try {
@@ -61,7 +107,11 @@ export default function InventoryPage() {
       const res = await fetch(`${API_BASE_URL}${path}`, { headers });
       if (!res.ok) return;
       const data = (await res.json()) as {
-        sales?: { leafLinkCategoryLabels?: CategoryLabelOverride[] };
+        sales?: {
+          leafLinkCategoryLabels?: CategoryLabelOverride[];
+          inventoryPrintLogoUrl?: string;
+          inventoryPrintLogoMaxWidthPx?: unknown;
+        };
         products?: { categoryLabels?: CategoryLabelOverride[] };
       };
       if (
@@ -70,10 +120,14 @@ export default function InventoryPage() {
         Array.isArray(data.sales.leafLinkCategoryLabels)
       ) {
         setCategoryLabels(data.sales.leafLinkCategoryLabels);
-        return;
+      } else {
+        const legacy = data.products?.categoryLabels;
+        setCategoryLabels(Array.isArray(legacy) ? legacy : []);
       }
-      const legacy = data.products?.categoryLabels;
-      setCategoryLabels(Array.isArray(legacy) ? legacy : []);
+      const logo =
+        typeof data.sales?.inventoryPrintLogoUrl === "string" ? data.sales.inventoryPrintLogoUrl.trim() : "";
+      setPrintBrandingLogoUrl(logo);
+      setPrintBrandingLogoMaxWidthPx(clampInventoryLogoMaxWidthPx(data.sales?.inventoryPrintLogoMaxWidthPx));
     } catch {
       /* non-fatal */
     }
@@ -349,14 +403,54 @@ export default function InventoryPage() {
                 </div>
                 <details style={exportDetailsStyle}>
                   <summary style={exportSummaryStyle}>Export current filter</summary>
-                  <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 8 }}>Columns on Excel and print</div>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: "6px 14px",
+                        marginBottom: 10,
+                        maxWidth: 720,
+                      }}
+                    >
+                      {INVENTORY_EXPORT_COLUMN_ORDER.map((id) => (
+                        <label
+                          key={id}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            cursor: "pointer",
+                            fontSize: 13,
+                            color: "#cbd5e1",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={exportColumns.includes(id)}
+                            onChange={() => toggleExportColumn(id)}
+                          />
+                          {INVENTORY_EXPORT_COLUMN_LABELS[id]}
+                        </label>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      style={{ ...exportActionButtonStyle, marginBottom: 12 }}
+                      onClick={() => setExportColumns([...DEFAULT_INVENTORY_EXPORT_COLUMNS])}
+                    >
+                      Select all columns
+                    </button>
+                  </div>
+                  <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 8 }}>
                     <button
                       type="button"
                       style={exportActionButtonStyle}
                       disabled={loading || filtered.length === 0}
                       onClick={(e) => {
                         e.preventDefault();
-                        downloadInventoryExcel(filtered, categoryLabels, {
+                        const filterState = {
                           query,
                           categoryFilter,
                           subcategoryFilter,
@@ -366,7 +460,12 @@ export default function InventoryPage() {
                           sortBy,
                           sortDir,
                           layoutMode,
-                        });
+                        };
+                        const exportOpts = {
+                          columns: exportColumns,
+                          apiBaseUrl: API_BASE_URL,
+                        };
+                        downloadInventoryExcel(filtered, categoryLabels, filterState, exportOpts);
                       }}
                     >
                       Download Excel (.xlsx)
@@ -377,7 +476,7 @@ export default function InventoryPage() {
                       disabled={loading || filtered.length === 0}
                       onClick={(e) => {
                         e.preventDefault();
-                        openInventoryPrintWindow(filtered, categoryLabels, {
+                        const filterState = {
                           query,
                           categoryFilter,
                           subcategoryFilter,
@@ -387,12 +486,28 @@ export default function InventoryPage() {
                           sortBy,
                           sortDir,
                           layoutMode,
-                        });
+                        };
+                        const exportOpts = {
+                          columns: exportColumns,
+                          apiBaseUrl: API_BASE_URL,
+                          printBranding: printBrandingLogoUrl.trim()
+                            ? {
+                                logoUrl: printBrandingLogoUrl.trim(),
+                                logoMaxWidthPx: printBrandingLogoMaxWidthPx,
+                              }
+                            : undefined,
+                        };
+                        openInventoryPrintWindow(filtered, categoryLabels, filterState, exportOpts);
                       }}
                     >
                       Printable menu (print / PDF)
                     </button>
                   </div>
+                  <p style={{ color: "#64748b", fontSize: 11, marginTop: 10, marginBottom: 0, maxWidth: 520, lineHeight: 1.45 }}>
+                    Logo (if configured under Admin → Company Config → Sales) appears on the printable menu only.
+                    Excel includes the same column selection and a text list of chosen columns; it does not embed the
+                    image.
+                  </p>
                   {filtered.length === 0 && !loading ? (
                     <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 8, maxWidth: 320 }}>
                       Nothing to export yet — widen filters or sync inventory from LeafLink.

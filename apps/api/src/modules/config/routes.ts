@@ -3,11 +3,14 @@ import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { z } from "zod";
 import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
-import { configUpsertSchema } from "../../validation/schemas.js";
+import { checkUploadSchema, configUpsertSchema } from "../../validation/schemas.js";
 import { ConfigService } from "../../services/configService.js";
+import { CompanyLogoUploadService } from "../../services/companyLogoUploadService.js";
 import { requireRole } from "../../middleware/rbac.js";
+import { AppError } from "../../errors/AppError.js";
 export const configRouter = Router();
 const configService = new ConfigService();
+const companyLogoUploadService = new CompanyLogoUploadService();
 configRouter.get("/", asyncHandler(async (req, res) => {
     const rows = await configService.list(getScopedCompanyId(req));
     const merged = rows.reduce((acc, row) => {
@@ -38,3 +41,23 @@ configRouter.post("/", requireRole(["OWNER", "ADMIN", "OPERATIONS_MANAGER"]), va
     });
     res.status(201).json(row);
 }));
+
+configRouter.post(
+    "/upload-company-logo",
+    requireRole(["OWNER", "ADMIN", "OPERATIONS_MANAGER"]),
+    validate({ body: checkUploadSchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        if (!companyId) {
+            throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
+        }
+        const origin = `${req.protocol}://${req.get("host") || ""}`;
+        const uploaded = await companyLogoUploadService.uploadLogo({
+            companyId,
+            mimeType: req.body.mimeType,
+            dataBase64: req.body.dataBase64,
+            origin,
+        });
+        res.status(201).json(uploaded);
+    }),
+);
