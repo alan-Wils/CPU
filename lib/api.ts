@@ -658,6 +658,8 @@ export type LeafLinkInventoryItemDto = {
   status: string;
   updatedAt: string;
   imageUrl: string;
+  /** Batch/source key when multiple SKUs share one package (see API leaflink normalize). */
+  sourcePackageGroup?: string;
 };
 
 export type LeafLinkInventoryDto = {

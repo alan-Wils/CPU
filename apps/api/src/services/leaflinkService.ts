@@ -136,6 +136,7 @@ export type LeafLinkInventoryItem = {
   productName: string;
   sku: string;
   strain: string;
+  /** Human-readable category (LeafLink often sends a numeric id in `category`). */
   category: string;
   productType: string;
   brand: string;
@@ -146,6 +147,11 @@ export type LeafLinkInventoryItem = {
   status: string;
   updatedAt: string;
   imageUrl: string;
+  /**
+   * Shared key for retail SKUs that split one extracted batch into 1g / 2g / 4g lines
+   * (e.g. `B1658(GUAV-LSW)` from SKU `B1658(GUAV-LSW) 2g`).
+   */
+  sourcePackageGroup: string;
 };
 
 export type LeafLinkInventoryResponse = {
@@ -303,6 +309,74 @@ function pickPrice(row: Record<string, unknown>): number | null {
   return nestedVal > 0 ? nestedVal : null;
 }
 
+function isDigitsOnly(s: string): boolean {
+  return /^\d+$/.test(s.trim());
+}
+
+/**
+ * LeafLink product rows often expose `category` as a bare id (number) while the real label
+ * lives on `product_type`, nested `category.name`, or `product_category`.
+ */
+function pickCategoryDisplay(row: Record<string, unknown>): string {
+  const cat = row.category;
+  if (cat != null && typeof cat === "object" && !Array.isArray(cat)) {
+    const nm = pickString(asRecord(cat), ["name", "title", "label", "display_name"]);
+    if (nm) return nm;
+  }
+  const pcat = row.product_category;
+  if (pcat != null && typeof pcat === "object" && !Array.isArray(pcat)) {
+    const nm = pickString(asRecord(pcat), ["name", "title", "label", "display_name"]);
+    if (nm) return nm;
+  }
+  const flat = pickString(row, [
+    "category_name",
+    "product_category_name",
+    "category_display_name",
+    "display_category",
+  ]);
+  if (flat && !isDigitsOnly(flat)) return flat;
+
+  const typeGuess = pickString(row, [
+    "product_type",
+    "type",
+    "product_type_display",
+    "product_type_name",
+    "product_class",
+    "item_category",
+  ]);
+  const rawId =
+    typeof cat === "number"
+      ? String(cat)
+      : typeof cat === "string"
+        ? cat.trim()
+        : pickString(row, ["category_id"]);
+  const categoryString = pickString(row, ["category", "category_name"]);
+  const idLike =
+    (categoryString && isDigitsOnly(categoryString)) ||
+    (rawId && isDigitsOnly(rawId)) ||
+    (flat && isDigitsOnly(flat));
+  if (idLike) {
+    if (typeGuess && !isDigitsOnly(typeGuess)) return typeGuess;
+    const id = categoryString && isDigitsOnly(categoryString) ? categoryString : rawId || flat;
+    return id ? `Category #${id}` : typeGuess;
+  }
+  const direct = pickString(row, ["category", "category_name"]);
+  return direct || typeGuess;
+}
+
+/**
+ * Group key for variants that share one bulk/extracted package (Metrc batch-style codes in SKU).
+ */
+function deriveSourcePackageGroup(sku: string, productName: string): string {
+  const s = (sku || "").trim();
+  const parenBatch = s.match(/^(B\d+\([^)]+\))/i);
+  if (parenBatch) return parenBatch[1];
+  const dateSku = s.match(/^(\d{2}\.\d{2}\.\d{2})/);
+  if (dateSku) return dateSku[1];
+  if (s) return s;
+  return (productName || "").trim() || "—";
+}
+
 function pickListSource(raw: unknown): { list: unknown[]; source: string } {
   const root = asRecord(raw);
   if (Array.isArray(root.data)) return { list: root.data, source: "data" };
@@ -345,12 +419,14 @@ function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
       status.includes("out_of_stock");
     // Keep rows unless they are clearly unavailable and have no stock.
     if (explicitlyUnavailable && availableQuantity <= 0) continue;
+    const productName = pickString(row, ["product_name", "name", "title"]);
+    const sku = pickString(row, ["sku", "product_sku"]);
     out.push({
       id,
-      productName: pickString(row, ["product_name", "name", "title"]),
-      sku: pickString(row, ["sku", "product_sku"]),
+      productName,
+      sku,
       strain: pickString(row, ["strain", "strain_name"]),
-      category: pickString(row, ["category", "category_name"]),
+      category: pickCategoryDisplay(row),
       productType: pickString(row, ["product_type", "type"]),
       brand: pickString(row, ["brand", "brand_name", "vendor_name"]),
       availableQuantity,
@@ -366,6 +442,7 @@ function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
           "image_url",
           "thumbnail_url",
         ]),
+      sourcePackageGroup: deriveSourcePackageGroup(sku, productName),
     });
   }
   return out;

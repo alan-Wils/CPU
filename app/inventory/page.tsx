@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import { fetchLeafLinkInventory, type LeafLinkInventoryItemDto } from "@/lib/api";
+import { groupInventoryBySourcePackage } from "@/lib/leafLinkInventoryDisplay";
 
 function usd(n: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -28,6 +29,7 @@ export default function InventoryPage() {
   const [sortBy, setSortBy] = useState<"name" | "qty" | "price" | "updated">("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(1);
+  const [layoutMode, setLayoutMode] = useState<"flat" | "grouped">("grouped");
 
   async function runSync() {
     setLoading(true);
@@ -91,8 +93,15 @@ export default function InventoryPage() {
     return arr;
   }, [items, query, categoryFilter, brandFilter, statusFilter, sortBy, sortDir]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const packageGroups = useMemo(() => groupInventoryBySourcePackage(filtered), [filtered]);
+
+  const totalPages =
+    layoutMode === "flat"
+      ? Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+      : Math.max(1, Math.ceil(packageGroups.length / PAGE_SIZE));
+
   const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pageGroups = packageGroups.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const stats = useMemo(() => {
     const totalInventoryUnits = filtered.reduce((sum, x) => sum + (Number(x.availableQuantity) || 0), 0);
@@ -175,6 +184,17 @@ export default function InventoryPage() {
                 <option value="asc">Ascending</option>
                 <option value="desc">Descending</option>
               </select>
+              <select
+                style={inputStyle}
+                value={layoutMode}
+                onChange={(e) => {
+                  setLayoutMode(e.target.value as "flat" | "grouped");
+                  setPage(1);
+                }}
+              >
+                <option value="flat">View: every SKU (flat)</option>
+                <option value="grouped">View: by source package</option>
+              </select>
             </div>
 
             {loading ? (
@@ -200,40 +220,60 @@ export default function InventoryPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {pageItems.map((row) => (
-                        <tr key={row.id} style={{ borderTop: "1px solid rgba(51,65,85,0.6)" }}>
-                          <td style={tdStyle}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                              {row.imageUrl ? (
-                                <img
-                                  src={row.imageUrl}
-                                  alt={row.productName || "inventory image"}
-                                  style={{ width: 34, height: 34, borderRadius: 8, objectFit: "cover", border: "1px solid #334155" }}
-                                />
-                              ) : (
-                                <div style={{ width: 34, height: 34, borderRadius: 8, background: "#0f172a", border: "1px solid #334155" }} />
-                              )}
-                              <div>
-                                <div style={{ color: "#e2e8f0", fontWeight: 700 }}>{row.productName || "Unnamed product"}</div>
-                                <div style={{ color: "#64748b", fontSize: 12 }}>{row.brand || "—"} · {row.productType || "—"}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td style={tdStyle}>{row.sku || "—"}</td>
-                          <td style={tdStyle}>{row.strain || "—"}</td>
-                          <td style={tdStyle}>{row.category || "—"}</td>
-                          <td style={tdStyle}>{row.availableQuantity} {row.unit || ""}</td>
-                          <td style={tdStyle}>{row.packageSize || "—"}</td>
-                          <td style={tdStyle}>{row.price == null ? "—" : usd(row.price)}</td>
-                          <td style={tdStyle}>{row.status || "—"}</td>
-                        </tr>
-                      ))}
+                      {layoutMode === "flat"
+                        ? pageItems.map((row) => <InventoryProductRow key={row.id} row={row} />)
+                        : pageGroups.map((g) =>
+                            g.rows.length === 1 ? (
+                              <InventoryProductRow key={g.key} row={g.rows[0]} />
+                            ) : (
+                              <Fragment key={g.key}>
+                                <tr style={{ borderTop: "1px solid rgba(51,65,85,0.6)", background: "rgba(15,23,42,0.5)" }}>
+                                  <td colSpan={8} style={{ ...tdStyle, paddingBottom: 4 }}>
+                                    <details open={g.rows.length <= 6} style={{ width: "100%" }}>
+                                      <summary
+                                        style={{
+                                          cursor: "pointer",
+                                          color: "#7dd3fc",
+                                          fontWeight: 800,
+                                          listStylePosition: "outside",
+                                        }}
+                                      >
+                                        Source package <span style={{ color: "#e2e8f0" }}>{g.key}</span>
+                                        <span style={{ color: "#94a3b8", fontWeight: 600, marginLeft: 8 }}>
+                                          — {g.rows.length} sizes / SKUs
+                                        </span>
+                                      </summary>
+                                      <div style={{ marginTop: 10, overflowX: "auto" }}>
+                                        <table style={{ ...tableStyle, minWidth: 720 }}>
+                                          <tbody>
+                                            {g.rows.map((row) => (
+                                              <InventoryProductRow key={row.id} row={row} nested />
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </details>
+                                  </td>
+                                </tr>
+                              </Fragment>
+                            ),
+                          )}
                     </tbody>
                   </table>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
                   <span style={{ color: "#64748b", fontSize: 12 }}>
-                    Showing {(page - 1) * PAGE_SIZE + 1}-{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}
+                    {layoutMode === "flat" ? (
+                      <>
+                        Showing {(page - 1) * PAGE_SIZE + 1}-{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}{" "}
+                        SKUs
+                      </>
+                    ) : (
+                      <>
+                        Showing {(page - 1) * PAGE_SIZE + 1}-{Math.min(page * PAGE_SIZE, packageGroups.length)} of{" "}
+                        {packageGroups.length} source packages ({filtered.length} SKUs)
+                      </>
+                    )}
                   </span>
                   <div style={{ display: "flex", gap: 8 }}>
                     <button style={pageButtonStyle} disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Prev</button>
@@ -246,6 +286,62 @@ export default function InventoryPage() {
         </div>
       </main>
     </PageAccessGate>
+  );
+}
+
+function InventoryProductRow({
+  row,
+  nested,
+}: {
+  row: LeafLinkInventoryItemDto;
+  nested?: boolean;
+}) {
+  const pad = nested ? { ...tdStyle, padding: "8px 6px", fontSize: 12 as const } : tdStyle;
+  return (
+    <tr style={{ borderTop: nested ? "1px solid rgba(51,65,85,0.45)" : "1px solid rgba(51,65,85,0.6)" }}>
+      <td style={pad}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {row.imageUrl ? (
+            <img
+              src={row.imageUrl}
+              alt={row.productName || "inventory image"}
+              style={{
+                width: nested ? 28 : 34,
+                height: nested ? 28 : 34,
+                borderRadius: 8,
+                objectFit: "cover",
+                border: "1px solid #334155",
+              }}
+            />
+          ) : (
+            <div
+              style={{
+                width: nested ? 28 : 34,
+                height: nested ? 28 : 34,
+                borderRadius: 8,
+                background: "#0f172a",
+                border: "1px solid #334155",
+              }}
+            />
+          )}
+          <div>
+            <div style={{ color: "#e2e8f0", fontWeight: 700 }}>{row.productName || "Unnamed product"}</div>
+            <div style={{ color: "#64748b", fontSize: nested ? 11 : 12 }}>
+              {row.brand || "—"} · {row.productType || "—"}
+            </div>
+          </div>
+        </div>
+      </td>
+      <td style={pad}>{row.sku || "—"}</td>
+      <td style={pad}>{row.strain || "—"}</td>
+      <td style={pad}>{row.category || "—"}</td>
+      <td style={pad}>
+        {row.availableQuantity} {row.unit || ""}
+      </td>
+      <td style={pad}>{row.packageSize || "—"}</td>
+      <td style={pad}>{row.price == null ? "—" : usd(row.price)}</td>
+      <td style={pad}>{row.status || "—"}</td>
+    </tr>
   );
 }
 
