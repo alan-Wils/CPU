@@ -3228,8 +3228,14 @@ export default function ConfigPage() {
           </>
         }
       >
-        <div style={{ ...styles.configSubCard, padding: "12px 14px" }}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0, fontSize: 16 }}>Strain List</h3>
+        <details style={styles.cultivationStrainsOuter}>
+          <summary style={styles.cultivationStrainsSummary}>
+            <span>Add Strains</span>
+            <span style={styles.cultivationStrainsSummaryMeta}>
+              {config.cultivation.strains.length} strain{config.cultivation.strains.length === 1 ? "" : "s"}
+            </span>
+          </summary>
+          <div style={styles.cultivationStrainsBody}>
         <details style={{ marginBottom: 8, color: "#94a3b8", fontSize: 12 }}>
           <summary style={{ cursor: "pointer", color: "#cbd5e1", fontWeight: 600 }}>
             How potency &amp; yield labels update from lab rollups
@@ -3377,7 +3383,8 @@ export default function ConfigPage() {
             </div>
           ))}
         </div>
-        </div>
+          </div>
+        </details>
 
         <div style={styles.configSubCard}>
         <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Cultivation Supplies & Cost</h3>
@@ -3448,68 +3455,14 @@ export default function ConfigPage() {
           </button>
         </div>
 
-        <div style={styles.cultivationList}>
-          {config.cultivation.rooms.vegRooms.map((room) => (
-            <div key={room.id} style={styles.cultivationRoomShell}>
-              <div style={styles.cultivationRow}>
-                <strong style={{ fontSize: 14 }}>{room.name}</strong>
-                <div style={{ ...styles.inlineSmall, gap: 6 }}>
-                  <button
-                    style={styles.cultivationBtnAdd}
-                    type="button"
-                    title="Add bay"
-                    onClick={() => openAddBayModal("vegRooms", room.id)}
-                  >
-                    + Bay
-                  </button>
-                  <button style={styles.cultivationBtnDelete} type="button" onClick={() => removeVegRoom(room.id)}>
-                    Remove room
-                  </button>
-                </div>
-              </div>
-
-              {room.bays.map((bay) => (
-                <div key={bay.id} style={styles.cultivationBayShell}>
-                  <div style={styles.cultivationRow}>
-                    <span style={{ fontSize: 13, fontWeight: 700 }}>Bay {bay.name}</span>
-                    <div style={{ ...styles.inlineSmall, gap: 6 }}>
-                      <button
-                        style={styles.cultivationBtnAdd}
-                        type="button"
-                        title="Add table"
-                        onClick={() => openAddTableModal("vegRooms", room.id, bay.id)}
-                      >
-                        + Table
-                      </button>
-                      <button
-                        style={styles.cultivationBtnDelete}
-                        type="button"
-                        onClick={() => removeBay("vegRooms", room.id, bay.id)}
-                      >
-                        Remove bay
-                      </button>
-                    </div>
-                  </div>
-
-                  {bay.tables.map((table) => (
-                    <div key={table.id} style={{ ...styles.cultivationRow, marginTop: 4 }}>
-                      <span style={{ fontSize: 13 }}>
-                        T{table.name} · {table.squareFeet} sq ft
-                      </span>
-                      <button
-                        style={styles.cultivationBtnDelete}
-                        type="button"
-                        onClick={() => removeTable("vegRooms", room.id, bay.id, table.id)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
+        <CultivationRoomAccordionList
+          rooms={config.cultivation.rooms.vegRooms}
+          onOpenAddBay={(roomId) => openAddBayModal("vegRooms", roomId)}
+          onRemoveRoom={removeVegRoom}
+          onOpenAddTable={(roomId, bayId) => openAddTableModal("vegRooms", roomId, bayId)}
+          onRemoveBay={(roomId, bayId) => removeBay("vegRooms", roomId, bayId)}
+          onRemoveTable={(roomId, bayId, tableId) => removeTable("vegRooms", roomId, bayId, tableId)}
+        />
         </div>
 
         <div style={{ ...styles.configSubCardLast, padding: "12px 14px" }}>
@@ -3566,66 +3519,16 @@ export default function ConfigPage() {
           </button>
         </div>
 
-        <div style={styles.cultivationList}>
-          {config.cultivation.rooms.flowerRooms.map((room) => (
-            <div key={room.id} style={styles.cultivationRoomShell}>
-              <div style={styles.cultivationRow}>
-                <strong style={{ fontSize: 14 }}>{room.name}</strong>
-                <div style={{ ...styles.inlineSmall, gap: 6 }}>
-                  <button
-                    type="button"
-                    title="Add bay"
-                    style={styles.cultivationBtnAdd}
-                    onClick={() => openAddBayModal("flowerRooms", room.id)}
-                  >
-                    + Bay
-                  </button>
-                  <button style={styles.cultivationBtnDelete} onClick={() => removeFlowerRoom(room.id)}>
-                    Remove room
-                  </button>
-                </div>
-              </div>
-
-              {room.bays.map((bay) => (
-                <div key={bay.id} style={styles.cultivationBayShell}>
-                  <div style={styles.cultivationRow}>
-                    <span style={{ fontSize: 13, fontWeight: 700 }}>Bay {bay.name}</span>
-                    <div style={{ ...styles.inlineSmall, gap: 6 }}>
-                      <button
-                        type="button"
-                        title="Add table"
-                        style={styles.cultivationBtnAdd}
-                        onClick={() => openAddTableModal("flowerRooms", room.id, bay.id)}
-                      >
-                        + Table
-                      </button>
-                      <button
-                        style={styles.cultivationBtnDelete}
-                        onClick={() => removeBay("flowerRooms", room.id, bay.id)}
-                      >
-                        Remove bay
-                      </button>
-                    </div>
-                  </div>
-
-                  {bay.tables.map((table) => (
-                    <div key={table.id} style={{ ...styles.cultivationRow, marginTop: 4 }}>
-                      <span style={{ fontSize: 13 }}>
-                        T{table.name} · {table.squareFeet} sq ft
-                      </span>
-                      <button
-                        style={styles.cultivationBtnDelete}
-                        onClick={() => removeTable("flowerRooms", room.id, bay.id, table.id)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
+        <CultivationRoomAccordionList
+          rooms={config.cultivation.rooms.flowerRooms}
+          onOpenAddBay={(roomId) => openAddBayModal("flowerRooms", roomId)}
+          onRemoveRoom={removeFlowerRoom}
+          onOpenAddTable={(roomId, bayId) => openAddTableModal("flowerRooms", roomId, bayId)}
+          onRemoveBay={(roomId, bayId) => removeBay("flowerRooms", roomId, bayId)}
+          onRemoveTable={(roomId, bayId, tableId) =>
+            removeTable("flowerRooms", roomId, bayId, tableId)
+          }
+        />
         </div>
       </CollapsibleConfigSection>
 
@@ -4264,6 +4167,130 @@ function SupplyList({
   );
 }
 
+function CultivationRoomAccordionList({
+  rooms,
+  onOpenAddBay,
+  onRemoveRoom,
+  onOpenAddTable,
+  onRemoveBay,
+  onRemoveTable,
+}: {
+  rooms: RoomWithBayLayout[];
+  onOpenAddBay: (roomId: string) => void;
+  onRemoveRoom: (roomId: string) => void;
+  onOpenAddTable: (roomId: string, bayId: string) => void;
+  onRemoveBay: (roomId: string, bayId: string) => void;
+  onRemoveTable: (roomId: string, bayId: string, tableId: string) => void;
+}) {
+  const n = rooms.length;
+  if (n === 0) {
+    return (
+      <p style={{ color: "#64748b", fontSize: 12, marginTop: 6, marginBottom: 0 }}>
+        No rooms yet — use + Layout or + Empty above.
+      </p>
+    );
+  }
+  return (
+    <div style={styles.cultivationList}>
+      {rooms.map((room, ri) => {
+        const roomShellStyle = ri === n - 1 ? styles.cultivationRoomDisclosureLast : styles.cultivationRoomDisclosure;
+        return (
+          <details key={room.id} style={roomShellStyle}>
+            <summary style={styles.cultivationRoomSummary}>
+              <span>{room.name || "Untitled room"}</span>
+              <span style={{ ...styles.inlineSmall, gap: 6 }}>
+                <button
+                  type="button"
+                  title="Add bay"
+                  style={styles.cultivationBtnAdd}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onOpenAddBay(room.id);
+                  }}
+                >
+                  + Bay
+                </button>
+                <button
+                  type="button"
+                  style={styles.cultivationBtnDelete}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onRemoveRoom(room.id);
+                  }}
+                >
+                  Remove room
+                </button>
+              </span>
+            </summary>
+            <div style={styles.cultivationRoomBody}>
+              {room.bays.length === 0 ? (
+                <p style={{ color: "#64748b", fontSize: 12, margin: "4px 0 0" }}>No bays yet — use + Bay.</p>
+              ) : (
+                room.bays.map((bay) => (
+                  <details key={bay.id} style={styles.cultivationBayDisclosure}>
+                    <summary style={styles.cultivationBaySummary}>
+                      <span>
+                        Bay {bay.name} ({bay.tables.length} table{bay.tables.length === 1 ? "" : "s"})
+                      </span>
+                      <span style={{ ...styles.inlineSmall, gap: 6 }}>
+                        <button
+                          type="button"
+                          title="Add table"
+                          style={styles.cultivationBtnAdd}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onOpenAddTable(room.id, bay.id);
+                          }}
+                        >
+                          + Table
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.cultivationBtnDelete}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onRemoveBay(room.id, bay.id);
+                          }}
+                        >
+                          Remove bay
+                        </button>
+                      </span>
+                    </summary>
+                    <div style={styles.cultivationBayBody}>
+                      {bay.tables.length === 0 ? (
+                        <p style={{ color: "#64748b", fontSize: 12, margin: 0 }}>No tables — use + Table.</p>
+                      ) : (
+                        bay.tables.map((table) => (
+                          <div key={table.id} style={styles.cultivationRow}>
+                            <span style={{ fontSize: 13 }}>
+                              T{table.name} · {table.squareFeet} sq ft
+                            </span>
+                            <button
+                              type="button"
+                              style={styles.cultivationBtnDelete}
+                              onClick={() => onRemoveTable(room.id, bay.id, table.id)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </details>
+                ))
+              )}
+            </div>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: "100vh",
@@ -4460,19 +4487,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     padding: "8px 10px",
   },
-  cultivationRoomShell: {
-    background: "#111827",
-    border: "1px solid #334155",
-    borderRadius: 10,
-    padding: "10px 12px",
-  },
-  cultivationBayShell: {
-    background: "#020617",
-    border: "1px solid #1e40af",
-    borderRadius: 8,
-    padding: "8px 10px",
-    marginTop: 6,
-  },
   cultivationBtnAdd: {
     background: "#2563eb",
     color: "white",
@@ -4502,5 +4516,91 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     fontSize: 12,
     cursor: "pointer",
+  },
+  cultivationStrainsOuter: {
+    border: "1px solid #334155",
+    borderRadius: 14,
+    background: "#020617",
+    overflow: "hidden",
+  },
+  cultivationStrainsSummary: {
+    cursor: "pointer",
+    padding: "12px 14px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    fontWeight: 800,
+    fontSize: 15,
+    color: "#bfdbfe",
+    listStyle: "none",
+  },
+  cultivationStrainsSummaryMeta: {
+    fontWeight: 600,
+    fontSize: 12,
+    color: "#64748b",
+    flexShrink: 0,
+  },
+  cultivationStrainsBody: {
+    padding: "0 14px 14px",
+    borderTop: "1px solid #1e293b",
+  },
+  cultivationRoomDisclosure: {
+    border: "1px solid #475569",
+    borderRadius: 10,
+    marginBottom: 8,
+    background: "#111827",
+    overflow: "hidden",
+  },
+  cultivationRoomDisclosureLast: {
+    border: "1px solid #475569",
+    borderRadius: 10,
+    marginBottom: 0,
+    background: "#111827",
+    overflow: "hidden",
+  },
+  cultivationRoomSummary: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    padding: "10px 12px",
+    cursor: "pointer",
+    fontWeight: 700,
+    fontSize: 14,
+    color: "#e2e8f0",
+    listStyle: "none",
+  },
+  cultivationRoomBody: {
+    padding: "8px 10px 10px",
+    borderTop: "1px solid #1e293b",
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  cultivationBayDisclosure: {
+    border: "1px solid #334155",
+    borderRadius: 8,
+    background: "#0f172a",
+    overflow: "hidden",
+  },
+  cultivationBaySummary: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    padding: "8px 10px",
+    cursor: "pointer",
+    fontWeight: 700,
+    fontSize: 13,
+    color: "#93c5fd",
+    listStyle: "none",
+  },
+  cultivationBayBody: {
+    padding: "6px 10px 10px",
+    borderTop: "1px solid #1e293b",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
   },
 };
