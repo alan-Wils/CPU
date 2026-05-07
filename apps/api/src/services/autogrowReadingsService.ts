@@ -24,6 +24,16 @@ function autogrowCompsRestId(compIndex: number): number {
   return Math.floor(compIndex) + 1;
 }
 
+/** Autogrow rejects history when `to` touches the current **UTC** calendar day (“before today” = before UTC midnight now). */
+function autogrowUtcCalendarDayStartEpoch(now: Date = new Date()): number {
+  return Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0) / 1000);
+}
+
+function clampAutogrowHistoryToEpoch(requestedToEpoch: number): number {
+  const latestInclusive = autogrowUtcCalendarDayStartEpoch() - 1;
+  return Math.min(Math.floor(requestedToEpoch), latestInclusive);
+}
+
 function autogrowErrorDetail(bodyJson: unknown): string | null {
   const o = asRecord(bodyJson);
   for (const k of ["message", "error", "detail", "Description"] as const) {
@@ -321,8 +331,26 @@ export class AutogrowReadingsService {
     if (!Number.isFinite(fromEpoch) || !Number.isFinite(toEpoch) || fromEpoch <= 0 || toEpoch <= 0) {
       return { ok: false, status: 400, message: "Invalid history range." };
     }
-    if (fromEpoch >= toEpoch) {
+    const effFrom = Math.floor(fromEpoch);
+    const requestedTo = Math.floor(toEpoch);
+    if (effFrom >= requestedTo) {
       return { ok: false, status: 400, message: "`from` must be less than `to`." };
+    }
+    const effTo = clampAutogrowHistoryToEpoch(requestedTo);
+    if (requestedTo > effTo) {
+      logInfo("[AUTOGROW] history_clamp_to_before_utc_today", {
+        companyId,
+        requestedTo,
+        appliedTo: effTo,
+      });
+    }
+    if (effFrom >= effTo) {
+      return {
+        ok: false,
+        status: 400,
+        message:
+          "Selected range has no valid window: Autogrow requires history `to` before the current UTC calendar day, and your range extends past that. Shorten the To date or choose earlier days.",
+      };
     }
 
     const gate = await this.loadClimateAutogrow(companyId);
@@ -332,7 +360,7 @@ export class AutogrowReadingsService {
     const compRestId = autogrowCompsRestId(compIndex);
     const r = await fetchAutogrowPath(
       uuid,
-      `/comps/${compRestId}/history/${Math.floor(fromEpoch)}/${Math.floor(toEpoch)}`,
+      `/comps/${compRestId}/history/${effFrom}/${effTo}`,
       apiKey,
     );
     if (r.status === 200) {
@@ -340,8 +368,8 @@ export class AutogrowReadingsService {
         ok: true,
         deviceUuid: uuid,
         compIndex,
-        fromEpoch: Math.floor(fromEpoch),
-        toEpoch: Math.floor(toEpoch),
+        fromEpoch: effFrom,
+        toEpoch: effTo,
         points: parseHistoryPoints(r.bodyJson),
       };
     }

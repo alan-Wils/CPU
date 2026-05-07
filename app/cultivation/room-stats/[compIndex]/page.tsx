@@ -77,9 +77,16 @@ function dateInputLocalEndEpoch(dateYmd: string): number {
   return Number.isFinite(dt.getTime()) ? Math.floor(dt.getTime() / 1000) : 0;
 }
 
-/** Preset: local today through seven calendar days prior (inclusive span of 8 local days unless you shorten). */
+/** Last inclusive Unix second Autogrow allows for `to` (strictly before current UTC calendar day). */
+function autogrowMaxInclusiveHistoryToEpochSec(): number {
+  const n = new Date();
+  return Math.floor(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate()) / 1000) - 1;
+}
+
+/** Preset: local yesterday as To (Autogrow excludes UTC “today”) and From seven days earlier. */
 function defaultRangeYmd() {
   const to = new Date();
+  to.setDate(to.getDate() - 1);
   const from = new Date(to);
   from.setDate(from.getDate() - 7);
   return { fromYmd: ymdLocalFromDate(from), toYmd: ymdLocalFromDate(to) };
@@ -125,6 +132,7 @@ export default function CultivationRoomStatsDetailPage() {
 
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyErr, setHistoryErr] = useState("");
+  const [historyAutogrowNote, setHistoryAutogrowNote] = useState("");
   const [history, setHistory] = useState<AutogrowCompHistoryDto | null>(null);
   const [{ fromYmd, toYmd }, setRange] = useState(defaultRangeYmd);
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>(["air_temp", "rh", "vpd"]);
@@ -178,9 +186,20 @@ export default function CultivationRoomStatsDetailPage() {
     async (opts?: { silent?: boolean }) => {
       if (compIndexNum == null) return;
       const fromEpoch = dateInputLocalStartEpoch(fromYmd);
-      const toEpoch = dateInputLocalEndEpoch(toYmd);
-      if (!fromEpoch || !toEpoch || fromEpoch >= toEpoch) {
+      const requestedToEpoch = dateInputLocalEndEpoch(toYmd);
+      const maxToEpoch = autogrowMaxInclusiveHistoryToEpochSec();
+      const toEpoch = Math.min(requestedToEpoch, maxToEpoch);
+      const toWasClamped = requestedToEpoch > maxToEpoch;
+      if (!fromEpoch || !requestedToEpoch || fromEpoch >= requestedToEpoch) {
         setHistoryErr("Choose a valid From/To range.");
+        setHistoryAutogrowNote("");
+        return;
+      }
+      if (fromEpoch >= toEpoch) {
+        setHistoryErr(
+          "No data window: Autogrow only returns history through the last UTC day before “now.” Your range runs past that—move To to an earlier calendar day.",
+        );
+        setHistoryAutogrowNote("");
         return;
       }
       const silent = Boolean(opts?.silent);
@@ -191,11 +210,17 @@ export default function CultivationRoomStatsDetailPage() {
       try {
         const out = await fetchAutogrowCompHistory(compIndexNum, fromEpoch, toEpoch);
         setHistory(out);
+        setHistoryAutogrowNote(
+          toWasClamped
+            ? "End of range was adjusted to the last moment Autogrow allows (UTC “today” is excluded; your local “To” day can extend into the next UTC day)."
+            : "",
+        );
       } catch (e) {
         if (!silent) {
           setHistoryErr(e instanceof Error ? e.message : String(e));
           setHistory(null);
         }
+        setHistoryAutogrowNote("");
       } finally {
         if (!silent) setHistoryLoading(false);
       }
@@ -296,7 +321,8 @@ export default function CultivationRoomStatsDetailPage() {
               </h2>
               <p style={{ color: "#64748b", fontSize: 12, margin: "0 0 12px", lineHeight: 1.45 }}>
                 Auto-refreshes about every {GRAPH_AUTO_REFRESH_MS / 1000}s while this browser tab is visible. Pauses in the
-                background to reduce Autogrow load.
+                background to reduce Autogrow load. Autogrow treats the end of the range in UTC: the current UTC calendar day is
+                excluded, so a local end-of-day can cross into “tomorrow” UTC and get trimmed automatically.
               </p>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "end", marginBottom: 12 }}>
                 <label style={{ display: "flex", flexDirection: "column", gap: 6, color: "#94a3b8", fontSize: 12 }}>
@@ -353,6 +379,9 @@ export default function CultivationRoomStatsDetailPage() {
               </div>
 
               {historyErr ? <p style={{ color: "#fecaca", margin: "0 0 12px" }}>{historyErr}</p> : null}
+              {historyAutogrowNote ? (
+                <p style={{ color: "#fcd34d", fontSize: 13, margin: "0 0 12px", lineHeight: 1.45 }}>{historyAutogrowNote}</p>
+              ) : null}
               {chartRows.length > 0 && selectedMetrics.length > 0 ? (
                 <div style={{ width: "100%", height: 360, border: "1px solid #1e293b", borderRadius: 10, padding: 8, background: "#020617" }}>
                   <ResponsiveContainer width="100%" height="100%">

@@ -23,6 +23,7 @@ describe("AutogrowReadingsService", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    vi.useRealTimers();
   });
 
   it("getSnapshot fails when integration is disabled", async () => {
@@ -135,6 +136,43 @@ describe("AutogrowReadingsService", () => {
     expect(out.points.length).toBeGreaterThan(0);
     const url = String((fetchMock.mock.calls[0] as [string, RequestInit])[0]);
     expect(url).toContain("/multigrow/dev-uuid/comps/1/history/");
+  });
+
+  it("getCompHistory clamps `to` to the last second before UTC today", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(Date.UTC(2024, 6, 10, 15, 30, 0)));
+
+    listMock.mockResolvedValue(
+      companyClimate({
+        apiKey: "k",
+        deviceUuid: "dev-uuid",
+        integrationEnabled: true,
+        compLabels: [],
+      }),
+    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          readings: [{ time: "2024-07-09T23:59:00Z", air_temp: 20, rh: 50 }],
+          metadata: {},
+        }),
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const utcTodayStart = Math.floor(Date.UTC(2024, 6, 10) / 1000);
+    const maxInclusiveTo = utcTodayStart - 1;
+    const fromEpoch = Math.floor(Date.UTC(2024, 6, 7) / 1000);
+    const requestedTo = Math.floor(Date.UTC(2024, 6, 10, 12, 0, 0) / 1000);
+
+    const svc = new AutogrowReadingsService();
+    const out = await svc.getCompHistory("c1", 0, fromEpoch, requestedTo);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.toEpoch).toBe(maxInclusiveTo);
+
+    const url = String((fetchMock.mock.calls[0] as [string, RequestInit])[0]);
+    expect(url).toContain(`/history/${fromEpoch}/${maxInclusiveTo}`);
   });
 
   it("getCompReadings returns message on non-200", async () => {
