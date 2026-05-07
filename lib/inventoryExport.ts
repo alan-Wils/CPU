@@ -216,6 +216,14 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** Absolute http(s) or protocol-relative — safe enough for `<img src>` in print HTML. */
+function isPrintableImageUrl(url: string): boolean {
+  const u = url.trim();
+  if (!u || u.length > 4000) return false;
+  if (/^javascript:/i.test(u)) return false;
+  return /^https?:\/\//i.test(u) || u.startsWith("//");
+}
+
 function buildTableHeaderHtml(cols: InventoryExportColumnId[]): string {
   return cols.map((id) => `<th>${escapeHtml(INVENTORY_EXPORT_COLUMN_LABELS[id])}</th>`).join("");
 }
@@ -247,7 +255,7 @@ export function openInventoryPrintWindow(
   const branding = options.printBranding;
   const rawLogo = (branding?.logoUrl || "").trim();
   const logoResolved = rawLogo ? resolveAssetUrlForPrint(rawLogo, options.apiBaseUrl || "") : "";
-  const showLogo = Boolean(logoResolved && /^https?:\/\//i.test(logoResolved));
+  const showLogo = Boolean(logoResolved && isPrintableImageUrl(logoResolved));
   const logoW = branding ? clampInventoryLogoMaxWidthPx(branding.logoMaxWidthPx) : 160;
   const logoBlock = showLogo
     ? `<div class="print-logo-wrap"><img class="print-logo" src="${escapeHtml(logoResolved)}" alt="" width="${logoW}" style="width:${logoW}px;max-width:${logoW}px;height:auto;object-fit:contain;" /></div>`
@@ -269,27 +277,34 @@ export function openInventoryPrintWindow(
       padding: 24px;
       background: #fff;
     }
-    .print-top {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 20px;
-      margin-bottom: 8px;
+    .print-header { margin-bottom: 4px; }
+    .print-header-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      column-gap: 20px;
+      row-gap: 0;
     }
-    .print-top-main { flex: 1; min-width: 0; }
-    .print-logo-wrap {
-      flex-shrink: 0;
-      max-width: 45%;
-    }
-    h1 {
+    .print-header-top h1 {
       font-size: 1.75rem;
-      margin: 0 0 8px;
+      margin: 0;
+      padding: 0;
       letter-spacing: -0.02em;
+    }
+    .print-logo-slot {
+      justify-self: end;
+      align-self: start;
+      text-align: right;
+      padding-top: 2px;
+    }
+    .print-logo-wrap {
+      display: inline-block;
+      max-width: min(45vw, 320px);
     }
     .meta {
       color: #475569;
       font-size: 0.875rem;
-      margin-bottom: 20px;
+      margin: 10px 0 20px;
     }
     .filters {
       border: 1px solid #e2e8f0;
@@ -334,22 +349,23 @@ export function openInventoryPrintWindow(
     @media print {
       body { padding: 12px; }
       .filters { break-inside: avoid; }
-      .print-top { break-inside: avoid; }
+      .print-header { break-inside: avoid; }
+      .print-header-top { break-inside: avoid; }
       thead { display: table-header-group; }
       tr { break-inside: avoid; }
     }
   </style>
 </head>
 <body>
-  <div class="print-top">
-    <div class="print-top-main">
+  <header class="print-header">
+    <div class="print-header-top">
       <h1>Inventory menu</h1>
-      <div class="meta">
-        Generated ${escapeHtml(new Date().toLocaleString())} · ${items.length} SKU${items.length === 1 ? "" : "s"} · LeafLink inventory
-      </div>
+      <div class="print-logo-slot">${logoBlock}</div>
     </div>
-    ${logoBlock}
-  </div>
+    <div class="meta">
+      Generated ${escapeHtml(new Date().toLocaleString())} · ${items.length} SKU${items.length === 1 ? "" : "s"} · LeafLink inventory
+    </div>
+  </header>
   <div class="filters">
     <h2>Current filters</h2>
     <ul>${filterHtml}</ul>
