@@ -193,7 +193,7 @@ describe("buildCultivationStrainMetricPoints", () => {
         expect(points[0].date).toBe("2026-05-10");
     });
 
-    it("skips fresh frozen metrics while parent batch still has plants remaining", () => {
+    it("includes fresh frozen metrics even when parent batch still shows plants remaining (partial harvest)", () => {
         const cultivationRows = [
             {
                 id: "TAHA.050726",
@@ -225,6 +225,8 @@ describe("buildCultivationStrainMetricPoints", () => {
             sourceBatches,
         });
 
-        expect(points).toHaveLength(0);
+        expect(points).toHaveLength(1);
+        expect(points[0].batchId).toBe("FF-TAHA.050726-8899");
+        expect(points[0].freshFrozenYieldGPerSqFt).toBeCloseTo(45.3592, 3);
     });
 });

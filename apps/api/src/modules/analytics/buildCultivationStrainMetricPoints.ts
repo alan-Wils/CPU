@@ -81,15 +81,6 @@ function readFreshFrozenGrams(row: Record<string, unknown>): number | null {
     return null;
 }
 
-/** Plants remaining on parent cultivation batch (partial harvest). When > 0, FF metrics are deferred. */
-function readParentPlantsRemaining(ui: Record<string, unknown>): number | null {
-    const raw = ui.plants ?? ui.plantsRemaining;
-    if (raw == null || raw === "")
-        return null;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : null;
-}
-
 function readFreshFrozenStemWasteGrams(row: Record<string, unknown>): number | null {
     const w = readNum(row, "freshFrozenStemWasteGrams");
     if (w != null && w >= 0 && Number.isFinite(w))
@@ -192,10 +183,6 @@ export function buildCultivationStrainMetricPoints(input: {
             continue;
 
         const ui = asUiRecord(parent.cultivationUiState);
-        const plantsLeft = readParentPlantsRemaining(ui);
-        /** Plot FF yield/stem waste only after the cultivation batch is fully harvested (no plants left). */
-        if (plantsLeft != null && plantsLeft > 0)
-            continue;
 
         const grams = readFreshFrozenGrams(sb);
         const canopy = readNum(ui, "dryCanopySqFt");

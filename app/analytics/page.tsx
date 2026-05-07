@@ -465,9 +465,9 @@ export default function AnalyticsPage() {
           <p style={{ textAlign: "center", color: "#94a3b8", marginTop: 0 }}>
             Cultivation strain metrics: <strong>potency</strong> and <strong>dry yield</strong> (g / sq ft) come from dry
             flower batches when synced to the server, dated by lab result (<strong>Test Passed</strong>).
-            <strong> Fresh frozen yield</strong> (g / sq ft) uses operator-entered FF grams ÷ parent canopy once the
-            cultivation batch has <strong>no plants remaining</strong>. Stem waste (g / sq ft) is (AI sheet sum − entered
-            grams) ÷ canopy when logged on the FF batch. Points date from harvest{" "}
+            <strong> Fresh frozen yield</strong> (g / sq ft) uses operator-entered FF grams ÷ parent dry canopy (partial
+            harvests included). Stem waste (g / sq ft) is (AI sheet sum − entered grams) ÷ canopy when logged on the FF
+            batch. Points date from harvest{" "}
             <strong>createdAt</strong>. Multiple FF pulls share one parent but plot separately (date · batch id).
             Lines connect batches of the same strain in time order; hover for the full batch id.
           </p>
