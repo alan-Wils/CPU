@@ -3228,18 +3228,23 @@ export default function ConfigPage() {
           </>
         }
       >
-        <div style={styles.configSubCard}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Strain List</h3>
-        <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14 }}>
-          When cultivation data is rolled up, <b>Potency</b> and <b>Average yield</b> on each strain update from lab
-          THC% and dry g/sq ft averages (defaults: THC under 16 = Low, 16–22 Medium, 22–28 High, 28+ Very High; yield
-          under 18 g/sq ft Light, 18–42 Medium, over 42 Heavy). <b>Dominance</b> is not changed. Auto numeric lines below
-          are read-only snapshots from the same rollups.
-        </p>
+        <div style={{ ...styles.configSubCard, padding: "12px 14px" }}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0, fontSize: 16 }}>Strain List</h3>
+        <details style={{ marginBottom: 8, color: "#94a3b8", fontSize: 12 }}>
+          <summary style={{ cursor: "pointer", color: "#cbd5e1", fontWeight: 600 }}>
+            How potency &amp; yield labels update from lab rollups
+          </summary>
+          <p style={{ margin: "6px 0 0", lineHeight: 1.45 }}>
+            When cultivation data is rolled up, <b>Potency</b> and <b>Average yield</b> on each strain update from lab
+            THC% and dry g/sq ft averages (defaults: THC under 16 = Low, 16–22 Medium, 22–28 High, 28+ Very High;
+            yield under 18 g/sq ft Light, 18–42 Medium, over 42 Heavy). <b>Dominance</b> is not changed. Auto averages
+            in each row are read-only snapshots from the same rollups.
+          </p>
+        </details>
 
-        <div style={styles.grid}>
+        <div style={styles.cultivationFormGrid}>
           <input
-            style={styles.input}
+            style={styles.cultivationField}
             placeholder="Strain Name"
             value={strainForm.name}
             onChange={(e) =>
@@ -3248,7 +3253,7 @@ export default function ConfigPage() {
           />
 
           <input
-            style={styles.input}
+            style={styles.cultivationField}
             placeholder="Acronym"
             value={strainForm.acronym}
             onChange={(e) =>
@@ -3257,7 +3262,7 @@ export default function ConfigPage() {
           />
 
           <select
-            style={styles.input}
+            style={styles.cultivationField}
             value={strainForm.dominance}
             onChange={(e) =>
               setStrainForm((prev) => ({ ...prev, dominance: e.target.value }))
@@ -3271,7 +3276,7 @@ export default function ConfigPage() {
           </select>
 
           <select
-            style={styles.input}
+            style={styles.cultivationField}
             value={strainForm.potency}
             onChange={(e) =>
               setStrainForm((prev) => ({ ...prev, potency: e.target.value }))
@@ -3284,7 +3289,7 @@ export default function ConfigPage() {
           </select>
 
           <select
-            style={styles.input}
+            style={styles.cultivationField}
             value={strainForm.averageYield}
             onChange={(e) =>
               setStrainForm((prev) => ({
@@ -3302,28 +3307,28 @@ export default function ConfigPage() {
             style={{
               gridColumn: "1 / -1",
               display: "flex",
-              gap: 10,
+              gap: 8,
               flexWrap: "wrap",
               alignItems: "center",
             }}
           >
-            <button type="button" style={styles.addButton} onClick={saveStrain}>
+            <button type="button" style={styles.cultivationBtnAdd} onClick={saveStrain}>
               {editingStrainId ? "Update strain" : "Add strain"}
             </button>
             {editingStrainId ? (
-              <button type="button" style={styles.secondaryButton} onClick={cancelStrainEdit}>
+              <button type="button" style={styles.cultivationBtnSecondary} onClick={cancelStrainEdit}>
                 Cancel edit
               </button>
             ) : null}
           </div>
         </div>
 
-        <div style={styles.list}>
+        <div style={styles.cultivationList}>
           {cultivationStrainsAlphabetical.map((strain) => (
             <div
               key={strain.id}
               style={{
-                ...styles.row,
+                ...styles.cultivationRow,
                 ...(editingStrainId === strain.id
                   ? {
                       borderColor: "#2563eb",
@@ -3332,33 +3337,40 @@ export default function ConfigPage() {
                   : {}),
               }}
             >
-              <span>
-                <strong>{strain.name}</strong> ({strain.acronym}) —{" "}
-                {strain.dominance}, {strain.potency}, {strain.averageYield} Yield
-                {(strain.autoAvgPotencyPct != null || strain.autoAvgDryYieldGPerSqFt != null) && (
-                  <span style={{ display: "block", marginTop: 6, color: "#94a3b8", fontSize: 13 }}>
-                    Auto avg:{" "}
-                    {strain.autoAvgPotencyPct != null
-                      ? `${strain.autoAvgPotencyPct}% THC`
-                      : "— potency"}
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "baseline",
+                  gap: "4px 8px",
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: 13,
+                  lineHeight: 1.4,
+                }}
+              >
+                <span>
+                  <strong>{strain.name}</strong> ({strain.acronym}) — {strain.dominance}, {strain.potency},{" "}
+                  {strain.averageYield} yield
+                </span>
+                {(strain.autoAvgPotencyPct != null || strain.autoAvgDryYieldGPerSqFt != null) ? (
+                  <span style={{ color: "#64748b", fontSize: 12 }}>
+                    Auto{" "}
+                    {strain.autoAvgPotencyPct != null ? `${strain.autoAvgPotencyPct}% THC` : "— potency"}
                     {" · "}
                     {strain.autoAvgDryYieldGPerSqFt != null
-                      ? `${strain.autoAvgDryYieldGPerSqFt} g/sq ft dry`
+                      ? `${strain.autoAvgDryYieldGPerSqFt} g/sq ft`
                       : "— yield"}
-                    {strain.autoMetricsSampleCount != null
-                      ? ` (n=${strain.autoMetricsSampleCount})`
-                      : ""}
-                    {strain.autoMetricsUpdatedAt
-                      ? ` · updated ${strain.autoMetricsUpdatedAt.slice(0, 10)}`
-                      : ""}
+                    {strain.autoMetricsSampleCount != null ? ` (n=${strain.autoMetricsSampleCount})` : ""}
+                    {strain.autoMetricsUpdatedAt ? ` · ${strain.autoMetricsUpdatedAt.slice(0, 10)}` : ""}
                   </span>
-                )}
-              </span>
-              <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
-                <button type="button" style={styles.secondaryButton} onClick={() => startEditStrain(strain)}>
+                ) : null}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" }}>
+                <button type="button" style={styles.cultivationBtnSecondary} onClick={() => startEditStrain(strain)}>
                   Edit
                 </button>
-                <button type="button" style={styles.deleteButton} onClick={() => removeStrain(strain.id)}>
+                <button type="button" style={styles.cultivationBtnDelete} onClick={() => removeStrain(strain.id)}>
                   Remove
                 </button>
               </div>
@@ -3382,88 +3394,110 @@ export default function ConfigPage() {
         />
         </div>
 
-        <div style={styles.configSubCard}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Veg Rooms / Bays / Tables</h3>
+        <div style={{ ...styles.configSubCard, padding: "12px 14px" }}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0, fontSize: 16 }}>Veg Rooms / Bays / Tables</h3>
 
-        <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
-          Same layout as flower: use <strong style={{ color: "#e5e7eb" }}>Add room with layout</strong> to name a
-          veg room and generate bays (A, B, C, …) with numbered tables (1, 2, …) per bay. Locations appear when
-          operators log <strong style={{ color: "#e5e7eb" }}>Clone → Veg</strong> on the Cultivation page.
-        </p>
+        <details style={{ marginBottom: 8, color: "#94a3b8", fontSize: 12 }}>
+          <summary style={{ cursor: "pointer", color: "#cbd5e1", fontWeight: 600 }}>
+            Layout &amp; where veg locations appear
+          </summary>
+          <p style={{ margin: "6px 0 0", lineHeight: 1.45 }}>
+            Same pattern as flower: <strong>Add room with layout</strong> names a veg room and creates bays (A, B, C, …)
+            with numbered tables per bay. Those locations show when operators log <strong>Clone → Veg</strong>.
+          </p>
+        </details>
 
-        <div style={{ ...styles.grid, marginBottom: 12 }}>
+        <div style={{ ...styles.cultivationFormGrid, gridTemplateColumns: "repeat(auto-fill, minmax(112px, 1fr))" }}>
           <input
-            style={styles.input}
-            placeholder="Veg room name"
+            style={styles.cultivationField}
+            placeholder="Room name"
             value={vegRoomName}
             onChange={(e) => setVegRoomName(e.target.value)}
           />
           <input
-            style={styles.input}
-            placeholder="Number of bays"
+            style={styles.cultivationField}
+            placeholder="Bays #"
             inputMode="numeric"
+            title="Number of bays"
             value={vegQuickBayCount}
             onChange={(e) => setVegQuickBayCount(e.target.value)}
           />
           <input
-            style={styles.input}
-            placeholder="Tables per bay"
+            style={styles.cultivationField}
+            placeholder="Tables/bay"
             inputMode="numeric"
+            title="Tables per bay"
             value={vegQuickTablesPerBay}
             onChange={(e) => setVegQuickTablesPerBay(e.target.value)}
           />
-          <button style={styles.addButton} type="button" onClick={addVegRoomWithLayout}>
-            Add room with layout
+          <button
+            type="button"
+            title="Add room with bays and tables"
+            style={styles.cultivationBtnAdd}
+            onClick={addVegRoomWithLayout}
+          >
+            + Layout
           </button>
-          <button style={styles.secondaryButton} type="button" onClick={addVegRoom}>
-            Add empty room
+          <button
+            type="button"
+            title="Add empty room (add bays manually)"
+            style={styles.cultivationBtnSecondary}
+            onClick={addVegRoom}
+          >
+            + Empty
           </button>
         </div>
 
-        <div style={styles.list}>
+        <div style={styles.cultivationList}>
           {config.cultivation.rooms.vegRooms.map((room) => (
-            <div key={room.id} style={styles.nestedBox}>
-              <div style={styles.row}>
-                <strong>{room.name}</strong>
-                <div style={styles.inlineSmall}>
-                  <button style={styles.addButton} type="button" onClick={() => openAddBayModal("vegRooms", room.id)}>
-                    Add Bay
+            <div key={room.id} style={styles.cultivationRoomShell}>
+              <div style={styles.cultivationRow}>
+                <strong style={{ fontSize: 14 }}>{room.name}</strong>
+                <div style={{ ...styles.inlineSmall, gap: 6 }}>
+                  <button
+                    style={styles.cultivationBtnAdd}
+                    type="button"
+                    title="Add bay"
+                    onClick={() => openAddBayModal("vegRooms", room.id)}
+                  >
+                    + Bay
                   </button>
-                  <button style={styles.deleteButton} type="button" onClick={() => removeVegRoom(room.id)}>
-                    Remove Room
+                  <button style={styles.cultivationBtnDelete} type="button" onClick={() => removeVegRoom(room.id)}>
+                    Remove room
                   </button>
                 </div>
               </div>
 
               {room.bays.map((bay) => (
-                <div key={bay.id} style={styles.bayBox}>
-                  <div style={styles.row}>
-                    <strong>Bay {bay.name}</strong>
-                    <div style={styles.inlineSmall}>
+                <div key={bay.id} style={styles.cultivationBayShell}>
+                  <div style={styles.cultivationRow}>
+                    <span style={{ fontSize: 13, fontWeight: 700 }}>Bay {bay.name}</span>
+                    <div style={{ ...styles.inlineSmall, gap: 6 }}>
                       <button
-                        style={styles.addButton}
+                        style={styles.cultivationBtnAdd}
                         type="button"
+                        title="Add table"
                         onClick={() => openAddTableModal("vegRooms", room.id, bay.id)}
                       >
-                        Add Table
+                        + Table
                       </button>
                       <button
-                        style={styles.deleteButton}
+                        style={styles.cultivationBtnDelete}
                         type="button"
                         onClick={() => removeBay("vegRooms", room.id, bay.id)}
                       >
-                        Remove Bay
+                        Remove bay
                       </button>
                     </div>
                   </div>
 
                   {bay.tables.map((table) => (
-                    <div key={table.id} style={styles.row}>
-                      <span>
-                        Table {table.name} — {table.squareFeet} sq ft
+                    <div key={table.id} style={{ ...styles.cultivationRow, marginTop: 4 }}>
+                      <span style={{ fontSize: 13 }}>
+                        T{table.name} · {table.squareFeet} sq ft
                       </span>
                       <button
-                        style={styles.deleteButton}
+                        style={styles.cultivationBtnDelete}
                         type="button"
                         onClick={() => removeTable("vegRooms", room.id, bay.id, table.id)}
                       >
@@ -3478,90 +3512,109 @@ export default function ConfigPage() {
         </div>
         </div>
 
-        <div style={styles.configSubCardLast}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Flower Rooms / Bays / Tables</h3>
+        <div style={{ ...styles.configSubCardLast, padding: "12px 14px" }}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0, fontSize: 16 }}>Flower Rooms / Bays / Tables</h3>
 
-        <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, lineHeight: 1.5 }}>
-          Use <strong style={{ color: "#e5e7eb" }}>Add room with layout</strong> to name a flower room and generate bays
-          (A, B, C, …) with numbered tables (1, 2, …) per bay. Those locations appear when operators log{" "}
-          <strong style={{ color: "#e5e7eb" }}>Move to Flower</strong> on the Cultivation page. You can still add an empty
-          room or edit bays and tables below.
-        </p>
+        <details style={{ marginBottom: 8, color: "#94a3b8", fontSize: 12 }}>
+          <summary style={{ cursor: "pointer", color: "#cbd5e1", fontWeight: 600 }}>
+            Layout &amp; where flower locations appear
+          </summary>
+          <p style={{ margin: "6px 0 0", lineHeight: 1.45 }}>
+            <strong>Add room with layout</strong> names a flower room and creates bays with tables. Locations appear on{" "}
+            <strong>Move to Flower</strong>. You can still add an empty room and edit bays/tables below.
+          </p>
+        </details>
 
-        <div style={{ ...styles.grid, marginBottom: 12 }}>
+        <div style={{ ...styles.cultivationFormGrid, gridTemplateColumns: "repeat(auto-fill, minmax(112px, 1fr))" }}>
           <input
-            style={styles.input}
-            placeholder="Flower room name"
+            style={styles.cultivationField}
+            placeholder="Room name"
             value={flowerRoomName}
             onChange={(e) => setFlowerRoomName(e.target.value)}
           />
           <input
-            style={styles.input}
-            placeholder="Number of bays"
+            style={styles.cultivationField}
+            placeholder="Bays #"
             inputMode="numeric"
+            title="Number of bays"
             value={flowerQuickBayCount}
             onChange={(e) => setFlowerQuickBayCount(e.target.value)}
           />
           <input
-            style={styles.input}
-            placeholder="Tables per bay"
+            style={styles.cultivationField}
+            placeholder="Tables/bay"
             inputMode="numeric"
+            title="Tables per bay"
             value={flowerQuickTablesPerBay}
             onChange={(e) => setFlowerQuickTablesPerBay(e.target.value)}
           />
-          <button style={styles.addButton} type="button" onClick={addFlowerRoomWithLayout}>
-            Add room with layout
+          <button
+            type="button"
+            title="Add room with bays and tables"
+            style={styles.cultivationBtnAdd}
+            onClick={addFlowerRoomWithLayout}
+          >
+            + Layout
           </button>
-          <button style={styles.secondaryButton} type="button" onClick={addFlowerRoom}>
-            Add empty room
+          <button
+            type="button"
+            title="Add empty room (add bays manually)"
+            style={styles.cultivationBtnSecondary}
+            onClick={addFlowerRoom}
+          >
+            + Empty
           </button>
         </div>
 
-        <div style={styles.list}>
+        <div style={styles.cultivationList}>
           {config.cultivation.rooms.flowerRooms.map((room) => (
-            <div key={room.id} style={styles.nestedBox}>
-              <div style={styles.row}>
-                <strong>{room.name}</strong>
-                <div style={styles.inlineSmall}>
-                  <button style={styles.addButton} onClick={() => openAddBayModal("flowerRooms", room.id)}>
-                    Add Bay
-                  </button>
+            <div key={room.id} style={styles.cultivationRoomShell}>
+              <div style={styles.cultivationRow}>
+                <strong style={{ fontSize: 14 }}>{room.name}</strong>
+                <div style={{ ...styles.inlineSmall, gap: 6 }}>
                   <button
-                    style={styles.deleteButton}
-                    onClick={() => removeFlowerRoom(room.id)}
+                    type="button"
+                    title="Add bay"
+                    style={styles.cultivationBtnAdd}
+                    onClick={() => openAddBayModal("flowerRooms", room.id)}
                   >
-                    Remove Room
+                    + Bay
+                  </button>
+                  <button style={styles.cultivationBtnDelete} onClick={() => removeFlowerRoom(room.id)}>
+                    Remove room
                   </button>
                 </div>
               </div>
 
               {room.bays.map((bay) => (
-                <div key={bay.id} style={styles.bayBox}>
-                  <div style={styles.row}>
-                    <strong>Bay {bay.name}</strong>
-                    <div style={styles.inlineSmall}>
+                <div key={bay.id} style={styles.cultivationBayShell}>
+                  <div style={styles.cultivationRow}>
+                    <span style={{ fontSize: 13, fontWeight: 700 }}>Bay {bay.name}</span>
+                    <div style={{ ...styles.inlineSmall, gap: 6 }}>
                       <button
-                        style={styles.addButton}
+                        type="button"
+                        title="Add table"
+                        style={styles.cultivationBtnAdd}
                         onClick={() => openAddTableModal("flowerRooms", room.id, bay.id)}
                       >
-                        Add Table
+                        + Table
                       </button>
                       <button
-                        style={styles.deleteButton}
+                        style={styles.cultivationBtnDelete}
                         onClick={() => removeBay("flowerRooms", room.id, bay.id)}
                       >
-                        Remove Bay
+                        Remove bay
                       </button>
                     </div>
                   </div>
 
                   {bay.tables.map((table) => (
-                    <div key={table.id} style={styles.row}>
-                      <span>
-                        Table {table.name} — {table.squareFeet} sq ft
+                    <div key={table.id} style={{ ...styles.cultivationRow, marginTop: 4 }}>
+                      <span style={{ fontSize: 13 }}>
+                        T{table.name} · {table.squareFeet} sq ft
                       </span>
                       <button
-                        style={styles.deleteButton}
+                        style={styles.cultivationBtnDelete}
                         onClick={() => removeTable("flowerRooms", room.id, bay.id, table.id)}
                       >
                         Remove
@@ -4373,5 +4426,81 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "16px 18px",
     marginBottom: 0,
     background: "#020617",
+  },
+  /** Dense UI for cultivation strain + room layout blocks */
+  cultivationField: {
+    background: "#020617",
+    color: "#e5e7eb",
+    border: "1px solid #475569",
+    borderRadius: 8,
+    padding: "6px 10px",
+    minHeight: 34,
+    fontSize: 13,
+  },
+  cultivationFormGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))",
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 0,
+  },
+  cultivationList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    marginTop: 8,
+  },
+  cultivationRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+    background: "#0f172a",
+    border: "1px solid #334155",
+    borderRadius: 8,
+    padding: "8px 10px",
+  },
+  cultivationRoomShell: {
+    background: "#111827",
+    border: "1px solid #334155",
+    borderRadius: 10,
+    padding: "10px 12px",
+  },
+  cultivationBayShell: {
+    background: "#020617",
+    border: "1px solid #1e40af",
+    borderRadius: 8,
+    padding: "8px 10px",
+    marginTop: 6,
+  },
+  cultivationBtnAdd: {
+    background: "#2563eb",
+    color: "white",
+    border: "none",
+    borderRadius: 8,
+    padding: "7px 12px",
+    fontWeight: 700,
+    fontSize: 13,
+    cursor: "pointer",
+  },
+  cultivationBtnSecondary: {
+    background: "#334155",
+    color: "#e2e8f0",
+    border: "1px solid #475569",
+    borderRadius: 8,
+    padding: "7px 12px",
+    fontWeight: 700,
+    fontSize: 13,
+    cursor: "pointer",
+  },
+  cultivationBtnDelete: {
+    background: "#dc2626",
+    color: "white",
+    border: "none",
+    borderRadius: 8,
+    padding: "6px 10px",
+    fontWeight: 700,
+    fontSize: 12,
+    cursor: "pointer",
   },
 };
