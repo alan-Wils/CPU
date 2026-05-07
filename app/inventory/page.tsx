@@ -16,10 +16,12 @@ import {
   DEFAULT_INVENTORY_EXPORT_COLUMNS,
   downloadInventoryExcel,
   EXPORT_COLUMN_PRESET,
+  fetchInventoryLogoDataUrl,
   INVENTORY_EXPORT_COLUMN_LABELS,
   INVENTORY_EXPORT_COLUMN_ORDER,
   openInventoryPrintWindow,
   parseStoredExportColumns,
+  resolveLogoAbsoluteUrlForFetch,
   type InventoryExportColumnId,
 } from "@/lib/inventoryExport";
 import { groupInventoryBySourcePackage } from "@/lib/leafLinkInventoryDisplay";
@@ -517,37 +519,47 @@ export default function InventoryPage() {
                       disabled={loading || filtered.length === 0}
                       onClick={(e) => {
                         e.preventDefault();
-                        const filterState = {
-                          query,
-                          categoryFilter,
-                          subcategoryFilter,
-                          brandFilter,
-                          statusFilter,
-                          availabilityFilter,
-                          sortBy,
-                          sortDir,
-                          layoutMode,
-                        };
-                        const exportOpts = {
-                          columns: exportColumns,
-                          apiBaseUrl: API_BASE_URL,
-                          printBranding: printBrandingLogoUrl.trim()
-                            ? {
-                                logoUrl: printBrandingLogoUrl.trim(),
-                                logoMaxWidthPx: printBrandingLogoMaxWidthPx,
-                              }
-                            : undefined,
-                        };
-                        openInventoryPrintWindow(filtered, categoryLabels, filterState, exportOpts);
+                        void (async () => {
+                          const filterState = {
+                            query,
+                            categoryFilter,
+                            subcategoryFilter,
+                            brandFilter,
+                            statusFilter,
+                            availabilityFilter,
+                            sortBy,
+                            sortDir,
+                            layoutMode,
+                          };
+                          const rawLogo = printBrandingLogoUrl.trim();
+                          let logoDataUrl: string | undefined;
+                          if (rawLogo) {
+                            const abs = resolveLogoAbsoluteUrlForFetch(rawLogo, API_BASE_URL);
+                            if (abs) {
+                              logoDataUrl = (await fetchInventoryLogoDataUrl(abs)) ?? undefined;
+                            }
+                          }
+                          const exportOpts = {
+                            columns: exportColumns,
+                            apiBaseUrl: API_BASE_URL,
+                            printBranding: rawLogo
+                              ? {
+                                  logoUrl: rawLogo,
+                                  logoMaxWidthPx: printBrandingLogoMaxWidthPx,
+                                  ...(logoDataUrl ? { logoDataUrl } : {}),
+                                }
+                              : undefined,
+                          };
+                          openInventoryPrintWindow(filtered, categoryLabels, filterState, exportOpts);
+                        })();
                       }}
                     >
                       Printable menu (print / PDF)
                     </button>
                   </div>
                   <p style={{ color: "#64748b", fontSize: 11, marginTop: 10, marginBottom: 0, maxWidth: 520, lineHeight: 1.45 }}>
-                    Logo (if configured under Admin → Company Config → Sales) appears on the printable menu only.
-                    Excel includes the same column selection and a text list of chosen columns; it does not embed the
-                    image.
+                    Logo (Admin → Company Config → Sales) is embedded into the printable sheet when the browser can
+                    fetch it (HTTPS / CORS). Excel still has no embedded image.
                   </p>
                   {filtered.length === 0 && !loading ? (
                     <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 8, maxWidth: 320 }}>

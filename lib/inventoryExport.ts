@@ -86,6 +86,11 @@ export function clampInventoryLogoMaxWidthPx(n: unknown): number {
 export type InventoryPrintBranding = {
   logoUrl: string;
   logoMaxWidthPx: number;
+  /**
+   * When set, used as `<img src>` so the print window does not depend on cross-origin or mixed-content
+   * loading of the raw logo URL inside `about:blank`.
+   */
+  logoDataUrl?: string;
 };
 
 export type InventoryExportOptions = {
@@ -126,15 +131,80 @@ export function describeInventoryFilters(state: InventoryFilterState): string[] 
   return lines;
 }
 
-/** Resolve stored logo URL (absolute or `/uploads/...`) for use in `<img src>`. */
+/**
+ * `NEXT_PUBLIC_API_URL` sometimes includes `/api` while static uploads are served from the origin root.
+ * Use this when joining `/uploads/...` paths.
+ */
+export function apiStaticOriginFromApiBase(apiBaseUrl: string): string {
+  const t = (apiBaseUrl || "").trim().replace(/\/+$/, "");
+  if (!t) return "";
+  if (/\/api$/i.test(t)) return t.replace(/\/api$/i, "");
+  return t;
+}
+
+/** Resolve stored logo URL (absolute or `/uploads/...`) for use in `<img src>` or fetch. */
 export function resolveAssetUrlForPrint(url: string, apiBaseUrl: string): string {
   const u = (url || "").trim();
   if (!u) return "";
   if (/^https?:\/\//i.test(u)) return u;
-  const base = (apiBaseUrl || "").replace(/\/+$/, "");
+  const base = apiStaticOriginFromApiBase(apiBaseUrl);
   if (!base) return u;
   if (u.startsWith("/")) return `${base}${u}`;
   return `${base}/${u}`;
+}
+
+/** When the app runs under HTTPS, try HTTPS for logo fetch (avoids mixed-content blocking of `http://` URLs). */
+export function preferHttpsInSecurePage(url: string): string {
+  const u = (url || "").trim();
+  if (typeof window === "undefined" || !window.isSecureContext) return u;
+  if (u.startsWith("http://")) {
+    return `https://${u.slice("http://".length)}`;
+  }
+  return u;
+}
+
+/** Absolute URL suitable for `fetch()` (resolves `//` using the current page protocol). */
+export function resolveLogoAbsoluteUrlForFetch(url: string, apiBaseUrl: string): string {
+  let u = resolveAssetUrlForPrint(url, apiBaseUrl).trim();
+  if (!u) return "";
+  if (u.startsWith("//")) {
+    if (typeof window !== "undefined" && window.location?.protocol) {
+      u = `${window.location.protocol}${u}`;
+    } else {
+      u = `https:${u}`;
+    }
+  }
+  return preferHttpsInSecurePage(u);
+}
+
+const MAX_LOGO_FETCH_BYTES = 2_500_000;
+
+/** Fetch a logo image in the browser and return a `data:` URL for embedding in print HTML. */
+export async function fetchInventoryLogoDataUrl(absoluteUrl: string): Promise<string | null> {
+  const u = (absoluteUrl || "").trim();
+  if (!u || !/^https?:\/\//i.test(u)) {
+    return null;
+  }
+  try {
+    const res = await fetch(u, { mode: "cors", credentials: "omit", cache: "force-cache" });
+    if (!res.ok) return null;
+    const len = Number(res.headers.get("content-length"));
+    if (Number.isFinite(len) && len > MAX_LOGO_FETCH_BYTES) return null;
+    const blob = await res.blob();
+    if (blob.size > MAX_LOGO_FETCH_BYTES) return null;
+    if (!String(blob.type || "").startsWith("image/")) return null;
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const s = String(reader.result || "");
+        resolve(s.startsWith("data:image/") ? s : null);
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
 }
 
 type RowStrings = Record<InventoryExportColumnId, string>;
@@ -234,11 +304,12 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** Absolute http(s) or protocol-relative — safe enough for `<img src>` in print HTML. */
+/** Absolute http(s), protocol-relative, or inlined image — safe enough for `<img src>` in print HTML. */
 function isPrintableImageUrl(url: string): boolean {
   const u = url.trim();
-  if (!u || u.length > 4000) return false;
+  if (!u || u.length > 6_000_000) return false;
   if (/^javascript:/i.test(u)) return false;
+  if (/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(u)) return true;
   return /^https?:\/\//i.test(u) || u.startsWith("//");
 }
 
@@ -270,11 +341,16 @@ export function openInventoryPrintWindow(
 
   const branding = options.printBranding;
   const rawLogo = (branding?.logoUrl || "").trim();
+  const dataUrl = (branding?.logoDataUrl || "").trim();
   const logoResolved = rawLogo ? resolveAssetUrlForPrint(rawLogo, options.apiBaseUrl || "") : "";
-  const showLogo = Boolean(logoResolved && isPrintableImageUrl(logoResolved));
+  const imgSrc = dataUrl && /^data:image\//i.test(dataUrl) ? dataUrl : logoResolved;
+  const showLogo = Boolean(imgSrc && isPrintableImageUrl(imgSrc));
   const logoW = branding ? clampInventoryLogoMaxWidthPx(branding.logoMaxWidthPx) : 160;
+  const imgSrcForAttr = imgSrc.startsWith("data:")
+    ? imgSrc.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+    : escapeHtml(imgSrc);
   const logoBlock = showLogo
-    ? `<div class="print-logo-wrap"><img class="print-logo" src="${escapeHtml(logoResolved)}" alt="" width="${logoW}" style="width:${logoW}px;max-width:${logoW}px;height:auto;object-fit:contain;" /></div>`
+    ? `<div class="print-logo-wrap"><img class="print-logo" src="${imgSrcForAttr}" alt="" width="${logoW}" style="width:${logoW}px;max-width:${logoW}px;height:auto;object-fit:contain;" /></div>`
     : "";
 
   const rowsHtml = items.map((row) => buildTableRowHtml(row, categoryLabels, cols)).join("");

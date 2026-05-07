@@ -16,7 +16,12 @@ import { logInfo, logError, logWarn } from "./lib/logger.js";
 import { registerUploadStreamRoutes, uploadsUseS3 } from "./lib/uploadStorage.js";
 import { runCashLogEodJob } from "./services/cashLogEodJobService.js";
 const app = express();
-app.use(helmet());
+/** Allow the web app (other origin) to `fetch()` uploads such as company logos for print preview. */
+app.use(
+    helmet({
+        crossOriginResourcePolicy: { policy: "cross-origin" },
+    }),
+);
 const corsOrigins = [env.CORS_ORIGIN, env.APP_URL ?? ""]
     .map((value) => String(value || "").trim())
     .filter(Boolean)

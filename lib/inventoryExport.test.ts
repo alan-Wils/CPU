@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  apiStaticOriginFromApiBase,
   clampInventoryLogoMaxWidthPx,
   describeInventoryFilters,
   EXPORT_COLUMN_PRESET,
@@ -90,5 +91,18 @@ describe("resolveAssetUrlForPrint", () => {
     expect(resolveAssetUrlForPrint("/uploads/company-logos/c1/x.png", "http://localhost:4000")).toBe(
       "http://localhost:4000/uploads/company-logos/c1/x.png",
     );
+  });
+
+  it("strips trailing /api when joining upload paths", () => {
+    expect(resolveAssetUrlForPrint("/uploads/company-logos/c1/x.png", "https://api.example.com/api")).toBe(
+      "https://api.example.com/uploads/company-logos/c1/x.png",
+    );
+  });
+});
+
+describe("apiStaticOriginFromApiBase", () => {
+  it("removes trailing /api", () => {
+    expect(apiStaticOriginFromApiBase("https://host/api")).toBe("https://host");
+    expect(apiStaticOriginFromApiBase("https://host/API")).toBe("https://host");
   });
 });
