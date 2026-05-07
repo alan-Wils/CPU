@@ -43,7 +43,7 @@ export async function syncOpenAIMonth(monthStart: Date, nextMonthStart: Date): P
         const totalCost = rows.reduce((sum, row) => sum + (Number(row?.amount?.value) || 0), 0);
         return {
             provider: "ai",
-            status: "connected",
+            status: "live_synced",
             totalCost,
             currency: "USD",
             syncedAt: new Date(),

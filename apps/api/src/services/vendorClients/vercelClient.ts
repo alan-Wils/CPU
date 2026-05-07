@@ -33,7 +33,7 @@ export async function syncVercelMonth(): Promise<VendorSyncResult> {
         const payload = rawText ? JSON.parse(rawText) : {};
         return {
             provider: "vercel",
-            status: "unsupported",
+            status: "estimated_only",
             totalCost: null,
             currency: "USD",
             syncedAt: new Date(),

@@ -13,7 +13,7 @@ export type UsageCostProviderRow = {
     estimatedCost: number;
     vendorTotalCost: number | null;
     currency: "USD";
-    status: "connected" | "missing_token" | "sync_failed" | "unsupported" | "estimated_only";
+    status: "live_synced" | "missing_token" | "sync_failed" | "estimated_only" | "no_activity";
     statusLabel: string;
     allocationMethod: "exact_internal" | "vendor_allocated" | "estimated";
     lastSyncedAt: string | null;
@@ -48,7 +48,7 @@ const PROVIDER_META: Record<
 > = {
     vercel: {
         displayName: "Vercel Frontend",
-        notes: "Bandwidth and build minutes from app-estimated events (no Vercel API yet).",
+        notes: "Frontend usage allocation from app usage events with vendor sync status.",
     },
     railway: {
         displayName: "Railway Backend",
@@ -204,7 +204,7 @@ export class UsageCostService {
                 "estimated_only";
             const vendorTotalCost =
                 snapshot &&
-                (snapshotStatus === "connected" || snapshotStatus === "unsupported") &&
+                snapshotStatus === "live_synced" &&
                 Number.isFinite(snapshot.totalCost)
                     ? snapshot.totalCost
                     : null;
@@ -245,15 +245,21 @@ export class UsageCostService {
                 ? `${usageMetrics.map((m) => `${m.label}: ${m.value}`).join(" · ")} · Event est. ${formatUsd(estimatedCost)}`
                 : "No usage logged this month for this provider.";
 
+            const hasCompanyActivity = estimatedCost > 0 || (a?.byUnit.size ?? 0) > 0;
+            let effectiveStatus: UsageCostProviderRow["status"] = snapshotStatus;
+            if (!hasCompanyActivity && (snapshotStatus === "estimated_only" || !snapshot)) {
+                effectiveStatus = "no_activity";
+            }
+
             let statusLabel = "Estimated from app usage only";
-            if (snapshotStatus === "connected")
+            if (effectiveStatus === "live_synced")
                 statusLabel = "Live vendor synced";
-            else if (snapshotStatus === "missing_token")
+            else if (effectiveStatus === "missing_token")
                 statusLabel = "Missing token";
-            else if (snapshotStatus === "sync_failed")
+            else if (effectiveStatus === "sync_failed")
                 statusLabel = "Sync failed";
-            else if (snapshotStatus === "unsupported")
-                statusLabel = "Connected, billing endpoint unsupported";
+            else if (effectiveStatus === "no_activity")
+                statusLabel = "No activity";
             if (meta.exactInternalPreferred && estimatedCost > 0) {
                 statusLabel = "Estimated from app usage (exact internal events)";
             }
@@ -267,7 +273,7 @@ export class UsageCostService {
                 estimatedCost,
                 vendorTotalCost,
                 currency: "USD" as const,
-                status: snapshotStatus,
+                status: effectiveStatus,
                 statusLabel,
                 allocationMethod,
                 lastSyncedAt: snapshot?.syncedAt ? snapshot.syncedAt.toISOString() : null,

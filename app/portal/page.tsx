@@ -87,7 +87,7 @@ function UsageCostsModal({
     setSyncNote("");
     try {
       const out = await syncVendorUsageCosts();
-      const connected = out.results.filter((r) => r.status === "connected").length;
+      const connected = out.results.filter((r) => r.status === "live_synced").length;
       const missing = out.results.filter((r) => r.status === "missing_token").length;
       const failed = out.results.filter((r) => r.status === "sync_failed").length;
       setSyncNote(`Synced ${out.month}. Connected: ${connected}, Missing token: ${missing}, Failed: ${failed}.`);
@@ -104,10 +104,10 @@ function UsageCostsModal({
   }, [loadUsage]);
 
   const badgeForProviderStatus = useCallback((status: CompanyUsageCostsDto["providers"][number]["status"]) => {
-    if (status === "connected") return { text: "Live vendor synced", color: "#22d3ee" };
+    if (status === "live_synced") return { text: "Live vendor synced", color: "#22d3ee" };
     if (status === "missing_token") return { text: "Missing token", color: "#f97316" };
     if (status === "sync_failed") return { text: "Sync failed", color: "#f87171" };
-    if (status === "unsupported") return { text: "Connected (unsupported billing endpoint)", color: "#a78bfa" };
+    if (status === "no_activity") return { text: "No activity", color: "#86efac" };
     return { text: "Estimated from app usage", color: "#86efac" };
   }, []);
 

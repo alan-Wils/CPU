@@ -176,7 +176,7 @@ model VendorBillingSnapshot {
   totalCost    Float         @default(0)
   currency     String        @default("USD")
   rawUsageJson Json?
-  /// connected | missing_token | sync_failed | unsupported | estimated_only
+  /// live_synced | missing_token | sync_failed | estimated_only | no_activity
   status       String
   syncedAt     DateTime?
   createdAt    DateTime      @default(now())

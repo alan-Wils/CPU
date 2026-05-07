@@ -33,7 +33,7 @@ export async function syncCloudflareMonth(): Promise<VendorSyncResult> {
         const payload = rawText ? JSON.parse(rawText) : {};
         return {
             provider: "cloudflare_r2",
-            status: "unsupported",
+            status: "estimated_only",
             totalCost: null,
             currency: "USD",
             syncedAt: new Date(),

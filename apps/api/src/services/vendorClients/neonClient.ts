@@ -33,7 +33,7 @@ export async function syncNeonMonth(): Promise<VendorSyncResult> {
         const payload = rawText ? JSON.parse(rawText) : {};
         return {
             provider: "neon",
-            status: "unsupported",
+            status: "estimated_only",
             totalCost: null,
             currency: "USD",
             syncedAt: new Date(),

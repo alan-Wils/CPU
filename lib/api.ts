@@ -551,7 +551,7 @@ export type UsageCostProviderDto = {
   estimatedCost: number;
   vendorTotalCost: number | null;
   currency: "USD";
-  status: "connected" | "missing_token" | "sync_failed" | "unsupported" | "estimated_only";
+  status: "live_synced" | "missing_token" | "sync_failed" | "estimated_only" | "no_activity";
   statusLabel: string;
   allocationMethod: "exact_internal" | "vendor_allocated" | "estimated";
   lastSyncedAt: string | null;
@@ -580,7 +580,7 @@ export async function fetchCompanyUsageCosts(companyId: string) {
 
 export type VendorSyncSummaryDto = {
   provider: string;
-  status: "connected" | "missing_token" | "sync_failed" | "unsupported" | "estimated_only";
+  status: "live_synced" | "missing_token" | "sync_failed" | "estimated_only";
   totalCost: number | null;
   currency: string;
   syncedAt: string | null;

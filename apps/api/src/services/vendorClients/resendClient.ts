@@ -33,7 +33,7 @@ export async function syncResendMonth(): Promise<VendorSyncResult> {
         const payload = rawText ? JSON.parse(rawText) : {};
         return {
             provider: "resend",
-            status: "unsupported",
+            status: "estimated_only",
             totalCost: null,
             currency: "USD",
             syncedAt: new Date(),

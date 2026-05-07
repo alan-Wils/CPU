@@ -39,7 +39,7 @@ export async function syncRailwayMonth(): Promise<VendorSyncResult> {
         const payload = rawText ? JSON.parse(rawText) : {};
         return {
             provider: "railway",
-            status: "unsupported",
+            status: "estimated_only",
             totalCost: null,
             currency: "USD",
             syncedAt: new Date(),

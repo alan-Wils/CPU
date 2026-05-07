@@ -1,10 +1,9 @@
 import type { Prisma, UsageProvider } from "@prisma/client";
 
 export type VendorSyncStatus =
-    | "connected"
+    | "live_synced"
     | "missing_token"
     | "sync_failed"
-    | "unsupported"
     | "estimated_only";
 
 export type VendorSyncResult = {
