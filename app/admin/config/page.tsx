@@ -457,13 +457,18 @@ export default function ConfigPage() {
     return { label: "Not tested", tone: "muted" as const };
   }, [metrcConnectionTesting, config.company.metrc.metrcLastConnectionStatus]);
 
-  const [strainForm, setStrainForm] = useState({
+  const defaultStrainForm = {
     name: "",
     acronym: "",
     dominance: "Hybrid",
     potency: "Medium",
     averageYield: "Medium",
-  });
+  };
+
+  const [strainForm, setStrainForm] = useState(defaultStrainForm);
+
+  /** When set, Add strain becomes Update strain for this id. */
+  const [editingStrainId, setEditingStrainId] = useState<string | null>(null);
 
   const [cultivationSupplyForm, setCultivationSupplyForm] = useState({
     name: "",
@@ -769,9 +774,48 @@ export default function ConfigPage() {
     void loadConfig();
   }, [pathname]);
 
-  function addStrain() {
+  function cancelStrainEdit() {
+    setEditingStrainId(null);
+    setStrainForm(defaultStrainForm);
+  }
+
+  function startEditStrain(strain: Strain) {
+    setEditingStrainId(strain.id);
+    setStrainForm({
+      name: strain.name,
+      acronym: strain.acronym,
+      dominance: strain.dominance,
+      potency: strain.potency,
+      averageYield: strain.averageYield,
+    });
+  }
+
+  function saveStrain() {
     if (!strainForm.name.trim() || !strainForm.acronym.trim()) {
       alert("Strain name and acronym are required");
+      return;
+    }
+
+    if (editingStrainId) {
+      setConfig((prev) => ({
+        ...prev,
+        cultivation: {
+          ...prev.cultivation,
+          strains: prev.cultivation.strains.map((s) =>
+            s.id === editingStrainId
+              ? {
+                  ...s,
+                  name: strainForm.name.trim(),
+                  acronym: strainForm.acronym.trim().toUpperCase(),
+                  dominance: strainForm.dominance,
+                  potency: strainForm.potency,
+                  averageYield: strainForm.averageYield,
+                }
+              : s,
+          ),
+        },
+      }));
+      cancelStrainEdit();
       return;
     }
 
@@ -793,16 +837,13 @@ export default function ConfigPage() {
       },
     }));
 
-    setStrainForm({
-      name: "",
-      acronym: "",
-      dominance: "Hybrid",
-      potency: "Medium",
-      averageYield: "Medium",
-    });
+    setStrainForm(defaultStrainForm);
   }
 
   function removeStrain(id: string) {
+    if (editingStrainId === id) {
+      cancelStrainEdit();
+    }
     setConfig((prev) => ({
       ...prev,
       cultivation: {
@@ -3240,14 +3281,40 @@ export default function ConfigPage() {
             <option>Heavy</option>
           </select>
 
-          <button style={styles.addButton} onClick={addStrain}>
-            Add Strain
-          </button>
+          <div
+            style={{
+              gridColumn: "1 / -1",
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <button type="button" style={styles.addButton} onClick={saveStrain}>
+              {editingStrainId ? "Update strain" : "Add strain"}
+            </button>
+            {editingStrainId ? (
+              <button type="button" style={styles.secondaryButton} onClick={cancelStrainEdit}>
+                Cancel edit
+              </button>
+            ) : null}
+          </div>
         </div>
 
         <div style={styles.list}>
           {cultivationStrainsAlphabetical.map((strain) => (
-            <div key={strain.id} style={styles.row}>
+            <div
+              key={strain.id}
+              style={{
+                ...styles.row,
+                ...(editingStrainId === strain.id
+                  ? {
+                      borderColor: "#2563eb",
+                      boxShadow: "0 0 0 1px rgba(37, 99, 235, 0.5)",
+                    }
+                  : {}),
+              }}
+            >
               <span>
                 <strong>{strain.name}</strong> ({strain.acronym}) —{" "}
                 {strain.dominance}, {strain.potency}, {strain.averageYield} Yield
@@ -3270,9 +3337,14 @@ export default function ConfigPage() {
                   </span>
                 )}
               </span>
-              <button style={styles.deleteButton} onClick={() => removeStrain(strain.id)}>
-                Remove
-              </button>
+              <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
+                <button type="button" style={styles.secondaryButton} onClick={() => startEditStrain(strain)}>
+                  Edit
+                </button>
+                <button type="button" style={styles.deleteButton} onClick={() => removeStrain(strain.id)}>
+                  Remove
+                </button>
+              </div>
             </div>
           ))}
         </div>
