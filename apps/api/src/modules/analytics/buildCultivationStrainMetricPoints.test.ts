@@ -291,4 +291,109 @@ describe("buildCultivationStrainMetricPoints", () => {
         expect(points[0].batchId).toBe("FF-RUCA.020926-8673");
         expect(points[0].freshFrozenYieldGPerSqFt).toBeCloseTo(180.18, 3);
     });
+
+    it("plots FF when dryCanopySqFt is 0 but FF plant share allocates table sq ft", () => {
+        const cultivationRows = [
+            {
+                id: "RUCA.020926",
+                strain: "Rum Cake",
+                strainAcronym: "RUCA",
+                updatedAt: parentUpdated,
+                cultivationUiState: {
+                    dryCanopySqFt: 0,
+                    totalFlowerTableSqFt: 440,
+                    plantsAtFlower: 44,
+                    plantsHarvestedFreshFrozen: 44,
+                },
+                freshFrozenGrams: 18018,
+            },
+        ];
+        const sourceBatches = [
+            {
+                id: "FF-RUCA.020926-8673",
+                type: "Fresh Frozen",
+                source: "RUCA.020926",
+                grams: 18018,
+                createdAt: "2026-05-06T15:10:40.000Z",
+            },
+        ];
+        const fromMs = Date.UTC(2026, 4, 1, 0, 0, 0, 0);
+        const toMs = Date.UTC(2026, 4, 31, 23, 59, 59, 999);
+        const points = buildCultivationStrainMetricPoints({
+            fromMs,
+            toMs,
+            strainFilter: null,
+            cultivationRows,
+            dryFlowerBatches: [],
+            sourceBatches,
+        });
+        expect(points).toHaveLength(1);
+        expect(points[0].freshFrozenYieldGPerSqFt).toBeCloseTo(18018 / 440, 4);
+    });
+
+    it("parses FF grams from amount string when grams field missing", () => {
+        const cultivationRows = [
+            {
+                id: "RUCA.020926",
+                strain: "Rum Cake",
+                strainAcronym: "RUCA",
+                updatedAt: parentUpdated,
+                cultivationUiState: { dryCanopySqFt: 100 },
+            },
+        ];
+        const sourceBatches = [
+            {
+                id: "FF-RUCA.020926-8673",
+                type: "Fresh Frozen",
+                source: "RUCA.020926",
+                amount: "3 bundles / 18,018 grams",
+                createdAt: "2026-05-06T15:10:40.000Z",
+            },
+        ];
+        const fromMs = Date.UTC(2026, 4, 1, 0, 0, 0, 0);
+        const toMs = Date.UTC(2026, 4, 31, 23, 59, 59, 999);
+        const points = buildCultivationStrainMetricPoints({
+            fromMs,
+            toMs,
+            strainFilter: null,
+            cultivationRows,
+            dryFlowerBatches: [],
+            sourceBatches,
+        });
+        expect(points).toHaveLength(1);
+        expect(points[0].freshFrozenYieldGPerSqFt).toBeCloseTo(180.18, 3);
+    });
+
+    it("uses relational freshFrozenGrams when store row has no numeric grams", () => {
+        const cultivationRows = [
+            {
+                id: "RUCA.020926",
+                strain: "Rum Cake",
+                strainAcronym: "RUCA",
+                updatedAt: parentUpdated,
+                cultivationUiState: { dryCanopySqFt: 100 },
+                freshFrozenGrams: 5000,
+            },
+        ];
+        const sourceBatches = [
+            {
+                id: "FF-RUCA.020926-8673",
+                type: "Fresh Frozen",
+                source: "RUCA.020926",
+                createdAt: "2026-05-06T15:10:40.000Z",
+            },
+        ];
+        const fromMs = Date.UTC(2026, 4, 1, 0, 0, 0, 0);
+        const toMs = Date.UTC(2026, 4, 31, 23, 59, 59, 999);
+        const points = buildCultivationStrainMetricPoints({
+            fromMs,
+            toMs,
+            strainFilter: null,
+            cultivationRows,
+            dryFlowerBatches: [],
+            sourceBatches,
+        });
+        expect(points).toHaveLength(1);
+        expect(points[0].freshFrozenYieldGPerSqFt).toBe(50);
+    });
 });

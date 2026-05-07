@@ -87,6 +87,7 @@ analyticsRouter.get(
                 strainAcronym: row.strainAcronym,
                 updatedAt: row.updatedAt,
                 cultivationUiState: row.cultivationUiState,
+                freshFrozenGrams: row.freshFrozenGrams,
             })),
             dryFlowerBatches,
             sourceBatches: mergedSourceBatches,

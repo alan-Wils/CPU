@@ -7,7 +7,7 @@ export type CultivationStrainMetricPoint = {
     date: string;
     potencyPct: number | null;
     dryYieldGPerSqFt: number | null;
-    /** Grams per sq ft from Fresh Frozen source-batch harvest ÷ parent `dryCanopySqFt`. */
+    /** Grams per sq ft from Fresh Frozen harvest ÷ parent canopy (dry canopy or FF-allocated table sq ft). */
     freshFrozenYieldGPerSqFt: number | null;
     /** Stem waste from AI sheet sum minus operator-entered FF grams, ÷ canopy (g/sq ft). */
     freshFrozenStemWasteGPerSqFt: number | null;
@@ -19,6 +19,8 @@ type CultivationRowInput = {
     strainAcronym: string;
     updatedAt: Date;
     cultivationUiState: unknown;
+    /** Relational `CultivationBatch.freshFrozenGrams` — fallback when store FF row omits numeric grams. */
+    freshFrozenGrams?: number | null;
 };
 
 function asUiRecord(value: unknown): Record<string, unknown> {
@@ -112,7 +114,38 @@ function readFreshFrozenGrams(row: Record<string, unknown>): number | null {
     const lbs = readNum(row, "weightLbs");
     if (lbs != null && lbs > 0)
         return +(lbs * 453.592).toFixed(4);
+    const amt = String(row.amount ?? "").trim();
+    const m = /(\d[\d,]*)\s*grams?\b/i.exec(amt);
+    if (m) {
+        const n = Number(String(m[1]).replace(/,/g, ""));
+        if (Number.isFinite(n) && n > 0)
+            return n;
+    }
     return null;
+}
+
+/**
+ * `dryCanopySqFt` in the client is allocated from **dry** harvest share; FF-only pulls often leave it at 0.
+ * Use flower table sq ft × FF plant share when needed.
+ */
+function resolveFreshFrozenCanopySqFt(ui: Record<string, unknown>): number | null {
+    const dry = readNum(ui, "dryCanopySqFt");
+    if (dry != null && dry > 0)
+        return dry;
+    const total = readNum(ui, "totalFlowerTableSqFt");
+    if (total == null || total <= 0)
+        return null;
+    const plantsAtFlower = readNum(ui, "plantsAtFlower") ?? readNum(ui, "plants");
+    const denom = plantsAtFlower != null && plantsAtFlower > 0 ? plantsAtFlower : null;
+    const plantsFf = readNum(ui, "plantsHarvestedFreshFrozen");
+    if (denom != null && plantsFf != null && plantsFf > 0) {
+        const frac = Math.min(1, Math.max(0, plantsFf / denom));
+        const sq = total * frac;
+        if (sq > 0)
+            return sq;
+    }
+    /** Last resort: full selected table footprint (better than dropping FF when counters lag). */
+    return total;
 }
 
 function readFreshFrozenStemWasteGrams(row: Record<string, unknown>): number | null {
@@ -204,7 +237,9 @@ export function buildCultivationStrainMetricPoints(input: {
         if (!isFreshFrozenSourceRow(sb))
             continue;
         const ffId = String(sb.id ?? "").trim();
-        const source = String(sb.source ?? "").trim();
+        const source = String(
+            sb.source ?? sb.cultivationBatchId ?? sb.parentCultivationBatch ?? "",
+        ).trim();
         if (!ffId || !source)
             continue;
 
@@ -218,8 +253,12 @@ export function buildCultivationStrainMetricPoints(input: {
 
         const ui = asUiRecord(parent.cultivationUiState);
 
-        const grams = readFreshFrozenGrams(sb);
-        const canopy = readNum(ui, "dryCanopySqFt");
+        let grams = readFreshFrozenGrams(sb);
+        const dbFf = parent.freshFrozenGrams;
+        if ((grams == null || grams <= 0) && dbFf != null && Number.isFinite(dbFf) && dbFf > 0)
+            grams = dbFf;
+
+        const canopy = resolveFreshFrozenCanopySqFt(ui);
         let ffYld: number | null = null;
         if (grams != null && grams > 0 && canopy != null && canopy > 0)
             ffYld = +(grams / canopy).toFixed(4);
