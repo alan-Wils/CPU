@@ -194,6 +194,9 @@ function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
   const list =
     (Array.isArray(root.data) && root.data) ||
     (Array.isArray(root.results) && root.results) ||
+    (Array.isArray(asRecord(root.content).results) && asRecord(root.content).results) ||
+    (Array.isArray(asRecord(root.content).products) && asRecord(root.content).products) ||
+    (Array.isArray(root.products) && root.products) ||
     (Array.isArray(root.items) && root.items) ||
     (Array.isArray(raw) ? raw : []);
   const out: LeafLinkInventoryItem[] = [];
@@ -216,12 +219,13 @@ function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
       "listing_state",
       "display_listing_state",
     ]).toLowerCase();
-    const likelyAvailable =
-      availableQuantity > 0 ||
-      status.includes("available") ||
-      status.includes("active") ||
-      status.includes("in_stock");
-    if (!likelyAvailable) continue;
+    const explicitlyUnavailable =
+      status.includes("unavailable") ||
+      status.includes("archived") ||
+      status.includes("inactive") ||
+      status.includes("out_of_stock");
+    // Keep rows unless they are clearly unavailable and have no stock.
+    if (explicitlyUnavailable && availableQuantity <= 0) continue;
     out.push({
       id,
       productName: pickString(row, ["product_name", "name", "title"]),
@@ -236,7 +240,13 @@ function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
       price: pickPrice(row),
       status: pickString(row, ["status", "availability", "state", "listing_state", "display_listing_state"]),
       updatedAt: pickString(row, ["updated_at", "updatedAt", "modified_at", "modified", "last_edit"]),
-      imageUrl: pickString(row, ["image_url", "image", "thumbnail_url"]),
+      imageUrl:
+        pickString(row, ["image_url", "image", "thumbnail_url"]) ||
+        pickString(asRecord((Array.isArray(row.images) ? row.images[0] : undefined)), [
+          "url",
+          "image_url",
+          "thumbnail_url",
+        ]),
     });
   }
   return out;
