@@ -258,11 +258,29 @@ export function openInventoryPrintWindow(
 </body>
 </html>`;
 
-  const w = window.open("", "_blank", "noopener,noreferrer");
-  if (!w) return;
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+  /**
+   * Do not pass `noopener` in the window features string: Chromium then returns `null` from
+   * `window.open` while still opening a tab, so we never get a handle to `document.write` the
+   * printable HTML — user sees a permanent blank `about:blank` tab.
+   */
+  const w = window.open("about:blank", "_blank");
+  if (!w) {
+    printInventoryViaHiddenIframe(html);
+    return;
+  }
+  try {
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  } catch {
+    try {
+      w.close();
+    } catch {
+      /* ignore */
+    }
+    printInventoryViaHiddenIframe(html);
+    return;
+  }
   const triggerPrint = () => {
     try {
       w.focus();
@@ -272,4 +290,36 @@ export function openInventoryPrintWindow(
     }
   };
   setTimeout(triggerPrint, 200);
+}
+
+function printInventoryViaHiddenIframe(html: string): void {
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("title", "Inventory print");
+  iframe.setAttribute("sandbox", "allow-modals allow-same-origin allow-scripts");
+  iframe.style.cssText =
+    "position:fixed;inset:0;width:100%;height:100%;opacity:0;pointer-events:none;z-index:-1;border:none;";
+  document.body.appendChild(iframe);
+  const pwin = iframe.contentWindow;
+  if (!pwin) {
+    iframe.remove();
+    return;
+  }
+  pwin.document.open();
+  pwin.document.write(html);
+  pwin.document.close();
+  const cleanup = () => {
+    try {
+      iframe.remove();
+    } catch {
+      /* ignore */
+    }
+  };
+  setTimeout(() => {
+    try {
+      pwin.focus();
+      pwin.print();
+    } finally {
+      setTimeout(cleanup, 800);
+    }
+  }, 50);
 }
