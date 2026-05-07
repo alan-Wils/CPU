@@ -14,6 +14,10 @@ export type MetrcAuthorizationErr = {
 
 export type MetrcAuthorizationResult = MetrcAuthorizationOk | MetrcAuthorizationErr;
 
+export function isMetrcAuthorizationErr(r: MetrcAuthorizationResult): r is MetrcAuthorizationErr {
+  return r.ok === false;
+}
+
 /**
  * METRC HTTP Authorization header.
  * - Dual-key: Basic base64(vendorKey:userKey) (official integrator + user).

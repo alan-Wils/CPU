@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMetrcAuthorization } from "./metrcAuthHeaders.js";
+import { buildMetrcAuthorization, isMetrcAuthorizationErr } from "./metrcAuthHeaders.js";
 
 describe("buildMetrcAuthorization", () => {
   it("uses Basic auth when both vendor and user keys exist", () => {
@@ -41,6 +41,13 @@ describe("buildMetrcAuthorization", () => {
     const r = buildMetrcAuthorization("", "");
     expect(r.ok).toBe(false);
     if (r.ok) return;
+    expect(r.status).toBe(400);
+  });
+
+  it("isMetrcAuthorizationErr narrows failed auth", () => {
+    const r = buildMetrcAuthorization("v", "");
+    expect(isMetrcAuthorizationErr(r)).toBe(true);
+    if (!isMetrcAuthorizationErr(r)) return;
     expect(r.status).toBe(400);
   });
 });

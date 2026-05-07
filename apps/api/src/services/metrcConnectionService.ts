@@ -6,7 +6,7 @@ import {
   parseLocationsPayload,
   toSampleLocation,
 } from "../lib/metrcConnectionHelpers.js";
-import { buildMetrcAuthorization } from "../lib/metrcAuthHeaders.js";
+import { buildMetrcAuthorization, isMetrcAuthorizationErr } from "../lib/metrcAuthHeaders.js";
 
 export type MetrcTestConnectionSuccess = {
   ok: true;
@@ -72,7 +72,7 @@ export class MetrcConnectionService {
     }
 
     const auth = buildMetrcAuthorization(apiKey, userKey);
-    if (!auth.ok) {
+    if (isMetrcAuthorizationErr(auth)) {
       const fail: MetrcTestConnectionFailure = {
         ok: false,
         connected: false,
