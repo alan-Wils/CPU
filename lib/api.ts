@@ -521,3 +521,22 @@ export async function fetchAutogrowCompReadings(compIndex: number, companyId?: s
   const idx = encodeURIComponent(String(compIndex));
   return apiRequest<AutogrowCompDetailSuccess>(`/api/autogrow/comps/${idx}`, { companyId });
 }
+
+export type AutogrowCompHistoryDto = {
+  deviceUuid: string;
+  compIndex: number;
+  fromEpoch: number;
+  toEpoch: number;
+  points: Array<{ time: string; [key: string]: string | number | null }>;
+};
+
+export async function fetchAutogrowCompHistory(
+  compIndex: number,
+  fromEpoch: number,
+  toEpoch: number,
+  companyId?: string,
+) {
+  const idx = encodeURIComponent(String(compIndex));
+  const qs = `from=${encodeURIComponent(String(Math.floor(fromEpoch)))}&to=${encodeURIComponent(String(Math.floor(toEpoch)))}`;
+  return apiRequest<AutogrowCompHistoryDto>(`/api/autogrow/comps/${idx}/history?${qs}`, { companyId });
+}

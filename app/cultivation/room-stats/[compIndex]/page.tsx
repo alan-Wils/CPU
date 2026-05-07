@@ -2,10 +2,24 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
-import { fetchAutogrowSnapshot, fetchAutogrowCompReadings } from "@/lib/api";
+import {
+  fetchAutogrowCompHistory,
+  fetchAutogrowCompReadings,
+  fetchAutogrowSnapshot,
+  type AutogrowCompHistoryDto,
+} from "@/lib/api";
 import { labelForAutogrowComp } from "@/lib/autogrowCompanyConfig";
 
 function fmt(v: unknown): string {
@@ -21,6 +35,48 @@ function fmt(v: unknown): string {
   }
   return String(v);
 }
+
+function finiteNumber(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function dateInputUtcStartEpoch(dateYmd: string): number {
+  const s = String(dateYmd || "").trim();
+  if (!s) return 0;
+  const d = new Date(`${s}T00:00:00.000Z`);
+  return Number.isFinite(d.getTime()) ? Math.floor(d.getTime() / 1000) : 0;
+}
+
+function dateInputUtcEndEpoch(dateYmd: string): number {
+  const s = String(dateYmd || "").trim();
+  if (!s) return 0;
+  const d = new Date(`${s}T23:59:59.000Z`);
+  return Number.isFinite(d.getTime()) ? Math.floor(d.getTime() / 1000) : 0;
+}
+
+function defaultRangeYmd() {
+  const to = new Date();
+  const from = new Date();
+  from.setDate(from.getDate() - 7);
+  const asYmd = (d: Date) => d.toISOString().slice(0, 10);
+  return { fromYmd: asYmd(from), toYmd: asYmd(to) };
+}
+
+/** Autogrow-friendly: avoid tight polling; refresh when tab visible. */
+const GRAPH_AUTO_REFRESH_MS = 60_000;
+
+const CHART_COLORS = [
+  "#22d3ee",
+  "#10b981",
+  "#a78bfa",
+  "#f59e0b",
+  "#fb7185",
+  "#60a5fa",
+  "#34d399",
+  "#f472b6",
+];
 
 const pageStyle: CSSProperties = {
   minHeight: "100vh",
@@ -39,13 +95,18 @@ const cardStyle: CSSProperties = {
 
 export default function CultivationRoomStatsDetailPage() {
   const routeParams = useParams<{ compIndex: string }>();
-
   const [compIndexNum, setCompIndexNum] = useState<number | null>(null);
   const [title, setTitle] = useState<string>("Zone");
   const [readings, setReadings] = useState<Record<string, unknown> | null>(null);
   const [meta, setMeta] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyErr, setHistoryErr] = useState("");
+  const [history, setHistory] = useState<AutogrowCompHistoryDto | null>(null);
+  const [{ fromYmd, toYmd }, setRange] = useState(defaultRangeYmd);
+  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(["air_temp", "rh", "vpd"]);
 
   const compKey =
     typeof routeParams?.compIndex === "string"
@@ -73,11 +134,7 @@ export default function CultivationRoomStatsDetailPage() {
       setMeta(null);
       try {
         const snapshot = await fetchAutogrowSnapshot();
-        let labels:
-          | { compIndex: number; label: string }[]
-          | undefined;
-        if (snapshot.ok) labels = snapshot.compLabels;
-
+        const labels = snapshot.ok ? snapshot.compLabels : undefined;
         const name = labelForAutogrowComp(parsed, labels);
         if (!cancelled) setTitle(name);
 
@@ -96,7 +153,97 @@ export default function CultivationRoomStatsDetailPage() {
     };
   }, [compKey]);
 
+  const loadHistory = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (compIndexNum == null) return;
+      const fromEpoch = dateInputUtcStartEpoch(fromYmd);
+      const toEpoch = dateInputUtcEndEpoch(toYmd);
+      if (!fromEpoch || !toEpoch || fromEpoch >= toEpoch) {
+        setHistoryErr("Choose a valid From/To range.");
+        return;
+      }
+      const silent = Boolean(opts?.silent);
+      if (!silent) {
+        setHistoryLoading(true);
+        setHistoryErr("");
+      }
+      try {
+        const out = await fetchAutogrowCompHistory(compIndexNum, fromEpoch, toEpoch);
+        setHistory(out);
+      } catch (e) {
+        if (!silent) {
+          setHistoryErr(e instanceof Error ? e.message : String(e));
+          setHistory(null);
+        }
+      } finally {
+        if (!silent) setHistoryLoading(false);
+      }
+    },
+    [compIndexNum, fromYmd, toYmd],
+  );
+
+  /** Initial load + auto-refresh on interval while tab visible. */
+  useEffect(() => {
+    if (compIndexNum == null) return undefined;
+
+    void loadHistory({ silent: false });
+
+    const tick = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      void loadHistory({ silent: true });
+    };
+    const id = window.setInterval(tick, GRAPH_AUTO_REFRESH_MS);
+
+    const onVis = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVis);
+
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [compIndexNum, fromYmd, toYmd, loadHistory]);
+
   const keysSorted = readings ? Object.keys(readings).sort((a, b) => a.localeCompare(b)) : [];
+  const availableMetrics = useMemo(() => {
+    const points = history?.points || [];
+    const set = new Set<string>();
+    for (const row of points) {
+      for (const [k, v] of Object.entries(row)) {
+        if (k === "time") continue;
+        if (finiteNumber(v) != null) set.add(k);
+      }
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [history]);
+
+  useEffect(() => {
+    if (availableMetrics.length === 0) return;
+    setSelectedMetrics((prev) => {
+      const kept = prev.filter((m) => availableMetrics.includes(m));
+      if (kept.length > 0) return kept;
+      return availableMetrics.slice(0, 3);
+    });
+  }, [availableMetrics]);
+
+  const chartRows = useMemo(() => {
+    const points = history?.points || [];
+    return points.map((row) => {
+      const d = new Date(String(row.time || ""));
+      const label = Number.isFinite(d.getTime())
+        ? d.toLocaleString()
+        : String(row.time || "");
+      const out: Record<string, string | number | null> = {
+        time: String(row.time || ""),
+        label,
+      };
+      for (const m of availableMetrics) {
+        out[m] = finiteNumber(row[m]);
+      }
+      return out;
+    });
+  }, [history, availableMetrics]);
 
   return (
     <PageAccessGate permission="page.cultivation">
@@ -121,50 +268,145 @@ export default function CultivationRoomStatsDetailPage() {
         ) : err ? (
           <div style={{ ...cardStyle, borderColor: "#991b1b", color: "#fecaca", maxWidth: 640 }}>{err}</div>
         ) : readings ? (
-          <section style={{ ...cardStyle }}>
-            {meta && Object.keys(meta).length > 0 && (
-              <details style={{ marginBottom: 16, fontSize: 13, color: "#94a3b8" }}>
-                <summary style={{ cursor: "pointer", color: "#a5f3fc", fontWeight: 700 }}>Metadata</summary>
-                <pre
-                  style={{
-                    marginTop: 10,
-                    padding: 12,
-                    overflow: "auto",
-                    borderRadius: 8,
-                    background: "#020617",
-                    border: "1px solid #1e293b",
-                  }}
+          <>
+            <section style={{ ...cardStyle, marginBottom: 16 }}>
+              <h2 style={{ margin: "0 0 4px", fontSize: 14, fontWeight: 900, letterSpacing: "0.06em", color: "#67e8f9" }}>
+                History graph
+              </h2>
+              <p style={{ color: "#64748b", fontSize: 12, margin: "0 0 12px", lineHeight: 1.45 }}>
+                Auto-refreshes about every {GRAPH_AUTO_REFRESH_MS / 1000}s while this browser tab is visible. Pauses in the
+                background to reduce Autogrow load.
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "end", marginBottom: 12 }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: 6, color: "#94a3b8", fontSize: 12 }}>
+                  From date
+                  <input
+                    type="date"
+                    value={fromYmd}
+                    onChange={(e) => setRange((r) => ({ ...r, fromYmd: e.target.value }))}
+                    style={{ background: "#020617", color: "#e2e8f0", border: "1px solid #334155", borderRadius: 8, padding: "8px 10px" }}
+                  />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 6, color: "#94a3b8", fontSize: 12 }}>
+                  To date
+                  <input
+                    type="date"
+                    value={toYmd}
+                    onChange={(e) => setRange((r) => ({ ...r, toYmd: e.target.value }))}
+                    style={{ background: "#020617", color: "#e2e8f0", border: "1px solid #334155", borderRadius: 8, padding: "8px 10px" }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void loadHistory()}
+                  disabled={historyLoading}
+                  style={{ padding: "9px 14px", borderRadius: 8, border: "1px solid #0369a1", background: "#0c4a6e", color: "#bae6fd", fontWeight: 700, cursor: "pointer" }}
                 >
-                  {fmt(meta)}
-                </pre>
-              </details>
-            )}
+                  {historyLoading ? "Loading…" : "Load graph"}
+                </button>
+              </div>
 
-            <h2 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 900, letterSpacing: "0.06em", color: "#67e8f9" }}>
-              Readings (full)
-            </h2>
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 8 }}>Select metrics</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                  {availableMetrics.map((m) => {
+                    const checked = selectedMetrics.includes(m);
+                    return (
+                      <label key={m} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#cbd5e1" }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) =>
+                            setSelectedMetrics((prev) => {
+                              if (e.target.checked) return [...new Set([...prev, m])];
+                              return prev.filter((x) => x !== m);
+                            })
+                          }
+                        />
+                        {m}
+                      </label>
+                    );
+                  })}
+                  {availableMetrics.length === 0 ? <span style={{ color: "#64748b", fontSize: 13 }}>No numeric history metrics in this range.</span> : null}
+                </div>
+              </div>
 
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ borderCollapse: "collapse", fontSize: 14, width: "100%", minWidth: 360 }}>
-                <thead>
-                  <tr style={{ textAlign: "left", borderBottom: "1px solid #334155", color: "#94a3b8" }}>
-                    <th style={{ padding: "8px 10px 8px 0" }}>Key</th>
-                    <th style={{ padding: "8px 0" }}>Value</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {keysSorted.map((k) => (
-                    <tr key={k} style={{ borderBottom: "1px solid #1e293b" }}>
-                      <td style={{ padding: "8px 10px 8px 0", fontFamily: "ui-monospace, monospace", color: "#93c5fd" }}>
-                        {k}
-                      </td>
-                      <td style={{ padding: "8px 0", wordBreak: "break-word" }}>{fmt(readings[k])}</td>
+              {historyErr ? <p style={{ color: "#fecaca", margin: "0 0 12px" }}>{historyErr}</p> : null}
+              {chartRows.length > 0 && selectedMetrics.length > 0 ? (
+                <div style={{ width: "100%", height: 360, border: "1px solid #1e293b", borderRadius: 10, padding: 8, background: "#020617" }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartRows}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis dataKey="label" minTickGap={28} stroke="#94a3b8" />
+                      <YAxis stroke="#94a3b8" />
+                      <Tooltip
+                        contentStyle={{ background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0" }}
+                        formatter={(value: unknown) => (typeof value === "number" ? value.toFixed(2) : String(value))}
+                      />
+                      {selectedMetrics.map((m, idx) => (
+                        <Line
+                          key={m}
+                          type="monotone"
+                          dataKey={m}
+                          stroke={CHART_COLORS[idx % CHART_COLORS.length]}
+                          dot={false}
+                          connectNulls
+                          strokeWidth={2}
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <p style={{ color: "#64748b", marginBottom: 0 }}>Pick one or more metrics and load a date range to see line data.</p>
+              )}
+            </section>
+
+            <section style={{ ...cardStyle }}>
+              {meta && Object.keys(meta).length > 0 && (
+                <details style={{ marginBottom: 16, fontSize: 13, color: "#94a3b8" }}>
+                  <summary style={{ cursor: "pointer", color: "#a5f3fc", fontWeight: 700 }}>Metadata</summary>
+                  <pre
+                    style={{
+                      marginTop: 10,
+                      padding: 12,
+                      overflow: "auto",
+                      borderRadius: 8,
+                      background: "#020617",
+                      border: "1px solid #1e293b",
+                    }}
+                  >
+                    {fmt(meta)}
+                  </pre>
+                </details>
+              )}
+
+              <h2 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 900, letterSpacing: "0.06em", color: "#67e8f9" }}>
+                Readings (full)
+              </h2>
+
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ borderCollapse: "collapse", fontSize: 14, width: "100%", minWidth: 360 }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", borderBottom: "1px solid #334155", color: "#94a3b8" }}>
+                      <th style={{ padding: "8px 10px 8px 0" }}>Key</th>
+                      <th style={{ padding: "8px 0" }}>Value</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                  </thead>
+                  <tbody>
+                    {keysSorted.map((k) => (
+                      <tr key={k} style={{ borderBottom: "1px solid #1e293b" }}>
+                        <td style={{ padding: "8px 10px 8px 0", fontFamily: "ui-monospace, monospace", color: "#93c5fd" }}>
+                          {k}
+                        </td>
+                        <td style={{ padding: "8px 0", wordBreak: "break-word" }}>{fmt(readings[k])}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
         ) : (
           <p style={{ color: "#94a3b8" }}>No readings.</p>
         )}

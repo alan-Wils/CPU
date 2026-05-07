@@ -51,6 +51,10 @@ export type AutogrowSnapshotFailure = {
 };
 
 export type AutogrowSnapshotResponse = AutogrowSnapshotSuccess | AutogrowSnapshotFailure;
+export type AutogrowHistoryPoint = {
+  time: string;
+  [key: string]: string | number | null;
+};
 
 async function fetchAutogrowPath(
   deviceUuid: string,
@@ -93,6 +97,33 @@ function readingsAndMeta(bodyJson: unknown): {
     metadata: Object.keys(md).length ? md : null,
     readings: rd && typeof rd === "object" && !Array.isArray(rd) ? asRecord(rd) : null,
   };
+}
+
+function parseHistoryPoints(bodyJson: unknown): AutogrowHistoryPoint[] {
+  const o = asRecord(bodyJson);
+  const readings = Array.isArray(o.readings) ? o.readings : [];
+  const out: AutogrowHistoryPoint[] = [];
+  for (const row of readings) {
+    const src = asRecord(row);
+    const t = String(src.time ?? "").trim();
+    if (!t) continue;
+    const point: AutogrowHistoryPoint = { time: t };
+    for (const [k, v] of Object.entries(src)) {
+      if (k === "time") continue;
+      if (typeof v === "number") {
+        point[k] = Number.isFinite(v) ? v : null;
+      } else if (typeof v === "string") {
+        const n = Number(v);
+        point[k] = Number.isFinite(n) ? n : v;
+      } else if (typeof v === "boolean") {
+        point[k] = v ? 1 : 0;
+      } else {
+        point[k] = null;
+      }
+    }
+    out.push(point);
+  }
+  return out;
 }
 
 export class AutogrowReadingsService {
@@ -237,6 +268,59 @@ export class AutogrowReadingsService {
         compIndex,
         metadata: parsed.metadata,
         readings: parsed.readings,
+      };
+    }
+
+    let message = `Autogrow returned HTTP ${r.status}`;
+    if (r.status === 429) message = "Autogrow rate limited. Try again shortly.";
+    if (r.status === 402) message = "Device subscription required on Autogrow.";
+    return { ok: false, status: r.status, message };
+  }
+
+  /** Single compartment time-series readings for line graph. */
+  async getCompHistory(
+    companyId: string,
+    compIndex: number,
+    fromEpoch: number,
+    toEpoch: number,
+  ): Promise<
+    | {
+        ok: true;
+        deviceUuid: string;
+        compIndex: number;
+        fromEpoch: number;
+        toEpoch: number;
+        points: AutogrowHistoryPoint[];
+      }
+    | AutogrowSnapshotFailure
+  > {
+    if (!Number.isFinite(compIndex) || compIndex < 0 || compIndex > MAX_COMP_PROBE) {
+      return { ok: false, status: 400, message: "Invalid compartment index." };
+    }
+    if (!Number.isFinite(fromEpoch) || !Number.isFinite(toEpoch) || fromEpoch <= 0 || toEpoch <= 0) {
+      return { ok: false, status: 400, message: "Invalid history range." };
+    }
+    if (fromEpoch >= toEpoch) {
+      return { ok: false, status: 400, message: "`from` must be less than `to`." };
+    }
+
+    const gate = await this.loadClimateAutogrow(companyId);
+    if (gate.valid === false) return { ok: false, status: gate.status, message: gate.message };
+
+    const { apiKey, uuid } = gate;
+    const r = await fetchAutogrowPath(
+      uuid,
+      `/comps/${compIndex}/history/${Math.floor(fromEpoch)}/${Math.floor(toEpoch)}`,
+      apiKey,
+    );
+    if (r.status === 200) {
+      return {
+        ok: true,
+        deviceUuid: uuid,
+        compIndex,
+        fromEpoch: Math.floor(fromEpoch),
+        toEpoch: Math.floor(toEpoch),
+        points: parseHistoryPoints(r.bodyJson),
       };
     }
 
