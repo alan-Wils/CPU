@@ -103,8 +103,15 @@ export default function InventoryPage() {
     [items],
   );
   const statuses = useMemo(() => {
-    const fromData = items.map((x) => (x.status || "").trim()).filter(Boolean);
-    return Array.from(new Set([...LEAFLINK_STATUS_PRESETS, ...fromData])).sort((a, b) =>
+    const map = new Map<string, string>();
+    for (const p of LEAFLINK_STATUS_PRESETS)
+      map.set(p.toLowerCase(), p);
+    for (const raw of items.map((x) => (x.status || "").trim()).filter(Boolean)) {
+      const k = raw.toLowerCase();
+      if (!map.has(k))
+        map.set(k, raw);
+    }
+    return Array.from(map.values()).sort((a, b) =>
       a.localeCompare(b, undefined, { sensitivity: "base" }),
     );
   }, [items]);
