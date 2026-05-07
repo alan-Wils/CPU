@@ -86,7 +86,7 @@ describe("MetrcConnectionService", () => {
     expect(Buffer.from(auth.slice(6), "base64").toString("utf8")).toBe("VENDOR:USER");
   });
 
-  it("returns not_connected when METRC responds 401", async () => {
+  it("returns not_connected when METRC responds 401 on all auth attempts", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
@@ -104,5 +104,60 @@ describe("MetrcConnectionService", () => {
     expect(out.connected).toBe(false);
     expect(out.status).toBe(401);
     expect(out.message).toMatch(/authentication failed/i);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("retries with Bearer when dual-key Basic returns 401, then succeeds", async () => {
+    let n = 0;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      n += 1;
+      const auth = (init?.headers as Record<string, string> | undefined)?.Authorization ?? "";
+      if (n === 1) {
+        expect(auth.startsWith("Basic ")).toBe(true);
+        return { ok: false, status: 401, text: async () => "{}" };
+      }
+      expect(auth.startsWith("Bearer ")).toBe(true);
+      return { ok: true, status: 200, text: async () => "[]" };
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    listMock.mockResolvedValue(
+      companyRow({
+        ...baseMetrc,
+        apiKey: "WRONG_VENDOR",
+        userKey: "GOOD_USER",
+      }),
+    );
+
+    const svc = new MetrcConnectionService();
+    const out = await svc.runTestConnection({ companyId: "c1", actorUserId: "u1" });
+
+    expect(out.ok && out.connected).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries with Basic colon-user when Bearer returns 401 (user key only)", async () => {
+    let n = 0;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      n += 1;
+      const auth = (init?.headers as Record<string, string> | undefined)?.Authorization ?? "";
+      if (n === 1) {
+        expect(auth.startsWith("Bearer ")).toBe(true);
+        return { ok: false, status: 401, text: async () => "{}" };
+      }
+      expect(auth.startsWith("Basic ")).toBe(true);
+      const decoded = Buffer.from(auth.slice(6), "base64").toString("utf8");
+      expect(decoded.startsWith(":")).toBe(true);
+      return { ok: true, status: 200, text: async () => "[]" };
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    listMock.mockResolvedValue(companyRow({ ...baseMetrc, apiKey: "", userKey: "ONLY_USER" }));
+
+    const svc = new MetrcConnectionService();
+    const out = await svc.runTestConnection({ companyId: "c1", actorUserId: "u1" });
+
+    expect(out.ok && out.connected).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

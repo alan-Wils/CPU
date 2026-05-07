@@ -35,6 +35,34 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+async function fetchMetrcActiveLocationsOnce(
+  url: string,
+  authorization: string,
+): Promise<{ res: Response; bodyText: string; bodyJson: unknown }> {
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: authorization,
+      Accept: "application/json",
+      "User-Agent": "CPU-Platform/1.0",
+    },
+    signal: AbortSignal.timeout(25_000),
+  });
+  let bodyText = "";
+  try {
+    bodyText = await res.text();
+  } catch {
+    bodyText = "";
+  }
+  let bodyJson: unknown = null;
+  try {
+    bodyJson = bodyText ? JSON.parse(bodyText) : null;
+  } catch {
+    bodyJson = null;
+  }
+  return { res, bodyText, bodyJson };
+}
+
 export class MetrcConnectionService {
   configService = new ConfigService();
 
@@ -86,38 +114,39 @@ export class MetrcConnectionService {
       return fail;
     }
 
-    if (auth.authMode === "dual_key") {
-      logInfo("Using METRC dual-key auth", { companyId: input.companyId });
-    } else {
-      logInfo("Using METRC single-key fallback auth", { companyId: input.companyId });
-    }
-
     const url = `${baseUrl.replace(/\/+$/, "")}/locations/v2/active?licenseNumber=${encodeURIComponent(licenseNumber)}`;
+    const hadVendorKey = Boolean(apiKey.trim());
 
     try {
-      const res = await fetch(url, {
-        method: "GET",
-        headers: {
-          Authorization: auth.authorization,
-          Accept: "application/json",
-          "User-Agent": "CPU-Platform/1.0",
-        },
-        signal: AbortSignal.timeout(25_000),
-      });
+      if (hadVendorKey) {
+        logInfo("Using METRC dual-key auth", { companyId: input.companyId });
+      } else {
+        logInfo("Using METRC single-key fallback auth", { companyId: input.companyId });
+      }
+
+      let { res, bodyJson } = await fetchMetrcActiveLocationsOnce(url, auth.authorization);
+
+      if (!res.ok && res.status === 401 && hadVendorKey) {
+        logInfo("METRC dual-key rejected (401); retrying Bearer user key", { companyId: input.companyId });
+        const second = await fetchMetrcActiveLocationsOnce(url, `Bearer ${userKey}`);
+        res = second.res;
+        bodyJson = second.bodyJson;
+      }
+
+      if (!res.ok && res.status === 401) {
+        logInfo(
+          hadVendorKey
+            ? "METRC auth retry: Basic with empty integrator field"
+            : "METRC Bearer rejected (401); retrying Basic with empty integrator field",
+          { companyId: input.companyId },
+        );
+        const basicUserOnly = `Basic ${Buffer.from(`:${userKey}`, "utf8").toString("base64")}`;
+        const third = await fetchMetrcActiveLocationsOnce(url, basicUserOnly);
+        res = third.res;
+        bodyJson = third.bodyJson;
+      }
 
       const status = res.status;
-      let bodyText = "";
-      try {
-        bodyText = await res.text();
-      } catch {
-        bodyText = "";
-      }
-      let bodyJson: unknown = null;
-      try {
-        bodyJson = bodyText ? JSON.parse(bodyText) : null;
-      } catch {
-        bodyJson = null;
-      }
 
       if (!res.ok) {
         const message = messageForMetrcHttpFailure(status);

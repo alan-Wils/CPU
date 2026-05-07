@@ -30,7 +30,8 @@ export function toSampleLocation(loc: Record<string, unknown>): MetrcSampleLocat
 }
 
 export function messageForMetrcHttpFailure(status: number): string {
-  if (status === 401) return "Authentication failed. Check METRC keys.";
+  if (status === 401)
+    return "Authentication failed. Paste the full METRC user API key, use a real integrator vendor key (or leave vendor empty), and save before testing.";
   if (status === 403) return "Permission denied. Check METRC user permissions and license access.";
   if (status === 400) return "Bad request. Check license number, state, and base URL.";
   return `METRC returned HTTP ${status}.`;

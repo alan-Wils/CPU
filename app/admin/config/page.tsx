@@ -1670,50 +1670,109 @@ export default function ConfigPage() {
         <div style={styles.grid}>
           <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
             Software vendor API key (optional — integrator key from METRC)
-            <input
-              style={styles.input}
-              type={showMetrcSecrets ? "text" : "password"}
-              autoComplete="off"
-              value={config.company.metrc.apiKey}
-              onChange={(e) =>
-                setConfig((prev) => ({
-                  ...prev,
-                  company: {
-                    ...prev.company,
-                    metrc: {
-                      ...prev.company.metrc,
-                      apiKey: e.target.value,
+            {showMetrcSecrets ? (
+              <textarea
+                style={{
+                  ...styles.textarea,
+                  minHeight: 72,
+                  fontFamily: "ui-monospace, monospace",
+                  wordBreak: "break-all",
+                }}
+                rows={3}
+                spellCheck={false}
+                autoComplete="off"
+                value={config.company.metrc.apiKey}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    company: {
+                      ...prev.company,
+                      metrc: {
+                        ...prev.company.metrc,
+                        apiKey: e.target.value,
+                      },
                     },
-                  },
-                }))
-              }
-            />
+                  }))
+                }
+              />
+            ) : (
+              <input
+                style={styles.input}
+                type="password"
+                autoComplete="off"
+                value={config.company.metrc.apiKey}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    company: {
+                      ...prev.company,
+                      metrc: {
+                        ...prev.company.metrc,
+                        apiKey: e.target.value,
+                      },
+                    },
+                  }))
+                }
+              />
+            )}
             <span style={{ color: "#64748b", fontSize: 12, marginTop: 4, lineHeight: 1.45 }}>
-              Vendor key may be required for official production integrations. If you leave it empty, the API can
-              still test the connection using only the user key where your METRC environment allows that.
+              Vendor key may be required for official production integrations. Leave empty to test with only the
+              facility user key (the server will try Bearer and other safe fallbacks on 401). Do not put passwords
+              here — only the integrator key from METRC.
             </span>
           </label>
 
-          <label style={styles.label}>
+          <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
             User API key (facility user key from METRC)
-            <input
-              style={styles.input}
-              type={showMetrcSecrets ? "text" : "password"}
-              autoComplete="off"
-              value={config.company.metrc.userKey}
-              onChange={(e) =>
-                setConfig((prev) => ({
-                  ...prev,
-                  company: {
-                    ...prev.company,
-                    metrc: {
-                      ...prev.company.metrc,
-                      userKey: e.target.value,
+            {showMetrcSecrets ? (
+              <textarea
+                style={{
+                  ...styles.textarea,
+                  minHeight: 88,
+                  fontFamily: "ui-monospace, monospace",
+                  wordBreak: "break-all",
+                }}
+                rows={4}
+                spellCheck={false}
+                autoComplete="off"
+                value={config.company.metrc.userKey}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    company: {
+                      ...prev.company,
+                      metrc: {
+                        ...prev.company.metrc,
+                        userKey: e.target.value,
+                      },
                     },
-                  },
-                }))
-              }
-            />
+                  }))
+                }
+              />
+            ) : (
+              <input
+                style={styles.input}
+                type="password"
+                autoComplete="off"
+                value={config.company.metrc.userKey}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    company: {
+                      ...prev.company,
+                      metrc: {
+                        ...prev.company.metrc,
+                        userKey: e.target.value,
+                      },
+                    },
+                  }))
+                }
+              />
+            )}
+            <span style={{ color: "#64748b", fontSize: 12, marginTop: 4, lineHeight: 1.45 }}>
+              Paste the full <strong style={{ color: "#94a3b8" }}>Current API Key</strong> from METRC (Admin → API
+              Keys). It is typically one long line (often 50+ characters). A truncated key always returns 401.
+            </span>
           </label>
 
           <label style={styles.label}>
