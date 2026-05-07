@@ -47,6 +47,8 @@ export default function InventoryPage() {
   const [fromCache, setFromCache] = useState(false);
   const [syncMode, setSyncMode] = useState<"" | "cache" | "full" | "incremental">("");
   const [categoryLabels, setCategoryLabels] = useState<CategoryLabelOverride[]>([]);
+  /** Grouped view: which source-package rows are expanded (same table as thead — no nested table shift). */
+  const [openSourcePackages, setOpenSourcePackages] = useState<Record<string, boolean>>({});
 
   async function loadProductsConfig() {
     try {
@@ -337,7 +339,18 @@ export default function InventoryPage() {
             ) : (
               <>
                 <div style={{ overflowX: "auto", marginTop: 14 }}>
-                  <table style={tableStyle}>
+                  <table style={{ ...tableStyle, tableLayout: "fixed" }}>
+                    <colgroup>
+                      <col style={{ width: "22%" }} />
+                      <col style={{ width: "11%" }} />
+                      <col style={{ width: "9%" }} />
+                      <col style={{ width: "10%" }} />
+                      <col style={{ width: "11%" }} />
+                      <col style={{ width: "9%" }} />
+                      <col style={{ width: "8%" }} />
+                      <col style={{ width: "8%" }} />
+                      <col style={{ width: "12%" }} />
+                    </colgroup>
                     <thead>
                       <tr>
                         <th style={thStyle}>Product</th>
@@ -359,54 +372,49 @@ export default function InventoryPage() {
                         : pageGroups.map((g) => (
                             <Fragment key={g.key}>
                               <tr style={{ borderTop: "1px solid rgba(51,65,85,0.6)", background: "rgba(15,23,42,0.5)" }}>
-                                <td colSpan={9} style={{ ...tdStyle, paddingBottom: 4 }}>
-                                  <details style={{ width: "100%" }}>
-                                    <summary
-                                      style={{
-                                        cursor: "pointer",
-                                        color: "#7dd3fc",
-                                        fontWeight: 800,
-                                        listStylePosition: "outside",
-                                      }}
-                                    >
-                                      Source package <span style={{ color: "#e2e8f0" }}>{g.key}</span>
-                                      <span style={{ color: "#94a3b8", fontWeight: 600, marginLeft: 8 }}>
-                                        —
-                                        {g.rows.length === 1
-                                          ? " 1 SKU"
-                                          : ` ${g.rows.length} sizes / SKUs`}
-                                      </span>
-                                    </summary>
-                                    <div style={{ marginTop: 10, overflowX: "auto" }}>
-                                      <table style={{ ...tableStyle, minWidth: 800 }}>
-                                        <thead>
-                                          <tr>
-                                            <th style={nestedThStyle}>Product</th>
-                                            <th style={nestedThStyle}>SKU</th>
-                                            <th style={nestedThStyle}>Strain</th>
-                                            <th style={nestedThStyle}>Category</th>
-                                            <th style={nestedThStyle}>Subcategory</th>
-                                            <th style={nestedThStyle}>Qty</th>
-                                            <th style={nestedThStyle}>Package</th>
-                                            <th style={nestedThStyle}>Price</th>
-                                            <th style={nestedThStyle}>Status</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {g.rows.map((row) => (
-                                            <InventoryProductRow
-                                              key={row.id}
-                                              row={row}
-                                              nested
-                                              categoryLabels={categoryLabels}
-                                            />
-                                          ))}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  </details>
+                                <td colSpan={9} style={{ ...tdStyle, paddingBottom: 8 }}>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setOpenSourcePackages((prev) => ({
+                                        ...prev,
+                                        [g.key]: !prev[g.key],
+                                      }))
+                                    }
+                                    style={{
+                                      width: "100%",
+                                      textAlign: "left",
+                                      cursor: "pointer",
+                                      background: "transparent",
+                                      border: "none",
+                                      color: "#7dd3fc",
+                                      fontWeight: 800,
+                                      fontFamily: "inherit",
+                                      fontSize: 14,
+                                      padding: "4px 0",
+                                    }}
+                                    aria-expanded={Boolean(openSourcePackages[g.key])}
+                                  >
+                                    <span aria-hidden>{openSourcePackages[g.key] ? "▼ " : "▶ "}</span>
+                                    Source package <span style={{ color: "#e2e8f0" }}>{g.key}</span>
+                                    <span style={{ color: "#94a3b8", fontWeight: 600, marginLeft: 8 }}>
+                                      —
+                                      {g.rows.length === 1
+                                        ? " 1 SKU"
+                                        : ` ${g.rows.length} sizes / SKUs`}
+                                    </span>
+                                  </button>
                                 </td>
                               </tr>
+                              {openSourcePackages[g.key]
+                                ? g.rows.map((row) => (
+                                    <InventoryProductRow
+                                      key={row.id}
+                                      row={row}
+                                      categoryLabels={categoryLabels}
+                                    />
+                                  ))
+                                : null}
                             </Fragment>
                           ))}
                     </tbody>
@@ -579,12 +587,6 @@ const thStyle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 800,
   padding: "10px 8px",
-};
-const nestedThStyle: React.CSSProperties = {
-  ...thStyle,
-  fontSize: 11,
-  padding: "8px 6px",
-  whiteSpace: "nowrap",
 };
 const tdStyle: React.CSSProperties = {
   color: "#cbd5e1",
