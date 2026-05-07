@@ -38,7 +38,7 @@ export class CompanyService {
             after: { id: company.id, slug: company.slug, ownerInviteId: invite.id }
         });
         const baseUrl = resolvePublicWebBaseUrl();
-        const inviteUrl = `${baseUrl}/accept-invite?token=${encodeURIComponent(rawToken)}`;
+        const inviteUrl = `${baseUrl}/accept-invite?token=${encodeURIComponent(rawToken)}&companyCode=${encodeURIComponent(company.slug)}`;
         logInfo("company_create_owner_invite", { companyId: company.id, inviteId: invite.id, webBaseUrl: baseUrl });
         void sendInviteEmail({
             to: email,

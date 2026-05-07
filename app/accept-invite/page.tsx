@@ -1,9 +1,9 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
-import { acceptInvite } from "@/lib/api";
+import { acceptInvite, getInvitePreview } from "@/lib/api";
 import { saveAuthSession } from "@/lib/auth";
 
 function AcceptInvitePageInner() {
@@ -11,11 +11,38 @@ function AcceptInvitePageInner() {
   const router = useRouter();
 
   const token = searchParams.get("token") || "";
+  const companyCodeFromUrl = (searchParams.get("companyCode") || "").trim();
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [resolvedCompanyCode, setResolvedCompanyCode] = useState("");
+
+  useEffect(() => {
+    if (companyCodeFromUrl || !token || token.length < 16) {
+      return;
+    }
+    let cancelled = false;
+    void getInvitePreview(token)
+      .then((out) => {
+        if (!cancelled && out?.companyCode) {
+          setResolvedCompanyCode(String(out.companyCode).trim());
+        }
+      })
+      .catch(() => {
+        /* old/invalid token — keep generic sign-in hint */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [companyCodeFromUrl, token]);
+
+  const displayCompanyCode = (
+    companyCodeFromUrl ||
+    resolvedCompanyCode ||
+    ""
+  ).toUpperCase();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -26,8 +53,8 @@ function AcceptInvitePageInner() {
       return;
     }
 
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
       return;
     }
 
@@ -97,8 +124,15 @@ function AcceptInvitePageInner() {
             lineHeight: 1.55,
           }}
         >
-          When you return to the login page, sign in with your{" "}
-          <strong style={{ color: "#f0f9ff" }}>“Company code”</strong>, your{" "}
+          When you return to the login page, sign in with{" "}
+          {displayCompanyCode ? (
+            <>
+              company code{" "}
+              <strong style={{ color: "#f0f9ff" }}>{displayCompanyCode}</strong>, your{" "}
+            </>
+          ) : (
+            <>your company code, </>
+          )}
           <strong style={{ color: "#f0f9ff" }}>email</strong>, and{" "}
           <strong style={{ color: "#f0f9ff" }}>this new password</strong>{" "}
           (enter the same password in both fields below, then use it on the login screen).

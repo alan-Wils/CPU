@@ -81,6 +81,9 @@ export const acceptInviteSchema = z.object({
     token: z.string().min(16).max(256),
     password: z.string().min(8).max(128)
 });
+export const invitePreviewQuerySchema = z.object({
+    token: z.string().min(16).max(256),
+});
 export const createCompanySchema = z.object({
     name: z.string().min(2).max(100),
     slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/),

@@ -279,6 +279,19 @@ export async function acceptInvite(payload: {
   });
 }
 
+/** Resolve company slug for accept-invite copy (unauthenticated; valid open invite only). */
+export async function getInvitePreview(token: string) {
+  const q = encodeURIComponent(token);
+  return apiRequest<{ companyCode: string }>(
+    `/api/auth/invite-preview?token=${q}`,
+    {
+      method: "GET",
+      auth: false,
+      omitCompanyHeader: true,
+    },
+  );
+}
+
 export async function acceptNexBatchInvite(payload: {
   token: string;
   password: string;

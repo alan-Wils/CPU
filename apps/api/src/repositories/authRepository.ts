@@ -98,6 +98,19 @@ export class AuthRepository extends TenantRepository {
             }
         });
     }
+    /** Open company invite with company slug (for accept-invite UI / preview). */
+    async findOpenInviteByTokenHashForPreview(tokenHash: string) {
+        return this.db.inviteToken.findFirst({
+            where: {
+                tokenHash,
+                acceptedAt: null,
+                expiresAt: { gt: new Date() },
+            },
+            include: {
+                company: { select: { slug: true } },
+            },
+        });
+    }
     async findOpenPlatformStaffInviteByTokenHash(tokenHash) {
         return this.db.platformStaffInvite.findFirst({
             where: {

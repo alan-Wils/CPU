@@ -47,10 +47,14 @@ export class AdminService {
         });
         const company = await this.repo.db.company.findUnique({
             where: { id: input.companyId },
-            select: { name: true }
+            select: { name: true, slug: true }
         });
         const baseUrl = resolvePublicWebBaseUrl();
-        const inviteUrl = `${baseUrl}/accept-invite?token=${encodeURIComponent(payload.token)}`;
+        const codeQs =
+            company?.slug != null && String(company.slug).trim()
+                ? `&companyCode=${encodeURIComponent(String(company.slug).trim())}`
+                : "";
+        const inviteUrl = `${baseUrl}/accept-invite?token=${encodeURIComponent(payload.token)}${codeQs}`;
         logInfo("admin_invite_url_resolved", { webBaseUrl: baseUrl });
 
         await this.auditService.logAction({

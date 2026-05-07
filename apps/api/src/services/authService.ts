@@ -411,6 +411,24 @@ export class AuthService {
         });
         return { ok: true };
     }
+    /**
+     * Public: returns company slug for a valid open invite token (same privacy bar as accepting the invite).
+     * Used by the accept-invite page when the email link has no `companyCode` query param (older links).
+     */
+    async getInvitePreview(token: string) {
+        const t = String(token || "").trim();
+        if (t.length < 16) {
+            throw new AppError("Invite is invalid or expired", 400);
+        }
+        const tokenHash = crypto.createHash("sha256").update(t).digest("hex");
+        const invite = await this.repo.findOpenInviteByTokenHashForPreview(tokenHash);
+        const slug = invite?.company?.slug?.trim();
+        if (!invite || !slug) {
+            throw new AppError("Invite is invalid or expired", 400);
+        }
+        return { companyCode: slug };
+    }
+
     async acceptInvite(input: { token: string; password: string }) {
         const tokenHash = crypto.createHash("sha256").update(input.token).digest("hex");
         const invite = await this.repo.findOpenInviteByTokenHash(tokenHash);

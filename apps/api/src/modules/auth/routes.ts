@@ -2,7 +2,7 @@ import { Router } from "express";
 import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { authMiddleware } from "../../middleware/auth.js";
-import { acceptInviteSchema, loginSchema, passwordResetConfirmSchema, resetRequestSchema, selectCompanySchema } from "../../validation/schemas.js";
+import { acceptInviteSchema, invitePreviewQuerySchema, loginSchema, passwordResetConfirmSchema, resetRequestSchema, selectCompanySchema } from "../../validation/schemas.js";
 import { AuthService } from "../../services/authService.js";
 export const authRouter = Router();
 const authService = new AuthService();
@@ -33,6 +33,11 @@ authRouter.post("/select-company", authMiddleware, validate({ body: selectCompan
     const a = req.auth as { userId: string; platformRole?: string | null };
     const out = await authService.selectCompany(a.userId, req.body.companyId, a.platformRole);
     res.json(out);
+}));
+authRouter.get("/invite-preview", validate({ query: invitePreviewQuerySchema }), asyncHandler(async (req, res) => {
+    const q = req.query as { token: string };
+    const result = await authService.getInvitePreview(q.token);
+    res.json(result);
 }));
 authRouter.post("/accept-invite", validate({ body: acceptInviteSchema }), asyncHandler(async (req, res) => {
     const payload = req.body;
