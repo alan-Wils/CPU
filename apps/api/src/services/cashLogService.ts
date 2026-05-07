@@ -12,7 +12,7 @@ import {
     requirePersistentUploadsInProduction,
     uploadsUseS3
 } from "../lib/uploadStorage.js";
-import { recordUsageEventSafe } from "./usageEventRecord.js";
+import { logDatabaseActivity, recordUsageEventSafe } from "./usageEventRecord.js";
 
 function extForReceiptMime(mimeType: string) {
     if (mimeType === "image/png")
@@ -167,13 +167,13 @@ export class CashLogService {
                 updatedAt: true
             }
         });
-        void recordUsageEventSafe({
+        void logDatabaseActivity({
             companyId: input.companyId,
-            provider: "neon",
             feature: "cash_log_entry_create",
-            unitType: "rows_written",
-            units: 1,
-            estimatedCost: 0.00002,
+            dbWrites: 1,
+            rowsWritten: 1,
+            queryCount: 1,
+            metadata: { table: "cash_log_entry", op: "insert" },
         });
         return row;
     }
@@ -242,7 +242,7 @@ export class CashLogService {
             if (patch.receiptImageUrl !== undefined)
                 data.receiptImageUrl = patch.receiptImageUrl ? String(patch.receiptImageUrl).trim() || null : null;
         }
-        return prisma.cashLogEntry.update({
+        const updated = await prisma.cashLogEntry.update({
             where: {
                 id: row.id
             },
@@ -263,6 +263,15 @@ export class CashLogService {
                 updatedAt: true
             }
         });
+        void logDatabaseActivity({
+            companyId,
+            feature: "cash_log_entry_update",
+            dbWrites: 1,
+            rowsWritten: 1,
+            queryCount: 1,
+            metadata: { table: "cash_log_entry", op: "update" },
+        });
+        return updated;
     }
     async list(companyId: string, take = 100, opts?: {
         from?: string;
@@ -270,7 +279,7 @@ export class CashLogService {
         direction?: "INCOMING" | "OUTGOING";
     }) {
         const range = buildUtcDayRange(opts);
-        return prisma.cashLogEntry.findMany({
+        const rows = await prisma.cashLogEntry.findMany({
             where: {
                 companyId,
                 ...(opts?.direction ? { direction: opts.direction } : {}),
@@ -292,6 +301,15 @@ export class CashLogService {
                 updatedAt: true
             }
         });
+        void logDatabaseActivity({
+            companyId,
+            feature: "cash_log_entry_list",
+            dbReads: 1,
+            rowsRead: rows.length,
+            queryCount: 1,
+            metadata: { table: "cash_log_entry", op: "list" },
+        });
+        return rows;
     }
     /**
      * Digest / automation: rolling window `[from, to]` (inclusive UTC instants).

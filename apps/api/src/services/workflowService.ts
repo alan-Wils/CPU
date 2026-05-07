@@ -1,5 +1,6 @@
 import { prisma } from "../config/prisma.js";
 import { OperationalWorkflowService } from "./operationalWorkflowService.js";
+import { logDatabaseActivity } from "./usageEventRecord.js";
 const operational = new OperationalWorkflowService();
 export class WorkflowService {
     async createCultivation(input) {
@@ -126,6 +127,14 @@ export class WorkflowService {
             this.computeSourceMaterialTension(companyId)
         ]);
         const cultivation = [...openCultivation, ...completedCultivation];
+        void logDatabaseActivity({
+            companyId,
+            feature: "workflow_list_active",
+            dbReads: 1,
+            rowsRead: cultivation.length + extraction.length + packaging.length + cultivationPacks.length + biomassRemaining.length,
+            queryCount: 6,
+            metadata: { domain: "workflow" },
+        });
         return { cultivation, extraction, packaging, cultivationPacks, sourceMaterial: biomassRemaining };
     }
     /** Monotonic token for polling: bumps when workflow rows relevant to the SPA change. */
@@ -153,6 +162,14 @@ export class WorkflowService {
             .filter((d) => Boolean(d))
             .map((d) => d.getTime());
         const maxMs = times.length ? Math.max(...times) : 0;
+        void logDatabaseActivity({
+            companyId,
+            feature: "workflow_revision_poll",
+            dbReads: 1,
+            rowsRead: 8,
+            queryCount: 8,
+            metadata: { domain: "workflow" },
+        });
         return { revision: String(maxMs) };
     }
     async computeSourceMaterialTension(companyId) {

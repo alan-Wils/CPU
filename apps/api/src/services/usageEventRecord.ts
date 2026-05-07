@@ -1,5 +1,10 @@
 import type { Prisma, UsageProvider } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
+import {
+    estimateNeonMetricCostUsd,
+    estimateStorageMbFromRowsWritten,
+    type NeonUsageMetric,
+} from "../config/neonUsagePricing.js";
 import { logWarn } from "../lib/logger.js";
 
 export type RecordUsageEventInput = {
@@ -9,6 +14,14 @@ export type RecordUsageEventInput = {
     unitType: string;
     units: number;
     estimatedCost?: number;
+    metadata?: Prisma.InputJsonValue;
+};
+
+export type RecordDbUsageInput = {
+    companyId: string;
+    metric: NeonUsageMetric;
+    units: number;
+    feature: string;
     metadata?: Prisma.InputJsonValue;
 };
 
@@ -54,4 +67,60 @@ export async function recordUsageEventSafe(input: RecordUsageEventInput): Promis
             error: error instanceof Error ? error.message : String(error),
         });
     }
+}
+
+/**
+ * Internal Neon usage logging for tenant-scoped DB attribution.
+ */
+export async function incrementDbUsage(input: RecordDbUsageInput): Promise<void> {
+    const metric = String(input.metric || "").trim() as NeonUsageMetric;
+    const units = Number.isFinite(input.units) ? input.units : 0;
+    await recordUsageEventSafe({
+        companyId: input.companyId,
+        provider: "neon",
+        feature: input.feature,
+        unitType: metric,
+        units,
+        estimatedCost: estimateNeonMetricCostUsd(metric, units),
+        metadata: input.metadata,
+    });
+}
+
+/**
+ * Convenience helper for multi-metric DB activity in one call.
+ */
+export async function logDatabaseActivity(input: {
+    companyId: string;
+    feature: string;
+    dbReads?: number;
+    dbWrites?: number;
+    rowsRead?: number;
+    rowsWritten?: number;
+    queryCount?: number;
+    storageMb?: number;
+    metadata?: Prisma.InputJsonValue;
+}): Promise<void> {
+    const rowsWritten = Math.max(0, Number(input.rowsWritten || 0));
+    const storageEstimate = Number(input.storageMb || 0) > 0
+        ? Number(input.storageMb)
+        : rowsWritten > 0
+            ? estimateStorageMbFromRowsWritten(rowsWritten)
+            : 0;
+    const rows: Array<{ metric: NeonUsageMetric; units: number }> = [
+        { metric: "db_read", units: Number(input.dbReads || 0) },
+        { metric: "db_write", units: Number(input.dbWrites || 0) },
+        { metric: "rows_read", units: Number(input.rowsRead || 0) },
+        { metric: "rows_written", units: rowsWritten },
+        { metric: "query", units: Number(input.queryCount || 0) },
+        { metric: "storage_mb", units: storageEstimate },
+    ];
+    await Promise.all(rows
+        .filter((r) => Number.isFinite(r.units) && r.units > 0)
+        .map((r) => incrementDbUsage({
+        companyId: input.companyId,
+        metric: r.metric,
+        units: r.units,
+        feature: input.feature,
+        metadata: input.metadata,
+    })));
 }

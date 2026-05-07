@@ -4,7 +4,7 @@ import { AppError } from "../errors/AppError.js";
 import { isPlatformOperator } from "../lib/nexbatchRoles.js";
 import { logInfo } from "../lib/logger.js";
 import { sendInviteEmail } from "../lib/mailer.js";
-import { recordUsageEventSafe } from "./usageEventRecord.js";
+import { logDatabaseActivity, recordUsageEventSafe } from "./usageEventRecord.js";
 import { CompanyRepository } from "../repositories/companyRepository.js";
 import { AuditService } from "./auditService.js";
 export class CompanyService {
@@ -92,6 +92,14 @@ export class CompanyService {
             entityType: "User",
             entityId: user.id,
             after: { email: user.email, role: user.role }
+        });
+        void logDatabaseActivity({
+            companyId: input.companyId,
+            feature: "company_user_create",
+            dbWrites: 1,
+            rowsWritten: 1,
+            queryCount: 1,
+            metadata: { table: "user", op: "insert" },
         });
         return user;
     }

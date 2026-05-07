@@ -56,7 +56,7 @@ const PROVIDER_META: Record<
     },
     neon: {
         displayName: "Neon Database",
-        notes: "Rows written / queries approximated from DB-touching actions.",
+        notes: "Tenant usage is aggregated internally from UsageEvent activity (Neon API optional for diagnostics).",
     },
     resend: {
         displayName: "Resend Email",
@@ -241,7 +241,7 @@ export class UsageCostService {
                 usageMetrics.push({ label: "Logged units (MTD)", value: "0" });
             }
 
-            const usageSummary = estimatedCost > 0
+            let usageSummary = estimatedCost > 0
                 ? `${usageMetrics.map((m) => `${m.label}: ${m.value}`).join(" · ")} · Event est. ${formatUsd(estimatedCost)}`
                 : "No usage logged this month for this provider.";
 
@@ -262,6 +262,50 @@ export class UsageCostService {
                 statusLabel = "No activity";
             if (meta.exactInternalPreferred && estimatedCost > 0) {
                 statusLabel = "Estimated from app usage (exact internal events)";
+            }
+            if (provider === "neon") {
+                const raw = (snapshot?.rawUsageJson ?? null) as {
+                    neonStatus?: string;
+                    metrics?: Record<string, unknown>;
+                } | null;
+                const neonStatus = String(raw?.neonStatus || "").trim();
+                const m = raw?.metrics || {};
+                const dbReads = Number(m.db_read ?? (a?.byUnit.get("db_read") ?? 0));
+                const dbWrites = Number(m.db_write ?? (a?.byUnit.get("db_write") ?? 0));
+                const rowsWritten = Number(m.rows_written ?? (a?.byUnit.get("rows_written") ?? 0));
+                const rowsRead = Number(m.rows_read ?? (a?.byUnit.get("rows_read") ?? 0));
+                const queries = Number(m.query ?? (a?.byUnit.get("query") ?? 0));
+                const storageMb = Number(m.storage_mb ?? (a?.byUnit.get("storage_mb") ?? 0));
+                usageMetrics.splice(0, usageMetrics.length, ...[
+                    { label: "db reads", value: formatUnits(dbReads) },
+                    { label: "db writes", value: formatUnits(dbWrites) },
+                    { label: "rows written", value: formatUnits(rowsWritten) },
+                    { label: "rows read", value: formatUnits(rowsRead) },
+                    { label: "query", value: formatUnits(queries) },
+                    { label: "storage mb", value: formatUnits(storageMb) },
+                ]);
+                usageSummary =
+                    `${usageMetrics.map((x) => `${x.label}: ${x.value}`).join(" · ")} · Est. ${formatUsd(displayCost)}`;
+                if (!neonStatus) {
+                    if (effectiveStatus === "sync_failed")
+                        statusLabel = "Error";
+                    else if (effectiveStatus === "missing_token")
+                        statusLabel = "Missing config";
+                    else if (effectiveStatus === "no_activity")
+                        statusLabel = "No activity";
+                    else
+                        statusLabel = "Aggregated internally";
+                }
+                else if (neonStatus === "Active")
+                    statusLabel = "Active";
+                else if (neonStatus === "No activity")
+                    statusLabel = "No activity";
+                else if (neonStatus === "Aggregated internally")
+                    statusLabel = "Aggregated internally";
+                else if (neonStatus === "Missing config")
+                    statusLabel = "Missing config";
+                else if (neonStatus === "Error")
+                    statusLabel = "Error";
             }
 
             return {

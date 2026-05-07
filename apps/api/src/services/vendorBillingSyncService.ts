@@ -2,7 +2,7 @@ import type { UsageProvider } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { logInfo, logWarn } from "../lib/logger.js";
 import { syncCloudflareMonth } from "./vendorClients/cloudflareClient.js";
-import { syncNeonMonth } from "./vendorClients/neonClient.js";
+import { NeonUsageAggregationService } from "./neonUsageAggregationService.js";
 import { syncOpenAIMonth } from "./vendorClients/openaiUsageClient.js";
 import { syncRailwayMonth } from "./vendorClients/railwayClient.js";
 import { syncResendMonth } from "./vendorClients/resendClient.js";
@@ -53,10 +53,30 @@ export class VendorBillingSyncService {
     async syncCurrentMonthAllProviders(): Promise<{ month: string; results: VendorSyncSummaryRow[] }> {
         const now = new Date();
         const { monthStart, nextMonthStart, label } = utcMonthRange(now);
+        const neonAggService = new NeonUsageAggregationService();
+        const neonAgg = await neonAggService.aggregateMonth(monthStart, nextMonthStart);
+        const neonSyncStatus: VendorSyncStatus = neonAgg.status === "Error"
+            ? "sync_failed"
+            : neonAgg.status === "No activity"
+                ? "estimated_only"
+                : "live_synced";
+        const neonResult: VendorSyncResult = {
+            provider: "neon",
+            status: neonSyncStatus,
+            totalCost: neonAgg.totalCost,
+            currency: neonAgg.currency,
+            syncedAt: new Date(),
+            message: neonAgg.status,
+            rawUsageJson: {
+                metrics: neonAgg.metrics,
+                diagnostics: neonAgg.diagnostics,
+                neonStatus: neonAgg.status,
+            },
+        };
         const results = await Promise.all([
             syncVercelMonth(),
             syncRailwayMonth(),
-            syncNeonMonth(),
+            Promise.resolve(neonResult),
             syncResendMonth(),
             syncCloudflareMonth(),
             syncOpenAIMonth(monthStart, nextMonthStart),

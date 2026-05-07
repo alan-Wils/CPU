@@ -2,6 +2,7 @@ import { prisma } from "../config/prisma.js";
 import { AppError } from "../errors/AppError.js";
 import { aGradePopcornAvailable, isAgriculturallyCompleteForAutoStatus, productCategoryForSource } from "../domain/cultivationStateEngine.js";
 import { AuditService } from "./auditService.js";
+import { logDatabaseActivity } from "./usageEventRecord.js";
 import { Prisma } from "@prisma/client";
 const MAX_UI_JSON_BYTES = 900_000;
 function assertUiJsonSize(field, value) {
@@ -28,6 +29,18 @@ function deriveStrainAcronym(strain) {
 }
 export class OperationalWorkflowService {
     audit = new AuditService();
+    private trackDb(companyId: string, feature: string, mode: "read" | "write", rows = 1, metadata?: Prisma.InputJsonValue) {
+        void logDatabaseActivity({
+            companyId,
+            feature,
+            dbReads: mode === "read" ? 1 : 0,
+            dbWrites: mode === "write" ? 1 : 0,
+            rowsRead: mode === "read" ? Math.max(0, rows) : 0,
+            rowsWritten: mode === "write" ? Math.max(0, rows) : 0,
+            queryCount: 1,
+            metadata,
+        });
+    }
     async createCultivation(input) {
         const total = g(input.aGradeFlowerGrams + input.popcornGrams + input.trimGrams + input.freshFrozenGrams);
         if (total <= 0) {
@@ -102,6 +115,7 @@ export class OperationalWorkflowService {
             entityId: created.id,
             after: { id: created.id, chain: `${created.strainAcronym}-${created.batchChainCode}` }
         });
+        this.trackDb(input.companyId, "cultivation_batch_create", "write", 6, { domain: "workflow" });
         return created;
     }
     async getOperationalState(companyId, batchId) {
@@ -240,6 +254,7 @@ export class OperationalWorkflowService {
             entityId: created.id,
             after: { id: created.id, line: created.line, mode: "new" }
         });
+        this.trackDb(input.companyId, "cultivation_packaging_start", "write", 1, { domain: "workflow" });
         return created;
     }
     async weighCultivationPackaging(input) {
@@ -294,6 +309,7 @@ export class OperationalWorkflowService {
             entityId: run.id,
             after: { netProductGrams: input.netProductGrams, terpeneGrams: input.terpeneGrams }
         });
+        this.trackDb(input.companyId, "cultivation_packaging_weigh", "write", 2, { domain: "workflow" });
         return out;
     }
     async finishCultivationPackaging(input) {
@@ -321,6 +337,7 @@ export class OperationalWorkflowService {
             entityId: run.id,
             after: { status: "COMPLETED" }
         });
+        this.trackDb(input.companyId, "cultivation_packaging_finish", "write", 1, { domain: "workflow" });
         await this.recomputeCultivationAutoStatus(input.companyId, run.cultivationBatchId, input.actorUserId);
         return completed;
     }
@@ -384,6 +401,7 @@ export class OperationalWorkflowService {
             entityId: run.id,
             after: { phase: run.phase }
         });
+        this.trackDb(input.companyId, "extraction_run_create_shell", "write", 1, { domain: "workflow" });
         return run;
     }
     async requireExtractionRun(companyId, id, expected) {
@@ -533,6 +551,7 @@ export class OperationalWorkflowService {
             entityId: created.id,
             after: { sourceType: input.sourceType, grams: input.grams, sock: input.sockWeightGrams, category: category }
         });
+        this.trackDb(input.companyId, "extraction_biomass_add", "write", 3, { domain: "workflow" });
         await this.recomputeCultivationAutoStatus(input.companyId, input.cultivationBatchId, input.actorUserId);
         return created;
     }
@@ -569,6 +588,7 @@ export class OperationalWorkflowService {
             entityId: run.id,
             after: { method: input.method, inputGrams, phase: "IN_PROGRESS" }
         });
+        this.trackDb(input.companyId, "extraction_input_seal", "write", 1, { domain: "workflow" });
         return updated;
     }
     async completeExtractionRun(input) {
@@ -595,6 +615,7 @@ export class OperationalWorkflowService {
             entityId: run.id,
             after: { outputGrams: input.outputGrams, phase: "COMPLETED" }
         });
+        this.trackDb(input.companyId, "extraction_run_complete", "write", 1, { domain: "workflow" });
         return out;
     }
     async startExtractionPackaging(input) {
@@ -629,6 +650,7 @@ export class OperationalWorkflowService {
             entityId: lot.id,
             after: { sku: lot.sku, status: "IN_PROGRESS" }
         });
+        this.trackDb(input.companyId, "extraction_packaging_start", "write", 1, { domain: "workflow" });
         return lot;
     }
     async weighExtractionPackaging(input) {
@@ -661,6 +683,7 @@ export class OperationalWorkflowService {
                 entityId: r.id,
                 after: { net: input.netOutputGrams, terpene: input.terpeneGrams }
             });
+            this.trackDb(input.companyId, "extraction_packaging_weigh", "write", 1, { domain: "workflow" });
             return r;
         });
     }
@@ -690,6 +713,7 @@ export class OperationalWorkflowService {
                 entityId: r.id,
                 after: { status: "COMPLETED", units }
             });
+            this.trackDb(input.companyId, "extraction_packaging_finish", "write", 1, { domain: "workflow" });
             return r;
         });
     }
@@ -737,6 +761,7 @@ export class OperationalWorkflowService {
                 hasCultivationUiState: Boolean(updated.cultivationUiState)
             }
         });
+        this.trackDb(input.companyId, "cultivation_batch_update", "write", 1, { domain: "workflow" });
         return updated;
     }
     async deleteCultivationBatch(input) {
@@ -813,6 +838,7 @@ export class OperationalWorkflowService {
                 batchChainCode: batch.batchChainCode
             }
         });
+        this.trackDb(input.companyId, "cultivation_batch_delete", "write", 1, { domain: "workflow", cascade: true });
         return { ok: true };
     }
     async listSourcePackages(input) {
@@ -848,6 +874,7 @@ export class OperationalWorkflowService {
             entityId: created.id,
             after: { role: created.role, canonicalName: created.canonicalName }
         });
+        this.trackDb(input.companyId, "source_package_create", "write", 1, { domain: "workflow" });
         return created;
     }
     async updateSourcePackage(input) {
@@ -869,6 +896,7 @@ export class OperationalWorkflowService {
             before: { canonicalName: current.canonicalName },
             after: { canonicalName: updated.canonicalName }
         });
+        this.trackDb(input.companyId, "source_package_update", "write", 1, { domain: "workflow" });
         return updated;
     }
     async consumeSourcePackage(input) {
@@ -897,6 +925,7 @@ export class OperationalWorkflowService {
                 entityId: pack.id,
                 after: { consumedGrams: row.consumedGrams }
             });
+            this.trackDb(input.companyId, "source_package_consume_trim", "write", 1, { domain: "workflow" });
             return row;
         }
         if (pack.role === "FRESH_FROZEN") {
@@ -918,6 +947,7 @@ export class OperationalWorkflowService {
                 entityId: pack.id,
                 after: { toExtractionGrams: row.toExtractionGrams }
             });
+            this.trackDb(input.companyId, "source_package_consume_fresh", "write", 1, { domain: "workflow" });
             return row;
         }
         throw new AppError("Only DRY_TRIM and FRESH_FROZEN can be consumed through this endpoint", 400);
@@ -937,6 +967,7 @@ export class OperationalWorkflowService {
             entityType: "SourcePackage",
             entityId: pack.id
         });
+        this.trackDb(input.companyId, "source_package_delete", "write", 1, { domain: "workflow" });
         return { ok: true };
     }
     async updateExtractionRun(input) {
@@ -966,6 +997,7 @@ export class OperationalWorkflowService {
             entityId: updated.id,
             after: { method: updated.method, supplyUsed: updated.supplyUsed, hasExtractionUiState: Boolean(updated.extractionUiState) }
         });
+        this.trackDb(input.companyId, "extraction_run_update", "write", 1, { domain: "workflow" });
         return updated;
     }
     async deleteExtractionRun(input) {
@@ -983,6 +1015,7 @@ export class OperationalWorkflowService {
             entityType: "ExtractionRun",
             entityId: run.id
         });
+        this.trackDb(input.companyId, "extraction_run_delete", "write", 1, { domain: "workflow" });
         return { ok: true };
     }
     async updatePackagingLot(input) {
@@ -1015,6 +1048,7 @@ export class OperationalWorkflowService {
             entityId: updated.id,
             after: { sku: updated.sku, gramsPerUnit: updated.gramsPerUnit, hasPackagingUiState: Boolean(updated.packagingUiState) }
         });
+        this.trackDb(input.companyId, "packaging_lot_update", "write", 1, { domain: "workflow" });
         return updated;
     }
     async deletePackagingLot(input) {
@@ -1032,6 +1066,7 @@ export class OperationalWorkflowService {
             entityType: "PackagingLot",
             entityId: lot.id
         });
+        this.trackDb(input.companyId, "packaging_lot_delete", "write", 1, { domain: "workflow" });
         return { ok: true };
     }
 }

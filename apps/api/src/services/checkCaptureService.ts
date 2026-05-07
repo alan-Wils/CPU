@@ -12,7 +12,7 @@ import {
     requirePersistentUploadsInProduction,
     uploadsUseS3
 } from "../lib/uploadStorage.js";
-import { recordUsageEventSafe } from "./usageEventRecord.js";
+import { logDatabaseActivity, recordUsageEventSafe } from "./usageEventRecord.js";
 
 function extForMime(mimeType) {
     if (mimeType === "image/png")
@@ -303,6 +303,14 @@ export class CheckCaptureService {
                 rawOcrJson: input.rawOcrJson ? JSON.stringify(input.rawOcrJson) : undefined
             }
         });
+        void logDatabaseActivity({
+            companyId: input.companyId,
+            feature: "check_capture_save",
+            dbWrites: 1,
+            rowsWritten: 1,
+            queryCount: 1,
+            metadata: { table: "check_capture", op: "insert" },
+        });
         return row;
     }
     async updateById(companyId, id, patch) {
@@ -365,7 +373,7 @@ export class CheckCaptureService {
         if (patch.rawOcrJson !== undefined) {
             data.rawOcrJson = patch.rawOcrJson == null ? null : JSON.stringify(patch.rawOcrJson);
         }
-        return prisma.checkCapture.update({
+        const updated = await prisma.checkCapture.update({
             where: {
                 id: row.id
             },
@@ -389,6 +397,15 @@ export class CheckCaptureService {
                 updatedAt: true
             }
         });
+        void logDatabaseActivity({
+            companyId,
+            feature: "check_capture_update",
+            dbWrites: 1,
+            rowsWritten: 1,
+            queryCount: 1,
+            metadata: { table: "check_capture", op: "update" },
+        });
+        return updated;
     }
     buildDateFilter(opts) {
         const from = opts?.from ? parseUtcDayStart(opts.from) : undefined;
@@ -433,7 +450,7 @@ export class CheckCaptureService {
     }
     async listChecks(companyId, take = 50, opts) {
         const createdAt = this.buildDateFilter(opts);
-        return prisma.checkCapture.findMany({
+        const rows = await prisma.checkCapture.findMany({
             where: {
                 companyId,
                 ...(createdAt ? { createdAt } : {})
@@ -460,6 +477,15 @@ export class CheckCaptureService {
                 updatedAt: true
             }
         });
+        void logDatabaseActivity({
+            companyId,
+            feature: "check_capture_list",
+            dbReads: 1,
+            rowsRead: rows.length,
+            queryCount: 1,
+            metadata: { table: "check_capture", op: "list" },
+        });
+        return rows;
     }
     async listChecksForExport(companyId, opts) {
         const createdAt = this.buildDateFilter(opts);
@@ -525,5 +551,13 @@ export class CheckCaptureService {
         await removeStoredUpload(row.imageUrl);
         await removeStoredUpload(row.stubImageUrl);
         await prisma.checkCapture.delete({ where: { id: row.id } });
+        void logDatabaseActivity({
+            companyId,
+            feature: "check_capture_delete",
+            dbWrites: 1,
+            rowsWritten: 1,
+            queryCount: 1,
+            metadata: { table: "check_capture", op: "delete" },
+        });
     }
 }
