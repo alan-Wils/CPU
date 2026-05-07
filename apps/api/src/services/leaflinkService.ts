@@ -201,8 +201,21 @@ function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
     const row = asRecord(item);
     const id = pickString(row, ["id", "inventory_id", "product_id", "sku"]);
     if (!id) continue;
-    const availableQuantity = pickNumber(row, ["available_quantity", "quantity_available", "quantity", "available"]);
-    const status = pickString(row, ["status", "availability", "state"]).toLowerCase();
+    const availableQuantity = pickNumber(row, [
+      "available_inventory",
+      "available_quantity",
+      "quantity_available",
+      "quantity",
+      "available",
+      "on_hand_quantity",
+    ]);
+    const status = pickString(row, [
+      "status",
+      "availability",
+      "state",
+      "listing_state",
+      "display_listing_state",
+    ]).toLowerCase();
     const likelyAvailable =
       availableQuantity > 0 ||
       status.includes("available") ||
@@ -218,11 +231,11 @@ function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
       productType: pickString(row, ["product_type", "type"]),
       brand: pickString(row, ["brand", "brand_name", "vendor_name"]),
       availableQuantity,
-      unit: pickString(row, ["unit", "unit_of_measure", "uom"]),
-      packageSize: pickString(row, ["package_size", "size"]),
+      unit: pickString(row, ["unit", "unit_of_measure", "sell_in_unit_of_measure", "uom"]),
+      packageSize: pickString(row, ["package_size", "size", "unit_multiplier"]),
       price: pickPrice(row),
-      status: pickString(row, ["status", "availability", "state"]),
-      updatedAt: pickString(row, ["updated_at", "updatedAt", "modified_at"]),
+      status: pickString(row, ["status", "availability", "state", "listing_state", "display_listing_state"]),
+      updatedAt: pickString(row, ["updated_at", "updatedAt", "modified_at", "modified", "last_edit"]),
       imageUrl: pickString(row, ["image_url", "image", "thumbnail_url"]),
     });
   }
