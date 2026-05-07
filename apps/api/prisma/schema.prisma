@@ -144,7 +144,8 @@ model Company {
   storeSnapshots      CompanyStore[]
   checkCaptures       CheckCapture[]
   cashLogEntries      CashLogEntry[]
-  usageEvents         UsageEvent[]
+  usageEvents                 UsageEvent[]
+  nexbatchCompanyUsageLogs    NexbatchCompanyUsageLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -161,6 +162,25 @@ model UsageEvent {
   estimatedCost Float         @default(0)
   metadata      Json?
   createdAt     DateTime      @default(now())
+
+  @@index([companyId, createdAt])
+  @@index([companyId, provider, createdAt])
+}
+
+/// NexBatch-initiated usage attributed per company (e.g. platform staff emails split across attached tenants).
+model NexbatchCompanyUsageLog {
+  id            String   @id @default(cuid())
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  actorUserId   String?
+  feature       String
+  category      String   @default("nexbatch_platform")
+  provider      String
+  unitType      String
+  units         Float    @default(0)
+  estimatedCost Float    @default(0)
+  metadata      Json?
+  createdAt     DateTime @default(now())
 
   @@index([companyId, createdAt])
   @@index([companyId, provider, createdAt])

@@ -13,6 +13,7 @@ import {
 } from "../lib/nexbatchRoles.js";
 import { AuthRepository } from "../repositories/authRepository.js";
 import { CompanyRepository } from "../repositories/companyRepository.js";
+import { recordNexbatchPlatformUsageSplitAcrossCompaniesSafe } from "./nexbatchCompanyUsageLogRecord.js";
 
 export class NexBatchStaffService {
     private authRepo = new AuthRepository();
@@ -79,7 +80,22 @@ export class NexBatchStaffService {
                 logInfo("nexbatch_staff_invite_email_sent", {
                     to: email,
                     companiesAttached: companyIds.length,
-                    note: "Resend usage not written to UsageEvent — platform invites are not attributable to a tenant (avoids charging the wrong company).",
+                    usageLog: "Attributed per NexbatchCompanyUsageLog (fractional split across attached companies)",
+                });
+                await recordNexbatchPlatformUsageSplitAcrossCompaniesSafe({
+                    companyIds,
+                    feature: "nexbatch_staff_invite_email",
+                    unitType: "email_sent",
+                    totalUnits: 1,
+                    totalEstimatedCost: 0.0004,
+                    provider: "resend",
+                    actorUserId: input.actorUserId,
+                    metadata: {
+                        scope: "platform_staff_invite",
+                        inviteeEmail: email,
+                        platformRole,
+                        splitAcrossCompanies: companyIds.length,
+                    },
                 });
             },
             (err) => {

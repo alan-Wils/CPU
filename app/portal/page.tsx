@@ -5,9 +5,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   apiRequest,
   fetchCompanyUsageCosts,
+  fetchNexbatchCompanyUsageLog,
   setSelectedCompanyId,
   syncVendorUsageCosts,
   type CompanyUsageCostsDto,
+  type NexbatchCompanyUsageLogItemDto,
 } from "@/lib/api";
 import {
   canCreatePlatformCompanies,
@@ -56,6 +58,7 @@ function UsageCostsModal({
   onClose: () => void;
 }) {
   const [data, setData] = useState<CompanyUsageCostsDto | null>(null);
+  const [nexbatchLog, setNexbatchLog] = useState<NexbatchCompanyUsageLogItemDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -67,8 +70,12 @@ function UsageCostsModal({
     else setRefreshing(true);
     setErr("");
     try {
-      const d = await fetchCompanyUsageCosts(companyId);
+      const [d, logOut] = await Promise.all([
+        fetchCompanyUsageCosts(companyId),
+        fetchNexbatchCompanyUsageLog(companyId, 35).catch(() => ({ companyId, items: [] as NexbatchCompanyUsageLogItemDto[] })),
+      ]);
       setData(d);
+      setNexbatchLog(logOut.items);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Could not load usage and costs.");
     } finally {
@@ -291,6 +298,45 @@ function UsageCostsModal({
                   </div>
                 </div>
               ))}
+            </div>
+
+            <div style={{ marginTop: 22 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#94a3b8", marginBottom: 8 }}>
+                NexBatch platform usage (attributed here)
+              </div>
+              <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                Actions initiated by NexBatch staff (for example inviting staff attached to multiple companies) are logged per company — often split as fractional units across each attached tenant so totals stay proportional.
+              </p>
+              {nexbatchLog.length === 0 ? (
+                <p style={{ margin: 0, fontSize: 12, color: "#475569", fontStyle: "italic" }}>No NexBatch-attributed rows for this workspace yet.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 8, maxHeight: 220, overflowY: "auto" }}>
+                  {nexbatchLog.map((row) => (
+                    <div
+                      key={row.id}
+                      style={{
+                        fontSize: 11,
+                        lineHeight: 1.45,
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        border: "1px solid rgba(71, 85, 105, 0.6)",
+                        background: "#020617",
+                      }}
+                    >
+                      <div style={{ color: "#bae6fd", fontWeight: 700 }}>
+                        {row.feature} · {row.provider} · {row.unitType}: {Number.isFinite(row.units) ? Number(row.units).toFixed(row.units >= 1 ? 4 : 6) : "0"}
+                      </div>
+                      <div style={{ color: "#64748b" }}>
+                        {new Date(row.createdAt).toLocaleString()}
+                        {" · "}est. {fmtUsd(row.estimatedCost)}
+                      </div>
+                      {typeof row.category === "string" && row.category ? (
+                        <div style={{ color: "#57534e" }}>category: {row.category}</div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </>
         ) : (

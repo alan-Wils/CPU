@@ -606,6 +606,27 @@ export async function fetchCompanyUsageCosts(companyId: string) {
   );
 }
 
+export type NexbatchCompanyUsageLogItemDto = {
+  id: string;
+  actorUserId: string | null;
+  feature: string;
+  category: string;
+  provider: string;
+  unitType: string;
+  units: number;
+  estimatedCost: number;
+  metadata: unknown;
+  createdAt: string;
+};
+
+export async function fetchNexbatchCompanyUsageLog(companyId: string, take = 40) {
+  const q = take > 0 ? `?take=${encodeURIComponent(String(take))}` : "";
+  return apiRequest<{ companyId: string; items: NexbatchCompanyUsageLogItemDto[] }>(
+    `/api/admin/companies/${encodeURIComponent(companyId)}/nexbatch-company-usage-log${q}`,
+    { omitCompanyHeader: true },
+  );
+}
+
 export type VendorSyncSummaryDto = {
   provider: string;
   status: "live_synced" | "missing_token" | "sync_failed" | "estimated_only";

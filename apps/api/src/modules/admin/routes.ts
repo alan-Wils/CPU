@@ -7,10 +7,13 @@ import { AdminService } from "../../services/adminService.js";
 import { requirePlatformRoles, requireRole } from "../../middleware/rbac.js";
 import { UsageCostService } from "../../services/usageCostService.js";
 import { VendorBillingSyncService } from "../../services/vendorBillingSyncService.js";
+import { NexbatchCompanyUsageLogService } from "../../services/nexbatchCompanyUsageLogService.js";
+
 export const adminRouter = Router();
 const adminService = new AdminService();
 const usageCostService = new UsageCostService();
 const vendorBillingSyncService = new VendorBillingSyncService();
+const nexbatchCompanyUsageLogService = new NexbatchCompanyUsageLogService();
 
 adminRouter.get(
     "/companies/:companyId/usage-costs",
@@ -26,6 +29,18 @@ adminRouter.post(
     requirePlatformRoles(["nexbatch_admin", "owner"]),
     asyncHandler(async (_req, res) => {
         const out = await vendorBillingSyncService.syncCurrentMonthAllProviders();
+        res.json(out);
+    }),
+);
+
+adminRouter.get(
+    "/companies/:companyId/nexbatch-company-usage-log",
+    requirePlatformRoles(["nexbatch_admin", "owner"]),
+    asyncHandler(async (req, res) => {
+        const companyId = String(req.params.companyId || "").trim();
+        const takeRaw = typeof req.query.take === "string" ? Number(req.query.take) : NaN;
+        const take = Number.isFinite(takeRaw) ? takeRaw : 50;
+        const out = await nexbatchCompanyUsageLogService.listForCompany(companyId, take);
         res.json(out);
     }),
 );
