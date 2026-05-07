@@ -160,6 +160,20 @@ type AppConfig = {
       tierPointsMultiplier: number;
     }>;
   };
+  /** Wholesale / ops contact and policy text (reference for staff; not sent to LeafLink). */
+  sales: {
+    primaryContactName: string;
+    primaryContactEmail: string;
+    primaryContactPhone: string;
+    defaultPaymentTerms: string;
+    fulfillmentNotes: string;
+    wholesalePortalUrl: string;
+  };
+  /** Merchandising & catalog display (e.g. map LeafLink category ids to friendly names). */
+  products: {
+    categoryLabels: Array<{ id: string; displayName: string }>;
+    notes: string;
+  };
 };
 
 const emptyConfig: AppConfig = {
@@ -214,6 +228,18 @@ const emptyConfig: AppConfig = {
   packaging: {
     supplies: [],
     customTasks: [],
+  },
+  sales: {
+    primaryContactName: "",
+    primaryContactEmail: "",
+    primaryContactPhone: "",
+    defaultPaymentTerms: "",
+    fulfillmentNotes: "",
+    wholesalePortalUrl: "",
+  },
+  products: {
+    categoryLabels: [],
+    notes: "",
   },
 };
 
@@ -569,6 +595,17 @@ export default function ConfigPage() {
             ? ((data.packaging as { customTasks: NonNullable<AppConfig["packaging"]["customTasks"]> }).customTasks)
             : [],
         },
+        sales: {
+          ...emptyConfig.sales,
+          ...(data.sales || {}),
+        },
+        products: {
+          ...emptyConfig.products,
+          ...(data.products || {}),
+          categoryLabels: Array.isArray((data.products as { categoryLabels?: unknown } | undefined)?.categoryLabels)
+            ? ((data.products as { categoryLabels: AppConfig["products"]["categoryLabels"] }).categoryLabels)
+            : [],
+        },
       });
       syncCompanyTimezoneFromConfigPayload(raw);
     } catch (error) {
@@ -648,6 +685,17 @@ export default function ConfigPage() {
           ...(data.packaging || {}),
           customTasks: Array.isArray((data.packaging as { customTasks?: unknown } | undefined)?.customTasks)
             ? ((data.packaging as { customTasks: NonNullable<AppConfig["packaging"]["customTasks"]> }).customTasks)
+            : [],
+        },
+        sales: {
+          ...emptyConfig.sales,
+          ...(data.sales || {}),
+        },
+        products: {
+          ...emptyConfig.products,
+          ...(data.products || {}),
+          categoryLabels: Array.isArray((data.products as { categoryLabels?: unknown } | undefined)?.categoryLabels)
+            ? ((data.products as { categoryLabels: AppConfig["products"]["categoryLabels"] }).categoryLabels)
             : [],
         },
       });
@@ -1430,7 +1478,8 @@ export default function ConfigPage() {
         <div>
           <h1 style={styles.title}>Company Config</h1>
           <p style={styles.subtitle}>
-            Admin-only company settings — climate control (Autogrow), METRC, cultivation, extraction, and packaging.
+            Admin-only company settings — sales, products, climate (Autogrow), METRC, cultivation, extraction, and
+            packaging.
           </p>
         </div>
 
@@ -2971,6 +3020,236 @@ export default function ConfigPage() {
       <CollapsibleConfigSection
         sectionStyle={{ ...styles.card, marginTop: 18 }}
         sectionNumber="2"
+        title="Sales"
+        summaryCollapsed={
+          <>
+            Contact:{" "}
+            <b style={{ color: "#e2e8f0" }}>
+              {(config.sales.primaryContactName || "").trim() || "—"}
+            </b>
+            {(config.sales.primaryContactEmail || "").trim()
+              ? ` · ${(config.sales.primaryContactEmail || "").trim()}`
+              : ""}
+          </>
+        }
+      >
+        <div style={styles.configSubCard}>
+          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14, lineHeight: 1.55 }}>
+            Wholesale and order reference for your team. This does not change LeafLink — it is stored in NexBatch
+            company config for internal use.
+          </p>
+          <div style={styles.grid}>
+            <label style={styles.label}>
+              Primary contact name
+              <input
+                style={styles.input}
+                value={config.sales.primaryContactName}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    sales: { ...prev.sales, primaryContactName: e.target.value },
+                  }))
+                }
+              />
+            </label>
+            <label style={styles.label}>
+              Email
+              <input
+                style={styles.input}
+                type="email"
+                autoComplete="off"
+                value={config.sales.primaryContactEmail}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    sales: { ...prev.sales, primaryContactEmail: e.target.value },
+                  }))
+                }
+              />
+            </label>
+            <label style={styles.label}>
+              Phone
+              <input
+                style={styles.input}
+                autoComplete="off"
+                value={config.sales.primaryContactPhone}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    sales: { ...prev.sales, primaryContactPhone: e.target.value },
+                  }))
+                }
+              />
+            </label>
+            <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
+              Default payment terms
+              <input
+                style={styles.input}
+                placeholder="e.g. Net 30, COD, prepay"
+                value={config.sales.defaultPaymentTerms}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    sales: { ...prev.sales, defaultPaymentTerms: e.target.value },
+                  }))
+                }
+              />
+            </label>
+            <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
+              Wholesale / ordering portal URL (optional)
+              <input
+                style={styles.input}
+                placeholder="https://…"
+                spellCheck={false}
+                value={config.sales.wholesalePortalUrl}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    sales: { ...prev.sales, wholesalePortalUrl: e.target.value },
+                  }))
+                }
+              />
+            </label>
+            <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
+              Fulfillment &amp; order policy notes
+              <textarea
+                style={{ ...styles.input, minHeight: 100, resize: "vertical" as const }}
+                placeholder="Cutoff times, minimums, delivery regions, etc."
+                value={config.sales.fulfillmentNotes}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    sales: { ...prev.sales, fulfillmentNotes: e.target.value },
+                  }))
+                }
+              />
+            </label>
+          </div>
+        </div>
+      </CollapsibleConfigSection>
+
+      <CollapsibleConfigSection
+        sectionStyle={{ ...styles.card, marginTop: 18 }}
+        sectionNumber="3"
+        title="Products"
+        summaryCollapsed={
+          <>
+            Category label overrides:{" "}
+            <b style={{ color: "#e2e8f0" }}>{config.products.categoryLabels.length}</b>
+            {(config.products.notes || "").trim() ? " · Notes set" : ""}
+          </>
+        }
+      >
+        <div style={styles.configSubCard}>
+          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14, lineHeight: 1.55 }}>
+            Map LeafLink category ids (e.g. <b style={{ color: "#cbd5e1" }}>5</b> or{" "}
+            <b style={{ color: "#cbd5e1" }}>Category #5</b>) to names your team recognizes. Overrides apply on the
+            Inventory page after you save config and refresh.
+          </p>
+          <div style={{ display: "grid", gap: 10 }}>
+            {(config.products.categoryLabels || []).map((row, idx) => (
+              <div
+                key={`${row.id}-${idx}`}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) auto",
+                  gap: 10,
+                  alignItems: "end",
+                }}
+              >
+                <label style={styles.label}>
+                  LeafLink category id
+                  <input
+                    style={styles.input}
+                    placeholder="e.g. 5"
+                    value={row.id}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setConfig((prev) => ({
+                        ...prev,
+                        products: {
+                          ...prev.products,
+                          categoryLabels: prev.products.categoryLabels.map((r, i) =>
+                            i === idx ? { ...r, id: v } : r,
+                          ),
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+                <label style={styles.label}>
+                  Display name
+                  <input
+                    style={styles.input}
+                    placeholder="e.g. Concentrates"
+                    value={row.displayName}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setConfig((prev) => ({
+                        ...prev,
+                        products: {
+                          ...prev.products,
+                          categoryLabels: prev.products.categoryLabels.map((r, i) =>
+                            i === idx ? { ...r, displayName: v } : r,
+                          ),
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  style={{ ...styles.deleteButton, marginBottom: 2 }}
+                  onClick={() =>
+                    setConfig((prev) => ({
+                      ...prev,
+                      products: {
+                        ...prev.products,
+                        categoryLabels: prev.products.categoryLabels.filter((_, i) => i !== idx),
+                      },
+                    }))
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              style={{ ...styles.saveButton, alignSelf: "flex-start" }}
+              onClick={() =>
+                setConfig((prev) => ({
+                  ...prev,
+                  products: {
+                    ...prev.products,
+                    categoryLabels: [...(prev.products.categoryLabels || []), { id: "", displayName: "" }],
+                  },
+                }))
+              }
+            >
+              + Add category label
+            </button>
+            <label style={{ ...styles.label, marginTop: 8 }}>
+              Product / merchandising notes (internal)
+              <textarea
+                style={{ ...styles.input, minHeight: 88, resize: "vertical" as const }}
+                placeholder="Optional context for SKUs, naming conventions, etc."
+                value={config.products.notes}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    products: { ...prev.products, notes: e.target.value },
+                  }))
+                }
+              />
+            </label>
+          </div>
+        </div>
+      </CollapsibleConfigSection>
+
+      <CollapsibleConfigSection
+        sectionStyle={{ ...styles.card, marginTop: 18 }}
+        sectionNumber="4"
         title="Climate control"
         summaryCollapsed={
           <>
@@ -3245,7 +3524,7 @@ export default function ConfigPage() {
 
       <CollapsibleConfigSection
         sectionStyle={{ ...styles.card, marginTop: 18 }}
-        sectionNumber="3"
+        sectionNumber="5"
         title="Cultivation"
         summaryCollapsed={
           <>
@@ -3563,7 +3842,7 @@ export default function ConfigPage() {
 
       <CollapsibleConfigSection
         sectionStyle={{ ...styles.card, marginTop: 18 }}
-        sectionNumber="4"
+        sectionNumber="6"
         title="Extraction"
         summaryCollapsed={
           <>
@@ -3697,7 +3976,7 @@ export default function ConfigPage() {
 
       <CollapsibleConfigSection
         sectionStyle={{ ...styles.card, marginTop: 18 }}
-        sectionNumber="5"
+        sectionNumber="7"
         title="Packaging"
         summaryCollapsed={
           <>

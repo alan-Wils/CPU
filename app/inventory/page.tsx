@@ -3,8 +3,16 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
-import { fetchLeafLinkInventory, type LeafLinkInventoryItemDto } from "@/lib/api";
+import {
+  API_BASE_URL,
+  appendCompanyIdQuery,
+  fetchLeafLinkInventory,
+  getSelectedCompanyId,
+  type LeafLinkInventoryItemDto,
+} from "@/lib/api";
+import { getAuthToken } from "@/lib/auth";
 import { groupInventoryBySourcePackage } from "@/lib/leafLinkInventoryDisplay";
+import { resolveInventoryCategoryLabel, type CategoryLabelOverride } from "@/lib/productCategoryLabels";
 
 function usd(n: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -17,6 +25,9 @@ function usd(n: number): string {
 
 const PAGE_SIZE = 50;
 
+/** LeafLink-style listing states; keeps the status dropdown valid before first sync. */
+const LEAFLINK_STATUS_PRESETS = ["Archived", "Available", "Internal", "Unavailable"] as const;
+
 export default function InventoryPage() {
   const [items, setItems] = useState<LeafLinkInventoryItemDto[]>([]);
   const [loading, setLoading] = useState(false);
@@ -25,7 +36,7 @@ export default function InventoryPage() {
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [brandFilter, setBrandFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("Available");
   /** Default: only rows with quantity available for sale (matches typical “available” inventory). */
   const [availabilityFilter, setAvailabilityFilter] = useState<"in_stock" | "all">("in_stock");
   const [sortBy, setSortBy] = useState<"name" | "qty" | "price" | "updated">("name");
@@ -34,6 +45,24 @@ export default function InventoryPage() {
   const [layoutMode, setLayoutMode] = useState<"flat" | "grouped">("grouped");
   const [fromCache, setFromCache] = useState(false);
   const [syncMode, setSyncMode] = useState<"" | "cache" | "full" | "incremental">("");
+  const [categoryLabels, setCategoryLabels] = useState<CategoryLabelOverride[]>([]);
+
+  async function loadProductsConfig() {
+    try {
+      const token = getAuthToken();
+      const companyId = getSelectedCompanyId().trim();
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (companyId) headers["X-Company-Id"] = companyId;
+      const path = appendCompanyIdQuery("/api/config", companyId);
+      const res = await fetch(`${API_BASE_URL}${path}`, { headers });
+      if (!res.ok) return;
+      const data = (await res.json()) as { products?: { categoryLabels?: CategoryLabelOverride[] } };
+      const list = data.products?.categoryLabels;
+      setCategoryLabels(Array.isArray(list) ? list : []);
+    } catch {
+      /* non-fatal */
+    }
+  }
 
   async function loadInventory(opts?: { refresh?: boolean }) {
     setLoading(true);
@@ -45,6 +74,7 @@ export default function InventoryPage() {
       setFromCache(Boolean(out.fromCache));
       setSyncMode((out.syncMode as "" | "cache" | "full" | "incremental") || "");
       setPage(1);
+      void loadProductsConfig();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Could not load inventory.");
     } finally {
@@ -53,35 +83,51 @@ export default function InventoryPage() {
   }
 
   useEffect(() => {
+    void loadProductsConfig();
     void loadInventory();
   }, []);
 
   const categories = useMemo(
-    () => Array.from(new Set(items.map((x) => (x.category || "").trim()).filter(Boolean))).sort(),
-    [items],
+    () =>
+      Array.from(
+        new Set(
+          items
+            .map((x) => resolveInventoryCategoryLabel((x.category || "").trim(), categoryLabels))
+            .filter(Boolean),
+        ),
+      ).sort(),
+    [items, categoryLabels],
   );
   const brands = useMemo(
     () => Array.from(new Set(items.map((x) => (x.brand || "").trim()).filter(Boolean))).sort(),
     [items],
   );
-  const statuses = useMemo(
-    () => Array.from(new Set(items.map((x) => (x.status || "").trim()).filter(Boolean))).sort(),
-    [items],
-  );
+  const statuses = useMemo(() => {
+    const fromData = items.map((x) => (x.status || "").trim()).filter(Boolean);
+    return Array.from(new Set([...LEAFLINK_STATUS_PRESETS, ...fromData])).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" }),
+    );
+  }, [items]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const arr = items.filter((row) => {
       if (availabilityFilter === "in_stock" && !(Number(row.availableQuantity) > 0)) return false;
-      if (categoryFilter !== "all" && row.category !== categoryFilter) return false;
+      const displayCat = resolveInventoryCategoryLabel((row.category || "").trim(), categoryLabels);
+      if (categoryFilter !== "all" && displayCat !== categoryFilter) return false;
       if (brandFilter !== "all" && row.brand !== brandFilter) return false;
-      if (statusFilter !== "all" && row.status !== statusFilter) return false;
+      if (statusFilter !== "all") {
+        const a = (row.status || "").trim().toLowerCase();
+        const b = statusFilter.trim().toLowerCase();
+        if (a !== b) return false;
+      }
       if (!q) return true;
       return [
         row.productName,
         row.sku,
         row.strain,
         row.category,
+        displayCat,
         row.brand,
         row.productType,
       ]
@@ -98,7 +144,7 @@ export default function InventoryPage() {
       return a.productName.localeCompare(b.productName) * mul;
     });
     return arr;
-  }, [items, query, availabilityFilter, categoryFilter, brandFilter, statusFilter, sortBy, sortDir]);
+  }, [items, query, availabilityFilter, categoryFilter, brandFilter, statusFilter, sortBy, sortDir, categoryLabels]);
 
   const packageGroups = useMemo(() => groupInventoryBySourcePackage(filtered), [filtered]);
 
@@ -113,14 +159,16 @@ export default function InventoryPage() {
   const stats = useMemo(() => {
     const totalInventoryUnits = filtered.reduce((sum, x) => sum + (Number(x.availableQuantity) || 0), 0);
     const totalInventoryValue = filtered.reduce((sum, x) => sum + ((x.price || 0) * (x.availableQuantity || 0)), 0);
-    const categoriesCount = new Set(filtered.map((x) => x.category).filter(Boolean)).size;
+    const categoriesCount = new Set(
+      filtered.map((x) => resolveInventoryCategoryLabel((x.category || "").trim(), categoryLabels)).filter(Boolean),
+    ).size;
     return {
       totalSkus: filtered.length,
       totalInventoryUnits,
       totalInventoryValue,
       categoriesCount,
     };
-  }, [filtered]);
+  }, [filtered, categoryLabels]);
 
   return (
     <PageAccessGate permission="page.inventory">
@@ -131,7 +179,9 @@ export default function InventoryPage() {
               <div style={badgeStyle}>LeafLink Source</div>
               <h1 style={{ margin: 0, fontSize: 38, fontWeight: 900 }}>Inventory</h1>
               <p style={{ color: "#94a3b8", marginTop: 10, marginBottom: 0 }}>
-                Live available-for-sale inventory synced from LeafLink via backend company-scoped credentials.
+                Live available-for-sale inventory synced from LeafLink via backend company-scoped credentials. Category
+                display names can be overridden under{" "}
+                <b style={{ color: "#cbd5e1" }}>Admin → Company Config → Products</b>.
               </p>
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -254,7 +304,9 @@ export default function InventoryPage() {
                     </thead>
                     <tbody>
                       {layoutMode === "flat"
-                        ? pageItems.map((row) => <InventoryProductRow key={row.id} row={row} />)
+                        ? pageItems.map((row) => (
+                            <InventoryProductRow key={row.id} row={row} categoryLabels={categoryLabels} />
+                          ))
                         : pageGroups.map((g) => (
                             <Fragment key={g.key}>
                               <tr style={{ borderTop: "1px solid rgba(51,65,85,0.6)", background: "rgba(15,23,42,0.5)" }}>
@@ -280,7 +332,12 @@ export default function InventoryPage() {
                                       <table style={{ ...tableStyle, minWidth: 720 }}>
                                         <tbody>
                                           {g.rows.map((row) => (
-                                            <InventoryProductRow key={row.id} row={row} nested />
+                                            <InventoryProductRow
+                                              key={row.id}
+                                              row={row}
+                                              nested
+                                              categoryLabels={categoryLabels}
+                                            />
                                           ))}
                                         </tbody>
                                       </table>
@@ -324,11 +381,14 @@ export default function InventoryPage() {
 function InventoryProductRow({
   row,
   nested,
+  categoryLabels,
 }: {
   row: LeafLinkInventoryItemDto;
   nested?: boolean;
+  categoryLabels?: CategoryLabelOverride[];
 }) {
   const pad = nested ? { ...tdStyle, padding: "8px 6px", fontSize: 12 as const } : tdStyle;
+  const categoryDisplay = resolveInventoryCategoryLabel((row.category || "").trim(), categoryLabels);
   return (
     <tr style={{ borderTop: nested ? "1px solid rgba(51,65,85,0.45)" : "1px solid rgba(51,65,85,0.6)" }}>
       <td style={pad}>
@@ -366,7 +426,7 @@ function InventoryProductRow({
       </td>
       <td style={pad}>{row.sku || "—"}</td>
       <td style={pad}>{row.strain || "—"}</td>
-      <td style={pad}>{row.category || "—"}</td>
+      <td style={pad}>{categoryDisplay || "—"}</td>
       <td style={pad}>
         {row.availableQuantity} {row.unit || ""}
       </td>
