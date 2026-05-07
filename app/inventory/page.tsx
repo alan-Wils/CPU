@@ -15,10 +15,11 @@ import {
   clampInventoryLogoMaxWidthPx,
   DEFAULT_INVENTORY_EXPORT_COLUMNS,
   downloadInventoryExcel,
+  EXPORT_COLUMN_PRESET,
   INVENTORY_EXPORT_COLUMN_LABELS,
   INVENTORY_EXPORT_COLUMN_ORDER,
-  normalizeInventoryExportColumns,
   openInventoryPrintWindow,
+  parseStoredExportColumns,
   type InventoryExportColumnId,
 } from "@/lib/inventoryExport";
 import { groupInventoryBySourcePackage } from "@/lib/leafLinkInventoryDisplay";
@@ -60,29 +61,46 @@ export default function InventoryPage() {
   const [categoryLabels, setCategoryLabels] = useState<CategoryLabelOverride[]>([]);
   /** Grouped view: which source-package rows are expanded (same table as thead — no nested table shift). */
   const [openSourcePackages, setOpenSourcePackages] = useState<Record<string, boolean>>({});
-  const [exportColumns, setExportColumns] = useState<InventoryExportColumnId[]>(DEFAULT_INVENTORY_EXPORT_COLUMNS);
+  const [exportColumns, setExportColumns] = useState<InventoryExportColumnId[]>(() => [...EXPORT_COLUMN_PRESET]);
+  const [exportColumnPrefsMessage, setExportColumnPrefsMessage] = useState("");
   const [printBrandingLogoUrl, setPrintBrandingLogoUrl] = useState("");
   const [printBrandingLogoMaxWidthPx, setPrintBrandingLogoMaxWidthPx] = useState(160);
 
   useEffect(() => {
     try {
       const raw = typeof window !== "undefined" ? window.localStorage.getItem(EXPORT_COLUMNS_STORAGE_KEY) : null;
-      if (raw) {
-        const parsed = JSON.parse(raw) as unknown;
-        setExportColumns(normalizeInventoryExportColumns(parsed));
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as unknown;
+      const restored = parseStoredExportColumns(parsed);
+      if (restored && restored.length > 0) {
+        setExportColumns(restored);
       }
     } catch {
       /* ignore */
     }
   }, []);
 
-  useEffect(() => {
+  const saveExportColumnPrefs = useCallback(() => {
     try {
       window.localStorage.setItem(EXPORT_COLUMNS_STORAGE_KEY, JSON.stringify(exportColumns));
+      setExportColumnPrefsMessage("Column preferences saved on this browser.");
+      window.setTimeout(() => setExportColumnPrefsMessage(""), 4000);
+    } catch {
+      setExportColumnPrefsMessage("Could not save (storage may be blocked).");
+      window.setTimeout(() => setExportColumnPrefsMessage(""), 4000);
+    }
+  }, [exportColumns]);
+
+  const resetExportColumnPrefs = useCallback(() => {
+    try {
+      window.localStorage.removeItem(EXPORT_COLUMNS_STORAGE_KEY);
     } catch {
       /* ignore */
     }
-  }, [exportColumns]);
+    setExportColumns([...EXPORT_COLUMN_PRESET]);
+    setExportColumnPrefsMessage("Reset to Product and Qty. Preferences no longer saved.");
+    window.setTimeout(() => setExportColumnPrefsMessage(""), 4000);
+  }, []);
 
   const toggleExportColumn = useCallback((id: InventoryExportColumnId) => {
     setExportColumns((prev) => {
@@ -404,7 +422,11 @@ export default function InventoryPage() {
                 <details style={exportDetailsStyle}>
                   <summary style={exportSummaryStyle}>Export current filter</summary>
                   <div style={{ marginTop: 12 }}>
-                    <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 8 }}>Columns on Excel and print</div>
+                    <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 6 }}>
+                      Columns on Excel and print — default is <b style={{ color: "#cbd5e1" }}>Product</b> and{" "}
+                      <b style={{ color: "#cbd5e1" }}>Qty</b>. Check others, then{" "}
+                      <b style={{ color: "#cbd5e1" }}>Save column preferences</b> to remember on this browser.
+                    </div>
                     <div
                       style={{
                         display: "flex",
@@ -435,13 +457,32 @@ export default function InventoryPage() {
                         </label>
                       ))}
                     </div>
-                    <button
-                      type="button"
-                      style={{ ...exportActionButtonStyle, marginBottom: 12 }}
-                      onClick={() => setExportColumns([...DEFAULT_INVENTORY_EXPORT_COLUMNS])}
-                    >
-                      Select all columns
-                    </button>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10, alignItems: "center" }}>
+                      <button type="button" style={exportActionButtonStyle} onClick={saveExportColumnPrefs}>
+                        Save column preferences
+                      </button>
+                      <button type="button" style={exportActionButtonStyle} onClick={resetExportColumnPrefs}>
+                        Reset to Product + Qty
+                      </button>
+                      <button
+                        type="button"
+                        style={exportActionButtonStyle}
+                        onClick={() => setExportColumns([...DEFAULT_INVENTORY_EXPORT_COLUMNS])}
+                      >
+                        Select all columns
+                      </button>
+                    </div>
+                    {exportColumnPrefsMessage ? (
+                      <div
+                        style={{
+                          color: exportColumnPrefsMessage.startsWith("Could") ? "#fdba74" : "#86efac",
+                          fontSize: 12,
+                          marginBottom: 10,
+                        }}
+                      >
+                        {exportColumnPrefsMessage}
+                      </div>
+                    ) : null}
                   </div>
                   <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 8 }}>
                     <button

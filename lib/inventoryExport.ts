@@ -47,7 +47,25 @@ export const INVENTORY_EXPORT_COLUMN_LABELS: Record<InventoryExportColumnId, str
 
 export const DEFAULT_INVENTORY_EXPORT_COLUMNS: InventoryExportColumnId[] = [...INVENTORY_EXPORT_COLUMN_ORDER];
 
+/** Initial / reset selection: Product and Qty only (until the user saves other preferences). */
+export const EXPORT_COLUMN_PRESET: InventoryExportColumnId[] = INVENTORY_EXPORT_COLUMN_ORDER.filter(
+  (id) => id === "product" || id === "qty",
+);
+
 const COLUMN_ID_SET = new Set<string>(INVENTORY_EXPORT_COLUMN_ORDER);
+
+/**
+ * Parse a stored JSON array from localStorage. Returns null if missing/invalid/empty so the UI can fall back to
+ * {@link EXPORT_COLUMN_PRESET}.
+ */
+export function parseStoredExportColumns(selected: unknown): InventoryExportColumnId[] | null {
+  if (!Array.isArray(selected)) return null;
+  const picked = new Set(
+    selected.filter((x): x is InventoryExportColumnId => typeof x === "string" && COLUMN_ID_SET.has(x)),
+  );
+  if (picked.size === 0) return null;
+  return INVENTORY_EXPORT_COLUMN_ORDER.filter((id) => picked.has(id));
+}
 
 /** Keep only known ids, preserve table order; if empty, return full default set. */
 export function normalizeInventoryExportColumns(selected: unknown): InventoryExportColumnId[] {
@@ -243,14 +261,12 @@ function buildTableRowHtml(row: LeafLinkInventoryItemDto, categoryLabels: Catego
 export function openInventoryPrintWindow(
   items: LeafLinkInventoryItemDto[],
   categoryLabels: CategoryLabelOverride[] | undefined,
-  state: InventoryFilterState,
+  _state: InventoryFilterState,
   options: InventoryExportOptions,
 ): void {
   if (items.length === 0) return;
 
   const cols = normalizeInventoryExportColumns(options.columns);
-  const filterLines = describeInventoryFilters(state);
-  const filterHtml = filterLines.map((line) => `<li>${escapeHtml(line)}</li>`).join("");
 
   const branding = options.printBranding;
   const rawLogo = (branding?.logoUrl || "").trim();
@@ -304,22 +320,8 @@ export function openInventoryPrintWindow(
     .meta {
       color: #475569;
       font-size: 0.875rem;
-      margin: 10px 0 20px;
+      margin: 10px 0 16px;
     }
-    .filters {
-      border: 1px solid #e2e8f0;
-      border-radius: 10px;
-      padding: 12px 16px;
-      margin-bottom: 24px;
-      background: #f8fafc;
-    }
-    .filters h2 {
-      margin: 0 0 8px;
-      font-size: 0.95rem;
-      color: #334155;
-    }
-    .filters ul { margin: 0; padding-left: 1.25rem; }
-    .filters li { margin: 4px 0; font-size: 0.875rem; }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -348,7 +350,6 @@ export function openInventoryPrintWindow(
     }
     @media print {
       body { padding: 12px; }
-      .filters { break-inside: avoid; }
       .print-header { break-inside: avoid; }
       .print-header-top { break-inside: avoid; }
       thead { display: table-header-group; }
@@ -366,10 +367,6 @@ export function openInventoryPrintWindow(
       Generated ${escapeHtml(new Date().toLocaleString())} · ${items.length} SKU${items.length === 1 ? "" : "s"} · LeafLink inventory
     </div>
   </header>
-  <div class="filters">
-    <h2>Current filters</h2>
-    <ul>${filterHtml}</ul>
-  </div>
   <table>
     <thead>
       <tr>${buildTableHeaderHtml(cols)}</tr>

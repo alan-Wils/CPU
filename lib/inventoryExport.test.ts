@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   clampInventoryLogoMaxWidthPx,
   describeInventoryFilters,
+  EXPORT_COLUMN_PRESET,
   normalizeInventoryExportColumns,
+  parseStoredExportColumns,
   resolveAssetUrlForPrint,
 } from "@/lib/inventoryExport";
 
@@ -50,6 +52,24 @@ describe("normalizeInventoryExportColumns", () => {
   it("keeps order and filters unknown ids", () => {
     const out = normalizeInventoryExportColumns(["sku", "product", "bogus"]);
     expect(out).toEqual(["product", "sku"]);
+  });
+});
+
+describe("EXPORT_COLUMN_PRESET", () => {
+  it("is Product and Qty in table order", () => {
+    expect(EXPORT_COLUMN_PRESET).toEqual(["product", "qty"]);
+  });
+});
+
+describe("parseStoredExportColumns", () => {
+  it("returns null when nothing usable", () => {
+    expect(parseStoredExportColumns(null)).toBeNull();
+    expect(parseStoredExportColumns([])).toBeNull();
+    expect(parseStoredExportColumns(["bad"])).toBeNull();
+  });
+
+  it("returns ordered columns when valid", () => {
+    expect(parseStoredExportColumns(["qty", "product", "sku"])).toEqual(["product", "sku", "qty"]);
   });
 });
 
