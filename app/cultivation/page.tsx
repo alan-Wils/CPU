@@ -945,13 +945,28 @@ export default function Cultivation() {
   const [vegMetrcFetchMessage, setVegMetrcFetchMessage] = useState("");
 
   type HarvestSheetRowEdit = { tag: string; weightValue: string; unitGuess: string };
-  type HarvestSheetPhoto = { id: string; storedPath: string; imageUrl: string };
+  /** `previewDataUrl` is the shrunk image shown in the UI so thumbnails work without relying on `NEXT_PUBLIC_API_URL` + GET /uploads. */
+  type HarvestSheetPhoto = {
+    id: string;
+    storedPath: string;
+    imageUrl: string;
+    previewDataUrl?: string;
+  };
   const [harvestSheetRows, setHarvestSheetRows] = useState<HarvestSheetRowEdit[]>([]);
   const [harvestSheetPhotos, setHarvestSheetPhotos] = useState<HarvestSheetPhoto[]>([]);
   const [harvestSheetWarnings, setHarvestSheetWarnings] = useState<string[]>([]);
   const [harvestSheetModel, setHarvestSheetModel] = useState("");
   const [harvestSheetBusy, setHarvestSheetBusy] = useState(false);
   const harvestSheetFileInputRef = useRef<HTMLInputElement>(null);
+
+  function harvestSheetPhotoThumbSrc(p: HarvestSheetPhoto): string {
+    if (p.previewDataUrl) return p.previewDataUrl;
+    const rel = (p.imageUrl || "").trim();
+    if (!rel) return "";
+    if (/^https?:\/\//i.test(rel)) return rel;
+    const base = API_BASE_URL.replace(/\/+$/, "");
+    return `${base}${rel.startsWith("/") ? rel : `/${rel}`}`;
+  }
 
   const [selectedDryFlowerBatch, setSelectedDryFlowerBatch] = useState<any>(null);
   const [selectedDryFlowerTask, setSelectedDryFlowerTask] = useState(
@@ -3540,7 +3555,7 @@ export default function Cultivation() {
             : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
         setHarvestSheetPhotos((prev) => [
           ...prev,
-          { id, storedPath: up.storedPath, imageUrl: up.imageUrl || "" },
+          { id, storedPath: up.storedPath, imageUrl: up.imageUrl || "", previewDataUrl: dataUrl },
         ]);
         uploaded += 1;
       }
@@ -7435,7 +7450,7 @@ export default function Cultivation() {
                               }}
                             >
                               <img
-                                src={`${API_BASE_URL.replace(/\/+$/, "")}${p.imageUrl}`}
+                                src={harvestSheetPhotoThumbSrc(p)}
                                 alt=""
                                 style={{
                                   width: "100%",
