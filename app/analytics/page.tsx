@@ -563,8 +563,9 @@ export default function AnalyticsPage() {
           {!loading && !error && points.length === 0 && (
             <p style={{ textAlign: "center", color: "#94a3b8", maxWidth: 720, margin: "24px auto 0", lineHeight: 1.6 }}>
               No data in this range. Dry/analytics potency points use lab result dates from <strong>Test Passed</strong>;
-              fresh frozen points use source-batch harvest dates and require grams plus parent canopy in sync. Extend the
-              date range or clear strain filters. If cultivation or company-store sync fails, retry after a successful save.
+              fresh frozen points use harvest dates and require grams plus parent canopy in sync (company store source,
+              production, or completed-source batches). Extend the date range or clear strain filters. If cultivation or
+              company-store sync fails, retry after a successful save.
             </p>
           )}
 

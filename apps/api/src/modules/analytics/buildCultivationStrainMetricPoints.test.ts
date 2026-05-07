@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildCultivationStrainMetricPoints } from "./buildCultivationStrainMetricPoints.js";
+import {
+    buildCultivationStrainMetricPoints,
+    mergeFreshFrozenSourcesForAnalytics,
+} from "./buildCultivationStrainMetricPoints.js";
 
 const parentUpdated = new Date("2026-04-28T15:00:00.000Z");
 
@@ -228,5 +231,64 @@ describe("buildCultivationStrainMetricPoints", () => {
         expect(points).toHaveLength(1);
         expect(points[0].batchId).toBe("FF-TAHA.050726-8899");
         expect(points[0].freshFrozenYieldGPerSqFt).toBeCloseTo(45.3592, 3);
+    });
+
+    it("mergeFreshFrozenSourcesForAnalytics picks FF rows only from productionBatches when sourceBatches empty", () => {
+        const merged = mergeFreshFrozenSourcesForAnalytics(
+            [],
+            [
+                {
+                    id: "FF-RUCA.020926-8673",
+                    type: "Fresh Frozen",
+                    source: "RUCA.020926",
+                    grams: 18018,
+                    createdAt: "2026-05-06T15:10:40.000Z",
+                },
+            ],
+            [],
+        );
+        expect(merged).toHaveLength(1);
+        expect(String((merged[0] as { id?: string }).id)).toBe("FF-RUCA.020926-8673");
+    });
+
+    it("plots FF when batch exists only under productionBatches in company store merge", () => {
+        const cultivationRows = [
+            {
+                id: "RUCA.020926",
+                strain: "Rum Cake",
+                strainAcronym: "RUCA",
+                updatedAt: parentUpdated,
+                cultivationUiState: { dryCanopySqFt: 100 },
+            },
+        ];
+        const merged = mergeFreshFrozenSourcesForAnalytics(
+            [],
+            [
+                {
+                    id: "FF-RUCA.020926-8673",
+                    type: "Fresh Frozen",
+                    source: "RUCA.020926",
+                    grams: 18018,
+                    createdAt: "2026-05-06T15:10:40.000Z",
+                },
+            ],
+            [],
+        );
+
+        const fromMs = Date.UTC(2026, 4, 1, 0, 0, 0, 0);
+        const toMs = Date.UTC(2026, 4, 31, 23, 59, 59, 999);
+
+        const points = buildCultivationStrainMetricPoints({
+            fromMs,
+            toMs,
+            strainFilter: null,
+            cultivationRows,
+            dryFlowerBatches: [],
+            sourceBatches: merged,
+        });
+
+        expect(points).toHaveLength(1);
+        expect(points[0].batchId).toBe("FF-RUCA.020926-8673");
+        expect(points[0].freshFrozenYieldGPerSqFt).toBeCloseTo(180.18, 3);
     });
 });

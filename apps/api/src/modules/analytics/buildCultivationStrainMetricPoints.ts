@@ -71,6 +71,40 @@ function isFreshFrozenSourceRow(row: Record<string, unknown>): boolean {
     return typ.includes("fresh frozen") || typ.includes("freshfrozen");
 }
 
+/**
+ * Company store mirrors Fresh Frozen into `productionBatches` / moves consumed rows to `completedSourceBatches`.
+ * Strain analytics historically consumed only `sourceBatches`, missing FF rows that exist solely in those arrays.
+ */
+export function mergeFreshFrozenSourcesForAnalytics(
+    sourceBatches: unknown[],
+    productionBatches: unknown[],
+    completedSourceBatches: unknown[],
+): unknown[] {
+    const primary = Array.isArray(sourceBatches) ? sourceBatches : [];
+    const out: unknown[] = [...primary];
+    const seen = new Set<string>();
+    for (const raw of primary) {
+        const id = String(asUiRecord(raw).id ?? "").trim();
+        if (id)
+            seen.add(id);
+    }
+    const extraLists = [
+        ...(Array.isArray(productionBatches) ? productionBatches : []),
+        ...(Array.isArray(completedSourceBatches) ? completedSourceBatches : []),
+    ];
+    for (const raw of extraLists) {
+        const row = asUiRecord(raw);
+        if (!isFreshFrozenSourceRow(row))
+            continue;
+        const id = String(row.id ?? "").trim();
+        if (!id || seen.has(id))
+            continue;
+        seen.add(id);
+        out.push(raw);
+    }
+    return out;
+}
+
 function readFreshFrozenGrams(row: Record<string, unknown>): number | null {
     let g = readNum(row, "grams");
     if (g != null && g > 0)

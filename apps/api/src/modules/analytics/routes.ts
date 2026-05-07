@@ -6,7 +6,10 @@ import { requireRoleOrAppPermission } from "../../middleware/rbac.js";
 import { AppError } from "../../errors/AppError.js";
 import { parseYmdEndUtc, parseYmdStartUtc } from "../../lib/analyticsDateRange.js";
 import { StoreService } from "../../services/storeService.js";
-import { buildCultivationStrainMetricPoints } from "./buildCultivationStrainMetricPoints.js";
+import {
+    buildCultivationStrainMetricPoints,
+    mergeFreshFrozenSourcesForAnalytics,
+} from "./buildCultivationStrainMetricPoints.js";
 
 const storeService = new StoreService();
 
@@ -50,6 +53,8 @@ analyticsRouter.get(
             storeService.load(companyId).catch(() => ({
                 dryFlowerBatches: [] as unknown[],
                 sourceBatches: [] as unknown[],
+                productionBatches: [] as unknown[],
+                completedSourceBatches: [] as unknown[],
             })),
         ]);
 
@@ -59,6 +64,18 @@ analyticsRouter.get(
         const sourceBatches = Array.isArray((storeSnap as { sourceBatches?: unknown }).sourceBatches)
             ? (storeSnap as { sourceBatches: unknown[] }).sourceBatches
             : [];
+        const productionBatches = Array.isArray((storeSnap as { productionBatches?: unknown }).productionBatches)
+            ? (storeSnap as { productionBatches: unknown[] }).productionBatches
+            : [];
+        const completedSourceBatches = Array.isArray((storeSnap as { completedSourceBatches?: unknown }).completedSourceBatches)
+            ? (storeSnap as { completedSourceBatches: unknown[] }).completedSourceBatches
+            : [];
+
+        const mergedSourceBatches = mergeFreshFrozenSourcesForAnalytics(
+            sourceBatches,
+            productionBatches,
+            completedSourceBatches,
+        );
 
         const points = buildCultivationStrainMetricPoints({
             fromMs,
@@ -72,7 +89,7 @@ analyticsRouter.get(
                 cultivationUiState: row.cultivationUiState,
             })),
             dryFlowerBatches,
-            sourceBatches,
+            sourceBatches: mergedSourceBatches,
         });
 
         res.json({ points });
