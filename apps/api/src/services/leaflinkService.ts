@@ -95,11 +95,12 @@ export class LeafLinkService {
         : cleanString(prev.apiKey);
     const next: LeafLinkStoredConfig = {
       integrationEnabled: Boolean(input.integrationEnabled),
-      companySlug: cleanString(input.companySlug),
-      companyId: cleanString(input.companyId),
-      username: cleanString(input.username),
+      // Preserve existing non-secret values when UI submits empty strings.
+      companySlug: cleanString(input.companySlug) || cleanString(prev.companySlug),
+      companyId: cleanString(input.companyId) || cleanString(prev.companyId),
+      username: cleanString(input.username) || cleanString(prev.username),
       apiKey: nextApiKey,
-      baseUrl: baseUrlOrDefault(input.baseUrl),
+      baseUrl: baseUrlOrDefault(cleanString(input.baseUrl) || cleanString(prev.baseUrl)),
     };
     await this.configService.upsert({
       companyId,
@@ -269,9 +270,9 @@ export class LeafLinkInventoryService {
     if (!creds.integrationEnabled) {
       throw new AppError("LeafLink sync is disabled for this company.", 400, "LEAFLINK_DISABLED");
     }
-    if (!creds.companySlug || !creds.companyId || !creds.username || !creds.apiKey) {
+    if (!creds.apiKey || (!creds.companyId && !creds.companySlug)) {
       throw new AppError(
-        "LeafLink is not fully configured. Set company slug, company ID, username, and API key.",
+        "LeafLink is not fully configured. Set at least company ID or company slug, plus API key.",
         400,
         "LEAFLINK_MISSING_CONFIG",
       );
