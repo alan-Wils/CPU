@@ -2,12 +2,16 @@ import { ConfigService } from "./configService.js";
 import { logInfo, logWarn } from "../lib/logger.js";
 import { resolveMetrcApiBaseUrl } from "../lib/metrcResolveBaseUrl.js";
 import {
+  buildAuthorizationHeader,
+  buildMetrcAttemptPlan,
+  type MetrcAttemptFailure,
+  type MetrcAuthModeUsed,
+} from "../lib/metrcConnectionAttempts.js";
+import {
   extractMetrcApiErrorSummary,
-  messageForMetrcHttpFailure,
   parseLocationsPayload,
   toSampleLocation,
 } from "../lib/metrcConnectionHelpers.js";
-import { buildMetrcAuthorization, isMetrcAuthorizationErr } from "../lib/metrcAuthHeaders.js";
 
 export type MetrcTestConnectionSuccess = {
   ok: true;
@@ -17,16 +21,20 @@ export type MetrcTestConnectionSuccess = {
   licenseNumber: string;
   locationCount: number;
   sampleLocations: ReturnType<typeof toSampleLocation>[];
+  authMode: MetrcAuthModeUsed;
 };
 
 export type MetrcTestConnectionFailure = {
   ok: false;
   connected: false;
   checkedAt: string;
+  /** HTTP status from the last attempt */
   status: number;
   message: string;
   baseUrl: string | null;
   licenseNumber: string;
+  attemptedModes: MetrcAuthModeUsed[];
+  failures: MetrcAttemptFailure[];
 };
 
 export type MetrcTestConnectionResponse = MetrcTestConnectionSuccess | MetrcTestConnectionFailure;
@@ -64,6 +72,14 @@ async function fetchMetrcActiveLocationsOnce(
   return { res, bodyText, bodyJson };
 }
 
+function summarizeAllAttemptsFailed(failures: MetrcAttemptFailure[]): string {
+  if (!failures.length) return "METRC connection test failed.";
+  const last = failures[failures.length - 1];
+  const modes = failures.map((f) => f.mode).join(", ");
+  const snippet = last.metrcSnippet ? ` ${last.metrcSnippet}` : "";
+  return `Every auth mode failed (${modes}). Last: HTTP ${last.status}.${snippet}`.slice(0, 4000);
+}
+
 export class MetrcConnectionService {
   configService = new ConfigService();
 
@@ -95,115 +111,108 @@ export class MetrcConnectionService {
         message: "Bad request. Check license number, state, and base URL. Save settings before testing.",
         baseUrl: baseUrl || null,
         licenseNumber: licenseNumber || "",
+        attemptedModes: [],
+        failures: [],
       };
       await this.persistConnectionSnapshot(input.companyId, input.actorUserId, company, metrc, fail);
       return fail;
     }
 
-    const auth = buildMetrcAuthorization(apiKey, userKey);
-    if (isMetrcAuthorizationErr(auth)) {
+    if (!userKey) {
       const fail: MetrcTestConnectionFailure = {
         ok: false,
         connected: false,
         checkedAt,
-        status: auth.status,
-        message: auth.message,
+        status: 400,
+        message: "User API key is required. Save a facility user key before testing.",
         baseUrl,
         licenseNumber,
+        attemptedModes: [],
+        failures: [],
       };
       await this.persistConnectionSnapshot(input.companyId, input.actorUserId, company, metrc, fail);
       return fail;
     }
 
     const url = `${baseUrl.replace(/\/+$/, "")}/locations/v2/active?licenseNumber=${encodeURIComponent(licenseNumber)}`;
-    const hadVendorKey = Boolean(apiKey.trim());
+    const hasVendorKey = Boolean(apiKey);
 
     try {
-      if (hadVendorKey) {
-        logInfo("Using METRC dual-key auth", { companyId: input.companyId });
-      } else {
-        logInfo("Using METRC single-key fallback auth", { companyId: input.companyId });
-      }
+      const plan = buildMetrcAttemptPlan(hasVendorKey);
+      const failures: MetrcAttemptFailure[] = [];
+      const attemptedModes: MetrcAuthModeUsed[] = [];
 
-      let lastAuthorization = auth.authorization;
-      let { res, bodyJson, bodyText } = await fetchMetrcActiveLocationsOnce(url, lastAuthorization);
+      for (const mode of plan) {
+        const authorization = buildAuthorizationHeader(mode, apiKey, userKey);
+        if (!authorization) {
+          continue;
+        }
 
-      if (!res.ok && res.status === 401 && hadVendorKey) {
-        logInfo("METRC dual-key rejected (401); retrying Bearer user key", { companyId: input.companyId });
-        lastAuthorization = `Bearer ${userKey}`;
-        const second = await fetchMetrcActiveLocationsOnce(url, lastAuthorization);
-        res = second.res;
-        bodyJson = second.bodyJson;
-        bodyText = second.bodyText;
-      }
+        attemptedModes.push(mode);
+        const t0 = Date.now();
+        const { res, bodyText, bodyJson } = await fetchMetrcActiveLocationsOnce(url, authorization);
+        const durationMs = Math.max(0, Date.now() - t0);
+        const metrcSnippet = extractMetrcApiErrorSummary(bodyJson, bodyText);
 
-      if (!res.ok && res.status === 401) {
-        logInfo(
-          hadVendorKey
-            ? "METRC auth retry: Basic with empty integrator field"
-            : "METRC Bearer rejected (401); retrying Basic with empty integrator field",
-          { companyId: input.companyId },
-        );
-        lastAuthorization = `Basic ${Buffer.from(`:${userKey}`, "utf8").toString("base64")}`;
-        const third = await fetchMetrcActiveLocationsOnce(url, lastAuthorization);
-        res = third.res;
-        bodyJson = third.bodyJson;
-        bodyText = third.bodyText;
-      }
-
-      if (!res.ok && (res.status === 500 || res.status === 502 || res.status === 503)) {
-        logInfo("[METRC] transient server error; retrying request once", {
+        logInfo("[METRC] connection_attempt", {
           companyId: input.companyId,
+          mode,
           status: res.status,
+          durationMs,
+          metrcSnippetPresent: Boolean(metrcSnippet),
         });
-        const backoffMs = process.env.VITEST === "true" ? 0 : 2000;
-        await new Promise((r) => setTimeout(r, backoffMs));
-        const again = await fetchMetrcActiveLocationsOnce(url, lastAuthorization);
-        res = again.res;
-        bodyJson = again.bodyJson;
-        bodyText = again.bodyText;
+
+        if (res.ok) {
+          const locations = parseLocationsPayload(bodyJson);
+          const sampleLocations = locations.slice(0, 5).map(toSampleLocation);
+          const success: MetrcTestConnectionSuccess = {
+            ok: true,
+            connected: true,
+            checkedAt,
+            baseUrl,
+            licenseNumber,
+            locationCount: locations.length,
+            sampleLocations,
+            authMode: mode,
+          };
+          logInfo("[METRC] connection_test_ok", {
+            companyId: input.companyId,
+            authMode: mode,
+            locationCount: locations.length,
+            attemptsBeforeSuccess: failures.length + 1,
+          });
+          await this.persistConnectionSnapshot(input.companyId, input.actorUserId, company, metrc, success);
+          return success;
+        }
+
+        failures.push({
+          mode,
+          status: res.status,
+          durationMs,
+          metrcSnippet,
+        });
       }
 
-      const status = res.status;
-
-      if (!res.ok) {
-        const metrcDetail = extractMetrcApiErrorSummary(bodyJson, bodyText);
-        const message = messageForMetrcHttpFailure(status, metrcDetail);
-        const fail: MetrcTestConnectionFailure = {
-          ok: false,
-          connected: false,
-          checkedAt,
-          status,
-          message,
-          baseUrl,
-          licenseNumber,
-        };
-        logWarn("[METRC] connection_test_failed", {
-          companyId: input.companyId,
-          status,
-          metrcErrorSummaryPresent: Boolean(metrcDetail),
-        });
-        await this.persistConnectionSnapshot(input.companyId, input.actorUserId, company, metrc, fail);
-        return fail;
-      }
-
-      const locations = parseLocationsPayload(bodyJson);
-      const sampleLocations = locations.slice(0, 5).map(toSampleLocation);
-      const success: MetrcTestConnectionSuccess = {
-        ok: true,
-        connected: true,
+      const last = failures[failures.length - 1];
+      const status = last?.status ?? 0;
+      const fail: MetrcTestConnectionFailure = {
+        ok: false,
+        connected: false,
         checkedAt,
+        status,
+        message: summarizeAllAttemptsFailed(failures),
         baseUrl,
         licenseNumber,
-        locationCount: locations.length,
-        sampleLocations,
+        attemptedModes,
+        failures,
       };
-      logInfo("[METRC] connection_test_ok", {
+      logWarn("[METRC] connection_test_failed_all_modes", {
         companyId: input.companyId,
-        locationCount: locations.length,
+        attemptCount: failures.length,
+        lastStatus: status,
       });
-      await this.persistConnectionSnapshot(input.companyId, input.actorUserId, company, metrc, success);
-      return success;
+      await this.persistConnectionSnapshot(input.companyId, input.actorUserId, company, metrc, fail);
+      return fail;
     } catch (error) {
       const fail: MetrcTestConnectionFailure = {
         ok: false,
@@ -213,6 +222,8 @@ export class MetrcConnectionService {
         message: "Unable to reach METRC from the API server.",
         baseUrl,
         licenseNumber,
+        attemptedModes: [],
+        failures: [],
       };
       logWarn("[METRC] connection_test_error", {
         companyId: input.companyId,
@@ -238,6 +249,7 @@ export class MetrcConnectionService {
       nextMetrc.metrcLastConnectionMessage = "";
       nextMetrc.metrcLastConnectionHttpStatus = null;
       nextMetrc.metrcLastLocationCount = result.locationCount;
+      nextMetrc.metrcLastSuccessfulAuthMode = result.authMode;
     } else {
       const fail = result as MetrcTestConnectionFailure;
       nextMetrc.metrcLastConnectionStatus = "not_connected";
@@ -245,6 +257,7 @@ export class MetrcConnectionService {
       nextMetrc.metrcLastConnectionHttpStatus =
         typeof fail.status === "number" && Number.isFinite(fail.status) ? fail.status : null;
       nextMetrc.metrcLastLocationCount = null;
+      nextMetrc.metrcLastSuccessfulAuthMode = null;
     }
 
     const nextCompany = { ...company, metrc: nextMetrc };

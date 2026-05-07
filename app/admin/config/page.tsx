@@ -282,6 +282,7 @@ type MetrcTestConnectionJson =
       baseUrl: string;
       licenseNumber: string;
       locationCount: number;
+      authMode: string;
       sampleLocations?: { id?: unknown; name?: string; label?: string }[];
     }
   | {
@@ -292,16 +293,36 @@ type MetrcTestConnectionJson =
       message: string;
       baseUrl: string | null;
       licenseNumber: string;
+      attemptedModes?: string[];
+      failures?: Array<{
+        mode: string;
+        status: number;
+        durationMs: number;
+        metrcSnippet?: string | null;
+      }>;
     };
 
+const METRC_AUTH_MODE_LABELS: Record<string, string> = {
+  dual_key_basic: "Dual-key Basic (vendor : user)",
+  bearer_user: "Bearer (user API key)",
+  basic_user_colon: "Basic — username=user key, password empty",
+  basic_colon_user: "Basic — empty vendor, user key as password",
+};
+
+function formatMetrcAuthModeLabel(mode: string | undefined | null): string {
+  const k = String(mode || "").trim();
+  return METRC_AUTH_MODE_LABELS[k] || k || "—";
+}
+
 function userFacingMetrcTestFailureMessage(json: Extract<MetrcTestConnectionJson, { ok: false }>): string {
+  const fromApi = String(json.message || "").trim();
+  if (fromApi) return fromApi.slice(0, 4000);
   const s = Number(json.status);
   if (s === 401) return "Authentication failed. Check METRC keys.";
   if (s === 403) return "Permission denied. Check METRC user permissions and license access.";
   if (s === 400) return "Bad request. Check license number, state, and base URL.";
   if (s === 0) return "Unable to reach METRC from the API server.";
-  const m = String(json.message || "").trim();
-  return m || "METRC connection failed.";
+  return "METRC connection failed.";
 }
 
 function extractionAiNamingStatusLine(extraction: AppConfig["extraction"]): string {
@@ -344,6 +365,17 @@ export default function ConfigPage() {
   const [timeZoneFilter, setTimeZoneFilter] = useState("");
   const [showMetrcSecrets, setShowMetrcSecrets] = useState(false);
   const [metrcConnectionTesting, setMetrcConnectionTesting] = useState(false);
+  /** Last connection-test diagnostics (from API; keys never included). */
+  const [metrcTestDiagnostics, setMetrcTestDiagnostics] = useState<{
+    authMode?: string;
+    attemptedModes?: string[];
+    failures?: Array<{
+      mode: string;
+      status: number;
+      durationMs: number;
+      metrcSnippet?: string | null;
+    }>;
+  } | null>(null);
 
   const ianaTimeZones = useMemo(() => {
     if (typeof Intl !== "undefined" && typeof (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf === "function") {
@@ -612,6 +644,7 @@ export default function ConfigPage() {
       }
 
       if (!res.ok || !json || typeof json !== "object") {
+        setMetrcTestDiagnostics(null);
         setConfig((prev) => ({
           ...prev,
           company: {
@@ -623,6 +656,7 @@ export default function ConfigPage() {
               metrcLastConnectionMessage: "Unable to reach METRC from the API server.",
               metrcLastConnectionHttpStatus: null,
               metrcLastLocationCount: null,
+              metrcLastSuccessfulAuthMode: null,
             },
           },
         }));
@@ -630,6 +664,9 @@ export default function ConfigPage() {
       }
 
       if (json.ok && json.connected) {
+        setMetrcTestDiagnostics({
+          authMode: json.authMode,
+        });
         setConfig((prev) => ({
           ...prev,
           company: {
@@ -641,6 +678,7 @@ export default function ConfigPage() {
               metrcLastConnectionMessage: "",
               metrcLastConnectionHttpStatus: null,
               metrcLastLocationCount: json.locationCount,
+              metrcLastSuccessfulAuthMode: json.authMode,
             },
           },
         }));
@@ -648,6 +686,10 @@ export default function ConfigPage() {
       }
 
       if (!json.ok) {
+        setMetrcTestDiagnostics({
+          attemptedModes: json.attemptedModes,
+          failures: json.failures,
+        });
         setConfig((prev) => ({
           ...prev,
           company: {
@@ -660,11 +702,13 @@ export default function ConfigPage() {
               metrcLastConnectionHttpStatus:
                 typeof json.status === "number" && Number.isFinite(json.status) ? json.status : null,
               metrcLastLocationCount: null,
+              metrcLastSuccessfulAuthMode: null,
             },
           },
         }));
       }
     } catch {
+      setMetrcTestDiagnostics(null);
       setConfig((prev) => ({
         ...prev,
         company: {
@@ -676,6 +720,7 @@ export default function ConfigPage() {
             metrcLastConnectionMessage: "Unable to reach METRC from the API server.",
             metrcLastConnectionHttpStatus: null,
             metrcLastLocationCount: null,
+            metrcLastSuccessfulAuthMode: null,
           },
         },
       }));
@@ -1421,6 +1466,14 @@ export default function ConfigPage() {
                 <strong>{Number(config.company.metrc.metrcLastLocationCount ?? 0)}</strong> active location
                 {Number(config.company.metrc.metrcLastLocationCount ?? 0) === 1 ? "" : "s"}.
               </p>
+              <p style={{ color: "#93c5fd", fontSize: 13, margin: "0 0 10px", lineHeight: 1.5 }}>
+                Auth mode:{" "}
+                <strong style={{ color: "#e2e8f0" }}>
+                  {formatMetrcAuthModeLabel(
+                    metrcTestDiagnostics?.authMode || config.company.metrc.metrcLastSuccessfulAuthMode,
+                  )}
+                </strong>
+              </p>
               <ul style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 12px", paddingLeft: 18, lineHeight: 1.5 }}>
                 <li>
                   License: <span style={{ color: "#e2e8f0" }}>{config.company.metrc.licenseNumber || "—"}</span>
@@ -1472,6 +1525,55 @@ export default function ConfigPage() {
                 {String(config.company.metrc.metrcLastConnectionMessage || "").trim() ||
                   "METRC connection failed."}
               </p>
+              {metrcTestDiagnostics?.failures && metrcTestDiagnostics.failures.length > 0 && (
+                <div
+                  style={{
+                    marginBottom: 12,
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    overflowX: "auto",
+                  }}
+                >
+                  <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 8, fontWeight: 600 }}>
+                    Diagnostic attempts (GET /locations/v2/active — read-only)
+                  </div>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, color: "#cbd5e1" }}>
+                    <thead>
+                      <tr style={{ textAlign: "left", borderBottom: "1px solid #334155" }}>
+                        <th style={{ padding: "6px 8px 6px 0" }}>Mode</th>
+                        <th style={{ padding: "6px 8px" }}>HTTP</th>
+                        <th style={{ padding: "6px 8px" }}>Time</th>
+                        <th style={{ padding: "6px 0 6px 8px" }}>METRC note</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {metrcTestDiagnostics.failures.map((row, i) => (
+                        <tr key={`${row.mode}-${i}`} style={{ borderBottom: "1px solid #1e293b" }}>
+                          <td style={{ padding: "6px 8px 6px 0", verticalAlign: "top", whiteSpace: "nowrap" }}>
+                            <code style={{ color: "#93c5fd", fontSize: 11 }}>{row.mode}</code>
+                          </td>
+                          <td style={{ padding: "6px 8px", verticalAlign: "top" }}>{row.status}</td>
+                          <td style={{ padding: "6px 8px", verticalAlign: "top" }}>{row.durationMs} ms</td>
+                          <td style={{ padding: "6px 0 6px 8px", verticalAlign: "top", wordBreak: "break-word" }}>
+                            {row.metrcSnippet ? (
+                              <span style={{ color: "#fcd34d" }}>{row.metrcSnippet}</span>
+                            ) : (
+                              <span style={{ color: "#64748b" }}>—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {metrcTestDiagnostics.attemptedModes && metrcTestDiagnostics.attemptedModes.length > 0 && (
+                    <p style={{ color: "#64748b", fontSize: 11, marginTop: 10, marginBottom: 0 }}>
+                      Order tried: {metrcTestDiagnostics.attemptedModes.join(" → ")}
+                    </p>
+                  )}
+                </div>
+              )}
               <ul style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 12px", paddingLeft: 18, lineHeight: 1.5 }}>
                 <li>
                   Status:{" "}

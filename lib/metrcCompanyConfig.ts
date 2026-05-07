@@ -34,6 +34,8 @@ export type MetrcCompanyConfig = {
   /** HTTP status from the last METRC call when `not_connected` (0 = transport / timeout). */
   metrcLastConnectionHttpStatus?: number | null;
   metrcLastLocationCount?: number | null;
+  /** Last successful GET /locations/v2/active auth mode label (server-set). */
+  metrcLastSuccessfulAuthMode?: string | null;
 };
 
 export const defaultMetrcCompanyConfig: MetrcCompanyConfig = {
