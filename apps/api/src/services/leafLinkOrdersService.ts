@@ -215,10 +215,13 @@ function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
   const nestedOrder = row.order != null && typeof row.order === "object" && !Array.isArray(row.order)
     ? asRecord(row.order)
     : {};
-  /** Human-facing order number — seller short refs first; `number` is often a UUID in v2 payloads. */
+  /**
+   * Human-facing “Order No.” per LeafLink docs:
+   * - `order_seller_number` aliases `external_id_seller` (seller-assigned ref like d83a9509); if missing, falls back to `short_id`.
+   * - `order_short_number` aliases `short_id` only (8-char tail of UUID) — do NOT prefer over seller number.
+   */
   const displayCandidates = [
-    row.order_short_number,
-    row.short_id,
+    row.external_id_seller,
     row.order_seller_number,
     row.seller_order_number,
     row.display_number,
@@ -230,12 +233,14 @@ function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
     row.invoice_number,
     row.order_code,
     row.confirmation_number,
-    row.number,
-    row.order_number,
     nestedOrder.number,
     nestedOrder.order_number,
     nestedOrder.display_number,
     nestedOrder.human_readable_id,
+    row.number,
+    row.order_number,
+    row.order_short_number,
+    row.short_id,
     nestedOrder.short_id,
     row.external_id,
     row.code,
@@ -279,7 +284,12 @@ function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
   }
 
   const shortNumber =
-    cleanString(row.order_short_number || row.short_id || row.order_seller_number) || displayOrderNumber.slice(0, 12);
+    cleanString(
+      row.external_id_seller
+      || row.order_seller_number
+      || row.order_short_number
+      || row.short_id,
+    ) || displayOrderNumber.slice(0, 12);
 
   return {
     id: lookupId || displayOrderNumber,
