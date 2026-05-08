@@ -241,6 +241,25 @@ const MAX_LINE_ITEMS_TO_TRUST_SUM = 120;
 const STORED_ORDERS_LIST_SCAN_LIMIT = 25_000;
 const preferredLeafLinkAuthByTenant = new Map<string, string>();
 
+/** User-entered invoice field may list several refs separated by comma, semicolon, or newline. */
+export function splitInvoiceNumberTokens(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return String(raw)
+    .split(/[\n,;]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function invoiceDigitsOnly(s: string): string {
+  return String(s || "").replace(/\D/g, "");
+}
+
+/** Last `n` digits from the order # / id string (for matching invoice stubs to e.g. …9511). */
+function orderTailDigits(orderNumber: string, n: number): string {
+  const d = invoiceDigitsOnly(orderNumber);
+  return d.length >= n ? d.slice(-n) : d;
+}
+
 function leafLinkOrdersFullSyncMaxPages(): number {
   const raw = String(process.env.LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES ?? "").trim();
   const n = raw ? Number.parseInt(raw, 10) : DEFAULT_LEAF_LINK_FULL_SYNC_MAX_PAGES;
@@ -2346,7 +2365,7 @@ export class LeafLinkOrdersService {
     companyId: string,
     input: { invoiceNumber?: string; payerName?: string; amount?: number },
   ): Promise<LeafLinkPaymentMatchCandidateDto[]> {
-    const invoiceNeedle = cleanString(input.invoiceNumber).toLowerCase();
+    const invoiceTokens = splitInvoiceNumberTokens(input.invoiceNumber);
     const payerNeedle = cleanString(input.payerName).toLowerCase();
     const amountNeedle = typeof input.amount === "number" && Number.isFinite(input.amount) ? input.amount : null;
     const rows = await findRecentLeafLinkStoredOrdersForCompany(companyId, 4000);
@@ -2363,31 +2382,48 @@ export class LeafLinkOrdersService {
       const customerName = cleanString(summary.customerName);
       const total = typeof summary.total === "number" ? summary.total : orderTotalMoney(summary);
       const outstandingBalance = paid ? 0 : total;
-      const matchedBy: string[] = [];
+      const matchedBySet = new Set<string>();
       let score = 0;
-      if (invoiceNeedle) {
-        const ordLower = orderNumber.toLowerCase();
-        if (ordLower === invoiceNeedle) {
-          matchedBy.push("invoice_exact");
-          score += 100;
-        } else if (ordLower.includes(invoiceNeedle) || invoiceNeedle.includes(ordLower)) {
-          matchedBy.push("invoice_partial");
-          score += 40;
+
+      if (invoiceTokens.length > 0) {
+        for (const rawTok of invoiceTokens) {
+          const tok = cleanString(rawTok);
+          if (!tok) continue;
+          const ordLower = orderNumber.toLowerCase();
+          const tokLower = tok.toLowerCase();
+          const tokDigits = invoiceDigitsOnly(tok);
+          const ordTail4 = orderTailDigits(orderNumber, 4);
+          const normOrd = ordLower.replace(/^#/, "");
+          const normTok = tokLower.replace(/^#/, "");
+          if (normOrd === normTok || ordLower === tokLower) {
+            matchedBySet.add("invoice_exact");
+            score += 100;
+          }
+          else if (tokDigits.length >= 4 && ordTail4.length >= 4 && tokDigits.slice(-4) === ordTail4) {
+            matchedBySet.add("invoice_last4");
+            score += 95;
+          }
+          else if (normOrd.includes(normTok) || normTok.includes(normOrd)) {
+            matchedBySet.add("invoice_partial");
+            score += 40;
+          }
         }
       }
-      if (!matchedBy.includes("invoice_exact") && payerNeedle && customerName.toLowerCase().includes(payerNeedle)) {
-        matchedBy.push("payee_name");
+
+      if (!matchedBySet.has("invoice_exact") && payerNeedle && customerName.toLowerCase().includes(payerNeedle)) {
+        matchedBySet.add("payee_name");
         score += 20;
       }
       if (amountNeedle != null) {
         const diffTotal = Math.abs(total - amountNeedle);
-        const diffOutstanding = outstandingBalance == null ? Number.POSITIVE_INFINITY : Math.abs(outstandingBalance - amountNeedle);
+        const diffOutstanding =
+          outstandingBalance == null ? Number.POSITIVE_INFINITY : Math.abs(outstandingBalance - amountNeedle);
         if (diffTotal <= 0.01 || diffOutstanding <= 0.01) {
-          matchedBy.push("amount");
+          matchedBySet.add("amount");
           score += 25;
         }
       }
-      if (matchedBy.length === 0) continue;
+      if (matchedBySet.size === 0) continue;
       out.push({
         leafLinkKey: cleanString(summary.id) || cleanString(row.id) || orderNumber,
         orderId: summary.id,
@@ -2400,15 +2436,30 @@ export class LeafLinkOrdersService {
         deliveryDate: summary.deliveryDate,
         lineItems: summary.lineItems,
         score,
-        matchedBy,
+        matchedBy: [...matchedBySet],
       });
     }
     return out.sort((a, b) => b.score - a.score || a.orderNumber.localeCompare(b.orderNumber));
   }
 
+  /** @deprecated Use {@link postOrderPayment} */
   async postCheckPayment(
     companyId: string,
     input: { orderNumber: string; amount: number; paymentDateIso: string; note: string; reference?: string | null },
+  ): Promise<{ paymentId: string; paymentStatus: string; rawResponse: unknown }> {
+    return this.postOrderPayment(companyId, { ...input, paymentMethod: "Check" });
+  }
+
+  async postOrderPayment(
+    companyId: string,
+    input: {
+      orderNumber: string;
+      amount: number;
+      paymentDateIso: string;
+      note: string;
+      reference?: string | null;
+      paymentMethod: "Check" | "Cash";
+    },
   ): Promise<{ paymentId: string; paymentStatus: string; rawResponse: unknown }> {
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
     logInfo("[LEAFLINK] credentials_resolved", {
@@ -2430,11 +2481,12 @@ export class LeafLinkOrdersService {
     }
     urls.push(`${base}/v2/orders-received/${orderNumEsc}/payments/`);
     urls.push(`${base}/v2/order-payments/`);
+    const method = input.paymentMethod === "Cash" ? "Cash" : "Check";
     const payloads: Record<string, unknown>[] = [
       {
         order_number: input.orderNumber,
         amount: input.amount,
-        payment_method: "Check",
+        payment_method: method,
         payment_date: input.paymentDateIso,
         reference: cleanString(input.reference),
         notes: input.note,
@@ -2442,7 +2494,7 @@ export class LeafLinkOrdersService {
       {
         order: input.orderNumber,
         amount: input.amount,
-        payment_method: "Check",
+        payment_method: method,
         date: input.paymentDateIso,
         reference: cleanString(input.reference),
         notes: input.note,

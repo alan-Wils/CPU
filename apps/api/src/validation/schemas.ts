@@ -262,7 +262,7 @@ export const checkSaveSchema = z.object({
     accountNumber: z.string().max(32).optional(),
     bankName: z.string().max(200).optional(),
     memo: z.string().max(500).optional(),
-    invoiceNumber: z.string().max(120).optional(),
+    invoiceNumber: z.string().max(4000).optional(),
     imageUrl: z.string().url(),
     stubImageUrl: z.string().url().optional(),
     rawOcrJson: z.unknown().optional()
@@ -287,7 +287,9 @@ export const checkLeafLinkMatchSchema = z.object({
 export const checkLeafLinkMarkPaidSchema = z.object({
     orderId: z.string().min(1).max(120).optional(),
     orderNumber: z.string().min(1).max(120).optional(),
-    allowAmountOverride: z.boolean().optional()
+    allowAmountOverride: z.boolean().optional(),
+    /** Post this dollar amount to LeafLink (defaults to order outstanding). Required when one physical check pays multiple invoices. */
+    paymentAmount: z.number().positive().max(10_000_000).optional(),
 }).superRefine((data, ctx) => {
     if (!data.orderId && !data.orderNumber) {
         ctx.addIssue({
@@ -297,6 +299,10 @@ export const checkLeafLinkMarkPaidSchema = z.object({
         });
     }
 });
+
+/** Same body shapes as check LeafLink routes — cash incoming payments use LeafLink `Cash` method. */
+export const cashLeafLinkMatchSchema = checkLeafLinkMatchSchema;
+export const cashLeafLinkMarkPaidSchema = checkLeafLinkMarkPaidSchema;
 const cashLogDepartmentSchema = z.enum(["CULTIVATION", "EXTRACTION", "PACKAGING", "GENERAL"]);
 export const cashLogCreateSchema = z
     .object({
@@ -305,7 +311,7 @@ export const cashLogCreateSchema = z
         memo: z.string().max(500).optional(),
         entryDate: z.coerce.date().optional(),
         payeeCompany: z.string().max(200).optional(),
-        invoiceNumber: z.string().max(120).optional(),
+        invoiceNumber: z.string().max(4000).optional(),
         department: cashLogDepartmentSchema.optional(),
         /** Outgoing only: URL from POST /cash-log/upload-receipt. */
         receiptImageUrl: z.string().url().max(2000).optional()
@@ -348,7 +354,7 @@ export const cashLogUpdateSchema = z
         amount: z.number().positive().max(10_000_000).optional(),
         memo: z.string().max(500).optional().nullable(),
         payeeCompany: z.string().max(200).optional().nullable(),
-        invoiceNumber: z.string().max(120).optional().nullable(),
+        invoiceNumber: z.string().max(4000).optional().nullable(),
         department: cashLogDepartmentSchema.optional().nullable(),
         entryDate: z.coerce.date().optional().nullable(),
         receiptImageUrl: z.union([z.string().url().max(2000), z.null()]).optional()

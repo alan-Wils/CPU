@@ -288,6 +288,12 @@ function canManageUsers(role: string) {
   return r === "OWNER" || r === "ADMIN";
 }
 
+/** Matches `/api/checks/.../leaflink-mark-paid` and `/api/cash-log/.../leaflink-mark-paid` RBAC. */
+function canPostLeafLinkPayment(role: string) {
+  const r = normalizePlatformRole(role);
+  return r === "OWNER" || r === "ADMIN" || r === "OPERATIONS_MANAGER";
+}
+
 /** Financial logs panel, digest email, and read-only cash/check views. */
 function canAccessFinancialAdminTools(role: string) {
   const r = normalizePlatformRole(role);
@@ -350,7 +356,14 @@ type CashLogRow = {
   entryDate?: string | null;
   receiptImageUrl?: string | null;
   createdAt: string;
+  leaflinkPostedPayments?: unknown;
+  leaflinkPaymentSyncStatus?: string | null;
+  leaflinkPaymentSyncError?: string | null;
 };
+
+function formatUsdLeafLink(n: number): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
+}
 
 function formatCashDepartment(d: CashLogDepartment | string | null | undefined): string {
   if (!d) return "—";
@@ -577,6 +590,120 @@ export default function AdminPage() {
     );
   }
 
+  async function promptLeafLinkPaymentsAfterCheckSave(checkId: string, invoiceEntered: boolean) {
+    if (!invoiceEntered || !canPostLeafLinkPayment(currentUser?.role || "")) return;
+    const cid = checksCompanyId();
+    if (!cid || !checkId) return;
+    try {
+      const data = await apiRequest<{
+        exactMatches?: CheckLeafLinkMatchCandidate[];
+        possibleMatches?: CheckLeafLinkMatchCandidate[];
+      }>(
+        withCompanyQuery(`/api/checks/${encodeURIComponent(checkId)}/leaflink-match`, cid),
+        {
+          method: "POST",
+          companyId: cid,
+          body: { refreshIfNoMatch: true },
+        },
+      );
+      const exact = Array.isArray(data?.exactMatches) ? data.exactMatches : [];
+      const possible = Array.isArray(data?.possibleMatches) ? data.possibleMatches : [];
+      const merged = new Map<string, CheckLeafLinkMatchCandidate>();
+      for (const c of [...exact, ...possible]) {
+        if (!merged.has(c.orderNumber)) merged.set(c.orderNumber, c);
+      }
+      const list = [...merged.values()].filter(
+        (c) => String(c.paymentStatus || "").toLowerCase() !== "paid",
+      );
+      for (const c of list) {
+        const ob =
+          typeof c.outstandingBalance === "number" && Number.isFinite(c.outstandingBalance)
+            ? c.outstandingBalance
+            : c.total;
+        const ok = window.confirm(
+          `LeafLink order ${c.orderNumber} (${c.customerName}) — payment status: ${c.paymentStatus || "Unpaid"}.\n\nPost ${formatUsdLeafLink(ob)} to LeafLink as a check payment for this order?`,
+        );
+        if (!ok) continue;
+        try {
+          await apiRequest(
+            withCompanyQuery(`/api/checks/${encodeURIComponent(checkId)}/leaflink-mark-paid`, cid),
+            {
+              method: "POST",
+              companyId: cid,
+              body: {
+                orderNumber: c.orderNumber,
+                allowAmountOverride: true,
+                paymentAmount: ob,
+              },
+            },
+          );
+        } catch (e: any) {
+          window.alert(e?.message || "Could not post check payment to LeafLink.");
+        }
+      }
+      await loadCheckCaptures();
+    } catch {
+      /* Matching is best-effort after save */
+    }
+  }
+
+  async function promptLeafLinkPaymentsAfterCashSave(entryId: string, invoiceEntered: boolean) {
+    if (!invoiceEntered || !canPostLeafLinkPayment(currentUser?.role || "")) return;
+    const cid = checksCompanyId();
+    if (!cid || !entryId) return;
+    try {
+      const data = await apiRequest<{
+        exactMatches?: CheckLeafLinkMatchCandidate[];
+        possibleMatches?: CheckLeafLinkMatchCandidate[];
+      }>(
+        withCompanyQuery(`/api/cash-log/${encodeURIComponent(entryId)}/leaflink-match`, cid),
+        {
+          method: "POST",
+          companyId: cid,
+          body: { refreshIfNoMatch: true },
+        },
+      );
+      const exact = Array.isArray(data?.exactMatches) ? data.exactMatches : [];
+      const possible = Array.isArray(data?.possibleMatches) ? data.possibleMatches : [];
+      const merged = new Map<string, CheckLeafLinkMatchCandidate>();
+      for (const c of [...exact, ...possible]) {
+        if (!merged.has(c.orderNumber)) merged.set(c.orderNumber, c);
+      }
+      const list = [...merged.values()].filter(
+        (c) => String(c.paymentStatus || "").toLowerCase() !== "paid",
+      );
+      for (const c of list) {
+        const ob =
+          typeof c.outstandingBalance === "number" && Number.isFinite(c.outstandingBalance)
+            ? c.outstandingBalance
+            : c.total;
+        const ok = window.confirm(
+          `LeafLink order ${c.orderNumber} (${c.customerName}) — payment status: ${c.paymentStatus || "Unpaid"}.\n\nPost ${formatUsdLeafLink(ob)} to LeafLink as a cash payment for this order?`,
+        );
+        if (!ok) continue;
+        try {
+          await apiRequest(
+            withCompanyQuery(`/api/cash-log/${encodeURIComponent(entryId)}/leaflink-mark-paid`, cid),
+            {
+              method: "POST",
+              companyId: cid,
+              body: {
+                orderNumber: c.orderNumber,
+                allowAmountOverride: true,
+                paymentAmount: ob,
+              },
+            },
+          );
+        } catch (e: any) {
+          window.alert(e?.message || "Could not post cash payment to LeafLink.");
+        }
+      }
+      await loadCashEntries();
+    } catch {
+      /* best-effort */
+    }
+  }
+
   async function loadCheckCaptures() {
     if (!canManageUsers(currentUser?.role || "")) return;
     const cid = checksCompanyId();
@@ -663,7 +790,7 @@ export default function AdminPage() {
       }
 
       const invoiceTrim = checkInvoice.trim();
-      await apiRequest(withCompanyQuery("/api/checks", cid), {
+      const saved = await apiRequest<CheckCaptureRow>(withCompanyQuery("/api/checks", cid), {
         method: "POST",
         companyId: cid,
         body: {
@@ -687,6 +814,9 @@ export default function AdminPage() {
       if (stubImageInputRef.current) stubImageInputRef.current.value = "";
       setCheckFileKey((k) => k + 1);
       await loadCheckCaptures();
+      if (invoiceTrim && saved?.id) {
+        await promptLeafLinkPaymentsAfterCheckSave(saved.id, true);
+      }
     } catch (e: any) {
       setCheckFormError(e?.message || "Could not save check capture.");
     } finally {
@@ -882,13 +1012,15 @@ export default function AdminPage() {
     }
     setCashSaving(true);
     try {
+      const invoiceTrimCash = cashInvoiceNumber.trim();
+      const wasIncoming = cashDirection === "INCOMING";
       const body: Record<string, unknown> = {
         direction: cashDirection,
         amount,
       };
       if (cashDirection === "INCOMING") {
         body.payeeCompany = cashPayeeCompany.trim();
-        body.invoiceNumber = cashInvoiceNumber.trim() || undefined;
+        body.invoiceNumber = invoiceTrimCash || undefined;
         body.entryDate = new Date(`${cashEntryDate.trim()}T12:00:00.000Z`).toISOString();
       } else {
         body.department = cashDepartment;
@@ -900,7 +1032,7 @@ export default function AdminPage() {
           body.receiptImageUrl = cashReceiptImageUrl.trim();
         }
       }
-      await apiRequest(withCompanyQuery("/api/cash-log", cid), {
+      const savedCash = await apiRequest<CashLogRow>(withCompanyQuery("/api/cash-log", cid), {
         method: "POST",
         companyId: cid,
         body,
@@ -916,6 +1048,9 @@ export default function AdminPage() {
       setCashReceiptFileKey((k) => k + 1);
       setCashEntryDate("");
       await loadCashEntries();
+      if (wasIncoming && invoiceTrimCash && savedCash?.id) {
+        await promptLeafLinkPaymentsAfterCashSave(savedCash.id, true);
+      }
     } catch (e: any) {
       setCashFormError(e?.message || "Could not save cash entry.");
     } finally {
@@ -1181,12 +1316,18 @@ export default function AdminPage() {
     setLeafLinkPostingPayment(true);
     setLeafLinkMatchError("");
     try {
+      const cand = leafLinkMatchChoices.find((x) => x.orderNumber === leafLinkSelectedOrderNumber);
+      const payAmt =
+        cand && typeof cand.outstandingBalance === "number" && Number.isFinite(cand.outstandingBalance)
+          ? cand.outstandingBalance
+          : cand?.total;
       await apiRequest(withCompanyQuery(`/api/checks/${encodeURIComponent(checkBeingEdited.id)}/leaflink-mark-paid`, cid), {
         method: "POST",
         companyId: cid,
         body: {
           orderNumber: leafLinkSelectedOrderNumber,
-          allowAmountOverride: canManageUsers(currentUser?.role || ""),
+          allowAmountOverride: true,
+          ...(typeof payAmt === "number" && Number.isFinite(payAmt) ? { paymentAmount: payAmt } : {}),
         },
       });
       setLeafLinkMatchModalOpen(false);
@@ -2719,7 +2860,11 @@ export default function AdminPage() {
                     }}
                   >
                     Photograph the check and optional stub, enter payee and totals, then save.
-                    Filter by capture date (UTC calendar day) and export CSV for the selected range.
+                    Filter by capture date (UTC calendar day) and export CSV for the selected range. Invoice
+                    references may include multiple values (comma, semicolon, or newline); each is matched to saved
+                    LeafLink orders by full order # or by the <strong style={{ color: "#cbd5e1" }}>last four digits</strong>{" "}
+                    (same as the Orders page). After save, you may be prompted to post payments to LeafLink for unpaid
+                    matches.
                   </p>
 
                   {checkFormError ? (
@@ -2809,13 +2954,14 @@ export default function AdminPage() {
                         autoComplete="off"
                       />
                     </label>
-                    <label style={labelStyle}>
-                      Invoice #
-                      <input
+                    <label style={{ ...labelStyle, gridColumn: "1 / -1" }}>
+                      Invoice # (one or many — matches LeafLink order # or last 4 digits)
+                      <textarea
                         value={checkInvoice}
                         onChange={(e) => setCheckInvoice(e.target.value)}
-                        placeholder="Optional"
-                        style={inputStyle}
+                        placeholder={"9511\n9449, 9448"}
+                        rows={3}
+                        style={{ ...inputStyle, resize: "vertical", minHeight: 72, fontFamily: "inherit" }}
                         autoComplete="off"
                       />
                     </label>
@@ -3075,7 +3221,9 @@ export default function AdminPage() {
                 </button>
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.55, fontSize: 14 }}>
-                Incoming: payee company, date, total, and optional invoice number. Outgoing: amount, department
+                Incoming: payee company, date, total, and optional invoice reference(s). Use comma, semicolon, or new
+                lines for multiple invoices on one deposit — values are matched to LeafLink orders by full order # or{" "}
+                <strong style={{ color: "#cbd5e1" }}>last four digits</strong>. Outgoing: amount, department
                 (cultivation, extraction, packaging, or general), optional date and memo, and optional receipt photo.
                 History filter matches entry date (UTC calendar day); rows with no entry date use logged time for the
                 same range. Use Direction to show only incoming or outgoing rows.
@@ -3188,12 +3336,14 @@ export default function AdminPage() {
                         autoComplete="off"
                       />
                     </label>
-                    <label style={{ ...labelStyle, marginBottom: 0 }}>
-                      Invoice # (optional)
-                      <input
+                    <label style={{ ...labelStyle, marginBottom: 0, gridColumn: "1 / -1" }}>
+                      Invoice # (optional — multiple allowed)
+                      <textarea
                         value={cashInvoiceNumber}
                         onChange={(e) => setCashInvoiceNumber(e.target.value)}
-                        style={{ ...inputStyle }}
+                        placeholder={"9511\n9449, 9448"}
+                        rows={3}
+                        style={{ ...inputStyle, resize: "vertical", minHeight: 72, fontFamily: "inherit" }}
                         autoComplete="off"
                       />
                     </label>
@@ -3753,9 +3903,14 @@ export default function AdminPage() {
                     style={{ ...inputStyle }}
                   />
                 </label>
-                <label style={{ ...labelStyle, marginBottom: 0 }}>
-                  Invoice # (optional)
-                  <input value={editCheckInvoice} onChange={(e) => setEditCheckInvoice(e.target.value)} style={{ ...inputStyle }} />
+                <label style={{ ...labelStyle, marginBottom: 0, gridColumn: "1 / -1" }}>
+                  Invoice # (optional — multiple allowed, matches order # or last 4 digits)
+                  <textarea
+                    value={editCheckInvoice}
+                    onChange={(e) => setEditCheckInvoice(e.target.value)}
+                    rows={3}
+                    style={{ ...inputStyle, resize: "vertical", minHeight: 72, fontFamily: "inherit" }}
+                  />
                 </label>
                 <label style={{ ...labelStyle, marginBottom: 0 }}>
                   Check date (optional)
@@ -3997,12 +4152,13 @@ export default function AdminPage() {
                       Date
                       <input type="date" value={editCashEntryDate} onChange={(e) => setEditCashEntryDate(e.target.value)} style={{ ...inputStyle }} />
                     </label>
-                    <label style={{ ...labelStyle, marginBottom: 0 }}>
-                      Invoice # (optional)
-                      <input
+                    <label style={{ ...labelStyle, marginBottom: 0, gridColumn: "1 / -1" }}>
+                      Invoice # (optional — multiple allowed)
+                      <textarea
                         value={editCashInvoiceNumber}
                         onChange={(e) => setEditCashInvoiceNumber(e.target.value)}
-                        style={{ ...inputStyle }}
+                        rows={3}
+                        style={{ ...inputStyle, resize: "vertical", minHeight: 72, fontFamily: "inherit" }}
                       />
                     </label>
                   </>

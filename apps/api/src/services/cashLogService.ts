@@ -13,6 +13,13 @@ import {
     uploadsUseS3
 } from "../lib/uploadStorage.js";
 import { logDatabaseActivity, recordUsageEventSafe } from "./usageEventRecord.js";
+import {
+    hasPostedOrderNumber,
+    parsePostedPaymentsJson,
+    type LeafLinkPostedPaymentRow,
+} from "../lib/leaflinkPostedPayments.js";
+import { AuditService } from "./auditService.js";
+import { LeafLinkOrdersService, type LeafLinkPaymentMatchCandidateDto } from "./leafLinkOrdersService.js";
 
 function extForReceiptMime(mimeType: string) {
     if (mimeType === "image/png")
@@ -72,7 +79,15 @@ function csvEscape(value: unknown) {
         return `"${s.replace(/"/g, '""')}"`;
     return s;
 }
+
+const PAY_TOLERANCE = 0.01;
+function sameMoneyCash(a: number, b: number) {
+    return Math.abs(Number(a || 0) - Number(b || 0)) <= PAY_TOLERANCE;
+}
+
 export class CashLogService {
+    leafLinkOrdersService = new LeafLinkOrdersService();
+    auditService = new AuditService();
     async uploadReceiptImage(input: {
         companyId: string;
         fileName?: string | null;
@@ -298,7 +313,10 @@ export class CashLogService {
                 entryDate: true,
                 receiptImageUrl: true,
                 createdAt: true,
-                updatedAt: true
+                updatedAt: true,
+                leaflinkPostedPayments: true,
+                leaflinkPaymentSyncStatus: true,
+                leaflinkPaymentSyncError: true,
             }
         });
         void logDatabaseActivity({
@@ -419,5 +437,192 @@ export class CashLogService {
         }
         await removeStoredUpload(row.receiptImageUrl);
         await prisma.cashLogEntry.delete({ where: { id: row.id } });
+    }
+
+    async matchLeafLinkIncoming(
+        companyId: string,
+        entryId: string,
+        input: { refreshIfNoMatch?: boolean },
+    ) {
+        const entry = await prisma.cashLogEntry.findFirst({
+            where: { id: entryId, companyId },
+            select: {
+                id: true,
+                direction: true,
+                amount: true,
+                payeeCompany: true,
+                invoiceNumber: true,
+            },
+        });
+        if (!entry || entry.direction !== "INCOMING") {
+            throw new AppError("Only incoming entries with optional invoice refs can match LeafLink orders.", 400, "CASH_LOG_LEAF_BAD_ENTRY");
+        }
+        const refresh = Boolean(input?.refreshIfNoMatch);
+        let candidates = await this.leafLinkOrdersService.findOpenPaymentCandidatesForCheck(companyId, {
+            invoiceNumber: entry.invoiceNumber ?? undefined,
+            payerName: entry.payeeCompany ?? undefined,
+            amount: typeof entry.amount === "number" ? entry.amount : undefined,
+        });
+        if (!candidates.length && refresh) {
+            await this.leafLinkOrdersService.syncOrdersWarm(companyId);
+            candidates = await this.leafLinkOrdersService.findOpenPaymentCandidatesForCheck(companyId, {
+                invoiceNumber: entry.invoiceNumber ?? undefined,
+                payerName: entry.payeeCompany ?? undefined,
+                amount: typeof entry.amount === "number" ? entry.amount : undefined,
+            });
+        }
+        const strongInvoice = (c: LeafLinkPaymentMatchCandidateDto) =>
+            c.matchedBy.includes("invoice_exact") || c.matchedBy.includes("invoice_last4");
+        const exactMatches = candidates.filter((c) => strongInvoice(c));
+        const payeeNeedle = String(entry.payeeCompany || "").trim().toLowerCase();
+        const entryAmt = typeof entry.amount === "number" ? entry.amount : null;
+        const hasInvoiceTokens = Boolean(String(entry.invoiceNumber || "").trim());
+        const possibleMatches = candidates.filter((c) => {
+            if (exactMatches.some((x) => x.orderNumber === c.orderNumber))
+                return false;
+            const openish = String(c.paymentStatus || "").toLowerCase() !== "paid";
+            if (!openish)
+                return false;
+            const nameOk = payeeNeedle ? String(c.customerName || "").toLowerCase().includes(payeeNeedle) : false;
+            const amountOk =
+                entryAmt == null
+                    ? false
+                    : sameMoneyCash(c.total, entryAmt) || sameMoneyCash(c.outstandingBalance ?? c.total, entryAmt);
+            const invoicePartial = hasInvoiceTokens ? c.matchedBy.includes("invoice_partial") : false;
+            return Boolean(invoicePartial || (nameOk && amountOk));
+        });
+        if (exactMatches.length === 1) {
+            const chosen = exactMatches[0];
+            await prisma.cashLogEntry.update({
+                where: { id: entry.id },
+                data: {
+                    leaflinkPaymentSyncStatus: "matched",
+                    leaflinkPaymentSyncError: null,
+                },
+            });
+        }
+        return {
+            cashEntryId: entry.id,
+            exactMatches,
+            possibleMatches,
+        };
+    }
+
+    async markLeafLinkIncomingPaid(
+        companyId: string,
+        actorUserId: string,
+        entryId: string,
+        input: {
+            orderId?: string;
+            orderNumber?: string;
+            allowAmountOverride?: boolean;
+            paymentAmount?: number;
+        },
+    ) {
+        const entry = await prisma.cashLogEntry.findFirst({
+            where: { id: entryId, companyId },
+            select: {
+                id: true,
+                direction: true,
+                amount: true,
+                payeeCompany: true,
+                invoiceNumber: true,
+                entryDate: true,
+                leaflinkPostedPayments: true,
+            },
+        });
+        if (!entry || entry.direction !== "INCOMING") {
+            throw new AppError("Only incoming cash entries can post LeafLink payments.", 400, "CASH_LOG_LEAF_BAD_ENTRY");
+        }
+        const postedBefore = parsePostedPaymentsJson(entry.leaflinkPostedPayments);
+        const cashAmt = typeof entry.amount === "number" ? entry.amount : NaN;
+        if (!Number.isFinite(cashAmt) || cashAmt <= 0) {
+            throw new AppError("Cash entry amount is required before posting payment.", 400, "CASH_AMOUNT_REQUIRED");
+        }
+        const candidates = await this.leafLinkOrdersService.findOpenPaymentCandidatesForCheck(companyId, {
+            invoiceNumber: entry.invoiceNumber ?? undefined,
+            payerName: entry.payeeCompany ?? undefined,
+            amount: cashAmt,
+        });
+        const selected = candidates.find(
+            (c) => c.orderNumber === input.orderNumber || c.orderId === input.orderId || c.leafLinkKey === input.orderId,
+        );
+        if (!selected) {
+            throw new AppError("Selected LeafLink order was not found or is not open.", 404, "LEAFLINK_ORDER_NOT_OPEN");
+        }
+        if (hasPostedOrderNumber(postedBefore, selected.orderNumber)) {
+            throw new AppError("A LeafLink payment for this order was already posted from this cash entry.", 409, "CASH_LEAF_DUPLICATE_ORDER");
+        }
+        const expectedBalance = selected.outstandingBalance ?? selected.total;
+        const payAmtRaw =
+            typeof input.paymentAmount === "number" && Number.isFinite(input.paymentAmount)
+                ? input.paymentAmount
+                : expectedBalance;
+        const payAmt = typeof payAmtRaw === "number" && Number.isFinite(payAmtRaw) ? payAmtRaw : NaN;
+        if (!Number.isFinite(payAmt) || payAmt <= 0) {
+            throw new AppError("Payment amount is invalid.", 400, "CASH_PAYMENT_AMOUNT_INVALID");
+        }
+        const amountMatches = sameMoneyCash(expectedBalance, payAmt) || sameMoneyCash(selected.total, payAmt);
+        if (!amountMatches && !input.allowAmountOverride) {
+            throw new AppError("Payment amount does not match invoice balance.", 409, "CASH_AMOUNT_MISMATCH");
+        }
+        const paymentDateIso = entry.entryDate
+            ? new Date(entry.entryDate).toISOString().slice(0, 10)
+            : new Date().toISOString().slice(0, 10);
+        try {
+            const posted = await this.leafLinkOrdersService.postOrderPayment(companyId, {
+                orderNumber: selected.orderNumber,
+                amount: payAmt,
+                paymentDateIso,
+                reference: entry.invoiceNumber ?? null,
+                note: `CPU cash log ${entry.id}`,
+                paymentMethod: "Cash",
+            });
+            const row: LeafLinkPostedPaymentRow = {
+                orderNumber: selected.orderNumber,
+                paymentId: posted.paymentId,
+                amount: payAmt,
+                postedAt: new Date().toISOString(),
+            };
+            const mergedJson = [...postedBefore, row];
+            await prisma.cashLogEntry.update({
+                where: { id: entry.id },
+                data: {
+                    leaflinkPostedPayments: mergedJson as Prisma.InputJsonValue,
+                    leaflinkPaymentSyncStatus: "payment_posted",
+                    leaflinkPaymentSyncError: null,
+                },
+            });
+            await this.auditService.logAction({
+                companyId,
+                actorUserId,
+                action: "cash_log_leaflink_payment_posted",
+                entityType: "CashLogEntry",
+                entityId: entry.id,
+                before: { entryId: entry.id },
+                after: {
+                    orderNumber: selected.orderNumber,
+                    amount: payAmt,
+                    paymentId: posted.paymentId,
+                    result: posted.paymentStatus,
+                },
+            });
+            return {
+                ok: true,
+                paymentId: posted.paymentId,
+                paymentStatus: posted.paymentStatus,
+                orderNumber: selected.orderNumber,
+            };
+        }
+        catch (err) {
+            await prisma.cashLogEntry.update({
+                where: { id: entry.id },
+                data: {
+                    leaflinkPaymentSyncStatus: "failed",
+                    leaflinkPaymentSyncError: err instanceof Error ? err.message : String(err),
+                },
+            });
+            throw err;
+        }
     }
 }

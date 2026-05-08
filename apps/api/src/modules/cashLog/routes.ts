@@ -4,7 +4,13 @@ import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { requireRole } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
-import { cashLogCreateSchema, cashLogUpdateSchema, checkUploadSchema } from "../../validation/schemas.js";
+import {
+    cashLeafLinkMarkPaidSchema,
+    cashLeafLinkMatchSchema,
+    cashLogCreateSchema,
+    cashLogUpdateSchema,
+    checkUploadSchema,
+} from "../../validation/schemas.js";
 import { CashLogService } from "../../services/cashLogService.js";
 import { AppError } from "../../errors/AppError.js";
 import { logInfo } from "../../lib/logger.js";
@@ -17,6 +23,7 @@ import {
 
 const cashLogWriteRoles = ["OWNER", "ADMIN"];
 const cashLogReadRoles = ["OWNER", "ADMIN", "OPERATIONS_MANAGER", "FINANCIAL_ANALYST"];
+const cashLogLeafLinkRoles = ["OWNER", "ADMIN", "OPERATIONS_MANAGER"];
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const listQuerySchema = z.object({
     take: z.coerce.number().int().positive().max(500).optional(),
@@ -117,6 +124,37 @@ cashLogRouter.patch("/:id", requireRole([...cashLogWriteRoles]), validate({ para
     });
     res.json(updated);
 }));
+
+cashLogRouter.post(
+    "/:id/leaflink-match",
+    requireRole([...cashLogLeafLinkRoles]),
+    validate({ params: cashLogIdParam, body: cashLeafLinkMatchSchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        if (!companyId) {
+            throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
+        }
+        const out = await service.matchLeafLinkIncoming(companyId, req.params.id, {
+            refreshIfNoMatch: req.body?.refreshIfNoMatch,
+        });
+        res.json(out);
+    }),
+);
+
+cashLogRouter.post(
+    "/:id/leaflink-mark-paid",
+    requireRole([...cashLogLeafLinkRoles]),
+    validate({ params: cashLogIdParam, body: cashLeafLinkMarkPaidSchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        if (!companyId || !req.auth?.userId) {
+            throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
+        }
+        const body = req.body as z.infer<typeof cashLeafLinkMarkPaidSchema>;
+        const out = await service.markLeafLinkIncomingPaid(companyId, req.auth.userId, req.params.id, body);
+        res.json(out);
+    }),
+);
 
 cashLogRouter.delete("/:id", requireRole([...cashLogWriteRoles]), validate({ params: cashLogIdParam }), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);

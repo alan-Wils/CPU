@@ -14,6 +14,12 @@ import {
 } from "../lib/uploadStorage.js";
 import { logDatabaseActivity, recordUsageEventSafe } from "./usageEventRecord.js";
 import { AuditService } from "./auditService.js";
+import {
+    hasPostedOrderNumber,
+    mergePostedPaymentsFromCheckCapture,
+    parsePostedPaymentsJson,
+    type LeafLinkPostedPaymentRow
+} from "../lib/leaflinkPostedPayments.js";
 import { LeafLinkOrdersService, type LeafLinkPaymentMatchCandidateDto } from "./leafLinkOrdersService.js";
 
 function extForMime(mimeType) {
@@ -468,10 +474,12 @@ export class CheckCaptureService {
                 amount: typeof check.amount === "number" ? check.amount : undefined
             });
         }
-        const invoiceNeedle = normalizeText(check.invoiceNumber);
+        const hasInvoiceTokens = Boolean(normalizeText(check.invoiceNumber));
         const payeeNeedle = normalizeText(check.payerName);
         const checkAmount = typeof check.amount === "number" ? check.amount : null;
-        const exactMatches = candidates.filter((c) => c.matchedBy.includes("invoice_exact"));
+        const strongInvoice = (c: LeafLinkPaymentMatchCandidateDto) =>
+            c.matchedBy.includes("invoice_exact") || c.matchedBy.includes("invoice_last4");
+        const exactMatches = candidates.filter((c) => strongInvoice(c));
         const possibleMatches = candidates.filter((c) => {
             if (exactMatches.find((x) => x.orderNumber === c.orderNumber))
                 return false;
@@ -480,10 +488,10 @@ export class CheckCaptureService {
                 return false;
             const nameOk = payeeNeedle ? normalizeText(c.customerName).includes(payeeNeedle) : false;
             const amountOk = checkAmount == null ? false : (sameMoney(c.total, checkAmount) || sameMoney(c.outstandingBalance, checkAmount));
-            const invoicePartial = invoiceNeedle ? c.matchedBy.includes("invoice_partial") : false;
+            const invoicePartial = hasInvoiceTokens ? c.matchedBy.includes("invoice_partial") : false;
             return Boolean(invoicePartial || (nameOk && amountOk));
         });
-        if (exactMatches.length > 0) {
+        if (exactMatches.length === 1) {
             const chosen = exactMatches[0];
             await prisma.checkCapture.update({
                 where: { id: check.id },
@@ -512,15 +520,15 @@ export class CheckCaptureService {
                 amount: true,
                 payerName: true,
                 invoiceNumber: true,
-                leaflinkPaymentId: true
+                leaflinkPaymentId: true,
+                leaflinkOrderNumber: true,
+                leaflinkPostedPayments: true,
             }
         });
         if (!check) {
             throw new AppError("Check capture not found.", 404, "CHECK_CAPTURE_NOT_FOUND");
         }
-        if (check.leaflinkPaymentId) {
-            throw new AppError("This check already has a LeafLink payment posted.", 409, "CHECK_LEAFLINK_DUPLICATE_PAYMENT");
-        }
+        const postedBefore = mergePostedPaymentsFromCheckCapture(check);
         const amount = typeof check.amount === "number" ? check.amount : NaN;
         if (!Number.isFinite(amount) || amount < 0) {
             throw new AppError("Check amount is required before posting payment.", 400, "CHECK_AMOUNT_REQUIRED");
@@ -534,20 +542,38 @@ export class CheckCaptureService {
         if (!selected) {
             throw new AppError("Selected LeafLink order was not found or is not open.", 404, "LEAFLINK_ORDER_NOT_OPEN");
         }
+        if (hasPostedOrderNumber(postedBefore, selected.orderNumber)) {
+            throw new AppError("A LeafLink payment for this order was already posted from this check.", 409, "CHECK_LEAFLINK_DUPLICATE_ORDER");
+        }
         const expectedBalance = selected.outstandingBalance ?? selected.total;
-        const amountMatches = sameMoney(expectedBalance, amount) || sameMoney(selected.total, amount);
+        const payAmtRaw = typeof input.paymentAmount === "number" && Number.isFinite(input.paymentAmount)
+            ? input.paymentAmount
+            : expectedBalance;
+        const payAmt = typeof payAmtRaw === "number" && Number.isFinite(payAmtRaw) ? payAmtRaw : NaN;
+        if (!Number.isFinite(payAmt) || payAmt <= 0) {
+            throw new AppError("Payment amount is invalid.", 400, "CHECK_PAYMENT_AMOUNT_INVALID");
+        }
+        const amountMatches = sameMoney(expectedBalance, payAmt) || sameMoney(selected.total, payAmt);
         if (!amountMatches && !input.allowAmountOverride) {
-            throw new AppError("Check amount does not match invoice balance.", 409, "CHECK_AMOUNT_MISMATCH");
+            throw new AppError("Payment amount does not match invoice balance.", 409, "CHECK_AMOUNT_MISMATCH");
         }
         const paymentDateIso = check.checkDate ? new Date(check.checkDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
         try {
-            const posted = await this.leafLinkOrdersService.postCheckPayment(companyId, {
+            const posted = await this.leafLinkOrdersService.postOrderPayment(companyId, {
                 orderNumber: selected.orderNumber,
-                amount,
+                amount: payAmt,
                 paymentDateIso,
                 reference: check.checkNumber ?? check.invoiceNumber ?? null,
-                note: `CPU check capture ${check.id}`
+                note: `CPU check capture ${check.id}`,
+                paymentMethod: "Check",
             });
+            const row: LeafLinkPostedPaymentRow = {
+                orderNumber: selected.orderNumber,
+                paymentId: posted.paymentId,
+                amount: payAmt,
+                postedAt: new Date().toISOString(),
+            };
+            const mergedJson = [...parsePostedPaymentsJson(check.leaflinkPostedPayments), row];
             await prisma.checkCapture.update({
                 where: { id: check.id },
                 data: {
@@ -557,6 +583,7 @@ export class CheckCaptureService {
                     leaflinkPaymentStatus: posted.paymentStatus,
                     leaflinkMatchedAt: new Date(),
                     leaflinkPaidAt: new Date(),
+                    leaflinkPostedPayments: mergedJson as import("@prisma/client").Prisma.InputJsonValue,
                     leaflinkPaymentResponseJson: JSON.stringify(posted.rawResponse),
                     paymentSyncStatus: "payment_posted",
                     paymentSyncError: null

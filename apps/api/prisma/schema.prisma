@@ -623,6 +623,8 @@ model CheckCapture {
   /// not_matched | matched | payment_posted | failed
   paymentSyncStatus String @default("not_matched")
   paymentSyncError String?
+  /// Successful LeafLink posts for multi-invoice checks (`[{ orderNumber, paymentId, amount, postedAt }]`).
+  leaflinkPostedPayments Json?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -648,6 +650,11 @@ model CashLogEntry {
   entryDate       DateTime?
   /// Outgoing only: optional receipt image (`/uploads/cash-receipts/...`).
   receiptImageUrl String?
+  /// Successful LeafLink posts when incoming cash is applied to orders (`[{ orderNumber, paymentId, amount, postedAt }]`).
+  leaflinkPostedPayments Json?
+  /// Mirrors check capture: not_matched | matched | payment_posted | failed
+  leaflinkPaymentSyncStatus String @default("not_matched")
+  leaflinkPaymentSyncError String?
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
 
