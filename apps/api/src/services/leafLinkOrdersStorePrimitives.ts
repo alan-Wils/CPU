@@ -88,6 +88,40 @@ export async function findRecentLeafLinkStoredOrdersWithNullCreatedOn(
   });
 }
 
+/**
+ * Newest stored LeafLink order row for realtime “new order” UI (poll).
+ * Orders `createdOn` desc, then `createdAt` so null `createdOn` rows still sort sensibly.
+ */
+export async function findLatestLeafLinkStoredOrderLive(companyId: string): Promise<{
+  id: string;
+  leafLinkKey: string;
+  customerName: string;
+  totalUsd: number | null;
+  createdOn: string | null;
+} | null> {
+  const cid = String(companyId ?? "").trim();
+  if (!cid) return null;
+  const row = await prisma.leafLinkStoredOrder.findFirst({
+    where: { companyId: cid },
+    orderBy: [{ createdOn: "desc" }, { createdAt: "desc" }],
+    select: {
+      id: true,
+      leafLinkKey: true,
+      customerName: true,
+      totalUsd: true,
+      createdOn: true,
+    },
+  });
+  if (!row) return null;
+  return {
+    id: row.id,
+    leafLinkKey: row.leafLinkKey,
+    customerName: String(row.customerName || "").trim() || "Customer",
+    totalUsd: row.totalUsd,
+    createdOn: row.createdOn?.toISOString() ?? null,
+  };
+}
+
 export async function findRecentLeafLinkStoredOrdersForCompany(
   companyId: string,
   limit: number,

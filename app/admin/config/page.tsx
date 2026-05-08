@@ -105,6 +105,8 @@ type AppConfig = {
       laborBreaks?: { id: string; label: string; start: string; end: string }[];
       /** When false, suppresses green realtime “peer completed a task” banners. Default true. */
       liveTaskNotifications?: boolean;
+      /** When false, suppresses orange LeafLink “new order” banners. Default true. */
+      liveOrderNotifications?: boolean;
       rewards?: {
         enabled: boolean;
         primaryWindowDays: number;
@@ -199,6 +201,7 @@ const emptyConfig: AppConfig = {
       displayTimezone: "",
       laborBreaks: [],
       liveTaskNotifications: true,
+      liveOrderNotifications: true,
       rewards: {
         enabled: false,
         primaryWindowDays: 30,
@@ -2250,9 +2253,10 @@ export default function ConfigPage() {
         </div>
 
         <div style={styles.configSubCard}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Live task banners</h3>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Live task and order banners</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
-          When teammates complete a logged task, other signed-in devices can show a short green notice. Disable here if your team finds it distracting (task history continues to refresh as today).
+          Quick pop-ups when a logged task completes (green) or a new LeafLink order appears in your stored orders (orange).
+          Disabled users still see full history on the Orders and workflow pages after refresh or sync.
         </p>
         <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 10 }}>
           <input
@@ -2271,7 +2275,26 @@ export default function ConfigPage() {
               }))
             }
           />
-          Show live task banners for teammate activity
+          Show live task banners (who performed which task)
+        </label>
+        <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+          <input
+            type="checkbox"
+            checked={(config.company.settings.liveOrderNotifications ?? true) !== false}
+            onChange={(e) =>
+              setConfig((prev) => ({
+                ...prev,
+                company: {
+                  ...prev.company,
+                  settings: {
+                    ...prev.company.settings,
+                    liveOrderNotifications: e.target.checked,
+                  },
+                },
+              }))
+            }
+          />
+          Show live order banners (customer name and order total)
         </label>
         </div>
 

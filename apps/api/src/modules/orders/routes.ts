@@ -5,6 +5,7 @@ import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { requireRoleOrAppPermission } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
+import { findLatestLeafLinkStoredOrderLive } from "../../services/leafLinkOrdersStorePrimitives.js";
 import { LeafLinkOrdersService } from "../../services/leafLinkOrdersService.js";
 
 export const ordersRouter = Router();
@@ -43,6 +44,17 @@ function resolveOrdering(q: z.infer<typeof ordersListQuerySchema>): string | und
   if (q.sort === "newest") return "-created_on";
   return undefined;
 }
+
+/** Compact newest stored order for realtime toasts (`GET /api/orders/latest-live`). Must mount before `/:orderId`. */
+ordersRouter.get(
+  "/latest-live",
+  ordersPermissionGuard,
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const row = await findLatestLeafLinkStoredOrderLive(companyId);
+    res.json(row);
+  }),
+);
 
 ordersRouter.get(
   "/",

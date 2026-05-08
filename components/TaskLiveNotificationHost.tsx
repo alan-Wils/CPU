@@ -1,10 +1,18 @@
 "use client";
 
+import {
+  defaultPagePermissionsForRole,
+  hasAppPermission,
+  isOwnerOrAdminRole,
+} from "@cpu/shared";
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { usePathname } from "next/navigation";
-import { apiRequest, fetchLatestTaskLogLive } from "@/lib/api";
-import { CPU_AUTH_CHANGED_EVENT, isLoggedIn } from "@/lib/auth";
-import { extractLiveTaskNotificationsEnabled } from "@/lib/taskNotificationsConfig";
+import { apiRequest, fetchLatestOrderLive, fetchLatestTaskLogLive } from "@/lib/api";
+import { CPU_AUTH_CHANGED_EVENT, getAuthUser, isLoggedIn } from "@/lib/auth";
+import {
+  extractLiveOrderNotificationsEnabled,
+  extractLiveTaskNotificationsEnabled,
+} from "@/lib/taskNotificationsConfig";
 
 function skipListeningForPath(pathname: string | null): boolean {
   const p = String(pathname || "");
@@ -20,7 +28,21 @@ function skipListeningForPath(pathname: string | null): boolean {
 
 const POLL_INTERVAL_MS = 4000;
 
-/** Public label for the actor on every device (same text for the performer and everyone else). */
+function canPollOrdersApi(): boolean {
+  const u = getAuthUser();
+  if (!u) return false;
+  const role = String(u.role || "").toUpperCase();
+  if (isOwnerOrAdminRole(role)) return true;
+  const perms = Array.isArray(u.permissions) ? u.permissions : defaultPagePermissionsForRole(role);
+  return hasAppPermission(perms, "page.orders");
+}
+
+function formatUsd(n: number | null): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
+}
+
+/** Public label for the task actor on every device. */
 function actorBroadcastLabel(actorEmail: string | null): string {
   const e = (actorEmail || "").trim();
   if (!e) return "Someone";
@@ -29,31 +51,41 @@ function actorBroadcastLabel(actorEmail: string | null): string {
   return pretty || "Someone";
 }
 
-function flushPendingToast(
+function flushPending(
   pending: MutableRefObject<{ message: string; key: string } | null>,
-  toastNow: (message: string, key: string) => void,
+  show: (message: string, key: string) => void,
 ): void {
   if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
   const p = pending.current;
   if (!p) return;
   pending.current = null;
-  toastNow(p.message, p.key);
+  show(p.message, p.key);
 }
 
+type ToastLine = { message: string; key: string };
+
 /**
- * Polls `/api/logs/latest-live`. Active tenant follows the JWT (not localStorage headers).
- * Polls while the tab is hidden so other machines / refocused tabs stay in sync; toasts queue until visible.
+ * Polls `/api/logs/latest-live` and `/api/orders/latest-live` (JWT tenant). Task + LeafLink order popups.
  */
 export default function TaskLiveNotificationHost() {
   const pathname = usePathname();
   const [authBump, setAuthBump] = useState(0);
-  const [toast, setToast] = useState<{ message: string; key: string } | null>(null);
+  const [taskToast, setTaskToast] = useState<ToastLine | null>(null);
+  const [orderToast, setOrderToast] = useState<ToastLine | null>(null);
 
-  const settingsEnabledRef = useRef(true);
-  const primedRef = useRef(false);
-  const lastIdRef = useRef<string | null>(null);
-  const hideToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingToastRef = useRef<{ message: string; key: string } | null>(null);
+  const taskNotifEnabledRef = useRef(true);
+  const orderNotifEnabledRef = useRef(true);
+
+  const taskPrimedRef = useRef(false);
+  const taskLastIdRef = useRef<string | null>(null);
+  const pendingTaskRef = useRef<ToastLine | null>(null);
+
+  const orderPrimedRef = useRef(false);
+  const orderLastIdRef = useRef<string | null>(null);
+  const pendingOrderRef = useRef<ToastLine | null>(null);
+
+  const hideTaskTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideOrderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     function bump() {
@@ -64,24 +96,31 @@ export default function TaskLiveNotificationHost() {
   }, []);
 
   useEffect(() => {
-    settingsEnabledRef.current = true;
+    taskNotifEnabledRef.current = true;
+    orderNotifEnabledRef.current = true;
 
     let cancelled = false;
     async function refreshSettings() {
       if (!isLoggedIn()) {
-        settingsEnabledRef.current = true;
+        taskNotifEnabledRef.current = true;
+        orderNotifEnabledRef.current = true;
         return;
       }
       try {
         const data = await apiRequest<unknown>("/api/config");
-        if (!cancelled) settingsEnabledRef.current = extractLiveTaskNotificationsEnabled(data);
+        if (!cancelled) {
+          taskNotifEnabledRef.current = extractLiveTaskNotificationsEnabled(data);
+          orderNotifEnabledRef.current = extractLiveOrderNotificationsEnabled(data);
+        }
       } catch {
-        if (!cancelled) settingsEnabledRef.current = true;
+        if (!cancelled) {
+          taskNotifEnabledRef.current = true;
+          orderNotifEnabledRef.current = true;
+        }
       }
     }
 
-    refreshSettings();
-
+    void refreshSettings();
     const onVis = () => {
       void refreshSettings();
     };
@@ -93,52 +132,66 @@ export default function TaskLiveNotificationHost() {
   }, [pathname, authBump]);
 
   useEffect(() => {
-    primedRef.current = false;
-    lastIdRef.current = null;
-    pendingToastRef.current = null;
+    taskPrimedRef.current = false;
+    taskLastIdRef.current = null;
+    pendingTaskRef.current = null;
+    orderPrimedRef.current = false;
+    orderLastIdRef.current = null;
+    pendingOrderRef.current = null;
 
     if (!isLoggedIn() || skipListeningForPath(pathname)) return;
 
     let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | null = null;
 
-    function dismissToastTimers() {
-      if (hideToastTimerRef.current) {
-        clearTimeout(hideToastTimerRef.current);
-        hideToastTimerRef.current = null;
+    function clearTaskTimer() {
+      if (hideTaskTimerRef.current) {
+        clearTimeout(hideTaskTimerRef.current);
+        hideTaskTimerRef.current = null;
+      }
+    }
+    function clearOrderTimer() {
+      if (hideOrderTimerRef.current) {
+        clearTimeout(hideOrderTimerRef.current);
+        hideOrderTimerRef.current = null;
       }
     }
 
-    function toastNow(message: string, key: string) {
-      dismissToastTimers();
-      setToast({ message, key });
-      hideToastTimerRef.current = setTimeout(() => {
-        setToast(null);
-        hideToastTimerRef.current = null;
+    function toastTaskNow(message: string, key: string) {
+      clearTaskTimer();
+      setTaskToast({ message, key });
+      hideTaskTimerRef.current = setTimeout(() => {
+        setTaskToast(null);
+        hideTaskTimerRef.current = null;
       }, 6500);
     }
 
-    /**
-     * Keep polling when the tab is hidden so `lastIdRef` matches the server (other devices won’t wedge state).
-     * Only show UI when visible, or enqueue for when the tab is focused again.
-     */
-    async function syncPoll() {
+    function toastOrderNow(message: string, key: string) {
+      clearOrderTimer();
+      setOrderToast({ message, key });
+      hideOrderTimerRef.current = setTimeout(() => {
+        setOrderToast(null);
+        hideOrderTimerRef.current = null;
+      }, 6500);
+    }
+
+    async function syncTaskPoll() {
       if (!isLoggedIn() || cancelled) return;
-      if (!settingsEnabledRef.current) return;
+      if (!taskNotifEnabledRef.current) return;
 
       try {
         const latest = await fetchLatestTaskLogLive();
         if (!latest || cancelled) return;
 
-        if (!primedRef.current) {
-          primedRef.current = true;
-          lastIdRef.current = latest.id;
+        if (!taskPrimedRef.current) {
+          taskPrimedRef.current = true;
+          taskLastIdRef.current = latest.id;
           return;
         }
 
-        if (latest.id === lastIdRef.current) return;
+        if (latest.id === taskLastIdRef.current) return;
 
-        lastIdRef.current = latest.id;
+        taskLastIdRef.current = latest.id;
 
         const who = actorBroadcastLabel(latest.actorEmail);
         const area = String(latest.area || "Workspace").trim() || "Workspace";
@@ -147,25 +200,73 @@ export default function TaskLiveNotificationHost() {
         const key = `${latest.id}:${latest.createdAt}`;
 
         if (typeof document !== "undefined" && document.visibilityState === "visible") {
-          toastNow(message, key);
+          toastTaskNow(message, key);
         } else {
-          pendingToastRef.current = { message, key };
+          pendingTaskRef.current = { message, key };
         }
       } catch {
-        /* ignore polling failures */
+        /* ignore */
       }
+    }
+
+    async function syncOrderPoll() {
+      if (!isLoggedIn() || cancelled) return;
+      if (!orderNotifEnabledRef.current) return;
+      if (!canPollOrdersApi()) return;
+
+      try {
+        const latest = await fetchLatestOrderLive();
+        if (cancelled) return;
+
+        if (!latest) {
+          if (!orderPrimedRef.current) {
+            orderPrimedRef.current = true;
+            orderLastIdRef.current = null;
+          }
+          return;
+        }
+
+        if (!orderPrimedRef.current) {
+          orderPrimedRef.current = true;
+          orderLastIdRef.current = latest.id;
+          return;
+        }
+
+        if (latest.id === orderLastIdRef.current) return;
+
+        orderLastIdRef.current = latest.id;
+
+        const buyer = String(latest.customerName || "").trim() || "Customer";
+        const amt = formatUsd(latest.totalUsd);
+        const message = `New order: ${buyer} · ${amt}`;
+        const key = `ord:${latest.id}:${latest.leafLinkKey}`;
+
+        if (typeof document !== "undefined" && document.visibilityState === "visible") {
+          toastOrderNow(message, key);
+        } else {
+          pendingOrderRef.current = { message, key };
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    async function syncAll() {
+      await syncTaskPoll();
+      await syncOrderPoll();
     }
 
     function onVisibilityOrFocus() {
       if (cancelled) return;
-      flushPendingToast(pendingToastRef, toastNow);
-      void syncPoll();
+      flushPending(pendingTaskRef, toastTaskNow);
+      flushPending(pendingOrderRef, toastOrderNow);
+      void syncAll();
     }
 
-    void syncPoll();
+    void syncAll();
 
     intervalId = setInterval(() => {
-      void syncPoll();
+      void syncAll();
     }, POLL_INTERVAL_MS);
 
     document.addEventListener("visibilitychange", onVisibilityOrFocus);
@@ -176,47 +277,89 @@ export default function TaskLiveNotificationHost() {
       if (intervalId) clearInterval(intervalId);
       document.removeEventListener("visibilitychange", onVisibilityOrFocus);
       window.removeEventListener("focus", onVisibilityOrFocus);
-      dismissToastTimers();
-      pendingToastRef.current = null;
+      clearTaskTimer();
+      clearOrderTimer();
+      pendingTaskRef.current = null;
+      pendingOrderRef.current = null;
     };
   }, [pathname, authBump]);
 
   useEffect(() => {
     return () => {
-      if (hideToastTimerRef.current) clearTimeout(hideToastTimerRef.current);
+      if (hideTaskTimerRef.current) clearTimeout(hideTaskTimerRef.current);
+      if (hideOrderTimerRef.current) clearTimeout(hideOrderTimerRef.current);
     };
   }, []);
 
-  if (!toast) return null;
+  const showTask = Boolean(taskToast);
+  const showOrder = Boolean(orderToast);
+  const orderBottom = showTask ? 118 : 28;
+  const taskBottom = 28;
+
+  if (!showTask && !showOrder) return null;
 
   return (
-    <div
-      key={toast.key}
-      role="status"
-      aria-live="polite"
-      style={{
-        position: "fixed",
-        right: 20,
-        bottom: 28,
-        zIndex: 99999,
-        maxWidth: 380,
-        boxSizing: "border-box",
-        padding: "14px 18px",
-        borderRadius: 14,
-        border: "1px solid rgba(34, 197, 94, 0.55)",
-        background:
-          "linear-gradient(135deg, rgba(6, 78, 59, 0.95), rgba(15, 23, 42, 0.98))",
-        color: "#dcfce7",
-        fontWeight: 700,
-        fontSize: 15,
-        lineHeight: 1.45,
-        boxShadow:
-          "0 18px 45px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(34, 197, 94, 0.12) inset",
-        animation: "cpu-task-live-toast-in 0.38s ease-out",
-      }}
-    >
-      <div style={{ color: "#86efac", fontSize: 11, letterSpacing: 0.06, marginBottom: 6 }}>TASK</div>
-      {toast.message}
-    </div>
+    <>
+      {showOrder && orderToast ? (
+        <div
+          key={orderToast.key}
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            right: 20,
+            bottom: orderBottom,
+            zIndex: 99999,
+            maxWidth: 380,
+            boxSizing: "border-box",
+            padding: "14px 18px",
+            borderRadius: 14,
+            border: "1px solid rgba(245, 158, 11, 0.55)",
+            background:
+              "linear-gradient(135deg, rgba(120, 53, 15, 0.92), rgba(15, 23, 42, 0.98))",
+            color: "#ffedd5",
+            fontWeight: 700,
+            fontSize: 15,
+            lineHeight: 1.45,
+            boxShadow:
+              "0 18px 45px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(245, 158, 11, 0.12) inset",
+            animation: "cpu-task-live-toast-in 0.38s ease-out",
+          }}
+        >
+          <div style={{ color: "#fcd34d", fontSize: 11, letterSpacing: 0.06, marginBottom: 6 }}>ORDER</div>
+          {orderToast.message}
+        </div>
+      ) : null}
+      {showTask && taskToast ? (
+        <div
+          key={taskToast.key}
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            right: 20,
+            bottom: taskBottom,
+            zIndex: 99998,
+            maxWidth: 380,
+            boxSizing: "border-box",
+            padding: "14px 18px",
+            borderRadius: 14,
+            border: "1px solid rgba(34, 197, 94, 0.55)",
+            background:
+              "linear-gradient(135deg, rgba(6, 78, 59, 0.95), rgba(15, 23, 42, 0.98))",
+            color: "#dcfce7",
+            fontWeight: 700,
+            fontSize: 15,
+            lineHeight: 1.45,
+            boxShadow:
+              "0 18px 45px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(34, 197, 94, 0.12) inset",
+            animation: "cpu-task-live-toast-in 0.38s ease-out",
+          }}
+        >
+          <div style={{ color: "#86efac", fontSize: 11, letterSpacing: 0.06, marginBottom: 6 }}>TASK</div>
+          {taskToast.message}
+        </div>
+      ) : null}
+    </>
   );
 }

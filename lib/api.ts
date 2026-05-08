@@ -480,6 +480,21 @@ export async function fetchLatestTaskLogLive(
   });
 }
 
+/** Newest stored LeafLink order for realtime toasts (`GET /api/orders/latest-live`). Requires `page.orders`. */
+export type LatestOrderLiveDto = {
+  id: string;
+  leafLinkKey: string;
+  customerName: string;
+  totalUsd: number | null;
+  createdOn: string | null;
+};
+
+export async function fetchLatestOrderLive(): Promise<LatestOrderLiveDto | null> {
+  return apiRequest<LatestOrderLiveDto | null>("/api/orders/latest-live", {
+    omitCompanyHeader: true,
+  });
+}
+
 export async function saveLog(
   log: {
     area: string;
