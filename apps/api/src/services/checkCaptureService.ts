@@ -561,6 +561,7 @@ export class CheckCaptureService {
         try {
             const posted = await this.leafLinkOrdersService.postOrderPayment(companyId, {
                 orderNumber: selected.orderNumber,
+                leafLinkOrderId: selected.orderId,
                 amount: payAmt,
                 paymentDateIso,
                 reference: check.checkNumber ?? check.invoiceNumber ?? null,

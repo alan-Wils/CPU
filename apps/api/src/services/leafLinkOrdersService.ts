@@ -1181,6 +1181,7 @@ async function leafLinkAuthedGet(
           && preferred === authValue
           && (
             code === "LEAFLINK_INVALID_CREDENTIALS"
+            || code === "LEAFLINK_FORBIDDEN"
             || code === "LEAFLINK_REQUEST_FAILED"
             || code === "LEAFLINK_HTML_ERROR"
             || code === "LEAFLINK_NON_JSON_RESPONSE"
@@ -1191,6 +1192,7 @@ async function leafLinkAuthedGet(
         }
         if (
           code === "LEAFLINK_INVALID_CREDENTIALS"
+          || code === "LEAFLINK_FORBIDDEN"
           || code === "LEAFLINK_REQUEST_FAILED"
           || code === "LEAFLINK_HTML_ERROR"
           || code === "LEAFLINK_NON_JSON_RESPONSE"
@@ -1255,6 +1257,7 @@ async function leafLinkAuthedRequest(
           && preferred === authValue
           && (
             code === "LEAFLINK_INVALID_CREDENTIALS"
+            || code === "LEAFLINK_FORBIDDEN"
             || code === "LEAFLINK_REQUEST_FAILED"
             || code === "LEAFLINK_HTML_ERROR"
             || code === "LEAFLINK_NON_JSON_RESPONSE"
@@ -1265,6 +1268,7 @@ async function leafLinkAuthedRequest(
         }
         if (
           code === "LEAFLINK_INVALID_CREDENTIALS"
+          || code === "LEAFLINK_FORBIDDEN"
           || code === "LEAFLINK_REQUEST_FAILED"
           || code === "LEAFLINK_HTML_ERROR"
           || code === "LEAFLINK_NON_JSON_RESPONSE"
@@ -2454,6 +2458,8 @@ export class LeafLinkOrdersService {
     companyId: string,
     input: {
       orderNumber: string;
+      /** LeafLink order primary key from API (`summary.id`) — payment URLs often require this instead of the human order number. */
+      leafLinkOrderId?: string | null;
       amount: number;
       paymentDateIso: string;
       note: string;
@@ -2473,13 +2479,24 @@ export class LeafLinkOrdersService {
     }
     await this.assertOrdersCapableOrThrow(creds);
     const base = creds.baseUrl.replace(/\/+$/, "");
-    const orderNumEsc = encodeURIComponent(cleanString(input.orderNumber));
+    const oid = cleanString(input.leafLinkOrderId);
+    const onum = cleanString(input.orderNumber);
+    const pathSegments: string[] = [];
+    if (oid) pathSegments.push(oid);
+    if (onum && !pathSegments.includes(onum)) pathSegments.push(onum);
+    if (!pathSegments.length && onum) pathSegments.push(onum);
+
     const urls: string[] = [];
+    for (const seg of pathSegments) {
+      const esc = encodeURIComponent(seg);
+      if (creds.companyId) {
+        urls.push(`${base}/v2/companies/${encodeURIComponent(creds.companyId)}/orders-received/${esc}/payments/`);
+      }
+      urls.push(`${base}/v2/orders-received/${esc}/payments/`);
+    }
     if (creds.companyId) {
-      urls.push(`${base}/v2/companies/${encodeURIComponent(creds.companyId)}/orders-received/${orderNumEsc}/payments/`);
       urls.push(`${base}/v2/companies/${encodeURIComponent(creds.companyId)}/order-payments/`);
     }
-    urls.push(`${base}/v2/orders-received/${orderNumEsc}/payments/`);
     urls.push(`${base}/v2/order-payments/`);
     const method = input.paymentMethod === "Cash" ? "Cash" : "Check";
     const payloads: Record<string, unknown>[] = [

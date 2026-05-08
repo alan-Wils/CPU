@@ -721,6 +721,26 @@ export function normalizeLeafLinkInventoryRows(raw: unknown): LeafLinkInventoryI
   return out;
 }
 
+/** Pull detail/message from LeafLink JSON error bodies (DRF-style). */
+function leafLinkJsonErrorDetail(trimmed: string): string {
+  try {
+    const j = JSON.parse(trimmed) as unknown;
+    if (typeof j !== "object" || j === null) return "";
+    const o = j as Record<string, unknown>;
+    const d = o.detail ?? o.message ?? o.error;
+    if (typeof d === "string") return d.trim();
+    if (Array.isArray(d) && d.length > 0) return String(d[0]).trim();
+    if (typeof d === "object" && d !== null && "message" in (d as object)) {
+      const m = (d as { message?: unknown }).message;
+      if (typeof m === "string") return m.trim();
+    }
+  }
+  catch {
+    /* ignore */
+  }
+  return "";
+}
+
 export async function fetchJsonWithRetry(url: string, init: RequestInit, timeoutMs: number): Promise<unknown> {
   let lastErr: unknown;
   for (let i = 0; i < 2; i += 1) {
@@ -752,9 +772,6 @@ export async function fetchJsonWithRetry(url: string, init: RequestInit, timeout
           lastErr = new AppError("LeafLink temporary server error. Retrying.", 502, "LEAFLINK_TEMPORARY");
           continue;
         }
-        if (res.status === 401 || res.status === 403) {
-          throw new AppError("LeafLink credentials are invalid for this company.", 401, "LEAFLINK_INVALID_CREDENTIALS");
-        }
         if (isHtml) {
           throw new AppError(
             "LeafLink returned an HTML error response instead of JSON.",
@@ -767,7 +784,25 @@ export async function fetchJsonWithRetry(url: string, init: RequestInit, timeout
             },
           );
         }
-        throw new AppError(`LeafLink request failed (${res.status}).`, 502, "LEAFLINK_REQUEST_FAILED");
+        const apiDetail = isJson ? leafLinkJsonErrorDetail(trimmed) : "";
+        const detailSuffix = apiDetail ? ` ${apiDetail}` : "";
+        if (res.status === 401) {
+          throw new AppError(
+            `LeafLink rejected authentication (401). Check API key and company id.${detailSuffix}`,
+            401,
+            "LEAFLINK_INVALID_CREDENTIALS",
+            apiDetail ? { leafLinkDetail: apiDetail } : undefined,
+          );
+        }
+        if (res.status === 403) {
+          throw new AppError(
+            `LeafLink denied this request (403). Reading orders can work while recording payments still fails: confirm your API token includes permission to create payments, and that you use the correct LeafLink order id in the URL.${detailSuffix}`,
+            403,
+            "LEAFLINK_FORBIDDEN",
+            apiDetail ? { leafLinkDetail: apiDetail } : undefined,
+          );
+        }
+        throw new AppError(`LeafLink request failed (${res.status}).${detailSuffix}`, 502, "LEAFLINK_REQUEST_FAILED");
       }
       if (!isJson) {
         throw new AppError(
@@ -876,6 +911,7 @@ async function fetchLeafLinkInventoryFromApi(
         const code = error instanceof AppError ? error.code : "";
         if (
           code === "LEAFLINK_INVALID_CREDENTIALS" ||
+          code === "LEAFLINK_FORBIDDEN" ||
           code === "LEAFLINK_REQUEST_FAILED" ||
           code === "LEAFLINK_NON_JSON_RESPONSE" ||
           code === "LEAFLINK_HTML_ERROR"

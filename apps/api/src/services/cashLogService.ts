@@ -572,6 +572,7 @@ export class CashLogService {
         try {
             const posted = await this.leafLinkOrdersService.postOrderPayment(companyId, {
                 orderNumber: selected.orderNumber,
+                leafLinkOrderId: selected.orderId,
                 amount: payAmt,
                 paymentDateIso,
                 reference: entry.invoiceNumber ?? null,
