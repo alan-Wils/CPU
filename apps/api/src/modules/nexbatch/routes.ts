@@ -1,17 +1,26 @@
 import { Router } from "express";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
-import { requirePlatformRoles } from "../../middleware/rbac.js";
+import { requireNexBatchStaffManagers } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
 import type { NexBatchInviteUiTier } from "../../lib/nexbatchRoles.js";
 import { NexBatchStaffService } from "../../services/nexbatchStaffService.js";
-import { inviteNexBatchStaffSchema, updateNexBatchStaffSchema } from "../../validation/schemas.js";
+import {
+    inviteNexBatchStaffSchema,
+    nexbatchStaffCompanyAccessSchema,
+    updateNexBatchStaffSchema,
+} from "../../validation/schemas.js";
+import { z } from "zod";
 
 export const nexbatchRouter = Router();
 const nexbatchStaffService = new NexBatchStaffService();
 
+const nexbatchUserIdParam = z.object({
+    userId: z.string().cuid(),
+});
+
 nexbatchRouter.get(
     "/staff",
-    requirePlatformRoles(["nexbatch_admin", "owner"]),
+    requireNexBatchStaffManagers,
     asyncHandler(async (req, res) => {
         const out = await nexbatchStaffService.listStaff({
             actorUserId: req.auth.userId,
@@ -23,15 +32,20 @@ nexbatchRouter.get(
 
 nexbatchRouter.post(
     "/staff/invite",
-    requirePlatformRoles(["nexbatch_admin", "owner"]),
+    requireNexBatchStaffManagers,
     validate({ body: inviteNexBatchStaffSchema }),
     asyncHandler(async (req, res) => {
-        const body = req.body as { email: string; tier: NexBatchInviteUiTier };
+        const body = req.body as {
+            email: string;
+            tier: NexBatchInviteUiTier;
+            companyIds?: string[];
+        };
         const out = await nexbatchStaffService.inviteStaff({
             actorUserId: req.auth.userId,
             actorPlatformRole: req.auth.platformRole ?? null,
             email: body.email,
             tier: body.tier,
+            companyIds: body.companyIds,
         });
         res.status(201).json(out);
     }),
@@ -39,8 +53,8 @@ nexbatchRouter.post(
 
 nexbatchRouter.patch(
     "/staff/:userId",
-    requirePlatformRoles(["nexbatch_admin", "owner"]),
-    validate({ body: updateNexBatchStaffSchema }),
+    requireNexBatchStaffManagers,
+    validate({ params: nexbatchUserIdParam, body: updateNexBatchStaffSchema }),
     asyncHandler(async (req, res) => {
         const body = req.body as { tier?: NexBatchInviteUiTier; active?: boolean };
         const out = await nexbatchStaffService.updateStaff({
@@ -54,9 +68,26 @@ nexbatchRouter.patch(
     }),
 );
 
+nexbatchRouter.post(
+    "/staff/:userId/company-access",
+    requireNexBatchStaffManagers,
+    validate({ params: nexbatchUserIdParam, body: nexbatchStaffCompanyAccessSchema }),
+    asyncHandler(async (req, res) => {
+        const body = req.body as { add?: string[]; remove?: string[] };
+        const out = await nexbatchStaffService.updatePortalStaffCompanyAccess({
+            actorUserId: req.auth.userId,
+            actorPlatformRole: req.auth.platformRole ?? null,
+            targetUserId: String(req.params.userId || ""),
+            add: body.add,
+            remove: body.remove,
+        });
+        res.json(out);
+    }),
+);
+
 nexbatchRouter.delete(
     "/staff/invites/:inviteId",
-    requirePlatformRoles(["nexbatch_admin", "owner"]),
+    requireNexBatchStaffManagers,
     asyncHandler(async (req, res) => {
         const out = await nexbatchStaffService.revokePendingStaffInvite({
             actorUserId: req.auth.userId,

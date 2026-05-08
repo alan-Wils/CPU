@@ -1,3 +1,5 @@
+import { canManageNexBatchPortalStaff } from "../lib/nexbatchRoles.js";
+
 export function requireRole(allowedRoles) {
     return (req, res, next) => {
         if (!req.auth || !allowedRoles.includes(req.auth.role)) {
@@ -23,6 +25,16 @@ export function requireRoleOrAppPermission(allowedRoles: string[], permission: s
         }
         res.status(403).json({ message: "Forbidden" });
     };
+}
+
+/** Portal operators who may list/invite NexBatch platform staff (`owner`, `nexbatch_admin`, `admin`). */
+export function requireNexBatchStaffManagers(req, res, next) {
+    const pr = String((req.auth as { platformRole?: string | null })?.platformRole || "").trim();
+    if (!canManageNexBatchPortalStaff(pr)) {
+        res.status(403).json({ message: "Forbidden" });
+        return;
+    }
+    next();
 }
 
 export function requirePlatformRoles(allowedPlatformRoles: string[]) {

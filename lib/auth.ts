@@ -159,6 +159,13 @@ export function canCreatePlatformCompanies(): boolean {
   return pr === "nexbatch_admin" || pr === "owner";
 }
 
+/** Owner, NexBatch Admin, or NexBatch Staff manager — list all companies & manage portal staff invites. */
+export function canManageNexBatchPortalStaff(): boolean {
+  const u = getAuthUser();
+  const pr = String(u?.platformRole || "").trim();
+  return pr === "owner" || pr === "nexbatch_admin" || pr === "admin";
+}
+
 /** Legacy keys written by older login code — clear so stale tokens cannot confuse other code paths. */
 const LEGACY_AUTH_KEYS = [
   "token",

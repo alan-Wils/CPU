@@ -5,9 +5,12 @@ import { resolvePublicWebBaseUrl } from "../config/publicWebUrl.js";
 import { logInfo } from "../lib/logger.js";
 import { sendInviteEmail } from "../lib/mailer.js";
 import {
-    canCreateCompanyAsPlatform,
+    canManageNexBatchPortalStaff,
+    canSeeAllCompaniesAsPlatform,
+    companyMembershipRoleForPlatformOperator,
     nexBatchInviteTierToPlatformRole,
     nexBatchPlatformRoleInviteLabel,
+    nexbatchPortalInviteTierViolatesPolicy,
     platformRoleToNexBatchInviteUiTier,
     type NexBatchInviteUiTier,
 } from "../lib/nexbatchRoles.js";
@@ -25,20 +28,37 @@ export class NexBatchStaffService {
     private authRepo = new AuthRepository();
     private companyRepo = new CompanyRepository();
 
+    private async actorAssignableScope(actorUserId: string, actorPlatformRole: string | null | undefined) {
+        const actorPr = String(actorPlatformRole ?? "").trim();
+        const assignable = await this.companyRepo.listAccessibleCompaniesForUser(actorUserId, {
+            platformRole: actorPr || null,
+            includeBootstrapInvites: true,
+        });
+        const assignableIds = new Set(assignable.map((c) => c.id));
+        return { actorPr, assignable, assignableIds };
+    }
+
     async inviteStaff(input: {
         actorUserId: string;
         actorPlatformRole: string | null | undefined;
         email: string;
         tier: NexBatchInviteUiTier;
+        companyIds?: string[] | undefined;
     }) {
-        if (!canCreateCompanyAsPlatform(input.actorPlatformRole)) {
+        if (!canManageNexBatchPortalStaff(input.actorPlatformRole)) {
             throw new AppError("Forbidden", 403);
         }
-        const actorPr = String(input.actorPlatformRole || "").trim();
-        const platformRole = nexBatchInviteTierToPlatformRole(input.tier);
-        if (platformRole === "owner" && actorPr !== "owner") {
-            throw new AppError("Only a NexBatch owner account can invite someone as Owner (full platform).", 403);
+        const { actorPr, assignable, assignableIds } = await this.actorAssignableScope(
+            input.actorUserId,
+            input.actorPlatformRole,
+        );
+
+        const tierDeny = nexbatchPortalInviteTierViolatesPolicy(actorPr, input.tier);
+        if (tierDeny) {
+            throw new AppError(tierDeny, 403);
         }
+
+        const platformRole = nexBatchInviteTierToPlatformRole(input.tier);
 
         const email = String(input.email).trim().toLowerCase();
         if (await this.authRepo.findUserByEmail(email)) {
@@ -48,13 +68,23 @@ export class NexBatchStaffService {
             throw new AppError("An invite is already pending for that email.", 409);
         }
 
-        const accessible = await this.companyRepo.listAccessibleCompaniesForUser(input.actorUserId, {
-            includeBootstrapInvites: true,
-        });
-        const companyIds = accessible.map((c) => c.id);
+        let companyIds: string[];
+        if (input.companyIds?.length) {
+            companyIds = [];
+            for (const id of input.companyIds) {
+                if (!assignableIds.has(id)) {
+                    throw new AppError("One or more companies are not in your assignable scope.", 403);
+                }
+                if (!companyIds.includes(id))
+                    companyIds.push(id);
+            }
+        }
+        else {
+            companyIds = assignable.map((c) => c.id);
+        }
         if (!companyIds.length) {
             throw new AppError(
-                "You have no company workspaces to attach. Open a tenant from the list above first, or create a company.",
+                "Select at least one workspace to attach, or ensure your account has company access.",
                 400,
             );
         }
@@ -130,20 +160,24 @@ export class NexBatchStaffService {
         actorUserId: string;
         actorPlatformRole: string | null | undefined;
     }) {
-        if (!canCreateCompanyAsPlatform(input.actorPlatformRole)) {
+        if (!canManageNexBatchPortalStaff(input.actorPlatformRole)) {
             throw new AppError("Forbidden", 403);
         }
-        const accessible = await this.companyRepo.listAccessibleCompaniesForUser(input.actorUserId, {
-            includeBootstrapInvites: true,
-        });
-        const companyIds = accessible.map((c) => c.id);
+        const { actorPr, assignableIds } = await this.actorAssignableScope(
+            input.actorUserId,
+            input.actorPlatformRole,
+        );
+        const companyIds = [...assignableIds];
+
+        const whereStaff = canSeeAllCompaniesAsPlatform(actorPr)
+            ? { platformRole: { not: null } as const }
+            : {
+                platformRole: { not: null } as const,
+                memberships: { some: { companyId: { in: companyIds } } },
+            };
+
         const users = await this.authRepo.db.user.findMany({
-            where: {
-                platformRole: { not: null },
-                memberships: companyIds.length
-                    ? { some: { companyId: { in: companyIds } } }
-                    : undefined,
-            },
+            where: whereStaff,
             orderBy: { createdAt: "asc" },
             select: {
                 id: true,
@@ -151,10 +185,8 @@ export class NexBatchStaffService {
                 platformRole: true,
                 isActive: true,
                 createdAt: true,
-                memberships: {
-                    where: companyIds.length ? { companyId: { in: companyIds } } : undefined,
-                    select: { companyId: true },
-                },
+                memberships: { select: { companyId: true } },
+                _count: { select: { memberships: true } },
             },
         });
         const now = new Date();
@@ -182,7 +214,8 @@ export class NexBatchStaffService {
                 tier: platformRoleToNexBatchInviteUiTier(String(u.platformRole || "admin")),
                 roleLabel: nexBatchPlatformRoleInviteLabel(String(u.platformRole || "admin")),
                 active: Boolean(u.isActive),
-                companiesGranted: u.memberships.length,
+                companiesGranted: u._count.memberships,
+                workspaceCompanyIds: u.memberships.map((m) => m.companyId),
                 createdAt: u.createdAt.toISOString(),
             })),
             pendingInvites,
@@ -194,7 +227,7 @@ export class NexBatchStaffService {
         actorPlatformRole: string | null | undefined;
         inviteId: string;
     }) {
-        if (!canCreateCompanyAsPlatform(input.actorPlatformRole)) {
+        if (!canManageNexBatchPortalStaff(input.actorPlatformRole)) {
             throw new AppError("Forbidden", 403);
         }
         const actorPr = String(input.actorPlatformRole || "").trim();
@@ -224,35 +257,40 @@ export class NexBatchStaffService {
         tier?: NexBatchInviteUiTier;
         active?: boolean;
     }) {
-        if (!canCreateCompanyAsPlatform(input.actorPlatformRole)) {
+        if (!canManageNexBatchPortalStaff(input.actorPlatformRole)) {
             throw new AppError("Forbidden", 403);
         }
         const actorPr = String(input.actorPlatformRole || "").trim();
-        const accessible = await this.companyRepo.listAccessibleCompaniesForUser(input.actorUserId, {
-            includeBootstrapInvites: true,
-        });
-        const companyIds = accessible.map((c) => c.id);
+        const { assignableIds } = await this.actorAssignableScope(input.actorUserId, input.actorPlatformRole);
+        const companyIds = [...assignableIds];
+
+        const scopedWhere = canSeeAllCompaniesAsPlatform(actorPr)
+            ? { platformRole: { not: null } as const }
+            : {
+                platformRole: { not: null } as const,
+                memberships: { some: { companyId: { in: companyIds } } },
+            };
+
         const target = await this.authRepo.db.user.findFirst({
-            where: { id: input.userId, platformRole: { not: null } },
+            where: { id: input.userId, ...scopedWhere },
             select: {
                 id: true,
                 email: true,
                 platformRole: true,
-                memberships: {
-                    where: companyIds.length ? { companyId: { in: companyIds } } : undefined,
-                    select: { companyId: true },
-                },
             },
         });
         if (!target) {
             throw new AppError("Staff user not found.", 404);
         }
-        if (companyIds.length && target.memberships.length === 0) {
-            throw new AppError("Forbidden", 403);
-        }
         const currentRole = (target.platformRole || "admin") as NexBatchPlatformRole;
         if (actorPr !== "owner" && currentRole === "owner") {
             throw new AppError("Only a NexBatch owner can edit an Owner (full platform) account.", 403);
+        }
+        if (input.tier) {
+            const tierDeny = nexbatchPortalInviteTierViolatesPolicy(actorPr, input.tier);
+            if (tierDeny) {
+                throw new AppError(tierDeny, 403);
+            }
         }
         const nextRole: NexBatchPlatformRole = input.tier
             ? nexBatchInviteTierToPlatformRole(input.tier)
@@ -260,27 +298,28 @@ export class NexBatchStaffService {
         if (nextRole === "owner" && actorPr !== "owner") {
             throw new AppError("Only a NexBatch owner can assign Owner (full platform).", 403);
         }
-        const updated = await this.authRepo.db.user.update({
+
+        await this.authRepo.db.user.update({
             where: { id: input.userId },
             data: {
                 platformRole: nextRole,
                 ...(typeof input.active === "boolean" ? { isActive: input.active } : {}),
             },
+        });
+        const updated = await this.authRepo.db.user.findUnique({
+            where: { id: input.userId },
             select: {
                 id: true,
                 email: true,
                 platformRole: true,
                 isActive: true,
                 createdAt: true,
+                _count: { select: { memberships: true } },
             },
         });
-        const memberships = await this.authRepo.db.companyMembership.findMany({
-            where: {
-                userId: updated.id,
-                ...(companyIds.length ? { companyId: { in: companyIds } } : {}),
-            },
-            select: { companyId: true },
-        });
+        if (!updated)
+            throw new AppError("Staff user not found after update.", 500);
+
         return {
             id: updated.id,
             email: updated.email,
@@ -288,8 +327,89 @@ export class NexBatchStaffService {
             tier: platformRoleToNexBatchInviteUiTier(String(updated.platformRole || "admin")),
             roleLabel: nexBatchPlatformRoleInviteLabel(String(updated.platformRole || "admin")),
             active: Boolean(updated.isActive),
-            companiesGranted: memberships.length,
+            companiesGranted: updated._count.memberships,
             createdAt: updated.createdAt.toISOString(),
         };
+    }
+
+    async updatePortalStaffCompanyAccess(input: {
+        actorUserId: string;
+        actorPlatformRole: string | null | undefined;
+        targetUserId: string;
+        add?: string[];
+        remove?: string[];
+    }) {
+        if (!canManageNexBatchPortalStaff(input.actorPlatformRole)) {
+            throw new AppError("Forbidden", 403);
+        }
+        const actorPr = String(input.actorPlatformRole || "").trim();
+        const { assignableIds } = await this.actorAssignableScope(input.actorUserId, input.actorPlatformRole);
+
+        const addIds = [...new Set(input.add ?? [])];
+        const removeIds = [...new Set(input.remove ?? [])];
+        for (const id of [...addIds, ...removeIds]) {
+            if (!assignableIds.has(id)) {
+                throw new AppError("One or more companies are not in your assignable scope.", 403);
+            }
+        }
+
+        const scopedWhere = canSeeAllCompaniesAsPlatform(actorPr)
+            ? { platformRole: { not: null } as const }
+            : {
+                platformRole: { not: null } as const,
+                memberships: { some: { companyId: { in: [...assignableIds] } } },
+            };
+
+        const target = await this.authRepo.db.user.findFirst({
+            where: { id: input.targetUserId, ...scopedWhere },
+            select: { id: true, platformRole: true },
+        });
+        if (!target) {
+            throw new AppError("Portal staff user not found.", 404);
+        }
+
+        const memRole = companyMembershipRoleForPlatformOperator();
+
+        await this.authRepo.db.$transaction(async (tx) => {
+            for (const companyId of removeIds) {
+                await tx.companyMembership.deleteMany({
+                    where: { userId: target.id, companyId },
+                });
+            }
+            for (const companyId of addIds) {
+                const existing = await tx.companyMembership.findFirst({
+                    where: { userId: target.id, companyId },
+                    select: { id: true },
+                });
+                if (!existing) {
+                    await tx.companyMembership.create({
+                        data: {
+                            userId: target.id,
+                            companyId,
+                            role: memRole,
+                        },
+                    });
+                }
+            }
+            const cnt = await tx.companyMembership.count({ where: { userId: target.id } });
+            if (cnt < 1) {
+                throw new AppError(
+                    "Refusing to remove the last workspace: portal staff must keep access to at least one company.",
+                    400,
+                );
+            }
+        });
+
+        const count = await this.authRepo.db.companyMembership.count({
+            where: { userId: target.id },
+        });
+        logInfo("nexbatch_staff_company_access_updated", {
+            actorUserId: input.actorUserId,
+            targetUserId: target.id,
+            added: addIds.length,
+            removed: removeIds.length,
+            totalMemberships: count,
+        });
+        return { ok: true as const, memberships: count };
     }
 }

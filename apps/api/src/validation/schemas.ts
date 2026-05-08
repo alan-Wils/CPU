@@ -96,7 +96,26 @@ export const createCompanySchema = z.object({
 export const inviteNexBatchStaffSchema = z.object({
     email: z.string().email().max(200),
     tier: z.enum(["owner", "nexbatch_admin", "management", "staff"]),
+    /** Subset of companies this actor may attach; omit to grant all workspaces in scope. */
+    companyIds: z.array(z.string().cuid()).min(1).optional(),
 });
+
+export const nexbatchStaffCompanyAccessSchema = z
+    .object({
+        add: z.array(z.string().cuid()).optional(),
+        remove: z.array(z.string().cuid()).optional(),
+    })
+    .superRefine((d, ctx) => {
+        const adds = d.add?.length ?? 0;
+        const removes = d.remove?.length ?? 0;
+        if (!adds && !removes) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Provide at least one company id in add or remove.",
+                path: ["add"],
+            });
+        }
+    });
 export const updateNexBatchStaffSchema = z.object({
     tier: z.enum(["owner", "nexbatch_admin", "management", "staff"]).optional(),
     active: z.boolean().optional(),

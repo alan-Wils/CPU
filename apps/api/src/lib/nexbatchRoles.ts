@@ -63,8 +63,50 @@ export function canCreateCompanyAsPlatform(role: NexBatchPlatformRole | string |
     return role === "nexbatch_admin" || role === "owner";
 }
 
+/** Owner, NexBatch Admin, and NexBatch Staff (`admin`) see every company in the portal company picker. */
+export function canSeeAllCompaniesAsPlatform(role: NexBatchPlatformRole | string | null | undefined): boolean {
+    const r = String(role || "").trim();
+    return r === "owner" || r === "nexbatch_admin" || r === "admin";
+}
+
+/** May list / invite / edit NexBatch portal staff (not the same as creating new tenants). */
+export function canManageNexBatchPortalStaff(role: NexBatchPlatformRole | string | null | undefined): boolean {
+    return canSeeAllCompaniesAsPlatform(role);
+}
+
 /** Portal “Add NexBatch staff” UI tiers → stored `NexBatchPlatformRole` (`staff` → `admin`). */
 export type NexBatchInviteUiTier = "owner" | "nexbatch_admin" | "management" | "staff";
+
+/** User-facing denial reason when the actor cannot assign this portal invite tier (`null` = allowed). */
+export function nexbatchPortalInviteTierViolatesPolicy(
+    actorPlatformRole: string | null | undefined,
+    tier: NexBatchInviteUiTier,
+): string | null {
+    const pr = String(actorPlatformRole || "").trim();
+    if (pr !== "owner" && pr !== "nexbatch_admin" && pr !== "admin") {
+        return "Forbidden";
+    }
+    if (tier === "owner" && pr !== "owner") {
+        return "Only a NexBatch owner account can invite someone as Owner (full platform).";
+    }
+    if (pr === "admin" && tier !== "nexbatch_admin" && tier !== "staff") {
+        return "NexBatch Staff managers may only invite NexBatch Admin or NexBatch Staff tiers.";
+    }
+    return null;
+}
+
+/** Validates changing an existing user's portal tier similarly to invites. */
+export function nexbatchPortalTierChangeViolatesPolicy(
+    actorPlatformRole: string | null | undefined,
+    tier: NexBatchInviteUiTier,
+): string | null {
+    return nexbatchPortalInviteTierViolatesPolicy(actorPlatformRole, tier);
+}
+
+/** NexBatchCompanyRole granted when attaching portal operators to workspaces (matches accept-invite bootstrap). */
+export function companyMembershipRoleForPlatformOperator(): "owner" {
+    return "owner";
+}
 
 export function nexBatchInviteTierToPlatformRole(tier: NexBatchInviteUiTier): NexBatchPlatformRole {
     if (tier === "owner")

@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import {
   canCreatePlatformCompanies,
+  canManageNexBatchPortalStaff,
   getAuthUser,
   isLoggedIn,
   isPortalSession,
@@ -34,6 +35,7 @@ type NexBatchStaffRow = {
   roleLabel: string;
   active: boolean;
   companiesGranted: number;
+  workspaceCompanyIds?: string[];
   createdAt: string;
 };
 
@@ -422,6 +424,10 @@ function PortalBody() {
   >({});
   const [usageCostsCompanyId, setUsageCostsCompanyId] = useState<string | null>(null);
   const [usageCostsCompanyName, setUsageCostsCompanyName] = useState("");
+  const [inviteCompanySelection, setInviteCompanySelection] = useState<string[]>([]);
+  const [workspaceEditUserId, setWorkspaceEditUserId] = useState<string | null>(null);
+  const [workspaceSelection, setWorkspaceSelection] = useState<string[]>([]);
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
 
   const fetchAccessibleList = useCallback(async (): Promise<CpuCompany[]> => {
     const raw = await apiRequest<{ companies: CpuCompany[] }>(
@@ -441,7 +447,9 @@ function PortalBody() {
   }, []);
 
   const canCreate = canCreatePlatformCompanies();
+  const canManageStaff = canManageNexBatchPortalStaff();
 
+  const platformPr = String(getAuthUser()?.platformRole || "").trim();
   const allowedTierOptions = (
     [
       ["staff", "NexBatch Staff"],
@@ -449,14 +457,24 @@ function PortalBody() {
       ["nexbatch_admin", "NexBatch Admin"],
       ["owner", "Owner (full platform)"],
     ] as const
-  ).filter(([value]) =>
-    value === "owner"
-      ? String(getAuthUser()?.platformRole || "") === "owner"
-      : true,
-  );
+  ).filter(([value]) => {
+    if (value === "owner") return platformPr === "owner";
+    if (platformPr === "admin") {
+      return value === "nexbatch_admin" || value === "staff";
+    }
+    return true;
+  });
+
+  useEffect(() => {
+    if (!companies.length) {
+      setInviteCompanySelection([]);
+      return;
+    }
+    setInviteCompanySelection(companies.map((c) => c.id));
+  }, [companies]);
 
   const fetchStaffRows = useCallback(async () => {
-    if (!canCreate) return;
+    if (!canManageStaff) return;
     setStaffListLoading(true);
     setStaffListErr("");
     try {
@@ -483,7 +501,7 @@ function PortalBody() {
     } finally {
       setStaffListLoading(false);
     }
-  }, [canCreate]);
+  }, [canManageStaff]);
 
   useEffect(() => {
     let cancelled = false;
@@ -615,6 +633,10 @@ function PortalBody() {
       setStaffErr("Enter a valid email.");
       return;
     }
+    if (!inviteCompanySelection.length) {
+      setStaffErr("Select at least one workspace to grant.");
+      return;
+    }
 
     setStaffBusy(true);
     try {
@@ -630,6 +652,7 @@ function PortalBody() {
         body: {
           email,
           tier: staffTier,
+          companyIds: inviteCompanySelection,
         },
       });
       setStaffOk(
@@ -672,24 +695,72 @@ function PortalBody() {
     setStaffErr("");
     setStaffOk(null);
     try {
-      const out = await apiRequest<NexBatchStaffRow>(`/api/nexbatch/staff/${encodeURIComponent(userId)}`, {
-        method: "PATCH",
-        omitCompanyHeader: true,
-        body: {
-          tier: edit.tier,
-          active: edit.active,
+      const out = await apiRequest<NexBatchStaffRow>(
+        `/api/nexbatch/staff/${encodeURIComponent(userId)}`,
+        {
+          method: "PATCH",
+          omitCompanyHeader: true,
+          body: {
+            tier: edit.tier,
+            active: edit.active,
+          },
         },
-      });
-      setStaffRows((prev) => prev.map((row) => (row.id === userId ? out : row)));
+      );
+      const merged =
+        typeof out.workspaceCompanyIds === "undefined"
+          ? { ...out, workspaceCompanyIds: staffRows.find((r) => r.id === userId)?.workspaceCompanyIds }
+          : out;
+      setStaffRows((prev) => prev.map((row) => (row.id === userId ? merged : row)));
       setStaffEditById((prev) => ({
         ...prev,
-        [userId]: { tier: out.tier, active: out.active },
+        [userId]: { tier: merged.tier, active: merged.active },
       }));
-      setStaffOk(`Updated ${out.email} to ${out.roleLabel}${out.active ? "" : " (inactive)"}.`);
+      setStaffOk(`Updated ${merged.email} to ${merged.roleLabel}${merged.active ? "" : " (inactive)"}.`);
     } catch (err: unknown) {
       setStaffErr(err instanceof Error ? err.message : "Could not update NexBatch staff member.");
     } finally {
       setStaffSavingId(null);
+    }
+  }
+
+  function openWorkspaceEditor(row: NexBatchStaffRow) {
+    setStaffErr("");
+    setStaffOk(null);
+    setWorkspaceEditUserId(row.id);
+    setWorkspaceSelection([...(row.workspaceCompanyIds ?? [])]);
+  }
+
+  async function onSaveWorkspaceAccess() {
+    if (!workspaceEditUserId) return;
+    const row = staffRows.find((r) => r.id === workspaceEditUserId);
+    const prev = new Set(row?.workspaceCompanyIds ?? []);
+    const nextSet = new Set(workspaceSelection);
+    const add = [...nextSet].filter((id) => !prev.has(id));
+    const remove = [...prev].filter((id) => !nextSet.has(id));
+    if (!add.length && !remove.length) {
+      setStaffOk("No workspace changes.");
+      setWorkspaceEditUserId(null);
+      return;
+    }
+    setWorkspaceBusy(true);
+    setStaffErr("");
+    setStaffOk(null);
+    try {
+      await apiRequest<{ ok: boolean; memberships: number }>(
+        `/api/nexbatch/staff/${encodeURIComponent(workspaceEditUserId)}/company-access`,
+        {
+          method: "POST",
+          omitCompanyHeader: true,
+          body: { add, remove },
+        },
+      );
+      setStaffOk(`${row?.email ?? "User"} workspaces updated (${nextSet.size} total).`);
+      setWorkspaceEditUserId(null);
+      await fetchStaffRows();
+    } catch (err: unknown) {
+      setStaffErr(err instanceof Error ? err.message : "Could not update workspaces.");
+    } finally {
+      setWorkspaceBusy(false);
     }
   }
 
@@ -892,7 +963,7 @@ function PortalBody() {
           )}
         </ul>
 
-        {canCreate && (
+        {canManageStaff && (
           <section
             style={{
               marginTop: 28,
@@ -907,8 +978,10 @@ function PortalBody() {
               Sends an <strong style={{ color: "#cbd5e1" }}>email invite</strong> (same
               delivery as company user invites). They open the link, set a password, and sign
               in at the NexBatch portal with access to the{" "}
-              <strong style={{ color: "#cbd5e1" }}>same company workspaces</strong> you see
-              in the list above. You need at least one workspace in that list to grant access.
+              <strong style={{ color: "#cbd5e1" }}>workspaces you select below</strong> (defaults
+              to all workspaces you can see). Owner and NexBatch Admin can invite every role;
+              NexBatch Staff managers may only invite <strong style={{ color: "#cbd5e1" }}>NexBatch Admin</strong>{" "}
+              or <strong style={{ color: "#cbd5e1" }}>NexBatch Staff</strong>.
             </p>
             {staffOk && (
               <div
@@ -979,6 +1052,73 @@ function PortalBody() {
                   ))}
                 </select>
               </label>
+              {companies.length > 0 ? (
+                <div style={{ marginTop: 4 }}>
+                  <span style={labelStyle}>Workspaces to grant</span>
+                  <div
+                    style={{
+                      maxHeight: 220,
+                      overflowY: "auto",
+                      border: "1px solid rgba(148, 163, 184, 0.28)",
+                      borderRadius: 10,
+                      padding: 10,
+                      background: "#020617",
+                    }}
+                  >
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontWeight: 600 }}>
+                      <input
+                        type="checkbox"
+                        checked={
+                          inviteCompanySelection.length === companies.length &&
+                          companies.length > 0
+                        }
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setInviteCompanySelection(companies.map((c) => c.id));
+                          } else {
+                            setInviteCompanySelection([]);
+                          }
+                        }}
+                      />
+                      <span style={{ color: "#cbd5e1", fontSize: 13 }}>
+                        Select all ({companies.length})
+                      </span>
+                    </label>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {companies.map((c) => {
+                        const sel = inviteCompanySelection.includes(c.id);
+                        return (
+                          <label
+                            key={c.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              cursor: "pointer",
+                              fontSize: 13,
+                              color: "#e2e8f0",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={sel}
+                              onChange={() => {
+                                setInviteCompanySelection((prev) =>
+                                  sel ? prev.filter((id) => id !== c.id) : [...prev, c.id],
+                                );
+                              }}
+                            />
+                            <span>
+                              {c.name}{" "}
+                              <span style={{ color: "#64748b" }}>({c.code})</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               <button
                 type="submit"
                 disabled={staffBusy}
@@ -1189,6 +1329,24 @@ function PortalBody() {
                             {saving ? "Saving…" : "Save"}
                           </button>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => openWorkspaceEditor(row)}
+                          disabled={saving || workspaceBusy}
+                          style={{
+                            marginTop: 10,
+                            border: "1px solid rgba(148,163,184,0.45)",
+                            borderRadius: 10,
+                            padding: "8px 12px",
+                            background: "#020617",
+                            color: "#e2e8f0",
+                            fontWeight: 700,
+                            fontSize: 13,
+                            cursor: saving ? "wait" : "pointer",
+                          }}
+                        >
+                          Workspaces…
+                        </button>
                       </div>
                     );
                   })}
@@ -1197,6 +1355,132 @@ function PortalBody() {
             </div>
           </section>
         )}
+
+        {canManageStaff && workspaceEditUserId ? (
+          <div
+            role="presentation"
+            onMouseDown={() => {
+              if (!workspaceBusy) setWorkspaceEditUserId(null);
+            }}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.72)",
+              zIndex: 1100,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+              overflowY: "auto",
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              onMouseDown={(e) => e.stopPropagation()}
+              style={{
+                width: "100%",
+                maxWidth: 520,
+                maxHeight: "90vh",
+                overflowY: "auto",
+                background: "rgba(15, 23, 42, 0.98)",
+                border: "1px solid rgba(148, 163, 184, 0.35)",
+                borderRadius: 16,
+                padding: "22px 22px 26px",
+                boxShadow: "0 30px 80px rgba(0,0,0,0.55)",
+                color: "#e2e8f0",
+              }}
+            >
+              <h3 style={{ margin: "0 0 12px", fontSize: 20, fontWeight: 900, color: "#67e8f9" }}>
+                Workspaces — {staffRows.find((r) => r.id === workspaceEditUserId)?.email ?? workspaceEditUserId}
+              </h3>
+              <p style={{ margin: "0 0 14px", fontSize: 13, color: "#94a3b8", lineHeight: 1.55 }}>
+                Add or remove company access for this NexBatch portal account (they must keep at least one workspace).
+              </p>
+              <div
+                style={{
+                  maxHeight: 280,
+                  overflowY: "auto",
+                  border: "1px solid rgba(148, 163, 184, 0.28)",
+                  borderRadius: 10,
+                  padding: 12,
+                  background: "#020617",
+                  display: "grid",
+                  gap: 8,
+                }}
+              >
+                {[
+                  ...new Set([
+                    ...companies.map((c) => c.id),
+                    ...workspaceSelection,
+                  ]),
+                ].map((id) => {
+                  const nm = companies.find((c) => c.id === id);
+                  const label = nm ? `${nm.name} (${nm.code})` : `Workspace (${id.slice(0, 8)}…)`;
+                  const checked = workspaceSelection.includes(id);
+                  return (
+                    <label
+                      key={id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        fontSize: 13,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setWorkspaceSelection((prev) =>
+                            checked ? prev.filter((x) => x !== id) : [...prev, id],
+                          )
+                        }
+                        disabled={workspaceBusy}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  disabled={workspaceBusy}
+                  onClick={() => void onSaveWorkspaceAccess()}
+                  style={{
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "10px 16px",
+                    background: workspaceBusy ? "#475569" : "#22c55e",
+                    color: "white",
+                    fontWeight: 800,
+                    cursor: workspaceBusy ? "wait" : "pointer",
+                  }}
+                >
+                  {workspaceBusy ? "Saving…" : "Apply changes"}
+                </button>
+                <button
+                  type="button"
+                  disabled={workspaceBusy}
+                  onClick={() => setWorkspaceEditUserId(null)}
+                  style={{
+                    border: "1px solid rgba(148,163,184,0.45)",
+                    borderRadius: 10,
+                    padding: "10px 16px",
+                    background: "#020617",
+                    color: "#94a3b8",
+                    fontWeight: 700,
+                    cursor: workspaceBusy ? "wait" : "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {canCreate && (
           <section

@@ -1,7 +1,10 @@
 import crypto from "node:crypto";
 import { UserRole } from "@prisma/client";
 import { TenantRepository } from "./TenantRepository.js";
-import { legacyUserRoleToCompanyRole } from "../lib/nexbatchRoles.js";
+import {
+    canSeeAllCompaniesAsPlatform,
+    legacyUserRoleToCompanyRole,
+} from "../lib/nexbatchRoles.js";
 export class CompanyRepository extends TenantRepository {
     async getById(companyId) {
         return this.db.company.findUnique({ where: { id: companyId } });
@@ -120,6 +123,10 @@ export class CompanyRepository extends TenantRepository {
      * rows from older deploys or failed transactions without duplicating entries when both exist.
      */
     async listAccessibleCompaniesForUser(userId, opts) {
+        const pr = String(opts?.platformRole ?? "").trim();
+        if (canSeeAllCompaniesAsPlatform(pr)) {
+            return this.listCompanies();
+        }
         const includeBootstrapInvites = Boolean(opts?.includeBootstrapInvites);
         const rows = await this.db.companyMembership.findMany({
             where: { userId },

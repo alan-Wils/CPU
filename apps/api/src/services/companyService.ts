@@ -111,6 +111,7 @@ export class CompanyService {
     }
     async listAccessibleCompanies(userId, opts) {
         return this.repo.listAccessibleCompaniesForUser(userId, {
+            platformRole: opts?.platformRole ?? null,
             includeBootstrapInvites: isPlatformOperator(opts?.platformRole),
         });
     }
