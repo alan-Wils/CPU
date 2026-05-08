@@ -1,19 +1,25 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   defaultPagePermissionsForRole,
   hasAppPermission,
   isOwnerOrAdminRole,
 } from "@cpu/shared";
+import { fetchCompanyWithServices, type CompanyServicesDto } from "@/lib/api";
 import { getAuthUser, isLoggedIn } from "@/lib/auth";
 
-const dashboardCards: {
+type DashboardCard = {
   title: string;
   description: string;
   href: string;
   accent: string;
   permission: string;
-}[] = [
+  /** When set, card only appears if company has turned on this workspace service (see /api/companies/me). */
+  requireService?: keyof Pick<CompanyServicesDto, "salesSellerEnabled" | "salesBuyerEnabled">;
+};
+
+const dashboardCards: DashboardCard[] = [
   {
     title: "Cultivation",
     description:
@@ -55,6 +61,24 @@ const dashboardCards: {
     permission: "page.orders",
   },
   {
+    title: "Seller marketplace",
+    description:
+      "List wholesale products on NexBatch, set availability, sync LeafLink inventory when enabled, and fulfill buyer orders.",
+    href: "/sales/seller",
+    accent: "#c084fc",
+    permission: "page.sales-seller",
+    requireService: "salesSellerEnabled",
+  },
+  {
+    title: "Buyer marketplace",
+    description:
+      "Browse approved seller catalogs, build carts, and place wholesale orders with connected producers.",
+    href: "/sales/marketplace",
+    accent: "#2dd4bf",
+    permission: "page.sales-marketplace",
+    requireService: "salesBuyerEnabled",
+  },
+  {
     title: "Analytics",
     description:
       "Company-wide metrics, trends, and reporting across cultivation and production performance.",
@@ -75,11 +99,36 @@ const dashboardCards: {
 export default function HomeDashboardCards() {
   const user = getAuthUser();
   const role = String(user?.role || "").toUpperCase();
+  const [services, setServices] = useState<CompanyServicesDto | null>(null);
+
+  useEffect(() => {
+    if (!isLoggedIn()) {
+      setServices(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const out = await fetchCompanyWithServices();
+        if (cancelled) return;
+        setServices((out.services as CompanyServicesDto) ?? null);
+      } catch {
+        if (!cancelled) setServices(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const visible = dashboardCards.filter((c) => {
-    if (!isLoggedIn())
+    if (c.requireService) {
+      if (!isLoggedIn()) return false;
+      if (!services?.[c.requireService]) return false;
+    } else if (!isLoggedIn()) {
       return true;
-    if (isOwnerOrAdminRole(role))
-      return true;
+    }
+    if (isOwnerOrAdminRole(role)) return true;
     const perms = Array.isArray(user?.permissions)
       ? user.permissions
       : defaultPagePermissionsForRole(role);
