@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { apiRequest, fetchLatestTaskLogLive, getSelectedCompanyId } from "@/lib/api";
-import { CPU_AUTH_CHANGED_EVENT, getAuthCompany, getAuthUser, isLoggedIn } from "@/lib/auth";
+import { CPU_AUTH_CHANGED_EVENT, getAuthCompany, isLoggedIn } from "@/lib/auth";
 import { extractLiveTaskNotificationsEnabled } from "@/lib/taskNotificationsConfig";
 
 function resolveCompanyIdForPolling(): string {
@@ -26,7 +26,8 @@ function skipListeningForPath(pathname: string | null): boolean {
 
 const POLL_INTERVAL_MS = 5500;
 
-function actorShortLabel(actorEmail: string | null): string {
+/** Public label for the actor on every device (same text for the performer and everyone else). */
+function actorBroadcastLabel(actorEmail: string | null): string {
   const e = (actorEmail || "").trim();
   if (!e) return "Someone";
   const local = e.split("@")[0] || "";
@@ -35,7 +36,8 @@ function actorShortLabel(actorEmail: string | null): string {
 }
 
 /**
- * Polls `/api/logs/latest-live` and shows ephemeral green banners when a teammate completes a logged task.
+ * Polls `/api/logs/latest-live`. Each logged-in session for the company shows the same toast when the
+ * newest task log changes — broadcast wording with the performer’s name for everyone.
  * Feature flag: `company.settings.liveTaskNotifications` (default on).
  */
 export default function TaskLiveNotificationHost() {
@@ -131,12 +133,10 @@ export default function TaskLiveNotificationHost() {
 
         lastIdRef.current = latest.id;
 
-        const selfId = String(getAuthUser()?.id || "").trim();
-        const who =
-          selfId && latest.actorUserId === selfId ? "You" : actorShortLabel(latest.actorEmail);
+        const who = actorBroadcastLabel(latest.actorEmail);
         const area = String(latest.area || "Workspace").trim() || "Workspace";
         const task = String(latest.task || "a task").trim() || "a task";
-        const message = `${who} completed "${task}" · ${area}`;
+        const message = `${who} performed “${task}” · ${area}`;
         toastNow(message, `${latest.id}:${latest.createdAt}`);
       } catch {
         /* ignore polling failures */
