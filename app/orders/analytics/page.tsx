@@ -24,6 +24,20 @@ import {
   type OrdersAnalyticsDto,
 } from "@/lib/api";
 
+function utcYmd(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function defaultRange(): { from: string; to: string } {
+  const to = new Date();
+  const from = new Date(to.getTime());
+  from.setUTCDate(from.getUTCDate() - 90);
+  return { from: utcYmd(from), to: utcYmd(to) };
+}
+
 const LINE_COLORS = [
   "#a78bfa",
   "#22d3ee",
@@ -164,9 +178,10 @@ type ScatterPoint = {
 };
 
 export default function OrdersAnalyticsPage() {
+  const initialRange = useMemo(() => defaultRange(), []);
+  const [from, setFrom] = useState(initialRange.from);
+  const [to, setTo] = useState(initialRange.to);
   const [loading, setLoading] = useState(true);
-  /** Keeps “Apply range” clickable copy while a heavy LeafLink pagination run is in flight on the other button. */
-  const [leafLinkPullActive, setLeafLinkPullActive] = useState(false);
   const [error, setError] = useState("");
   const [data, setData] = useState<OrdersAnalyticsDto | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -175,20 +190,15 @@ export default function OrdersAnalyticsPage() {
   const [detailCustomerKey, setDetailCustomerKey] = useState<string | null>(null);
   const [sampleCustomerKey, setSampleCustomerKey] = useState<string | null>(null);
 
-  const load = useCallback(async (opts?: { refreshLeafLink?: boolean; silent?: boolean }) => {
-    const refreshLeafLink = Boolean(opts?.refreshLeafLink);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = Boolean(opts?.silent);
     if (!silent) {
       setLoading(true);
       setError("");
-      if (refreshLeafLink)
-        setLeafLinkPullActive(true);
     }
     try {
       const cid = getSelectedCompanyId().trim();
-      const out = await fetchOrdersAnalytics(cid || undefined, {
-        refreshLeafLink,
-      });
+      const out = await fetchOrdersAnalytics(from, to, cid || undefined);
       setData(out);
     }
     catch (e: unknown) {
@@ -198,12 +208,10 @@ export default function OrdersAnalyticsPage() {
       }
     }
     finally {
-      if (!silent) {
+      if (!silent)
         setLoading(false);
-        setLeafLinkPullActive(false);
-      }
     }
-  }, []);
+  }, [from, to]);
 
   useEffect(() => {
     void load();
@@ -217,7 +225,7 @@ export default function OrdersAnalyticsPage() {
       if (cancelled || lightInFlight || document.hidden) return;
       lightInFlight = true;
       try {
-        await load({ refreshLeafLink: false, silent: true });
+        await load({ silent: true });
       }
       finally {
         lightInFlight = false;
@@ -375,10 +383,10 @@ export default function OrdersAnalyticsPage() {
             <div>
               <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900, color: "#f8fafc" }}>Order analytics</h1>
               <p style={{ margin: "8px 0 0", fontSize: 15, color: "#94a3b8", maxWidth: 760, lineHeight: 1.5 }}>
-                Uses the <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>same saved orders</strong> as the Orders page (full catalogue up to the server scan cap
-                — no status search, no date filter). Charts bucket revenue and counts by <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>UTC calendar day</strong>{' '}
-                from your earliest to latest <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>parsed order date</strong> in that snapshot.{' '}
-                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Pull from LeafLink → save</strong> re-syncs the full LeafLink history into Postgres first.
+                Charts and totals use <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>saved orders in Postgres</strong> (same snapshot pool as the Orders page —
+                no LeafLink call here). Pick a <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>UTC From/To</strong> window; only orders with a parseable placed
+                date in that span are included. <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Sync from LeafLink</strong> only on the Orders page (
+                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Multi-page sync</strong> / Refresh there).
               </p>
             </div>
             <Link href="/orders" style={btnGhost}>
@@ -388,17 +396,16 @@ export default function OrdersAnalyticsPage() {
 
           <div style={glassPanel}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end", marginBottom: 18 }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, fontWeight: 700, color: "#94a3b8" }}>
+                From (UTC)
+                <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={{ ...filterInputStyle, minWidth: 160 }} />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, fontWeight: 700, color: "#94a3b8" }}>
+                To (UTC)
+                <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={{ ...filterInputStyle, minWidth: 160 }} />
+              </label>
               <button type="button" style={btnPrimary} onClick={() => void load()} disabled={loading}>
-                {loading && !leafLinkPullActive ? "Loading…" : "Refresh"}
-              </button>
-              <button
-                type="button"
-                style={btnGhost}
-                onClick={() => void load({ refreshLeafLink: true })}
-                disabled={loading}
-                title="Full catalogue: fetches all LeafLink orders-received pages until complete (or LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES). Large histories can take several minutes."
-              >
-                {leafLinkPullActive ? "Pulling LeafLink (full history)…" : "Pull from LeafLink → save"}
+                {loading ? "Loading…" : "Refresh"}
               </button>
             </div>
 
@@ -423,20 +430,9 @@ export default function OrdersAnalyticsPage() {
               </p>
             ) : null}
 
-            {data?.truncated ? (
-              <p style={{ fontSize: 13, color: "#fbbf24", marginBottom: 12 }}>
-                LeafLink sync hit the server&apos;s page cap (default 5000 pages — set{' '}
-                <code style={{ fontSize: 12 }}>LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES</code> higher on the API if needed). Charts still
-                reflect orders saved so far — run{' '}
-                <strong style={{ fontWeight: 700, color: "#fcd34d" }}>Pull from LeafLink → save</strong> again after raising the cap, or{' '}
-                <strong style={{ fontWeight: 700, color: "#fcd34d" }}>Refresh</strong> without pull for a faster reload.
-              </p>
-            ) : null}
-
             {data?.chartDaysCapped ? (
               <p style={{ fontSize: 13, color: "#fbbf24", marginBottom: 12 }}>
-                Daily chart shows the most recent slice of UTC days (very long history). Customer totals and order counts still include{' '}
-                <strong style={{ fontWeight: 700, color: "#fcd34d" }}>every</strong> saved order with a parseable date.
+                Your selected range spans more daily buckets than the chart can render; the X-axis shows the <strong style={{ fontWeight: 700, color: "#fcd34d" }}>most recent</strong> slice. Customer totals and order counts still include the <strong style={{ fontWeight: 700, color: "#fcd34d" }}>full</strong> From/To window.
               </p>
             ) : null}
 
@@ -448,31 +444,30 @@ export default function OrdersAnalyticsPage() {
 
             {data && data.ordersIncluded === 0 && data.configured && data.integrationEnabled && !loading ? (
               <p style={{ color: "#94a3b8" }}>
-                No saved orders with a parseable order date yet. Open the <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Orders</strong> page or run{' '}
-                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Pull from LeafLink → save</strong>.
+                No saved orders fall in this UTC range with a parseable date. Widen From/To or sync on the{' '}
+                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Orders</strong> page first.
               </p>
             ) : null}
 
             {data && data.configured && data.integrationEnabled && !loading ? (
               <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16, lineHeight: 1.55 }}>
-                <strong style={{ fontWeight: 700, color: "#94a3b8" }}>Reporting span (UTC):</strong>{" "}
-                {data.dateFrom && data.dateTo ? `${data.dateFrom} → ${data.dateTo}` : "—"} (from order dates in this snapshot). Loaded{" "}
+                <strong style={{ fontWeight: 700, color: "#94a3b8" }}>Selected UTC range:</strong>{" "}
+                {data.dateFrom && data.dateTo ? `${data.dateFrom} → ${data.dateTo}` : "—"}.{" "}
                 <strong style={{ fontWeight: 700, color: "#94a3b8" }}>{data.storedRowsInRange}</strong> stored row
-                {data.storedRowsInRange === 1 ? "" : "s"}
+                {data.storedRowsInRange === 1 ? "" : "s"} overlap this range
                 {typeof data.totalStoredOrders === "number"
-                  ? ` · ${data.totalStoredOrders.toLocaleString()} total in database (Orders page pool)`
+                  ? ` · ${data.totalStoredOrders.toLocaleString()} total synced (Orders page pool)`
                   : ""}
                 {data.storedSnapshotMaxUpdatedAt
                   ? ` · newest save ${fmtShortDate(data.storedSnapshotMaxUpdatedAt)}`
                   : ""}
                 .
-                {data.storedRowsInRange === 0 ? " Open the Orders page or run Multi-page sync, or use “Pull from LeafLink → save”." : ""}{" "}
+                {data.storedRowsInRange === 0 ? " Run Multi-page sync on Orders if counts look stale." : ""}{" "}
                 {data.ordersIncluded > 0
-                  ? `${data.ordersIncluded} order(s) with parseable dates · ${data.customers.length} customer(s) · daily axes are UTC`
+                  ? `${data.ordersIncluded} order(s) in range · ${data.customers.length} customer(s) · chart days match this window`
                   : data.storedRowsInRange > 0
-                    ? "Saved rows exist but no order dates could be parsed for analytics — check LeafLink payloads or re-sync."
+                    ? "Rows overlap the range but dates could not be parsed — re-sync from the Orders page."
                     : null}
-                {data.leafLinkRefreshRan ? ` · LeafLink pull ran this request (${data.pagesScanned} page(s)).` : ""}
               </p>
             ) : null}
 

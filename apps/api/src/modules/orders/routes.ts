@@ -88,7 +88,8 @@ ordersRouter.post("/sync", ordersPermissionGuard, asyncHandler(async (req, res) 
 }));
 
 const analyticsQuerySchema = z.object({
-  refresh: refreshQuery,
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
 ordersRouter.get(
@@ -98,9 +99,9 @@ ordersRouter.get(
   asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const q = req.query as z.infer<typeof analyticsQuerySchema>;
-    const refreshLeafLink = q?.refresh === "1" || q?.refresh === "true";
     const out = await ordersService.getOrdersAnalytics(companyId, {
-      refresh: refreshLeafLink,
+      dateFrom: q.from,
+      dateTo: q.to,
     });
     res.json(out);
   }),

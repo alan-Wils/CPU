@@ -1965,14 +1965,18 @@ export class LeafLinkOrdersService {
   }
 
   /**
-   * Aggregate wholesale orders from **all saved** DB rows up to the same scan cap as the Orders page (no date-range filter).
-   * Pass `{ refresh: true }` to paginate LeafLink into Postgres first. Response `dateFrom` / `dateTo` are the UTC span of
-   * parsed order dates in that snapshot (for chart axes and labels).
+   * Aggregate wholesale orders for a **UTC date range** from **saved** DB rows only (same hydration cap as the Orders page).
+   * Does not call LeafLink — run **Multi-page sync** / **Refresh** on the Orders page to update Postgres first.
    */
   async getOrdersAnalytics(
     companyId: string,
-    input: { refresh?: boolean },
+    input: { dateFrom: string; dateTo: string },
   ): Promise<OrdersAnalyticsDto> {
+    const dateFrom = cleanString(input.dateFrom);
+    const dateTo = cleanString(input.dateTo);
+    const fromMs = parseUtcDateOnlyToMs(dateFrom, false);
+    const toMs = parseUtcDateOnlyToMs(dateTo, true);
+
     const emptyMeta = (): Pick<
       OrdersAnalyticsDto,
       | "readFromDatabase"
@@ -1985,7 +1989,7 @@ export class LeafLinkOrdersService {
       | "chartDaysCapped"
     > => ({
       readFromDatabase: true,
-      leafLinkRefreshRan: Boolean(input.refresh),
+      leafLinkRefreshRan: false,
       storedRowsInRange: 0,
       totalStoredOrders: 0,
       storedSnapshotMaxUpdatedAt: null,
@@ -1993,6 +1997,13 @@ export class LeafLinkOrdersService {
       leafLinkCurrentCustomerCount: 0,
       chartDaysCapped: false,
     });
+
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) {
+      throw new AppError("Invalid date range.", 400, "ORDERS_ANALYTICS_BAD_RANGE");
+    }
+    if ((toMs - fromMs) / 86_400_000 > MAX_ANALYTICS_RANGE_DAYS) {
+      throw new AppError(`Date range cannot exceed ${MAX_ANALYTICS_RANGE_DAYS} days.`, 400, "ORDERS_ANALYTICS_RANGE_TOO_WIDE");
+    }
 
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
     logInfo("[LEAFLINK] credentials_resolved", {
@@ -2009,8 +2020,8 @@ export class LeafLinkOrdersService {
         source: "leaflink",
         configured: baseConfigured,
         integrationEnabled: creds.integrationEnabled,
-        dateFrom: "",
-        dateTo: "",
+        dateFrom,
+        dateTo,
         ordersIncluded: 0,
         minOrderTotal: 0,
         pagesScanned: 0,
@@ -2021,7 +2032,6 @@ export class LeafLinkOrdersService {
         qualifyingOrdersTruncated: false,
         ...emptyMeta(),
         totalStoredOrders,
-        chartDaysCapped: false,
       };
     }
 
@@ -2031,15 +2041,6 @@ export class LeafLinkOrdersService {
 
     const filteredByLeafLinkCurrentCustomerStatus = false;
     const leafLinkCurrentCustomerCount = 0;
-
-    let pagesScanned = 0;
-    let truncated = false;
-
-    if (input.refresh) {
-      const pulled = await this.pullLeafLinkOrdersReceivedToDb(companyId, undefined, creds);
-      pagesScanned = pulled.pagesPulled;
-      truncated = pulled.hitPageCap || !pulled.syncComplete;
-    }
 
     const fetchLimit = Math.min(STORED_ORDERS_LIST_SCAN_LIMIT, Math.max(totalStoredOrders, 1));
     const storedDb = await findRecentLeafLinkStoredOrdersForCompany(companyId, fetchLimit);
@@ -2051,6 +2052,16 @@ export class LeafLinkOrdersService {
         rowsLoaded: storedDb.length,
         scanCap: STORED_ORDERS_LIST_SCAN_LIMIT,
       });
+    }
+
+    let storedRowsInRange = 0;
+    for (const r of storedDb) {
+      const pair = collectedPairFromStoredPayload(r.payload);
+      if (!pair) continue;
+      const iso = cleanString(pair.summary.createdAt) || leafLinkOrderCreatedIso(pair.raw);
+      const t = Date.parse(iso || "");
+      if (!Number.isFinite(t) || t < fromMs || t > toMs) continue;
+      storedRowsInRange++;
     }
 
     const storedSnapshotMaxUpdatedAt =
@@ -2066,36 +2077,11 @@ export class LeafLinkOrdersService {
         collected.push(pair);
     }
 
-    let minOrderMs = Number.POSITIVE_INFINITY;
-    let maxOrderMs = Number.NEGATIVE_INFINITY;
-    for (const pair of collected) {
-      const createdIsoAgg =
-        cleanString(pair.summary.createdAt) || leafLinkOrderCreatedIso(pair.raw);
-      const t = Date.parse(createdIsoAgg || "");
-      if (!Number.isFinite(t)) continue;
-      if (t < minOrderMs) minOrderMs = t;
-      if (t > maxOrderMs) maxOrderMs = t;
-    }
-
-    let dateFrom = "";
-    let dateTo = "";
-    let dayList: string[] = [];
+    let dayList = enumerateUtcDaysInclusive(dateFrom, dateTo);
     let chartDaysCapped = false;
-    let chartFromMs = Number.NaN;
-    let chartToMs = Number.NaN;
-
-    if (Number.isFinite(minOrderMs) && Number.isFinite(maxOrderMs) && minOrderMs <= maxOrderMs) {
-      dateFrom = utcDayKeyFromMs(minOrderMs);
-      dateTo = utcDayKeyFromMs(maxOrderMs);
-      dayList = enumerateUtcDaysInclusive(dateFrom, dateTo);
-      if (dayList.length > MAX_ANALYTICS_CHART_DAYS) {
-        chartDaysCapped = true;
-        dayList = dayList.slice(dayList.length - MAX_ANALYTICS_CHART_DAYS);
-      }
-      if (dayList.length > 0) {
-        chartFromMs = parseUtcDateOnlyToMs(dayList[0]!, false);
-        chartToMs = parseUtcDateOnlyToMs(dayList[dayList.length - 1]!, true);
-      }
+    if (dayList.length > MAX_ANALYTICS_CHART_DAYS) {
+      chartDaysCapped = true;
+      dayList = dayList.slice(dayList.length - MAX_ANALYTICS_CHART_DAYS);
     }
 
     const nDays = dayList.length;
@@ -2165,18 +2151,14 @@ export class LeafLinkOrdersService {
       const createdIsoAgg = cleanString(o.createdAt) || leafLinkOrderCreatedIso(raw);
       const t = Date.parse(createdIsoAgg || "");
       if (!Number.isFinite(t)) continue;
+      if (t < fromMs || t > toMs) continue;
+
       const rawMoney = effectiveOrderTotalUsd(raw, o);
       const money = typeof rawMoney === "number" && Number.isFinite(rawMoney) ? Math.max(0, rawMoney) : 0;
 
       const day = utcDayKeyFromMs(t);
       const di = dayIndex.get(day);
-      const inChart =
-        nDays > 0
-        && di !== undefined
-        && Number.isFinite(chartFromMs)
-        && Number.isFinite(chartToMs)
-        && t >= chartFromMs
-        && t <= chartToMs;
+      const inChartBuckets = di !== undefined;
 
       qualifyingOrderCount++;
       const nmFromOrder = cleanString(o.customerName);
@@ -2215,7 +2197,7 @@ export class LeafLinkOrdersService {
       }
       row.orderTotalSum += money;
 
-      if (inChart && di !== undefined) {
+      if (inChartBuckets && di !== undefined) {
         row.revenueByDay[di] += money;
         row.orderCountByDay[di] += 1;
       }
@@ -2234,7 +2216,7 @@ export class LeafLinkOrdersService {
           quantity: q,
           typeLabel: tl,
         });
-        if (inChart && di !== undefined)
+        if (inChartBuckets && di !== undefined)
           row.sampleUnitsByDay[di] += q;
       }
     }
@@ -2279,15 +2261,14 @@ export class LeafLinkOrdersService {
     logInfo("[LEAFLINK] orders_analytics_done", {
       companyId,
       ordersIncluded: qualifyingOrderCount,
-      pagesScanned,
-      truncated,
       chartDaysCapped,
       customerCount: customers.length,
       qualifyingOrdersReturned: qualifyingOrders.length,
       qualifyingOrdersTruncated,
-      storedRowsInRange: storedDb.length,
+      storedRowsInRange,
       totalStoredOrders,
-      refresh: Boolean(input.refresh),
+      dateFrom,
+      dateTo,
       leafLinkCurrentCustomerCount,
       filteredByLeafLinkCurrentCustomerStatus,
     });
@@ -2300,15 +2281,15 @@ export class LeafLinkOrdersService {
       dateTo,
       ordersIncluded: qualifyingOrderCount,
       minOrderTotal: 0,
-      pagesScanned,
-      truncated,
+      pagesScanned: 0,
+      truncated: false,
       days: dayList,
       customers,
       qualifyingOrders,
       qualifyingOrdersTruncated,
       readFromDatabase: true,
-      leafLinkRefreshRan: Boolean(input.refresh),
-      storedRowsInRange: storedDb.length,
+      leafLinkRefreshRan: false,
+      storedRowsInRange,
       totalStoredOrders,
       chartDaysCapped,
       storedSnapshotMaxUpdatedAt,
