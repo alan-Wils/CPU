@@ -98,6 +98,29 @@ Success (**200**) after Bearer auth:
 
 Every run emits **`[cash_log_eod] membership_eval`** once per membership with **`localDate`** (today in that TZ), **`lastSuccessDigestLocalDate`**, **`alreadySentToday`**, **`skipPrimaryCause`**, **`evalHint`**, **`outcome`**, and **`skipReason`**. **`[cash_log_eod] job_complete`** summarizes **`skipReasons`** and **`errors`**.
 
+## Troubleshooting Railway Cron logs
+
+### `Missing or invalid Authorization header; expected Bearer CRON_SECRET`
+
+The API compares the **`Authorization`** header to the **`CRON_SECRET`** variable on the **same service that serves HTTP** (your API deployment).
+
+1. In Railway → **API** service → **Variables** → set **`CRON_SECRET`** to a long random string (≥ 16 characters). Redeploy if needed.
+2. In Railway **Cron** (or whatever calls the URL), add a header exactly:
+   - **Name:** `Authorization`
+   - **Value:** `Bearer ` + the **same** secret (no extra quotes). Example: `Bearer abcd1234...` — the token after `Bearer ` must equal `CRON_SECRET` byte-for-byte (spaces matter).
+3. If you use a **shell** `curl` command for the schedule, pass the header explicitly:
+   ```bash
+   curl -sS -X POST "$API_URL/api/internal/jobs/cash-log-eod" \
+     -H "Authorization: Bearer $CRON_SECRET"
+   ```
+   Inject `$CRON_SECRET` from Railway Cron’s variables **or** paste the literal once you confirm it matches the API service.
+
+The same **`Authorization: Bearer …`** rule applies to other internal job URLs (`/api/internal/jobs/cultivation-climate-alerts`, `/api/internal/jobs/leaflink-orders-warm-sync`).
+
+### Curl lines like `% Total`, `Dload`, `Speed` showing as **errors**
+
+That is **curl’s progress meter** on stderr. Use **`curl -s`** (silent) or **`curl -sS`** (silent but still show errors). Without `-s`, hosted cron logs often classify stderr lines as errors even when the HTTP request succeeded.
+
 ### Multiple recipients (Admin vs Financial logs)
 
 The job sends **one digest per enabled `CompanyMembership`** (that user's email). **OWNER** can save **only** the digest checkbox on their own account from Admin; other profile fields still require another OWNER or ADMIN.
