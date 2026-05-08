@@ -6,6 +6,7 @@ import {
   type CashLogEodJobResult,
 } from "../../services/cashLogEodJobService.js";
 import { runCultivationClimateAlertsJob } from "../../services/cultivationClimateAlertsJobService.js";
+import { runLeafLinkOrdersWarmSyncJob } from "../../services/leafLinkOrdersWarmSyncJobService.js";
 
 export const internalJobsRouter = Router();
 
@@ -111,6 +112,39 @@ internalJobsRouter.post(
     }
 
     const job = await runCultivationClimateAlertsJob();
+    res.status(200).json({
+      ok: job.errors.length === 0,
+      ...job,
+    });
+  }),
+);
+
+/**
+ * LeafLink wholesale orders — warm DB from `orders-received` for all companies (same as UI “Refresh from LeafLink”).
+ * Schedule externally (e.g. every 2–5 min). Auth: `Authorization: Bearer CRON_SECRET`.
+ */
+internalJobsRouter.post(
+  "/leaflink-orders-warm-sync",
+  asyncHandler(async (_req, res) => {
+    const secret = env.CRON_SECRET?.trim();
+    if (!secret) {
+      res.status(503).json({
+        ok: false,
+        message: "CRON_SECRET is not set; LeafLink orders warm-sync job is disabled.",
+      });
+      return;
+    }
+    const authz = String(_req.headers.authorization || "").trim();
+    const bearer = authz.toLowerCase().startsWith("bearer ") ? authz.slice(7).trim() : "";
+    if (bearer !== secret) {
+      res.status(401).json({
+        ok: false,
+        message: "Missing or invalid Authorization header; expected Bearer CRON_SECRET.",
+      });
+      return;
+    }
+
+    const job = await runLeafLinkOrdersWarmSyncJob();
     res.status(200).json({
       ok: job.errors.length === 0,
       ...job,
