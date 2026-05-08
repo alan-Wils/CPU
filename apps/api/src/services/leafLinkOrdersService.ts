@@ -1781,7 +1781,12 @@ export class LeafLinkOrdersService {
     let leafLinkCurrentCustomerCount = 0;
     try {
       currentCustomerIds = await this.loadCurrentCustomerIdsFromLeafLink(companyId, creds, creds.source, {
-        refresh: Boolean(input.refresh),
+        /**
+         * Avoid re-paginating all customers on every analytics refresh.
+         * Large customer lists can hit provider-side auth throttles/403s mid-scan;
+         * we prefer persisted snapshot reuse for stability and only refresh when cache is absent.
+         */
+        refresh: false,
         actorUserId: "system",
       });
       leafLinkCurrentCustomerCount = currentCustomerIds.size;
