@@ -14,6 +14,7 @@ import {
 } from "./leaflinkService.js";
 import {
   upsertLeafLinkStoredOrders,
+  countLeafLinkStoredOrdersForCompany,
   findLeafLinkStoredOrdersForCompanyInRange,
   findRecentLeafLinkStoredOrdersWithNullCreatedOn,
   findRecentLeafLinkStoredOrdersForCompany,
@@ -230,7 +231,8 @@ const ABS_LEAF_LINK_FULL_SYNC_MAX_PAGES = 50_000;
 const MAX_QUALIFYING_ORDERS_IN_PAYLOAD = 3500;
 /** If list payload embeds many line rows, summing them is often wrong vs order headline `total`. */
 const MAX_LINE_ITEMS_TO_TRUST_SUM = 120;
-const STORED_ORDERS_LIST_SCAN_LIMIT = 2500;
+/** Max Postgres rows hydrated for the Orders list when `refresh=false`. Must stay ≤ prisma cap in leafLinkOrdersStorePrimitives. */
+const STORED_ORDERS_LIST_SCAN_LIMIT = 25_000;
 const preferredLeafLinkAuthByTenant = new Map<string, string>();
 
 function leafLinkOrdersFullSyncMaxPages(): number {
@@ -1304,27 +1306,84 @@ function buildOrdersListUrlCandidates(
   });
 }
 
-function parseListBody(body: unknown): { list: unknown[]; totalCount: number; next: string | null; previous: string | null } {
-  const root = asRecord(body);
-  let totalCount = 0;
-  if (typeof root.count === "number" && Number.isFinite(root.count) && root.count >= 0)
-    totalCount = root.count;
+function coerceLeafLinkAggregateCount(raw: unknown): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw))
+    return 0;
+  const n = Math.floor(raw);
+  return n >= 0 ? n : 0;
+}
+
+function pickOrdersListAggregateTotal(root: Record<string, unknown>): number {
+  /** DRF-ish `count`; some tenants expose only `total` / `total_count`. */
+  for (const k of ["count", "total", "total_count"] as const) {
+    const v = coerceLeafLinkAggregateCount(root[k]);
+    if (v > 0) return v;
+  }
   const meta = typeof root.meta === "object" && root.meta !== null ? asRecord(root.meta) : null;
-  if (totalCount === 0 && meta && typeof meta.count === "number")
-    totalCount = meta.count;
+  if (meta) {
+    for (const k of ["count", "total", "total_count"] as const) {
+      const v = coerceLeafLinkAggregateCount(meta[k]);
+      if (v > 0) return v;
+    }
+  }
+  return 0;
+}
 
+/** `next` / `previous` on list responses; tolerate nested `links` seen on some wrappers. */
+function pickPagedUrlFromRoot(root: Record<string, unknown>, key: "next" | "previous"): string | null {
+  const top = typeof root[key] === "string" ? String(root[key]).trim() : "";
+  if (top) return top;
+  const links = root.links;
+  if (links != null && typeof links === "object" && !Array.isArray(links)) {
+    const v = typeof (links as Record<string, unknown>)[key] === "string"
+      ? String((links as Record<string, unknown>)[key]).trim()
+      : "";
+    if (v) return v;
+  }
+  return null;
+}
+
+/**
+ * Parse LeafLink wholesale list envelopes (`results`/`data`/…) plus pagination metadata without
+ * overstating totals (never infer catalogue size from page length alone — that prematurely clears `hasNext`).
+ */
+export function parseLeafLinkOrdersListEnvelope(body: unknown): {
+  list: unknown[];
+  totalCount: number;
+  next: string | null;
+  previous: string | null;
+} {
+  const root = asRecord(body);
+  const totalCount = pickOrdersListAggregateTotal(root);
   const { list } = pickListSource(body);
-  if (totalCount === 0 && Array.isArray(list))
-    totalCount = list.length;
-
-  const next = typeof root.next === "string" && root.next.trim()
-    ? String(root.next).trim()
-    : null;
-  const previous =
-    typeof root.previous === "string" && root.previous.trim()
-      ? String(root.previous).trim()
-      : null;
+  const next = pickPagedUrlFromRoot(root, "next");
+  const previous = pickPagedUrlFromRoot(root, "previous");
   return { list, totalCount, next, previous };
+}
+
+/** Shared termination rule between live list + stored full-sync pagination. */
+function leafLinkPagedHasMore(opts: {
+  pageNum: number;
+  pageSize: number;
+  aggregateTotal: number;
+  nextUrl: string | null;
+  rowsOnPage: number;
+}): boolean {
+  const ps = opts.pageSize;
+  const pn = opts.pageNum;
+  const trimmedNext = opts.nextUrl?.trim() ?? "";
+  if (trimmedNext.length > 0) return true;
+  const agg = opts.aggregateTotal;
+  if (agg > 0 && pn * ps < agg) return true;
+  const r = opts.rowsOnPage;
+  /**
+   * Unknown aggregate + missing `next`: LeafLink frequently returns fewer rows than requested
+   * `page_size` when `fields_add=line_items`. If the slice still looks full vs common upstream caps (~50–100),
+   * keep paginating until an empty page terminates the caller loop.
+   */
+  if (agg <= 0 && r > 0 && r >= Math.min(ps, 50))
+    return true;
+  return false;
 }
 
 /** Light in-process cache for identical list reads (TTL). */
@@ -1379,8 +1438,19 @@ export class LeafLinkOrdersService {
     },
     baseOut: Omit<LeafLinkOrdersListDto, "orders" | "totalCount" | "hasNext" | "hasPrevious" | "lastFetchedAt" | "fromCache">,
   ): Promise<LeafLinkOrdersListDto | null> {
-    const storedRows = await findRecentLeafLinkStoredOrdersForCompany(companyId, STORED_ORDERS_LIST_SCAN_LIMIT);
+    const syncedTotal = await countLeafLinkStoredOrdersForCompany(companyId);
+    const fetchLimit = Math.min(STORED_ORDERS_LIST_SCAN_LIMIT, Math.max(syncedTotal, 1));
+    const storedRows = await findRecentLeafLinkStoredOrdersForCompany(companyId, fetchLimit);
     if (!storedRows.length) return null;
+
+    if (syncedTotal > STORED_ORDERS_LIST_SCAN_LIMIT) {
+      logWarn("[LEAFLINK] orders_list_from_stored_truncated", {
+        companyId,
+        syncedTotal,
+        rowsLoaded: storedRows.length,
+        scanCap: STORED_ORDERS_LIST_SCAN_LIMIT,
+      });
+    }
 
     const statusFilter = cleanString(input.status).toLowerCase();
     const needleRaw = cleanString(input.search).toLowerCase();
@@ -1535,7 +1605,7 @@ export class LeafLinkOrdersService {
           throw err;
         }
 
-        const { list } = parseListBody(body);
+        const { list, totalCount: pullAggTotal, next: pullNext } = parseLeafLinkOrdersListEnvelope(body);
 
         await persistLeafLinkOrderListRows(companyId, list, pg);
 
@@ -1558,11 +1628,18 @@ export class LeafLinkOrdersService {
           dedupedCards.push(card);
         }
 
-        const rootNext = asRecord(body).next;
-        const hasLeafNext = typeof rootNext === "string" && rootNext.trim().length > 0;
-        /** Stop when API has no cursor and last page shorter than requested size — typical end of list. */
-        const shortPage = Array.isArray(list) && list.length > 0 && list.length < 100;
-        if (!hasLeafNext && shortPage) break;
+        const searchPs = Math.min(
+          500,
+          Math.max(1, Number.parseInt(searchParams.get("page_size") || "100", 10) || 100),
+        );
+        const hasMoreMerged = leafLinkPagedHasMore({
+          pageNum: pg,
+          pageSize: searchPs,
+          aggregateTotal: pullAggTotal,
+          nextUrl: pullNext,
+          rowsOnPage: Array.isArray(list) ? list.length : 0,
+        });
+        if (!hasMoreMerged) break;
         if (!Array.isArray(list) || list.length === 0) break;
       }
 
@@ -1614,25 +1691,32 @@ export class LeafLinkOrdersService {
     const { authMode, body } = await leafLinkAuthedGet(urls, creds, creds.source, 20_000);
     logInfo("[LEAFLINK] orders_list_ok", { authMode, page: input.page });
 
-    const { list, totalCount: apiTotal, next } = parseListBody(body);
+    const { list, totalCount: apiTotal, next } = parseLeafLinkOrdersListEnvelope(body);
 
     /** If API exposes no aggregate count but `next` exists, approximate hasNext without total. */
     const orders = list.map((r) => orderToCardDto(normalizeOrder(r)));
     const rawRoot = asRecord(body);
-    const nextUrl = typeof next === "string" ? next.trim() : "";
+    const nextUrl = next?.trim() ?? "";
 
-    let totalCount = apiTotal || orders.length;
     const ps = Number(searchParams.get("page_size")) || orders.length || 18;
     const pageNum = Number(searchParams.get("page")) || 1;
 
     await persistLeafLinkOrderListRows(companyId, list, pageNum);
 
-    const hasNextBool =
-      Boolean(nextUrl) || (apiTotal ? pageNum * ps < apiTotal : false);
+    const hasNextBool = leafLinkPagedHasMore({
+      pageNum,
+      pageSize: ps,
+      aggregateTotal: apiTotal,
+      nextUrl,
+      rowsOnPage: orders.length,
+    });
     const hasPrevBool = pageNum > 1;
 
-    if (!apiTotal && hasNextBool)
-      totalCount = pageNum * ps + orders.length;
+    /** Never treat `orders.length` as catalogue total unless the API publishes an aggregate (`count`). */
+    let totalCount =
+      apiTotal > 0
+        ? apiTotal
+        : (hasNextBool ? pageNum * ps + orders.length : (pageNum - 1) * ps + orders.length);
 
     const payload: LeafLinkOrdersListDto = {
       ...baseOut,
@@ -1743,16 +1827,21 @@ export class LeafLinkOrdersService {
       searchParams.set("created_on__lte", lte);
     const urls = buildOrdersListUrlCandidates(base, creds, searchParams);
     const { body } = await leafLinkAuthedGet(urls, creds, creds.source, 20_000);
-    const { list, totalCount: apiTotal, next } = parseListBody(body);
+    const { list, totalCount: apiTotal, next } = parseLeafLinkOrdersListEnvelope(body);
     const rows = list.map((row) => {
       const raw = typeof row === "object" && row !== null && !Array.isArray(row) ? asRecord(row) : {};
       return { raw, summary: normalizeOrder(row) };
     });
     const pageNum = Math.max(1, input.page);
     const ps = Math.min(500, Math.max(1, input.pageSize));
-    const nextUrl = typeof next === "string" ? next.trim() : "";
-    const hasNextBool =
-      Boolean(nextUrl) || (apiTotal ? pageNum * ps < apiTotal : false);
+    const nextUrl = next?.trim() ?? "";
+    const hasNextBool = leafLinkPagedHasMore({
+      pageNum,
+      pageSize: ps,
+      aggregateTotal: apiTotal,
+      nextUrl,
+      rowsOnPage: rows.length,
+    });
     return { rows, hasNext: hasNextBool };
   }
 
@@ -2045,8 +2134,13 @@ export class LeafLinkOrdersService {
     }
 
     for (const { raw, summary: o } of collected) {
-      const buyerKeys = leafLinkOrderBuyerKeyCandidates(raw, o.buyerCustomerId);
-      if (!buyerKeys.length) continue;
+      let buyerKeys = leafLinkOrderBuyerKeyCandidates(raw, o.buyerCustomerId);
+      if (!buyerKeys.length) {
+        const oid = cleanString(o.id) || cleanString(o.orderNumber);
+        if (!oid) continue;
+        /** Orders without resolvable CRM / customer ids were previously dropped from analytics entirely. */
+        buyerKeys = [`__missing_buyer__:${canonicalLeafLinkBuyerId(oid) || oid.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 120)}`];
+      }
 
       const buyerCanon = buyerKeys[0];
 
