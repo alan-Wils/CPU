@@ -1,5 +1,4 @@
 import { clearAuthSession, getAuthToken, type LoginResponse } from "./auth";
-import type { PeerNotificationItem } from "./peerNotificationsTypes";
 
 function resolveApiBaseUrl(): string {
   const raw =
@@ -461,72 +460,6 @@ export async function getLogs(companyId?: string) {
   });
 }
 
-/** Latest task row for realtime peer notifications (`GET /api/logs/latest-live`). */
-export type LatestTaskLogLiveDto = {
-  id: string;
-  createdAt: string;
-  actorUserId: string;
-  actorEmail: string | null;
-  area: string;
-  task: string;
-};
-
-export async function fetchLatestTaskLogLive(
-  companyId?: string,
-): Promise<LatestTaskLogLiveDto | null> {
-  return apiRequest<LatestTaskLogLiveDto | null>("/api/logs/latest-live", {
-    companyId,
-    omitCompanyHeader: true,
-  });
-}
-
-/** Newest stored LeafLink order for realtime toasts (`GET /api/orders/latest-live`). */
-export type LatestOrderLiveDto = {
-  id: string;
-  leafLinkKey: string;
-  customerName: string;
-  totalUsd: number | null;
-  createdOn: string | null;
-};
-
-export async function fetchLatestOrderLive(): Promise<LatestOrderLiveDto | null> {
-  return apiRequest<LatestOrderLiveDto | null>("/api/orders/latest-live", {
-    omitCompanyHeader: true,
-  });
-}
-
-/** Per-user per-company notification inbox (tasks, orders, climate). */
-export type PeerNotifyInboxResponse = {
-  items: PeerNotificationItem[];
-  updatedAt: string | null;
-};
-
-export async function fetchPeerNotifyInbox(): Promise<PeerNotifyInboxResponse> {
-  return apiRequest<PeerNotifyInboxResponse>("/api/notifications/inbox", {
-    omitCompanyHeader: true,
-  });
-}
-
-export async function pushPeerNotifyItem(
-  item: PeerNotificationItem,
-): Promise<{ items: PeerNotificationItem[] }> {
-  return apiRequest<{ items: PeerNotificationItem[] }>("/api/notifications/inbox/push", {
-    method: "POST",
-    body: { item },
-    omitCompanyHeader: true,
-  });
-}
-
-export async function replacePeerNotifyInbox(
-  items: PeerNotificationItem[],
-): Promise<{ items: PeerNotificationItem[] }> {
-  return apiRequest<{ items: PeerNotificationItem[] }>("/api/notifications/inbox", {
-    method: "PUT",
-    body: { items },
-    omitCompanyHeader: true,
-  });
-}
-
 export async function saveLog(
   log: {
     area: string;
@@ -778,6 +711,7 @@ export type LeafLinkConfigDto = {
   username: string;
   baseUrl: string;
   hasApiKey: boolean;
+  recordedByStaffId: number | null;
 };
 
 export type LeafLinkConfigUpsertInput = {
@@ -788,6 +722,7 @@ export type LeafLinkConfigUpsertInput = {
   baseUrl: string;
   apiKey?: string;
   clearApiKey?: boolean;
+  recordedByStaffId?: number | null;
 };
 
 export async function fetchLeafLinkInventory(companyId?: string, opts?: { refresh?: boolean }) {

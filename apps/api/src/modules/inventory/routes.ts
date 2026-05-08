@@ -21,6 +21,8 @@ const leafLinkConfigWriteSchema = z.object({
   /** Write-only secret field. Empty means "keep existing". */
   apiKey: z.string().max(2048).optional(),
   clearApiKey: z.boolean().optional(),
+  /** LeafLink `company-staff` id for `recorded_by` on check/cash payment posts. Omit to keep previous; null clears. */
+  recordedByStaffId: z.union([z.number().int().positive(), z.null()]).optional(),
 });
 const leafLinkInventoryQuerySchema = z.object({
   debug: z

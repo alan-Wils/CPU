@@ -14,6 +14,8 @@ type LeafLinkStoredConfig = {
   username?: string;
   apiKey?: string;
   baseUrl?: string;
+  /** LeafLink `company-staff` id used as `recorded_by` on `POST /v2/order-payments/`. */
+  recordedByStaffId?: number | string;
 };
 
 export type LeafLinkRuntimeCredentials = {
@@ -38,6 +40,8 @@ export type LeafLinkConfigReadDto = {
   username: string;
   baseUrl: string;
   hasApiKey: boolean;
+  /** When set, check/cash “mark paid” uses this LeafLink company-staff row as `recorded_by`. */
+  recordedByStaffId: number | null;
 };
 
 export type LeafLinkConfigWriteInput = {
@@ -48,6 +52,8 @@ export type LeafLinkConfigWriteInput = {
   baseUrl: string;
   apiKey?: string;
   clearApiKey?: boolean;
+  /** Omit to preserve; set null to clear and fall back to env / auto staff list. */
+  recordedByStaffId?: number | null;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -57,6 +63,50 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function cleanString(v: unknown): string {
   return String(v || "").trim();
+}
+
+function parseRecordedByStaffId(raw: unknown): number | null {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0)
+    return Math.trunc(raw);
+  const s = cleanString(raw);
+  if (!s) return null;
+  const n = Number.parseInt(s, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Short human-readable fragment from LeafLink/DRF JSON error bodies for logs and AppError messages. */
+function leafLinkErrorDetailFromBody(parsed: unknown): string {
+  if (parsed == null) return "";
+  if (typeof parsed === "string")
+    return parsed.length > 400 ? `${parsed.slice(0, 397)}…` : parsed;
+  if (typeof parsed !== "object" || Array.isArray(parsed)) return "";
+  const o = parsed as Record<string, unknown>;
+  const pick = (v: unknown): string => {
+    if (v == null) return "";
+    if (typeof v === "string") return v.length > 400 ? `${v.slice(0, 397)}…` : v;
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    if (Array.isArray(v)) {
+      const parts = v.map((x) => pick(x)).filter(Boolean);
+      return parts.join("; ");
+    }
+    if (typeof v === "object") {
+      try {
+        const s = JSON.stringify(v);
+        return s.length > 400 ? `${s.slice(0, 397)}…` : s;
+      }
+      catch {
+        return "";
+      }
+    }
+    return "";
+  };
+  const detail =
+    pick(o.detail)
+    || pick(o.message)
+    || pick(o.error)
+    || pick(o.non_field_errors)
+    || pick(o.errors);
+  return detail ? `— ${detail}` : "";
 }
 
 function envBool(v: unknown): boolean {
@@ -87,7 +137,17 @@ export class LeafLinkService {
       username: cleanString(cfg.username),
       baseUrl: baseUrlOrDefault(cfg.baseUrl),
       hasApiKey: cleanString(cfg.apiKey).length > 0,
+      recordedByStaffId: parseRecordedByStaffId(cfg.recordedByStaffId),
     };
+  }
+
+  /**
+   * Company-staff id for LeafLink order payments (`recorded_by`), if configured on the tenant.
+   * Does not read process env — callers merge env themselves when appropriate.
+   */
+  async getRecordedByStaffIdFromConfig(companyId: string): Promise<number | null> {
+    const cfg = await this.getStoredConfig(companyId);
+    return parseRecordedByStaffId(cfg.recordedByStaffId);
   }
 
   async upsertConfig(
@@ -109,6 +169,12 @@ export class LeafLinkService {
       username: cleanString(input.username) || cleanString(prev.username),
       apiKey: nextApiKey,
       baseUrl: baseUrlOrDefault(cleanString(input.baseUrl) || cleanString(prev.baseUrl)),
+      recordedByStaffId:
+        input.recordedByStaffId === undefined
+          ? prev.recordedByStaffId
+          : input.recordedByStaffId === null
+            ? undefined
+            : input.recordedByStaffId,
     };
     await this.configService.upsert({
       companyId,
@@ -721,26 +787,6 @@ export function normalizeLeafLinkInventoryRows(raw: unknown): LeafLinkInventoryI
   return out;
 }
 
-/** Pull detail/message from LeafLink JSON error bodies (DRF-style). */
-function leafLinkJsonErrorDetail(trimmed: string): string {
-  try {
-    const j = JSON.parse(trimmed) as unknown;
-    if (typeof j !== "object" || j === null) return "";
-    const o = j as Record<string, unknown>;
-    const d = o.detail ?? o.message ?? o.error;
-    if (typeof d === "string") return d.trim();
-    if (Array.isArray(d) && d.length > 0) return String(d[0]).trim();
-    if (typeof d === "object" && d !== null && "message" in (d as object)) {
-      const m = (d as { message?: unknown }).message;
-      if (typeof m === "string") return m.trim();
-    }
-  }
-  catch {
-    /* ignore */
-  }
-  return "";
-}
-
 export async function fetchJsonWithRetry(url: string, init: RequestInit, timeoutMs: number): Promise<unknown> {
   let lastErr: unknown;
   for (let i = 0; i < 2; i += 1) {
@@ -772,6 +818,9 @@ export async function fetchJsonWithRetry(url: string, init: RequestInit, timeout
           lastErr = new AppError("LeafLink temporary server error. Retrying.", 502, "LEAFLINK_TEMPORARY");
           continue;
         }
+        if (res.status === 401 || res.status === 403) {
+          throw new AppError("LeafLink credentials are invalid for this company.", 401, "LEAFLINK_INVALID_CREDENTIALS");
+        }
         if (isHtml) {
           throw new AppError(
             "LeafLink returned an HTML error response instead of JSON.",
@@ -784,25 +833,21 @@ export async function fetchJsonWithRetry(url: string, init: RequestInit, timeout
             },
           );
         }
-        const apiDetail = isJson ? leafLinkJsonErrorDetail(trimmed) : "";
-        const detailSuffix = apiDetail ? ` ${apiDetail}` : "";
-        if (res.status === 401) {
-          throw new AppError(
-            `LeafLink rejected authentication (401). Check API key and company id.${detailSuffix}`,
-            401,
-            "LEAFLINK_INVALID_CREDENTIALS",
-            apiDetail ? { leafLinkDetail: apiDetail } : undefined,
-          );
+        let leafLinkDetail = "";
+        if (isJson && trimmed) {
+          try {
+            const parsed: unknown = JSON.parse(trimmed);
+            leafLinkDetail = leafLinkErrorDetailFromBody(parsed);
+          }
+          catch {
+            /* ignore */
+          }
         }
-        if (res.status === 403) {
-          throw new AppError(
-            `LeafLink denied this request (403). Reading orders can work while recording payments still fails: confirm your API token includes permission to create payments, and that you use the correct LeafLink order id in the URL.${detailSuffix}`,
-            403,
-            "LEAFLINK_FORBIDDEN",
-            apiDetail ? { leafLinkDetail: apiDetail } : undefined,
-          );
-        }
-        throw new AppError(`LeafLink request failed (${res.status}).${detailSuffix}`, 502, "LEAFLINK_REQUEST_FAILED");
+        const suffix = leafLinkDetail ? ` ${leafLinkDetail}` : "";
+        throw new AppError(`LeafLink request failed (${res.status}).${suffix}`, 502, "LEAFLINK_REQUEST_FAILED", {
+          status: res.status,
+          leafLinkDetail: leafLinkDetail || undefined,
+        });
       }
       if (!isJson) {
         throw new AppError(
@@ -911,7 +956,6 @@ async function fetchLeafLinkInventoryFromApi(
         const code = error instanceof AppError ? error.code : "";
         if (
           code === "LEAFLINK_INVALID_CREDENTIALS" ||
-          code === "LEAFLINK_FORBIDDEN" ||
           code === "LEAFLINK_REQUEST_FAILED" ||
           code === "LEAFLINK_NON_JSON_RESPONSE" ||
           code === "LEAFLINK_HTML_ERROR"

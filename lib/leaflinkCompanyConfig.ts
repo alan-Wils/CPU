@@ -6,6 +6,8 @@ export type LeafLinkCompanyConfig = {
   /** Write-only from UI; never returned by API reads. */
   apiKey?: string;
   baseUrl: string;
+  /** LeafLink company-staff row id for payment `recorded_by`; null = auto from API list when possible. */
+  recordedByStaffId: number | null;
 };
 
 export const defaultLeafLinkCompanyConfig: LeafLinkCompanyConfig = {
@@ -15,6 +17,7 @@ export const defaultLeafLinkCompanyConfig: LeafLinkCompanyConfig = {
   username: "",
   apiKey: "",
   baseUrl: "https://app.leaflink.com/api",
+  recordedByStaffId: null,
 };
 
 export type LeafLinkConfigReadDto = Omit<LeafLinkCompanyConfig, "apiKey"> & {

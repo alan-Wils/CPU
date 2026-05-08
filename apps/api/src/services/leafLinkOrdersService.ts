@@ -1004,11 +1004,11 @@ export type LeafLinkPaymentMatchCandidateDto = {
   lineItems: LeafLinkOrderLineItemDto[];
   score: number;
   matchedBy: string[];
-  /** From synced LeafLink order: true when the order is already fully paid (posting another payment is usually unnecessary). */
+  /** True when the cached LeafLink order is already paid (only returned by {@link findPaymentMatchCandidatesIncludingPaidForCheck}). */
   markedPaidInLeafLink: boolean;
 };
 
-/** One-line summary for cash/check list rows vs synced LeafLink orders (read from DB cache, no live API). */
+/** API shape for check/cash list “LeafLink invoice” column (see admin `LeafLinkInvoiceLineStatus`). */
 export type LeafLinkInvoiceLineStatusDto = {
   hasInvoiceTokens: boolean;
   matchedOrderNumber: string | null;
@@ -1019,55 +1019,17 @@ export type LeafLinkInvoiceLineStatusDto = {
   summary: string;
 };
 
-/** Detail upserts wrap our normalized summary so sample flags & enriched lines stay intact. */
-const CPU_DETAIL_V = 1 as const;
-type CpuDetailPayload = { _cpu_v: typeof CPU_DETAIL_V; summary: LeafLinkOrderSummaryDto };
-
-function isCpuDetailPayload(p: unknown): p is CpuDetailPayload {
-  return (
-    typeof p === "object"
-    && p !== null
-    && (p as CpuDetailPayload)._cpu_v === CPU_DETAIL_V
-    && typeof (p as CpuDetailPayload).summary === "object"
-    && (p as CpuDetailPayload).summary !== null
-  );
-}
-
-function syntheticRawForTotalsFromSummary(summary: LeafLinkOrderSummaryDto): Record<string, unknown> {
-  const raw: Record<string, unknown> = {};
-  if (summary.total !== null && summary.total !== undefined)
-    raw.total = summary.total;
-  if (summary.subtotal !== null && summary.subtotal !== undefined)
-    raw.subtotal = summary.subtotal;
-  return raw;
-}
-
-function collectedPairFromStoredPayload(payload: unknown): { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto } | null {
-  if (isCpuDetailPayload(payload)) {
-    const summary = payload.summary;
-    return { raw: syntheticRawForTotalsFromSummary(summary), summary };
-  }
-  if (payload != null && typeof payload === "object" && !Array.isArray(payload))
-    return { raw: payload as Record<string, unknown>, summary: normalizeOrder(payload) };
-  return null;
-}
-
 type LeafLinkStoredOrderScanRow = {
   id: string;
   leafLinkKey: string;
   totalUsd: number | null;
   payload: unknown;
-  createdOn: Date | null;
-  updatedAt: Date;
 };
 
-/**
- * Match stored LeafLink orders to an invoice / payee / amount (same rules as check & cash log matching).
- * Includes **paid** orders with `markedPaidInLeafLink: true` so UIs can show “already paid in LeafLink”.
- */
-export function collectPaymentMatchCandidatesFromStoredRows(
+function collectLeafLinkPaymentCandidatesFromDbRows(
   rows: LeafLinkStoredOrderScanRow[],
-  input: { invoiceNumber?: string | undefined; payerName?: string | undefined; amount?: number | null | undefined },
+  input: { invoiceNumber?: string; payerName?: string; amount?: number },
+  opts: { includePaid: boolean },
 ): LeafLinkPaymentMatchCandidateDto[] {
   const invoiceTokens = splitInvoiceNumberTokens(input.invoiceNumber);
   const payerNeedle = cleanString(input.payerName).toLowerCase();
@@ -1080,6 +1042,7 @@ export function collectPaymentMatchCandidatesFromStoredRows(
     const statusNorm = cleanString(summary.statusNormalized || summary.status).toLowerCase();
     if (statusNorm.includes("cancel")) continue;
     const paid = summary.paid || cleanString(summary.paymentStatus).toLowerCase() === "paid";
+    if (paid && !opts.includePaid) continue;
     const orderNumber = cleanString(summary.orderNumber || summary.shortNumber || summary.id);
     const customerName = cleanString(summary.customerName);
     const total = typeof summary.total === "number" ? summary.total : orderTotalMoney(summary);
@@ -1145,18 +1108,34 @@ export function collectPaymentMatchCandidatesFromStoredRows(
   return out.sort((a, b) => b.score - a.score || a.orderNumber.localeCompare(b.orderNumber));
 }
 
+/**
+ * Best-effort LeafLink order state for a check/cash row using only **saved** `leafLinkStoredOrder` payloads
+ * (same scan cap as matching — no live LeafLink call).
+ */
 export function summarizeLeafLinkInvoiceFromStoredRows(
-  rows: LeafLinkStoredOrderScanRow[],
-  input: { invoiceNumber?: string | null; payerName?: string | null; amount?: number | null },
-): LeafLinkInvoiceLineStatusDto | null {
-  const tokens = splitInvoiceNumberTokens(input.invoiceNumber ?? undefined);
-  if (!tokens.length) return null;
-  const all = collectPaymentMatchCandidatesFromStoredRows(rows, {
+  storedRows: LeafLinkStoredOrderScanRow[],
+  input: { invoiceNumber?: string | null; payerName?: string | null; amount: number | null },
+): LeafLinkInvoiceLineStatusDto {
+  const invoiceTokens = splitInvoiceNumberTokens(input.invoiceNumber ?? undefined);
+  const hasInvoiceTokens = invoiceTokens.length > 0;
+  if (!hasInvoiceTokens) {
+    return {
+      hasInvoiceTokens: false,
+      matchedOrderNumber: null,
+      matchedOrderId: null,
+      markedPaidInLeafLink: false,
+      outstandingBalance: null,
+      paymentStatus: null,
+      summary: "",
+    };
+  }
+  const narrow = {
     invoiceNumber: input.invoiceNumber ?? undefined,
     payerName: input.payerName ?? undefined,
-    amount: input.amount,
-  });
-  if (!all.length) {
+    amount: input.amount == null || !Number.isFinite(input.amount) ? undefined : input.amount,
+  };
+  const candidates = collectLeafLinkPaymentCandidatesFromDbRows(storedRows, narrow, { includePaid: true });
+  if (!candidates.length) {
     return {
       hasInvoiceTokens: true,
       matchedOrderNumber: null,
@@ -1164,31 +1143,53 @@ export function summarizeLeafLinkInvoiceFromStoredRows(
       markedPaidInLeafLink: false,
       outstandingBalance: null,
       paymentStatus: null,
-      summary: "No matching LeafLink order in recently synced orders.",
+      summary: "No matching LeafLink order in saved cache — refresh Orders / multi-page sync.",
     };
   }
-  const best = all[0];
-  const ob = best.outstandingBalance ?? best.total;
-  if (best.markedPaidInLeafLink) {
-    return {
-      hasInvoiceTokens: true,
-      matchedOrderNumber: best.orderNumber,
-      matchedOrderId: best.orderId,
-      markedPaidInLeafLink: true,
-      outstandingBalance: 0,
-      paymentStatus: best.paymentStatus || null,
-      summary: `Order ${best.orderNumber}: marked paid in LeafLink (${best.paymentStatus || "paid"}).`,
-    };
-  }
+  const best = candidates[0];
+  const summary = `${best.customerName} · #${best.orderNumber} · ${best.paymentStatus} (match ${best.matchedBy.join(", ")})`;
   return {
     hasInvoiceTokens: true,
     matchedOrderNumber: best.orderNumber,
     matchedOrderId: best.orderId,
-    markedPaidInLeafLink: false,
-    outstandingBalance: ob,
-    paymentStatus: best.paymentStatus || null,
-    summary: `Order ${best.orderNumber}: open — outstanding ${typeof ob === "number" ? ob.toFixed(2) : String(ob)}.`,
+    markedPaidInLeafLink: best.markedPaidInLeafLink,
+    outstandingBalance: best.outstandingBalance,
+    paymentStatus: best.paymentStatus,
+    summary,
   };
+}
+
+/** Detail upserts wrap our normalized summary so sample flags & enriched lines stay intact. */
+const CPU_DETAIL_V = 1 as const;
+type CpuDetailPayload = { _cpu_v: typeof CPU_DETAIL_V; summary: LeafLinkOrderSummaryDto };
+
+function isCpuDetailPayload(p: unknown): p is CpuDetailPayload {
+  return (
+    typeof p === "object"
+    && p !== null
+    && (p as CpuDetailPayload)._cpu_v === CPU_DETAIL_V
+    && typeof (p as CpuDetailPayload).summary === "object"
+    && (p as CpuDetailPayload).summary !== null
+  );
+}
+
+function syntheticRawForTotalsFromSummary(summary: LeafLinkOrderSummaryDto): Record<string, unknown> {
+  const raw: Record<string, unknown> = {};
+  if (summary.total !== null && summary.total !== undefined)
+    raw.total = summary.total;
+  if (summary.subtotal !== null && summary.subtotal !== undefined)
+    raw.subtotal = summary.subtotal;
+  return raw;
+}
+
+function collectedPairFromStoredPayload(payload: unknown): { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto } | null {
+  if (isCpuDetailPayload(payload)) {
+    const summary = payload.summary;
+    return { raw: syntheticRawForTotalsFromSummary(summary), summary };
+  }
+  if (payload != null && typeof payload === "object" && !Array.isArray(payload))
+    return { raw: payload as Record<string, unknown>, summary: normalizeOrder(payload) };
+  return null;
 }
 
 function toUpsertInputFromLeafLinkPayload(
@@ -1333,7 +1334,6 @@ async function leafLinkAuthedGet(
           && preferred === authValue
           && (
             code === "LEAFLINK_INVALID_CREDENTIALS"
-            || code === "LEAFLINK_FORBIDDEN"
             || code === "LEAFLINK_REQUEST_FAILED"
             || code === "LEAFLINK_HTML_ERROR"
             || code === "LEAFLINK_NON_JSON_RESPONSE"
@@ -1344,7 +1344,6 @@ async function leafLinkAuthedGet(
         }
         if (
           code === "LEAFLINK_INVALID_CREDENTIALS"
-          || code === "LEAFLINK_FORBIDDEN"
           || code === "LEAFLINK_REQUEST_FAILED"
           || code === "LEAFLINK_HTML_ERROR"
           || code === "LEAFLINK_NON_JSON_RESPONSE"
@@ -1409,7 +1408,6 @@ async function leafLinkAuthedRequest(
           && preferred === authValue
           && (
             code === "LEAFLINK_INVALID_CREDENTIALS"
-            || code === "LEAFLINK_FORBIDDEN"
             || code === "LEAFLINK_REQUEST_FAILED"
             || code === "LEAFLINK_HTML_ERROR"
             || code === "LEAFLINK_NON_JSON_RESPONSE"
@@ -1420,7 +1418,6 @@ async function leafLinkAuthedRequest(
         }
         if (
           code === "LEAFLINK_INVALID_CREDENTIALS"
-          || code === "LEAFLINK_FORBIDDEN"
           || code === "LEAFLINK_REQUEST_FAILED"
           || code === "LEAFLINK_HTML_ERROR"
           || code === "LEAFLINK_NON_JSON_RESPONSE"
@@ -1443,6 +1440,109 @@ async function leafLinkAuthedRequest(
   }
   if (lastErr instanceof AppError) throw lastErr;
   throw lastErr instanceof Error ? lastErr : new AppError("LeafLink request failed.", 502, "LEAFLINK_ORDERS_FAILED");
+}
+
+/** In-process cache: resolved LeafLink `company-staff` id used as `recorded_by` on payments. */
+const paymentRecorderStaffIdCache = new Map<string, number>();
+
+function companyStaffRowsFromBody(body: unknown): Record<string, unknown>[] {
+  const root = asRecord(body);
+  if (Array.isArray(root.results)) {
+    return root.results.filter(
+      (x): x is Record<string, unknown> =>
+        x != null && typeof x === "object" && !Array.isArray(x),
+    ) as Record<string, unknown>[];
+  }
+  if (Array.isArray(body)) {
+    return body.filter(
+      (x): x is Record<string, unknown> =>
+        x != null && typeof x === "object" && !Array.isArray(x),
+    ) as Record<string, unknown>[];
+  }
+  return [];
+}
+
+function pickRecorderStaffIdFromList(rows: Record<string, unknown>[]): number | null {
+  const active = rows.filter((r) => r.is_active !== false);
+  const admins = active.filter((r) => r.is_admin === true);
+  const pool = admins.length ? admins : active;
+  for (const r of pool) {
+    const id = toNumber(r.id);
+    if (id > 0) return Math.trunc(id);
+  }
+  return null;
+}
+
+async function fetchFirstCompanyStaffRecorderId(
+  creds: LeafLinkRuntimeCredentials,
+  authSource: LeafLinkCredentialSource,
+): Promise<number | null> {
+  const base = creds.baseUrl.replace(/\/+$/, "");
+  const qs = new URLSearchParams({ is_active: "true", limit: "50" });
+  if (creds.companyId)
+    qs.set("company", creds.companyId);
+  else if (creds.companySlug)
+    qs.set("company_slug", creds.companySlug);
+  const qStr = qs.toString();
+  const urls: string[] = [];
+  if (creds.companyId) {
+    urls.push(
+      `${base}/v2/companies/${encodeURIComponent(creds.companyId)}/company-staff/?${qStr}`,
+    );
+  }
+  urls.push(`${base}/v2/company-staff/?${qStr}`);
+  const seen = new Set<string>();
+  const uniq = urls.filter((u) => {
+    if (!u || seen.has(u)) return false;
+    seen.add(u);
+    return true;
+  });
+  try {
+    const { body } = await leafLinkAuthedGet(uniq, creds, authSource, 15_000);
+    return pickRecorderStaffIdFromList(companyStaffRowsFromBody(body));
+  }
+  catch {
+    return null;
+  }
+}
+
+async function resolvePaymentRecorderStaffId(
+  leafLinkService: LeafLinkService,
+  companyId: string,
+  creds: LeafLinkResolvedCredentials,
+  authSource: LeafLinkCredentialSource,
+): Promise<number> {
+  const cacheKey = `${authTenantKey(creds)}|paymentRecorder`;
+  const cached = paymentRecorderStaffIdCache.get(cacheKey);
+  if (cached != null && cached > 0)
+    return cached;
+
+  const fromCfg = await leafLinkService.getRecordedByStaffIdFromConfig(companyId);
+  if (fromCfg != null && fromCfg > 0) {
+    paymentRecorderStaffIdCache.set(cacheKey, fromCfg);
+    return fromCfg;
+  }
+
+  const envRaw = cleanString(process.env.LEAFLINK_RECORDED_BY_STAFF_ID);
+  if (envRaw) {
+    const n = Number.parseInt(envRaw, 10);
+    if (Number.isFinite(n) && n > 0) {
+      paymentRecorderStaffIdCache.set(cacheKey, n);
+      return n;
+    }
+  }
+
+  const fetched = await fetchFirstCompanyStaffRecorderId(creds, authSource);
+  if (fetched != null && fetched > 0) {
+    paymentRecorderStaffIdCache.set(cacheKey, fetched);
+    return fetched;
+  }
+
+  throw new AppError(
+    "LeafLink order payments require `recorded_by` (a company staff id). Set “Payment recorder (staff id)” in Admin → LeafLink, set env LEAFLINK_RECORDED_BY_STAFF_ID, or grant the API token permission to list GET /v2/company-staff/.",
+    400,
+    "LEAFLINK_PAYMENT_RECORDER_REQUIRED",
+  );
 }
 
 function buildOrdersListUrlCandidates(
@@ -2517,22 +2617,24 @@ export class LeafLinkOrdersService {
     };
   }
 
-  /** All matches (including orders already paid in LeafLink) for UI status and modals. */
+  async findOpenPaymentCandidatesForCheck(
+    companyId: string,
+    input: { invoiceNumber?: string; payerName?: string; amount?: number },
+  ): Promise<LeafLinkPaymentMatchCandidateDto[]> {
+    const rows = await findRecentLeafLinkStoredOrdersForCompany(companyId, 4000);
+    return collectLeafLinkPaymentCandidatesFromDbRows(rows, input, { includePaid: false });
+  }
+
+  /**
+   * Same scoring as {@link findOpenPaymentCandidatesForCheck} but includes **paid** orders so UIs can show
+   * “already paid in LeafLink” and still link audit rows.
+   */
   async findPaymentMatchCandidatesIncludingPaidForCheck(
     companyId: string,
     input: { invoiceNumber?: string; payerName?: string; amount?: number },
   ): Promise<LeafLinkPaymentMatchCandidateDto[]> {
     const rows = await findRecentLeafLinkStoredOrdersForCompany(companyId, 4000);
-    return collectPaymentMatchCandidatesFromStoredRows(rows, input);
-  }
-
-  /** Open orders only — used when resolving which order to post payment against. */
-  async findOpenPaymentCandidatesForCheck(
-    companyId: string,
-    input: { invoiceNumber?: string; payerName?: string; amount?: number },
-  ): Promise<LeafLinkPaymentMatchCandidateDto[]> {
-    const all = await this.findPaymentMatchCandidatesIncludingPaidForCheck(companyId, input);
-    return all.filter((c) => !c.markedPaidInLeafLink);
+    return collectLeafLinkPaymentCandidatesFromDbRows(rows, input, { includePaid: true });
   }
 
   /** @deprecated Use {@link postOrderPayment} */
@@ -2547,7 +2649,10 @@ export class LeafLinkOrdersService {
     companyId: string,
     input: {
       orderNumber: string;
-      /** LeafLink order primary key from API (`summary.id`) — payment URLs often require this instead of the human order number. */
+      /**
+       * LeafLink wholesale `number` when it differs from the display `orderNumber` (e.g. short id vs label).
+       * Check/cash flows pass `selected.orderId` from stored order payloads — often the same key LeafLink expects on `POST /v2/order-payments/`.
+       */
       leafLinkOrderId?: string | null;
       amount: number;
       paymentDateIso: string;
@@ -2568,58 +2673,45 @@ export class LeafLinkOrdersService {
     }
     await this.assertOrdersCapableOrThrow(creds);
     const base = creds.baseUrl.replace(/\/+$/, "");
-    const oid = cleanString(input.leafLinkOrderId);
-    const onum = cleanString(input.orderNumber);
-    const pathSegments: string[] = [];
-    if (oid) pathSegments.push(oid);
-    if (onum && !pathSegments.includes(onum)) pathSegments.push(onum);
-    if (!pathSegments.length && onum) pathSegments.push(onum);
+    /**
+     * LeafLink Marketplace V2 creates payments only via `POST /v2/order-payments/` with a DRF-shaped body
+     * (`order`, `recorded_by`, `total.amount` + `currency`, `payment_date`, `reason`, `payment_type`).
+     * Nested `…/orders-received/{n}/payments/` URLs are list-only in the public reference — posting there yields 405/404.
+     */
+    const orderRef = cleanString(
+      input.leafLinkOrderId || input.orderNumber,
+    ).replace(/^#/, "");
+    if (!orderRef) {
+      throw new AppError("Missing LeafLink order number for payment.", 400, "LEAFLINK_PAYMENT_ORDER_REQUIRED");
+    }
+    const recorderId = await resolvePaymentRecorderStaffId(this.leafLinkService, companyId, creds, creds.source);
+    const amt = Number.isFinite(input.amount) ? Math.max(0, input.amount) : 0;
+    const amountStr = amt.toFixed(2);
+    const reference = cleanString(input.reference);
+    const note = cleanString(input.note);
+    const reasonParts = [note, reference ? `Ref: ${reference}` : ""].filter(Boolean);
+    const reason = (reasonParts.join(" — ") || "Payment recorded via NexBatch").slice(0, 2000);
+    const paymentType = input.paymentMethod === "Cash" ? "cash" : "check";
+    const payDateRaw = cleanString(input.paymentDateIso);
+    const paymentDate =
+      /^\d{4}-\d{2}-\d{2}$/.test(payDateRaw) ? `${payDateRaw}T12:00:00.000Z` : (payDateRaw || new Date().toISOString());
 
-    const urls: string[] = [];
-    for (const seg of pathSegments) {
-      const esc = encodeURIComponent(seg);
-      if (creds.companyId) {
-        urls.push(`${base}/v2/companies/${encodeURIComponent(creds.companyId)}/orders-received/${esc}/payments/`);
-      }
-      urls.push(`${base}/v2/orders-received/${esc}/payments/`);
-    }
-    if (creds.companyId) {
-      urls.push(`${base}/v2/companies/${encodeURIComponent(creds.companyId)}/order-payments/`);
-    }
-    urls.push(`${base}/v2/order-payments/`);
-    const method = input.paymentMethod === "Cash" ? "Cash" : "Check";
-    const payloads: Record<string, unknown>[] = [
-      {
-        order_number: input.orderNumber,
-        amount: input.amount,
-        payment_method: method,
-        payment_date: input.paymentDateIso,
-        reference: cleanString(input.reference),
-        notes: input.note,
-      },
-      {
-        order: input.orderNumber,
-        amount: input.amount,
-        payment_method: method,
-        date: input.paymentDateIso,
-        reference: cleanString(input.reference),
-        notes: input.note,
-      },
-    ];
-    let lastErr: unknown;
-    for (const payload of payloads) {
-      try {
-        const { body } = await leafLinkAuthedRequest(urls, creds, creds.source, 25_000, "POST", payload);
-        const rec = asRecord(body);
-        const paymentId = cleanString(rec.id || rec.payment_id || rec.uuid || rec.reference || rec.order_payment_id) || `leaflink-${Date.now()}`;
-        const paymentStatus = cleanString(rec.status || rec.payment_status || rec.state) || "posted";
-        return { paymentId, paymentStatus, rawResponse: body };
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-    if (lastErr instanceof AppError) throw lastErr;
-    throw new AppError("LeafLink payment post failed.", 502, "LEAFLINK_PAYMENT_POST_FAILED");
+    const payload: Record<string, unknown> = {
+      order: orderRef,
+      recorded_by: recorderId,
+      total: { amount: amountStr, currency: "USD" },
+      payment_date: paymentDate,
+      reason,
+      payment_type: paymentType,
+    };
+    const urls = [`${base}/v2/order-payments/`];
+    const { body } = await leafLinkAuthedRequest(urls, creds, creds.source, 25_000, "POST", payload);
+    const rec = asRecord(body);
+    const paymentId =
+      cleanString(rec.id || rec.payment_id || rec.uuid || rec.reference || rec.order_payment_id)
+      || `leaflink-${Date.now()}`;
+    const paymentStatus = cleanString(rec.status || rec.payment_status || rec.state) || "posted";
+    return { paymentId, paymentStatus, rawResponse: body };
   }
 }
 

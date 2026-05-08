@@ -134,6 +134,15 @@ const envSchema = z
         const t = v.trim().replace(/\/+$/, "");
         return t === "" ? undefined : t;
     }, z.string().url().optional()),
+    /** Fallback LeafLink `company-staff` id used as `recorded_by` when posting order payments (per-tenant config preferred). */
+    LEAFLINK_RECORDED_BY_STAFF_ID: z.preprocess((v) => {
+        if (typeof v !== "string")
+            return undefined;
+        const t = v.trim();
+        if (!t) return undefined;
+        const n = Number.parseInt(t, 10);
+        return Number.isFinite(n) && n > 0 ? n : undefined;
+    }, z.number().int().positive().optional()),
     /** Backend-only vendor billing integrations. */
     RAILWAY_API_TOKEN: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().optional()),
     VERCEL_API_TOKEN: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().optional()),

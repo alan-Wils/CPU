@@ -31,6 +31,10 @@ export function LeafLinkConfigCard() {
           username: String(out.username || ""),
           baseUrl: String(out.baseUrl || defaultLeafLinkCompanyConfig.baseUrl),
           apiKey: "",
+          recordedByStaffId:
+            typeof out.recordedByStaffId === "number" && Number.isFinite(out.recordedByStaffId)
+              ? out.recordedByStaffId
+              : null,
         });
         setHasApiKey(Boolean(out.hasApiKey));
       } catch (e: unknown) {
@@ -56,6 +60,7 @@ export function LeafLinkConfigCard() {
         username: cfg.username,
         baseUrl: cfg.baseUrl || defaultLeafLinkCompanyConfig.baseUrl,
         apiKey: cfg.apiKey?.trim() || undefined,
+        recordedByStaffId: cfg.recordedByStaffId,
       });
       setCfg((prev) => ({ ...prev, apiKey: "" }));
       setHasApiKey(Boolean(out.hasApiKey || cfg.apiKey));
@@ -72,7 +77,9 @@ export function LeafLinkConfigCard() {
       <h3 style={{ marginTop: 0, marginBottom: 8, color: "#e2e8f0" }}>LeafLink Inventory</h3>
       <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, lineHeight: 1.55 }}>
         Company-scoped LeafLink credentials are saved server-side. The API key is write-only in this UI and never
-        returned to the browser.
+        returned to the browser. Check/cash “mark paid” uses LeafLink{" "}
+        <code style={{ color: "#bae6fd" }}>POST /v2/order-payments/</code> — set a payment recorder staff id if
+        auto-detect from <code style={{ color: "#bae6fd" }}>company-staff</code> is not available for your token.
       </p>
 
       {loading ? <p style={{ color: "#93c5fd", fontWeight: 700 }}>Loading LeafLink settings...</p> : null}
@@ -123,6 +130,29 @@ export function LeafLinkConfigCard() {
             value={cfg.baseUrl}
             onChange={(e) => setCfg((prev) => ({ ...prev, baseUrl: e.target.value }))}
             placeholder="https://app.leaflink.com/api"
+          />
+        </label>
+        <label style={{ ...labelStyle, gridColumn: "1 / -1" }}>
+          Payment recorder (LeafLink staff id)
+          <input
+            style={inputStyle}
+            type="number"
+            min={1}
+            step={1}
+            value={cfg.recordedByStaffId ?? ""}
+            onChange={(e) => {
+              const v = e.target.value.trim();
+              if (!v) {
+                setCfg((prev) => ({ ...prev, recordedByStaffId: null }));
+                return;
+              }
+              const n = Number.parseInt(v, 10);
+              setCfg((prev) => ({
+                ...prev,
+                recordedByStaffId: Number.isFinite(n) && n > 0 ? n : null,
+              }));
+            }}
+            placeholder="Leave blank to auto-pick an active admin from company-staff"
           />
         </label>
       </div>
