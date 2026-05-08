@@ -232,20 +232,35 @@ const preferredLeafLinkAuthByTenant = new Map<string, string>();
  */
 export const ORDERS_ANALYTICS_MIN_ORDER_TOTAL = 0;
 
-const currentCustomersByCompanyCache = new Map<string, { atMs: number; ids: Set<string>; labelById: Map<string, string> }>();
+type LeafLinkCustomerRowStored = {
+  /** Canonical primary id for this LeafLink CRM row (one analytics row per customer). */
+  id: string;
+  label: string;
+  /** Other canonical ids for the same account (e.g. `crm_record_id` vs `id` vs empty external id). */
+  keys?: string[];
+};
+
+const currentCustomersByCompanyCache = new Map<
+  string,
+  { atMs: number; directory: LeafLinkCurrentCustomersDirectory }
+>();
 
 type LeafLinkCustomersSnapshot = {
   currentCustomerIds: string[];
-  /** Display names from LeafLink customers list (canonical id keys). */
-  customerRows?: Array<{ id: string; label: string }>;
+  /** Display names from LeafLink customers list (canonical primary `id`; optional alias `keys`). */
+  customerRows?: LeafLinkCustomerRowStored[];
   statusId: string;
   statusLabel: string;
   fetchedAt: string;
 };
 
 type LeafLinkCurrentCustomersDirectory = {
-  ids: Set<string>;
-  labelById: Map<string, string>;
+  /** One id per LeafLink customer row (preferred key for aggregation + padded roster size). */
+  primaryIds: Set<string>;
+  /** Any canonical id LeafLink might put on orders that maps to `primaryIds`. */
+  membershipKeys: Set<string>;
+  aliasToPrimary: Map<string, string>;
+  labelByPrimary: Map<string, string>;
 };
 
 /**
@@ -277,6 +292,161 @@ function leafLinkCustomerListLabel(row: Record<string, unknown>): string {
     || row.legal_business_name
     || row.customer_name,
   );
+}
+
+/** Raw fields that LeafLink wholesale may use interchangeably across Customers API vs Orders (CRM record id ≠ external id). */
+const LEAF_LINK_CUSTOMER_ID_FIELD_NAMES = [
+  "id",
+  "pk",
+  "customer_id",
+  "buyer_customer_id",
+  "crm_record_id",
+  "crm_id",
+  "leaflink_crm_record_id",
+  /** Export column `CUSTOMER_EXTERNAL_ID` — sparse but must match when set. */
+  "external_id",
+  "business_identifier",
+] as const;
+
+function canonicalIdsFromSellerRecord(row: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const pushCanon = (raw: unknown) => {
+    const c = canonicalLeafLinkBuyerId(raw);
+    if (c && !seen.has(c)) {
+      seen.add(c);
+      out.push(c);
+    }
+  };
+  for (const fn of LEAF_LINK_CUSTOMER_ID_FIELD_NAMES)
+    pushCanon(row[fn]);
+
+  const nestObjs: unknown[] = [row.buyer, row.retailer];
+  const cust = row.customer;
+  if (cust != null && typeof cust === "object" && !Array.isArray(cust))
+    nestObjs.push(cust);
+
+  for (const n of nestObjs) {
+    if (n != null && typeof n === "object" && !Array.isArray(n)) {
+      const rec = asRecord(n);
+      for (const fn of LEAF_LINK_CUSTOMER_ID_FIELD_NAMES)
+        pushCanon(rec[fn]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Canonical primary for one CRM row — prefer LeafLink wholesale `id`/`pk`, then FKs, then CRM record id seen in BI exports (`LEAFLINK_CRM_RECORD_ID`).
+ */
+function leafLinkSellerCustomerPrimaryCanon(row: Record<string, unknown>): string {
+  const order = ["id", "pk", "customer_id", "buyer_customer_id", "crm_record_id", "crm_id"] as const;
+  for (const k of order) {
+    const c = canonicalLeafLinkBuyerId(row[k]);
+    if (c) return c;
+  }
+  const rest = canonicalIdsFromSellerRecord(row);
+  return rest[0] ?? "";
+}
+
+function leafLinkSellerCustomerVariants(row: Record<string, unknown>): string[] {
+  return canonicalIdsFromSellerRecord(row);
+}
+
+function leafLinkCustomersDirectoryEmpty(): LeafLinkCurrentCustomersDirectory {
+  return {
+    primaryIds: new Set(),
+    membershipKeys: new Set(),
+    aliasToPrimary: new Map(),
+    labelByPrimary: new Map(),
+  };
+}
+
+function leafLinkCustomersDirectoryFromRows(rows: Iterable<LeafLinkCustomerRowStored>): LeafLinkCurrentCustomersDirectory {
+  const d = leafLinkCustomersDirectoryEmpty();
+  for (const r of rows) {
+    const primary = canonicalLeafLinkBuyerId(r.id);
+    if (!primary) continue;
+    const label = cleanString(r.label);
+    if (label)
+      d.labelByPrimary.set(primary, label);
+
+    const variantSet = new Set<string>();
+    variantSet.add(primary);
+    const extra = Array.isArray(r.keys) ? r.keys : [];
+    for (const k of extra) {
+      const c = canonicalLeafLinkBuyerId(k);
+      if (c) variantSet.add(c);
+    }
+    d.primaryIds.add(primary);
+    for (const v of variantSet) {
+      d.membershipKeys.add(v);
+      d.aliasToPrimary.set(v, primary);
+    }
+  }
+  return d;
+}
+
+function leafLinkCustomersDirectoryMergeRow(
+  d: LeafLinkCurrentCustomersDirectory,
+  row: Record<string, unknown>,
+): void {
+  const variants = leafLinkSellerCustomerVariants(row);
+  if (!variants.length) return;
+
+  let primary = leafLinkSellerCustomerPrimaryCanon(row);
+  if (!primary || !variants.includes(primary))
+    primary = variants[0];
+  const label = leafLinkCustomerListLabel(row);
+  const prev = d.labelByPrimary.get(primary) ?? "";
+  if (label && (!prev || label.length > prev.length))
+    d.labelByPrimary.set(primary, label);
+
+  d.primaryIds.add(primary);
+  for (const v of variants) {
+    d.membershipKeys.add(v);
+    d.aliasToPrimary.set(v, primary);
+  }
+}
+
+/** Stable JSON round-trip for nested maps/sets stored in-memory. */
+function cloneLeafLinkCustomersDirectory(dir: LeafLinkCurrentCustomersDirectory): LeafLinkCurrentCustomersDirectory {
+  return {
+    primaryIds: new Set(dir.primaryIds),
+    membershipKeys: new Set(dir.membershipKeys),
+    aliasToPrimary: new Map(dir.aliasToPrimary),
+    labelByPrimary: new Map(dir.labelByPrimary),
+  };
+}
+
+/** Inverse of merge — persists alias keys so restarted workers restore CRM id ↔ wholesale id bridging. */
+function leafLinkCustomerRowsStoredFromDirectory(dir: LeafLinkCurrentCustomersDirectory): LeafLinkCustomerRowStored[] {
+  const variantSets = new Map<string, Set<string>>();
+  for (const [alias, prim] of dir.aliasToPrimary) {
+    let s = variantSets.get(prim);
+    if (!s) {
+      s = new Set();
+      variantSets.set(prim, s);
+    }
+    s.add(alias);
+  }
+  const out: LeafLinkCustomerRowStored[] = [];
+  for (const primary of dir.primaryIds) {
+    const all = variantSets.get(primary) ?? new Set([primary]);
+    const keysSorted = [...all].filter((k) => k !== primary).sort();
+    const label = dir.labelByPrimary.get(primary) ?? "";
+    out.push({
+      id: primary,
+      label,
+      keys: keysSorted.length ? keysSorted : undefined,
+    });
+  }
+  out.sort((a, b) => {
+    const al = cleanString(a.label) || a.id;
+    const bl = cleanString(b.label) || b.id;
+    return al.localeCompare(bl);
+  });
+  return out;
 }
 
 function utcDayKeyFromMs(ms: number): string {
@@ -365,9 +535,22 @@ function leafLinkOrderCreatedIso(row: Record<string, unknown>): string {
 }
 
 function idLikeFromBuyerObject(o: Record<string, unknown>): string {
-  /** Prefer opaque ids; reject full URLs mistaken for ids. */
+  /** Prefer opaque ids; reject full URLs mistaken for ids. Match LeafLink Customers / CRM linkage fields. */
   const direct =
-    cleanString(o.id ?? o.customer_id ?? o.pk ?? o.uuid ?? o.buyer_customer_id ?? o.buyer ?? o.retailer_id ?? o.retailer);
+    cleanString(
+      o.id
+      ?? o.pk
+      ?? o.customer_id
+      ?? o.uuid
+      ?? o.buyer_customer_id
+      ?? o.buyer
+      ?? o.retailer_id
+      ?? o.retailer
+      ?? o.crm_record_id
+      ?? o.crm_id
+      ?? o.leaflink_crm_record_id
+      ?? o.external_id,
+    );
   if (!direct || direct.includes("http") || direct.includes("://"))
     return "";
   return direct;
@@ -1384,22 +1567,44 @@ export class LeafLinkOrdersService {
     try {
       const v = JSON.parse(row.valueJson) as LeafLinkCustomersSnapshot & { customerRows?: unknown };
       if (!Array.isArray(v.currentCustomerIds)) return null;
-      const canonIds = v.currentCustomerIds
+      const canonIdsLegacy = v.currentCustomerIds
         .map((x) => canonicalLeafLinkBuyerId(x))
         .filter(Boolean);
       const rowsIn = Array.isArray(v.customerRows) ? v.customerRows : [];
-      const labelById = new Map<string, string>();
-      for (const r of rowsIn) {
-        const rec = r != null && typeof r === "object" && !Array.isArray(r) ? (r as Record<string, unknown>) : null;
+      const normalizedRows: LeafLinkCustomerRowStored[] = [];
+      for (const raw of rowsIn) {
+        const rec = raw != null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
         if (!rec) continue;
-        const id = canonicalLeafLinkBuyerId(rec.id);
-        if (!id) continue;
-        const lb = cleanString(rec.label) || leafLinkCustomerListLabel(rec);
-        if (lb) labelById.set(id, lb);
+        const primary = canonicalLeafLinkBuyerId(rec.id);
+        if (!primary) continue;
+        const keysExtra =
+          Array.isArray(rec.keys)
+            ? rec.keys.flatMap((k) => {
+                const c = canonicalLeafLinkBuyerId(k);
+                return c ? [c] : [];
+              })
+            : [];
+        const uniqKeys = [...new Set(keysExtra.filter((k) => k !== primary))];
+        normalizedRows.push({
+          id: primary,
+          label: cleanString(rec.label) || "",
+          keys: uniqKeys.length ? uniqKeys : undefined,
+        });
       }
+
+      /** Legacy JSON: ids only → synthesize sparse rows */
+      const havePrimaries = new Set(normalizedRows.map((r) => r.id));
+      for (const id of canonIdsLegacy) {
+        if (!havePrimaries.has(id)) {
+          havePrimaries.add(id);
+          normalizedRows.push({ id, label: "" });
+        }
+      }
+
+      const allPrimaries = [...new Set(normalizedRows.map((r) => r.id))];
       return {
-        currentCustomerIds: [...new Set(canonIds)],
-        customerRows: [...labelById.entries()].map(([id, label]) => ({ id, label })),
+        currentCustomerIds: allPrimaries,
+        customerRows: normalizedRows,
         statusId: cleanString(v.statusId),
         statusLabel: cleanString(v.statusLabel) || "Current Customer",
         fetchedAt: cleanString(v.fetchedAt),
@@ -1433,24 +1638,19 @@ export class LeafLinkOrdersService {
     const cid = cleanString(companyId);
     const refresh = Boolean(opts?.refresh);
     const cacheHit = currentCustomersByCompanyCache.get(cid);
-    if (!refresh && cacheHit && Date.now() - cacheHit.atMs < CURRENT_CUSTOMERS_CACHE_TTL_MS) {
-      return { ids: new Set(cacheHit.ids), labelById: new Map(cacheHit.labelById) };
-    }
+    if (!refresh && cacheHit && Date.now() - cacheHit.atMs < CURRENT_CUSTOMERS_CACHE_TTL_MS)
+      return cloneLeafLinkCustomersDirectory(cacheHit.directory);
 
     if (!refresh) {
       const persisted = await this.loadPersistedCurrentCustomers(cid);
-      if (persisted?.currentCustomerIds?.length) {
-        const labelById = new Map<string, string>();
-        for (const row of persisted.customerRows ?? []) {
-          const id = canonicalLeafLinkBuyerId(row.id);
-          if (!id) continue;
-          const lb = cleanString(row.label);
-          if (lb) labelById.set(id, lb);
-        }
-        const ids = new Set(persisted.currentCustomerIds.map((x) => canonicalLeafLinkBuyerId(x)).filter(Boolean));
-        currentCustomersByCompanyCache.set(cid, { atMs: Date.now(), ids, labelById: new Map(labelById) });
-        return { ids, labelById };
+      const rows = persisted?.customerRows ?? [];
+      const hasStoredBuyerAliases = rows.some((r) => Array.isArray(r.keys) && r.keys.length > 0);
+      if (persisted?.currentCustomerIds?.length && hasStoredBuyerAliases) {
+        const directory = leafLinkCustomersDirectoryFromRows(rows);
+        currentCustomersByCompanyCache.set(cid, { atMs: Date.now(), directory });
+        return cloneLeafLinkCustomersDirectory(directory);
       }
+      /** Pre-alias snapshots only knew one id per buyer — replay LeafLink Customers once to capture `crm_record_id`/`id` pairs. */
     }
 
     const base = creds.baseUrl.replace(/\/+$/, "");
@@ -1479,8 +1679,7 @@ export class LeafLinkOrdersService {
       throw new AppError("LeafLink status 'Current Customer' was not found for this company.", 502, "LEAFLINK_CURRENT_CUSTOMER_STATUS_MISSING");
     }
 
-    const labelByIdFresh = new Map<string, string>();
-    const ids = new Set<string>();
+    const directoryFresh = leafLinkCustomersDirectoryEmpty();
     for (let page = 1; page <= MAX_CURRENT_CUSTOMER_PAGES; page++) {
       const qp = new URLSearchParams();
       qp.set("page", String(page));
@@ -1491,19 +1690,13 @@ export class LeafLinkOrdersService {
       const { list, next } = parseListBody(body);
       for (const item of list) {
         const row = asRecord(item);
-        const rawId = entityIdString(row, "id", "customer_id");
-        const canon = canonicalLeafLinkBuyerId(rawId);
-        if (!canon) continue;
-        ids.add(canon);
-        const nm = leafLinkCustomerListLabel(row);
-        if (nm && (!labelByIdFresh.has(canon) || labelByIdFresh.get(canon)!.length < nm.length))
-          labelByIdFresh.set(canon, nm);
+        leafLinkCustomersDirectoryMergeRow(directoryFresh, row);
       }
       if (!next) break;
     }
 
-    const idsArr = [...ids];
-    const customerRows = [...labelByIdFresh.entries()].map(([id, label]) => ({ id, label }));
+    const idsArr = [...directoryFresh.primaryIds];
+    const customerRows = leafLinkCustomerRowsStoredFromDirectory(directoryFresh);
     await this.persistCurrentCustomersSnapshot(cid, opts?.actorUserId || "system", {
       currentCustomerIds: idsArr,
       customerRows,
@@ -1512,8 +1705,8 @@ export class LeafLinkOrdersService {
       fetchedAt: new Date().toISOString(),
     });
 
-    currentCustomersByCompanyCache.set(cid, { atMs: Date.now(), ids, labelById: labelByIdFresh });
-    return { ids, labelById: labelByIdFresh };
+    currentCustomersByCompanyCache.set(cid, { atMs: Date.now(), directory: directoryFresh });
+    return cloneLeafLinkCustomersDirectory(directoryFresh);
   }
 
   private async listOrdersFromStored(
@@ -1975,8 +2168,7 @@ export class LeafLinkOrdersService {
 
     await this.assertOrdersCapableOrThrow(creds);
 
-    let currentCustomerIds = new Set<string>();
-    let leafLinkCustomerLabelById = new Map<string, string>();
+    let leafLinkCustomersDir: LeafLinkCurrentCustomersDirectory | null = null;
     let filteredByLeafLinkCurrentCustomerStatus = false;
     let leafLinkCurrentCustomerCount = 0;
     try {
@@ -1985,13 +2177,14 @@ export class LeafLinkOrdersService {
         refresh: false,
         actorUserId: "system",
       });
-      /** Legacy snapshots stored ids only — one live fetch restores display names for zero-order rows. */
-      if (directory.ids.size > 0 && directory.labelById.size === 0)
+      /** Legacy snapshots (ids-only) — one live Customers fetch restores CRM ↔ wholesale alias keys + display names for padded rows. */
+      const hydratedLabels =
+        [...directory.labelByPrimary.values()].filter((s) => Boolean(cleanString(s))).length;
+      if (directory.primaryIds.size > 0 && hydratedLabels === 0)
         directory = await this.resolveCurrentCustomersDirectory(companyId, creds, creds.source, { refresh: true, actorUserId: "system" });
 
-      currentCustomerIds = directory.ids;
-      leafLinkCustomerLabelById = directory.labelById;
-      leafLinkCurrentCustomerCount = currentCustomerIds.size;
+      leafLinkCustomersDir = directory;
+      leafLinkCurrentCustomerCount = directory.primaryIds.size;
       filteredByLeafLinkCurrentCustomerStatus = true;
     }
     catch (err) {
@@ -2101,12 +2294,60 @@ export class LeafLinkOrdersService {
     let qualifyingOrderCount = 0;
     const qualifyingOrdersFull: OrdersAnalyticsQualifyingOrderDto[] = [];
 
+    /** All canonical LeafLink identifiers we can derive from one order payload (matches export columns like `LEAFLINK_CRM_RECORD_ID`). */
+    function leafLinkOrderBuyerKeyCandidates(
+      buyerRaw: Record<string, unknown>,
+      summaryBuyerId: LeafLinkOrderSummaryDto["buyerCustomerId"],
+    ): string[] {
+      const nest = nestedOrderRecord(buyerRaw);
+      const nests = nest && typeof nest === "object" ? [buyerRaw, asRecord(nest)] : [buyerRaw];
+
+      const seen = new Set<string>();
+      const out: string[] = [];
+      const push = (rawId: unknown) => {
+        const c = canonicalLeafLinkBuyerId(rawId);
+        if (!c || seen.has(c)) return;
+        seen.add(c);
+        out.push(c);
+      };
+
+      push(summaryBuyerId);
+      for (const rec of nests) {
+        push(leafLinkBuyerCustomerId(rec));
+        for (const c of canonicalIdsFromSellerRecord(rec))
+          push(c);
+      }
+
+      const buyerBare = buyerRaw.buyer ?? (nest ? asRecord(nest).buyer : undefined);
+      if (buyerBare != null && typeof buyerBare === "object" && !Array.isArray(buyerBare)) {
+        const br = asRecord(buyerBare);
+        for (const fn of LEAF_LINK_CUSTOMER_ID_FIELD_NAMES)
+          push(br[fn]);
+      }
+      return out;
+    }
+
     for (const { raw, summary: o } of collected) {
-      const buyerCanon =
-        canonicalLeafLinkBuyerId(leafLinkBuyerCustomerId(raw))
-        || canonicalLeafLinkBuyerId(o.buyerCustomerId);
-      if (!buyerCanon) continue;
-      if (filteredByLeafLinkCurrentCustomerStatus && !currentCustomerIds.has(buyerCanon)) continue;
+      const buyerKeys = leafLinkOrderBuyerKeyCandidates(raw, o.buyerCustomerId);
+      if (!buyerKeys.length) continue;
+
+      let buyerCanon = "";
+
+      if (filteredByLeafLinkCurrentCustomerStatus && leafLinkCustomersDir?.membershipKeys.size) {
+        for (const c of buyerKeys) {
+          const p = leafLinkCustomersDir.aliasToPrimary.get(c);
+          if (p) {
+            buyerCanon = p;
+            break;
+          }
+        }
+        if (!buyerCanon)
+          continue;
+      }
+      else {
+        buyerCanon = buyerKeys[0];
+      }
+
       const createdIsoAgg = cleanString(o.createdAt) || leafLinkOrderCreatedIso(raw);
       const t = Date.parse(createdIsoAgg || "");
       if (!Number.isFinite(t)) continue;
@@ -2121,7 +2362,7 @@ export class LeafLinkOrdersService {
       const nmFromOrder = cleanString(o.customerName);
       const label =
         nmFromOrder
-        || leafLinkCustomerLabelById.get(buyerCanon)
+        || leafLinkCustomersDir?.labelByPrimary.get(buyerCanon)
         || `Buyer ${buyerCanon.length > 10 ? `${buyerCanon.slice(0, 8)}…` : buyerCanon}`;
       const ck = customerSeriesKey(buyerCanon, label);
       seenBuyerCanonFromOrders.add(buyerCanon);
@@ -2177,11 +2418,11 @@ export class LeafLinkOrdersService {
     }
 
     /** Every LeafLink Current Customer appears in charts/checkbox list ($0 rows when none in-range). */
-    if (filteredByLeafLinkCurrentCustomerStatus && currentCustomerIds.size > 0) {
-      for (const canonId of currentCustomerIds) {
+    if (filteredByLeafLinkCurrentCustomerStatus && leafLinkCustomersDir && leafLinkCustomersDir.primaryIds.size > 0) {
+      for (const canonId of leafLinkCustomersDir.primaryIds) {
         if (seenBuyerCanonFromOrders.has(canonId)) continue;
         const labelPad =
-          leafLinkCustomerLabelById.get(canonId)
+          leafLinkCustomersDir.labelByPrimary.get(canonId)
           || `Customer ${canonId.length > 12 ? `${canonId.slice(0, 10)}…` : canonId}`;
         const ck = customerSeriesKey(canonId, labelPad);
         if (agg.has(ck))
