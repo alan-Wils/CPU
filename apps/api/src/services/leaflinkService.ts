@@ -354,6 +354,21 @@ async function fetchAllLeafLinkPagedRows(
   return { rows: aggregated, finalUrl: url || firstUrl, lastPayload };
 }
 
+/** LeafLink often sends FK ids (numbers) or `{ name, label }` instead of a plain string. */
+function pickLeafLinkNestedLabel(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return cleanString(v);
+  if (typeof v === "number") {
+    if (!Number.isFinite(v)) return "";
+    return "";
+  }
+  if (typeof v === "object" && !Array.isArray(v)) {
+    const o = asRecord(v);
+    return pickString(o, ["name", "display_name", "title", "label", "short_name"]);
+  }
+  return "";
+}
+
 function extractMoneyScalar(v: unknown): number | null {
   if (v == null)
     return null;
@@ -373,9 +388,17 @@ function extractMoneyScalar(v: unknown): number | null {
   return null;
 }
 
+function moneyScalarAcceptable(key: string, n: number): boolean {
+  if (!Number.isFinite(n) || n < 0) return false;
+  /** LeafLink commonly sends `sale_price: { amount: 0 }` alongside real wholesale — ignore zero sale as “no price”. */
+  if (key === "sale_price" && n === 0) return false;
+  return true;
+}
+
 function pickPrice(row: Record<string, unknown>): number | null {
   const keys = [
     "wholesale_price",
+    "price_schedule_price",
     "unit_price",
     "sale_price",
     "price",
@@ -388,20 +411,18 @@ function pickPrice(row: Record<string, unknown>): number | null {
   ];
   for (const k of keys) {
     const n = extractMoneyScalar(row[k]);
-    if (n != null && n > 0)
-      return n;
+    if (n == null) continue;
+    if (moneyScalarAcceptable(k, n)) return n;
   }
   const nestedPrice = asRecord(row.price);
   if (Object.keys(nestedPrice).length > 0) {
     const n = extractMoneyScalar(nestedPrice.amount ?? nestedPrice.value ?? nestedPrice);
-    if (n != null && n > 0)
-      return n;
+    if (n != null && n >= 0) return n;
   }
   const pricing = asRecord(row.pricing);
   if (Object.keys(pricing).length > 0) {
     const n = extractMoneyScalar(pricing.wholesale ?? pricing.unit_price ?? pricing.price ?? pricing.retail);
-    if (n != null && n > 0)
-      return n;
+    if (n != null && n >= 0) return n;
   }
   return null;
 }
@@ -485,19 +506,27 @@ function inferSubcategoryFromProductTitle(productName: string): string {
 }
 
 /**
- * Product-style bucket under the menu category (LeafLink product_type / explicit subcategory fields).
+ * Product-style bucket under the menu category.
+ * LeafLink v2 often stores `sub_category` / `product_line` as numeric FKs or nested `{ name }` objects — not plain strings.
  */
 function pickSubcategoryDisplay(row: Record<string, unknown>, categoryDisplay: string): string {
+  const fromNested =
+    pickLeafLinkNestedLabel(row.sub_category) ||
+    pickLeafLinkNestedLabel(row.subcategory) ||
+    pickLeafLinkNestedLabel(row.product_line);
+  if (fromNested) return fromNested;
+
   const explicit = pickString(row, [
     "subcategory",
-    "sub_category",
+    "sub_category_name",
+    "sub_category_display",
     "product_subcategory",
     "subtype",
     "variety",
     "segment",
   ]);
-  if (explicit)
-    return explicit;
+  if (explicit && !isDigitsOnly(explicit)) return explicit;
+
   const typeGuess = pickString(row, [
     "product_type",
     "type",
@@ -506,13 +535,20 @@ function pickSubcategoryDisplay(row: Record<string, unknown>, categoryDisplay: s
     "product_class",
     "item_category",
   ]);
-  if (!typeGuess)
-    return "";
+  const strainDisp = pickString(row, ["strain_classification_display", "strain_type_display"]);
+  const strainUse =
+    Boolean(strainDisp) &&
+    !/^n\/?a$/i.test(strainDisp.trim()) &&
+    !["na", "n/a"].includes(strainDisp.trim().toLowerCase());
+
   const catNorm = categoryDisplay.trim().toLowerCase();
-  const typNorm = typeGuess.trim().toLowerCase();
-  if (catNorm && typNorm === catNorm)
-    return "";
-  return typeGuess;
+  const typNorm = (typeGuess || "").trim().toLowerCase();
+  const typeDistinct = Boolean(typeGuess && (!catNorm || typNorm !== catNorm));
+
+  const parts: string[] = [];
+  if (typeDistinct) parts.push(typeGuess);
+  if (strainUse) parts.push(strainDisp);
+  return parts.join(" · ");
 }
 
 /**
@@ -541,7 +577,22 @@ function pickListSource(raw: unknown): { list: unknown[]; source: string } {
   return { list: [], source: "none" };
 }
 
-function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
+function pickSellUnit(row: Record<string, unknown>): string {
+  const direct = pickString(row, ["unit", "unit_of_measure", "sell_in_unit_of_measure", "uom"]);
+  if (direct) return direct;
+  const ud = row.unit_denomination;
+  if (ud != null && typeof ud === "object" && !Array.isArray(ud)) {
+    const o = asRecord(ud);
+    const fromObj = pickString(o, ["name", "label", "display_name", "short_name"]);
+    if (fromObj) return fromObj;
+    const val = cleanString(o.value);
+    if (val) return val;
+  }
+  return "";
+}
+
+/** Same row shaping as inventory sync; exported for tests. */
+export function normalizeLeafLinkInventoryRows(raw: unknown): LeafLinkInventoryItem[] {
   const { list } = pickListSource(raw);
   const out: LeafLinkInventoryItem[] = [];
   for (const item of list as unknown[]) {
@@ -588,7 +639,7 @@ function normalizeRows(raw: unknown): LeafLinkInventoryItem[] {
       subcategory: subcategoryResolved,
       brand: pickString(row, ["brand", "brand_name", "vendor_name"]),
       availableQuantity,
-      unit: pickString(row, ["unit", "unit_of_measure", "sell_in_unit_of_measure", "uom"]),
+      unit: pickSellUnit(row),
       packageSize: pickString(row, ["package_size", "size", "unit_multiplier"]),
       price: pickPrice(row),
       status: pickString(row, ["status", "availability", "state", "listing_state", "display_listing_state"]),
@@ -809,7 +860,7 @@ async function fetchLeafLinkInventoryFromApi(
     modifiedGte: modifiedGte || null,
   });
 
-  const items = normalizeRows(mergedPayload);
+  const items = normalizeLeafLinkInventoryRows(mergedPayload);
   if (debug) {
     logInfo("[LEAFLINK] pull_complete", {
       itemCount: items.length,
