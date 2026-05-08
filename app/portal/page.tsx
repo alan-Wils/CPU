@@ -4,8 +4,11 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   apiRequest,
+  clearSelectedCompanyId,
+  deletePlatformCompany,
   fetchCompanyUsageCosts,
   fetchNexbatchCompanyUsageLog,
+  getSelectedCompanyId,
   setSelectedCompanyId,
   syncVendorUsageCosts,
   type CompanyUsageCostsDto,
@@ -425,6 +428,10 @@ function PortalBody() {
   const [usageCostsCompanyId, setUsageCostsCompanyId] = useState<string | null>(null);
   const [usageCostsCompanyName, setUsageCostsCompanyName] = useState("");
   const [inviteCompanySelection, setInviteCompanySelection] = useState<string[]>([]);
+  /** NexBatch Owner / NexBatch Admin — hard-delete workspace after confirmation. */
+  const [companyToDelete, setCompanyToDelete] = useState<CpuCompany | null>(null);
+  const [deleteCompanyBusy, setDeleteCompanyBusy] = useState(false);
+  const [deleteCompanyErr, setDeleteCompanyErr] = useState("");
   const [workspaceEditUserId, setWorkspaceEditUserId] = useState<string | null>(null);
   const [workspaceSelection, setWorkspaceSelection] = useState<string[]>([]);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
@@ -564,6 +571,34 @@ function PortalBody() {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Could not select company");
       setLoading(false);
+    }
+  }
+
+  async function confirmDeleteCompany() {
+    const target = companyToDelete;
+    if (!target || deleteCompanyBusy) return;
+    setDeleteCompanyErr("");
+    setDeleteCompanyBusy(true);
+    try {
+      await deletePlatformCompany(target.id);
+      if (getSelectedCompanyId() === target.id) {
+        clearSelectedCompanyId();
+      }
+      setCompanyToDelete(null);
+      setInviteCompanySelection((prev) => prev.filter((id) => id !== target.id));
+      if (usageCostsCompanyId === target.id) {
+        setUsageCostsCompanyId(null);
+        setUsageCostsCompanyName("");
+      }
+      const list = await fetchAccessibleList();
+      setCompanies(list);
+      if (canManageStaff) void fetchStaffRows();
+    } catch (err: unknown) {
+      setDeleteCompanyErr(
+        err instanceof Error ? err.message : "Could not delete company.",
+      );
+    } finally {
+      setDeleteCompanyBusy(false);
     }
   }
 
@@ -934,6 +969,8 @@ function PortalBody() {
                         borderTop: "1px solid rgba(148, 163, 184, 0.2)",
                         display: "flex",
                         justifyContent: "flex-end",
+                        flexWrap: "wrap",
+                        gap: 10,
                       }}
                     >
                       <button
@@ -955,6 +992,25 @@ function PortalBody() {
                       >
                         Usage & Costs
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeleteCompanyErr("");
+                          setCompanyToDelete(c);
+                        }}
+                        style={{
+                          border: "1px solid rgba(248, 113, 113, 0.55)",
+                          borderRadius: 10,
+                          padding: "8px 14px",
+                          background: "rgba(127, 29, 29, 0.45)",
+                          color: "#fecaca",
+                          fontWeight: 800,
+                          fontSize: 13,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Delete workspace
+                      </button>
                     </div>
                   ) : null}
                 </div>
@@ -962,6 +1018,114 @@ function PortalBody() {
             ))
           )}
         </ul>
+
+        {companyToDelete ? (
+          <div
+            role="presentation"
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 1200,
+              background: "rgba(0,0,0,0.72)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 24,
+            }}
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget && !deleteCompanyBusy) {
+                setCompanyToDelete(null);
+                setDeleteCompanyErr("");
+              }
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-company-title"
+              style={{
+                width: "100%",
+                maxWidth: 440,
+                background: "#0f172a",
+                border: "1px solid rgba(248, 113, 113, 0.45)",
+                borderRadius: 16,
+                padding: "24px 26px",
+                boxShadow: "0 24px 64px rgba(0,0,0,0.55)",
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <h2
+                id="delete-company-title"
+                style={{ marginTop: 0, marginBottom: 12, fontSize: 22, fontWeight: 900 }}
+              >
+                Delete company?
+              </h2>
+              <p style={{ color: "#fecaca", lineHeight: 1.55, margin: "0 0 8px" }}>
+                Are you sure you want to delete{" "}
+                <strong style={{ color: "#fff" }}>{companyToDelete.name}</strong> (
+                {companyToDelete.code})?
+              </p>
+              <p style={{ color: "#94a3b8", lineHeight: 1.55, margin: "0 0 18px" }}>
+                All data for this workspace will be permanently lost. This cannot be undone.
+              </p>
+              {deleteCompanyErr ? (
+                <div
+                  style={{
+                    marginBottom: 14,
+                    padding: 12,
+                    borderRadius: 10,
+                    background: "rgba(127, 29, 29, 0.55)",
+                    border: "1px solid rgba(248, 113, 113, 0.45)",
+                    color: "#fecaca",
+                    fontSize: 14,
+                    fontWeight: 600,
+                  }}
+                >
+                  {deleteCompanyErr}
+                </div>
+              ) : null}
+              <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  disabled={deleteCompanyBusy}
+                  onClick={() => {
+                    if (!deleteCompanyBusy) {
+                      setCompanyToDelete(null);
+                      setDeleteCompanyErr("");
+                    }
+                  }}
+                  style={{
+                    border: "1px solid rgba(148, 163, 184, 0.45)",
+                    borderRadius: 10,
+                    padding: "10px 16px",
+                    background: "transparent",
+                    color: "#e2e8f0",
+                    fontWeight: 800,
+                    cursor: deleteCompanyBusy ? "wait" : "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deleteCompanyBusy}
+                  onClick={() => void confirmDeleteCompany()}
+                  style={{
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "10px 16px",
+                    background: deleteCompanyBusy ? "#64748b" : "#dc2626",
+                    color: "white",
+                    fontWeight: 900,
+                    cursor: deleteCompanyBusy ? "wait" : "pointer",
+                  }}
+                >
+                  {deleteCompanyBusy ? "Deleting…" : "Yes, delete forever"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {canManageStaff && (
           <section

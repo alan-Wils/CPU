@@ -149,4 +149,74 @@ export class CompanyService {
         });
         return { ok: true };
     }
+
+    /**
+     * Hard-delete a tenant and all FK-cascaded company data (cultivation, inventory config, audits, invites, etc.).
+     * NexBatch Owner / NexBatch Admin only (`requirePlatformRoles` on the route).
+     * Removes pending portal staff invites that only referenced this workspace; trims others.
+     * Deletes `User` rows that had no portal role and no remaining memberships after the company is gone.
+     */
+    async deleteCompanyPermanently(input: { companyId: string; actorUserId: string }) {
+        const cid = String(input.companyId || "").trim();
+        const company = await this.repo.getById(cid);
+        if (!company) {
+            throw new AppError("Company not found", 404);
+        }
+
+        const memberships = await this.repo.db.companyMembership.findMany({
+            where: { companyId: cid },
+            select: { userId: true },
+        });
+        const affectedUserIds = [...new Set(memberships.map((m) => m.userId))];
+
+        const parseInviteCompanyIds = (value: unknown): string[] => {
+            if (!Array.isArray(value))
+                return [];
+            return value.filter((x): x is string => typeof x === "string" && x.length > 0);
+        };
+
+        await this.repo.db.$transaction(async (tx) => {
+            const pendingInvites = await tx.platformStaffInvite.findMany({
+                where: { acceptedAt: null },
+                select: { id: true, companyIds: true },
+            });
+            for (const inv of pendingInvites) {
+                const ids = parseInviteCompanyIds(inv.companyIds);
+                if (!ids.includes(cid))
+                    continue;
+                const next = ids.filter((id) => id !== cid);
+                if (next.length === 0) {
+                    await tx.platformStaffInvite.delete({ where: { id: inv.id } });
+                }
+                else {
+                    await tx.platformStaffInvite.update({
+                        where: { id: inv.id },
+                        data: { companyIds: next },
+                    });
+                }
+            }
+
+            await tx.company.delete({ where: { id: cid } });
+
+            for (const uid of affectedUserIds) {
+                const u = await tx.user.findUnique({
+                    where: { id: uid },
+                    select: { platformRole: true },
+                });
+                if (u?.platformRole != null)
+                    continue;
+                const remaining = await tx.companyMembership.count({ where: { userId: uid } });
+                if (remaining === 0) {
+                    await tx.user.delete({ where: { id: uid } });
+                }
+            }
+        });
+
+        logInfo("company_deleted_permanently", {
+            deletedCompanyId: cid,
+            actorUserId: input.actorUserId,
+            slug: company.slug,
+        });
+        return { ok: true as const };
+    }
 }

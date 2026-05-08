@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@cpu/shared": "file:./packages/shared",
+    "framer-motion": "^12.38.0",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",

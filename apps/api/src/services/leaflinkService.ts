@@ -16,7 +16,7 @@ type LeafLinkStoredConfig = {
   baseUrl?: string;
 };
 
-type LeafLinkRuntimeCredentials = {
+export type LeafLinkRuntimeCredentials = {
   integrationEnabled: boolean;
   companySlug: string;
   companyId: string;
@@ -564,7 +564,7 @@ function deriveSourcePackageGroup(sku: string, productName: string): string {
   return (productName || "").trim() || "—";
 }
 
-function pickListSource(raw: unknown): { list: unknown[]; source: string } {
+export function pickListSource(raw: unknown): { list: unknown[]; source: string } {
   const root = asRecord(raw);
   if (Array.isArray(root.data)) return { list: root.data, source: "data" };
   if (Array.isArray(root.results)) return { list: root.results, source: "results" };
@@ -657,7 +657,7 @@ export function normalizeLeafLinkInventoryRows(raw: unknown): LeafLinkInventoryI
   return out;
 }
 
-async function fetchJsonWithRetry(url: string, init: RequestInit, timeoutMs: number): Promise<unknown> {
+export async function fetchJsonWithRetry(url: string, init: RequestInit, timeoutMs: number): Promise<unknown> {
   let lastErr: unknown;
   for (let i = 0; i < 2; i += 1) {
     const ctrl = new AbortController();

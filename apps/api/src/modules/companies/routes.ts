@@ -32,6 +32,14 @@ companiesRouter.get("/all", asyncHandler(async (req, res) => {
     });
     res.json({ companies });
 }));
+companiesRouter.delete("/:companyId", requirePlatformRoles(["nexbatch_admin", "owner"]), validate({ params: companyIdParam }), asyncHandler(async (req, res) => {
+    const { companyId } = req.params;
+    const out = await companyService.deleteCompanyPermanently({
+        companyId,
+        actorUserId: req.auth.userId,
+    });
+    res.json(out);
+}));
 companiesRouter.patch("/:companyId", requireCompanyOwnerOfTargetOrPlatform, validate({ params: companyIdParam, body: updateCompanySchema }), asyncHandler(async (req, res) => {
     const { companyId } = req.params;
     const payload = req.body;

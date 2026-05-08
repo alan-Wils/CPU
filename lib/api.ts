@@ -411,6 +411,17 @@ export async function getCompanies() {
   }));
 }
 
+/** NexBatch Owner / NexBatch Admin: permanently delete a tenant and all cascaded company data. */
+export async function deletePlatformCompany(companyId: string) {
+  return apiRequest<{ ok: boolean }>(
+    `/api/companies/${encodeURIComponent(companyId)}`,
+    {
+      method: "DELETE",
+      omitCompanyHeader: true,
+    },
+  );
+}
+
 export async function getCompanyData<T = any[]>(
   type: string,
   companyId?: string
@@ -727,4 +738,119 @@ export async function saveLeafLinkConfig(input: LeafLinkConfigUpsertInput, compa
     body: input,
     companyId,
   });
+}
+
+/** LeafLink wholesale orders (backend-normalized JSON). See `LeafLinkOrdersService`. */
+export type LeafLinkOrderLineItemDto = {
+  id: string;
+  productName: string;
+  sku: string;
+  quantity: number;
+  unitPrice: number | null;
+  lineTotal: number | null;
+  notes: string;
+  productId: string;
+};
+
+export type LeafLinkOrderSummaryDto = {
+  id: string;
+  orderNumber: string;
+  shortNumber: string;
+  customerName: string;
+  status: string;
+  statusNormalized: string;
+  createdAt: string;
+  updatedAt: string;
+  subtotal: number | null;
+  total: number | null;
+  itemCount: number;
+  salesRep: string;
+  paymentStatus: string;
+  deliveryDate: string | null;
+  lineItems: LeafLinkOrderLineItemDto[];
+  notes: string;
+  internalNotes: string | null;
+  discount: number | null;
+  discountType: string | null;
+  taxAmount: number | null;
+  finalTaxAmount: number | null;
+  shippingAmount: number | null;
+  paymentTerm: string | null;
+  paid: boolean;
+  shipDate: string | null;
+  deliveryPreferences: string | null;
+  shippingDetails: string | null;
+  classification: string;
+  buyerCustomerId: string;
+};
+
+export type LeafLinkOrderCardDto = Omit<LeafLinkOrderSummaryDto, "lineItems"> & {
+  itemCount: number;
+};
+
+export type LeafLinkOrdersListDto = {
+  source: "leaflink";
+  configured: boolean;
+  integrationEnabled: boolean;
+  orders: LeafLinkOrderCardDto[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  ordering: string;
+  hasNext: boolean;
+  hasPrevious: boolean;
+  lastFetchedAt: string;
+  fromCache?: boolean;
+};
+
+export type LeafLinkOrdersSyncDto = {
+  ok: boolean;
+  configured: boolean;
+  integrationEnabled: boolean;
+  pagesPulled: number;
+  ordersSeen: number;
+  lastFetchedAt: string;
+};
+
+export async function fetchLeafLinkOrdersList(
+  opts: {
+    companyId?: string;
+    page?: number;
+    pageSize?: number;
+    status?: string;
+    sort?: "newest" | "oldest";
+    search?: string;
+    refresh?: boolean;
+  } = {},
+) {
+  const q = new URLSearchParams();
+  if (opts.page && opts.page >= 1) q.set("page", String(opts.page));
+  if (opts.pageSize && opts.pageSize >= 1 && opts.pageSize <= 500)
+    q.set("page_size", String(opts.pageSize));
+  const st = String(opts.status || "").trim();
+  if (st && st !== "all") q.set("status", st);
+  if (opts.sort) q.set("sort", opts.sort);
+  const s = String(opts.search || "").trim();
+  if (s) q.set("search", s);
+  if (opts.refresh) q.set("refresh", "true");
+  const qs = q.toString();
+  return apiRequest<LeafLinkOrdersListDto>(
+    qs ? `/api/orders?${qs}` : "/api/orders",
+    opts.companyId ? { companyId: opts.companyId } : {},
+  );
+}
+
+export async function fetchLeafLinkOrderDetail(orderId: string, companyId?: string) {
+  const id = encodeURIComponent(orderId);
+  return apiRequest<{ order: LeafLinkOrderSummaryDto }>(
+    `/api/orders/${id}`,
+    companyId ? { companyId } : {},
+  );
+}
+
+export async function syncLeafLinkOrders(companyId?: string) {
+  return apiRequest<LeafLinkOrdersSyncDto>(
+    "/api/orders/sync",
+    { method: "POST", companyId },
+  );
 }
