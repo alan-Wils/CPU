@@ -43,6 +43,8 @@ type AdminUser = {
   cashLogEodEnabled?: boolean;
   /** Staff rewards enrollment for this company membership. */
   rewardsEnrolled?: boolean;
+  /** Cultivation climate (Autogrow) threshold alerts for this workspace. */
+  cultivationAlertsEnabled?: boolean;
 };
 
 type CompanyItem = {
@@ -435,6 +437,7 @@ export default function AdminPage() {
   const [editAppPermissions, setEditAppPermissions] = useState<string[]>([]);
   const [editCashLogEodEnabled, setEditCashLogEodEnabled] = useState(false);
   const [editRewardsEnrolled, setEditRewardsEnrolled] = useState(false);
+  const [editCultivationAlertsEnabled, setEditCultivationAlertsEnabled] = useState(false);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [sendingResetUserId, setSendingResetUserId] = useState<string | null>(null);
   const [savingInviteId, setSavingInviteId] = useState<string | null>(null);
@@ -1639,6 +1642,7 @@ export default function AdminPage() {
       normalizePlatformRole(user.role) === "OWNER" ? false : Boolean(user.cashLogEodEnabled),
     );
     setEditRewardsEnrolled(Boolean(user.rewardsEnrolled));
+    setEditCultivationAlertsEnabled(Boolean(user.cultivationAlertsEnabled));
     const roleU = String(user.role || "VIEW_ONLY").trim().toUpperCase();
     if (isOwnerOrAdminRoleKey(roleU)) {
       setEditAppPermissions(fullAccessPermissionIds());
@@ -1662,6 +1666,7 @@ export default function AdminPage() {
     setEditAppPermissions([]);
     setEditCashLogEodEnabled(false);
     setEditRewardsEnrolled(false);
+    setEditCultivationAlertsEnabled(false);
   }
 
   function toggleEditPermission(id: string) {
@@ -1720,6 +1725,7 @@ export default function AdminPage() {
         body.cashLogEodEnabled = editCashLogEodEnabled;
       }
       body.rewardsEnrolled = editRewardsEnrolled;
+      body.cultivationAlertsEnabled = editCultivationAlertsEnabled;
       if (ownerOrAdminRole)
         body.appPermissions = null;
       else
@@ -4495,6 +4501,44 @@ export default function AdminPage() {
                       <br />
                       <span style={{ color: "#94a3b8" }}>
                         If unchecked, this user will not see Rewards (managers with access still see the dashboard).
+                      </span>
+                    </span>
+                  </label>
+                </div>
+
+                <div
+                  style={{
+                    marginBottom: 14,
+                    borderRadius: 12,
+                    border: "1px solid rgba(248, 113, 113, 0.28)",
+                    background: "rgba(69, 10, 10, 0.25)",
+                    padding: 12,
+                    textAlign: "left",
+                  }}
+                >
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 10,
+                      cursor: "pointer",
+                      color: "#e2e8f0",
+                      fontSize: 14,
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={editCultivationAlertsEnabled}
+                      onChange={(e) => setEditCultivationAlertsEnabled(e.target.checked)}
+                      style={{ marginTop: 3 }}
+                    />
+                    <span>
+                      <b>Receive cultivation climate alerts</b>
+                      <br />
+                      <span style={{ color: "#94a3b8" }}>
+                        When Admin configures Autogrow temp/RH thresholds (Company config → Cultivation), subscribed
+                        users get inbox notifications if the scheduler job runs. Uncheck to opt out.
                       </span>
                     </span>
                   </label>

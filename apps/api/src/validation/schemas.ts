@@ -427,8 +427,10 @@ export const adminUserUpdateSchema = z.preprocess(preprocessBodyNormalizeUserRol
     cashLogEodEnabled: z.boolean().optional(),
     /** Staff rewards program enrollment for this company membership. */
     rewardsEnrolled: z.boolean().optional(),
+    /** Cultivation climate (Autogrow temp/RH) threshold alerts for this workspace. */
+    cultivationAlertsEnabled: z.boolean().optional(),
 }).superRefine((val, ctx) => {
-    const n = [val.email, val.role, val.isActive, val.appPermissions, val.cashLogEodEnabled, val.rewardsEnrolled].filter((x) => x !== undefined).length;
+    const n = [val.email, val.role, val.isActive, val.appPermissions, val.cashLogEodEnabled, val.rewardsEnrolled, val.cultivationAlertsEnabled].filter((x) => x !== undefined).length;
     if (n === 0) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -456,4 +458,19 @@ export const inviteCreateSchema = z.preprocess(preprocessBodyNormalizeUserRole, 
 export const configUpsertSchema = z.object({
     key: z.string().min(2).max(100),
     value: z.union([z.record(z.string(), z.unknown()), z.array(z.unknown())])
+});
+
+/** Home notification bell inbox (per CompanyMembership, synced across devices). */
+export const peerNotifyItemSchema = z.object({
+    id: z.string().min(1).max(240),
+    kind: z.enum(["task", "order", "climate"]),
+    message: z.string().min(1).max(800),
+    at: z.string().min(1).max(48),
+    read: z.boolean(),
+});
+export const peerNotifyInboxPushSchema = z.object({
+    item: peerNotifyItemSchema,
+});
+export const peerNotifyInboxReplaceSchema = z.object({
+    items: z.array(peerNotifyItemSchema).max(60),
 });

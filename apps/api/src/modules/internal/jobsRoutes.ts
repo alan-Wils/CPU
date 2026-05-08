@@ -5,6 +5,7 @@ import {
   runCashLogEodJob,
   type CashLogEodJobResult,
 } from "../../services/cashLogEodJobService.js";
+import { runCultivationClimateAlertsJob } from "../../services/cultivationClimateAlertsJobService.js";
 
 export const internalJobsRouter = Router();
 
@@ -81,5 +82,38 @@ internalJobsRouter.post(
     const result = await runCashLogEodJob({ trigger: "cron" });
     const body = buildCashLogEodCronResponse(result);
     res.status(200).json(body);
+  }),
+);
+
+/**
+ * Cultivation climate (Autogrow temp/RH) threshold alerts → peer notification inboxes.
+ * Auth: `Authorization: Bearer <CRON_SECRET>`.
+ */
+internalJobsRouter.post(
+  "/cultivation-climate-alerts",
+  asyncHandler(async (_req, res) => {
+    const secret = env.CRON_SECRET?.trim();
+    if (!secret) {
+      res.status(503).json({
+        ok: false,
+        message: "CRON_SECRET is not set; cultivation climate alert job is disabled.",
+      });
+      return;
+    }
+    const authz = String(_req.headers.authorization || "").trim();
+    const bearer = authz.toLowerCase().startsWith("bearer ") ? authz.slice(7).trim() : "";
+    if (bearer !== secret) {
+      res.status(401).json({
+        ok: false,
+        message: "Missing or invalid Authorization header; expected Bearer CRON_SECRET.",
+      });
+      return;
+    }
+
+    const job = await runCultivationClimateAlertsJob();
+    res.status(200).json({
+      ok: job.errors.length === 0,
+      ...job,
+    });
   }),
 );

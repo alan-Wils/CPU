@@ -26,6 +26,7 @@ import { metrcRouter } from "./modules/metrc/routes.js";
 import { autogrowRouter } from "./modules/autogrow/routes.js";
 import { inventoryRouter } from "./modules/inventory/routes.js";
 import { ordersRouter } from "./modules/orders/routes.js";
+import { notificationsRouter } from "./modules/notifications/routes.js";
 export const appRouter = Router();
 appRouter.use("/auth", authRouter);
 /** Cron / worker hooks (Bearer CRON_SECRET) — must not run behind JWT. */
@@ -43,6 +44,7 @@ appRouter.use("/metrc", metrcRouter);
 appRouter.use("/autogrow", autogrowRouter);
 appRouter.use("/inventory", inventoryRouter);
 appRouter.use("/orders", ordersRouter);
+appRouter.use("/notifications", notificationsRouter);
 appRouter.use("/tasks", tasksRouter);
 appRouter.use("/dashboard", dashboardRouter);
 appRouter.use("/data-hub", dataHubRouter);

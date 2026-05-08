@@ -480,7 +480,7 @@ export async function fetchLatestTaskLogLive(
   });
 }
 
-/** Newest stored LeafLink order for realtime toasts (`GET /api/orders/latest-live`). Requires `page.orders`. */
+/** Newest stored LeafLink order for realtime toasts (`GET /api/orders/latest-live`). */
 export type LatestOrderLiveDto = {
   id: string;
   leafLinkKey: string;
@@ -495,7 +495,7 @@ export async function fetchLatestOrderLive(): Promise<LatestOrderLiveDto | null>
   });
 }
 
-/** Per-user per-company peer notification inbox (`PeerNotificationInbox` rows). */
+/** Per-user per-company notification inbox (tasks, orders, climate). */
 export type PeerNotifyInboxResponse = {
   items: PeerNotificationItem[];
   updatedAt: string | null;
@@ -992,16 +992,12 @@ export type OrdersAnalyticsDto = {
 };
 
 export async function fetchOrdersAnalytics(
+  from: string,
+  to: string,
   companyId?: string,
-  opts?: { refreshLeafLink?: boolean },
 ) {
-  const q = new URLSearchParams();
-  if (opts?.refreshLeafLink) q.set("refresh", "true");
-  const qs = q.toString();
-  return apiRequest<OrdersAnalyticsDto>(
-    `/api/orders/analytics${qs ? `?${qs}` : ""}`,
-    {
-      companyId,
-    },
-  );
+  const q = new URLSearchParams({ from, to });
+  return apiRequest<OrdersAnalyticsDto>(`/api/orders/analytics?${q.toString()}`, {
+    companyId,
+  });
 }

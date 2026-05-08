@@ -251,12 +251,27 @@ model CompanyMembership {
   cashLogEodScheduleGeneration Int @default(0)
   /// Generation value that last successful digest matched; duplicates same calendar day suppressed only when equals `cashLogEodScheduleGeneration`.
   cashLogEodDigestSentScheduleGeneration Int?
+  /// Per-user per-company peer task/order notification inbox (syncs across devices).
+  peerNotificationInbox PeerNotificationInbox?
+  /// Receive cultivation climate (temp/RH) threshold alerts for this company workspace.
+  cultivationAlertsEnabled Boolean @default(false)
+
   createdAt DateTime            @default(now())
   updatedAt DateTime            @updatedAt
 
   @@unique([userId, companyId])
   @@index([companyId])
   @@index([userId])
+}
+
+model PeerNotificationInbox {
+  id           String              @id @default(cuid())
+  membershipId String              @unique
+  membership   CompanyMembership   @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  items        Json                @default("[]")
+  updatedAt    DateTime            @updatedAt
+
+  @@index([membershipId])
 }
 
 model SourceChain {

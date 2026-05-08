@@ -36,6 +36,11 @@ import {
   type AutogrowCompLabel,
   type ClimateControlCompanyConfig,
 } from "@/lib/autogrowCompanyConfig";
+import {
+  defaultCultivationClimateAlerts,
+  mergeCultivationClimateAlerts,
+  type CultivationClimateAlertsConfig,
+} from "@/lib/cultivationClimateAlertsConfig";
 
 type Strain = {
   id: string;
@@ -143,6 +148,8 @@ type AppConfig = {
       tierPointsMultiplier: number;
       stages: ("clone" | "veg" | "flower")[];
     }>;
+    /** Autogrow zone temp/RH thresholds → inbox alerts (see Admin → Users). */
+    climateAlerts?: CultivationClimateAlertsConfig;
   };
   extraction: {
     productNames: ProductNameRecord[];
@@ -235,6 +242,7 @@ const emptyConfig: AppConfig = {
       flowerRooms: [],
     },
     customTasks: [],
+    climateAlerts: { ...defaultCultivationClimateAlerts },
   },
   extraction: {
     productNames: [],
@@ -645,6 +653,9 @@ export default function ConfigPage() {
         cultivation: {
           ...emptyConfig.cultivation,
           ...(data.cultivation || {}),
+          climateAlerts: mergeCultivationClimateAlerts(
+            (data.cultivation as { climateAlerts?: unknown } | undefined)?.climateAlerts,
+          ),
           customTasks: Array.isArray((data.cultivation as { customTasks?: unknown } | undefined)?.customTasks)
             ? ((data.cultivation as { customTasks: NonNullable<AppConfig["cultivation"]["customTasks"]> }).customTasks)
             : [],
@@ -783,6 +794,9 @@ export default function ConfigPage() {
         cultivation: {
           ...emptyConfig.cultivation,
           ...(data.cultivation || {}),
+          climateAlerts: mergeCultivationClimateAlerts(
+            (data.cultivation as { climateAlerts?: unknown } | undefined)?.climateAlerts,
+          ),
           customTasks: Array.isArray((data.cultivation as { customTasks?: unknown } | undefined)?.customTasks)
             ? ((data.cultivation as { customTasks: NonNullable<AppConfig["cultivation"]["customTasks"]> }).customTasks)
             : [],
@@ -3975,6 +3989,253 @@ export default function ConfigPage() {
         </div>
           </div>
         </details>
+
+        <div style={styles.configSubCard}>
+          <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Climate alerts (temperature &amp; humidity)</h3>
+          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14, lineHeight: 1.5 }}>
+            Uses live readings from <b style={{ color: "#e2e8f0" }}>Autogrow</b> (section 4). Set thresholds per{" "}
+            <b style={{ color: "#e2e8f0" }}>zone index</b> (same numbers as Cultivation → Room stats / Autogrow comp index,
+            0-based). When a reading crosses a limit, subscribed employees get an app notification. Point a scheduler at{" "}
+            <code style={{ color: "#86efac" }}>POST /api/internal/jobs/cultivation-climate-alerts</code> with{" "}
+            <code style={{ color: "#86efac" }}>Authorization: Bearer CRON_SECRET</code> (same as other internal jobs).
+          </p>
+          <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 10 }}>
+            <input
+              type="checkbox"
+              checked={(config.cultivation.climateAlerts ?? defaultCultivationClimateAlerts).enabled === true}
+              onChange={(e) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  cultivation: {
+                    ...prev.cultivation,
+                    climateAlerts: {
+                      ...(prev.cultivation.climateAlerts ?? { ...defaultCultivationClimateAlerts }),
+                      enabled: e.target.checked,
+                    },
+                  },
+                }))
+              }
+            />
+            Enable climate threshold alerts
+          </label>
+          <label style={{ ...styles.label, marginTop: 12 }}>
+            Cooldown between repeat alerts (minutes)
+            <input
+              style={styles.input}
+              type="number"
+              min={5}
+              max={1440}
+              value={(config.cultivation.climateAlerts ?? defaultCultivationClimateAlerts).cooldownMinutes}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                setConfig((prev) => ({
+                  ...prev,
+                  cultivation: {
+                    ...prev.cultivation,
+                    climateAlerts: {
+                      ...(prev.cultivation.climateAlerts ?? { ...defaultCultivationClimateAlerts }),
+                      cooldownMinutes: Number.isFinite(n) && n >= 5 ? Math.round(n) : 45,
+                    },
+                  },
+                }));
+              }}
+            />
+          </label>
+          <div style={{ marginTop: 16 }}>
+            <div style={{ color: "#cbd5e1", fontWeight: 800, marginBottom: 8 }}>Zones</div>
+            <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 10px" }}>
+              Leave a field empty for no limit on that side. Temperatures are °F; humidity is % RH.
+            </p>
+            {(config.cultivation.climateAlerts ?? defaultCultivationClimateAlerts).zones.map((z, idx) => (
+              <div
+                key={`cz-${idx}`}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))",
+                  gap: 10,
+                  alignItems: "end",
+                  marginBottom: 10,
+                  padding: 12,
+                  borderRadius: 12,
+                  border: "1px solid rgba(51, 65, 85, 0.9)",
+                  background: "rgba(15, 23, 42, 0.5)",
+                }}
+              >
+                <label style={styles.label}>
+                  Zone index
+                  <input
+                    style={styles.input}
+                    type="number"
+                    min={0}
+                    value={z.compIndex}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setConfig((prev) => {
+                        const ca = prev.cultivation.climateAlerts ?? { ...defaultCultivationClimateAlerts };
+                        const zones = [...ca.zones];
+                        zones[idx] = { ...zones[idx], compIndex: Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0 };
+                        return {
+                          ...prev,
+                          cultivation: { ...prev.cultivation, climateAlerts: { ...ca, zones } },
+                        };
+                      });
+                    }}
+                  />
+                </label>
+                <label style={styles.label}>
+                  Temp min °F
+                  <input
+                    style={styles.input}
+                    type="number"
+                    placeholder="—"
+                    value={z.tempMinF ?? ""}
+                    onChange={(e) => {
+                      const raw = e.target.value.trim();
+                      setConfig((prev) => {
+                        const ca = prev.cultivation.climateAlerts ?? { ...defaultCultivationClimateAlerts };
+                        const zones = [...ca.zones];
+                        const n = raw === "" ? null : Number(raw);
+                        zones[idx] = {
+                          ...zones[idx],
+                          tempMinF: n != null && Number.isFinite(n) ? n : null,
+                        };
+                        return {
+                          ...prev,
+                          cultivation: { ...prev.cultivation, climateAlerts: { ...ca, zones } },
+                        };
+                      });
+                    }}
+                  />
+                </label>
+                <label style={styles.label}>
+                  Temp max °F
+                  <input
+                    style={styles.input}
+                    type="number"
+                    placeholder="—"
+                    value={z.tempMaxF ?? ""}
+                    onChange={(e) => {
+                      const raw = e.target.value.trim();
+                      setConfig((prev) => {
+                        const ca = prev.cultivation.climateAlerts ?? { ...defaultCultivationClimateAlerts };
+                        const zones = [...ca.zones];
+                        const n = raw === "" ? null : Number(raw);
+                        zones[idx] = {
+                          ...zones[idx],
+                          tempMaxF: n != null && Number.isFinite(n) ? n : null,
+                        };
+                        return {
+                          ...prev,
+                          cultivation: { ...prev.cultivation, climateAlerts: { ...ca, zones } },
+                        };
+                      });
+                    }}
+                  />
+                </label>
+                <label style={styles.label}>
+                  RH min %
+                  <input
+                    style={styles.input}
+                    type="number"
+                    placeholder="—"
+                    value={z.rhMinPct ?? ""}
+                    onChange={(e) => {
+                      const raw = e.target.value.trim();
+                      setConfig((prev) => {
+                        const ca = prev.cultivation.climateAlerts ?? { ...defaultCultivationClimateAlerts };
+                        const zones = [...ca.zones];
+                        const n = raw === "" ? null : Number(raw);
+                        zones[idx] = {
+                          ...zones[idx],
+                          rhMinPct: n != null && Number.isFinite(n) ? n : null,
+                        };
+                        return {
+                          ...prev,
+                          cultivation: { ...prev.cultivation, climateAlerts: { ...ca, zones } },
+                        };
+                      });
+                    }}
+                  />
+                </label>
+                <label style={styles.label}>
+                  RH max %
+                  <input
+                    style={styles.input}
+                    type="number"
+                    placeholder="—"
+                    value={z.rhMaxPct ?? ""}
+                    onChange={(e) => {
+                      const raw = e.target.value.trim();
+                      setConfig((prev) => {
+                        const ca = prev.cultivation.climateAlerts ?? { ...defaultCultivationClimateAlerts };
+                        const zones = [...ca.zones];
+                        const n = raw === "" ? null : Number(raw);
+                        zones[idx] = {
+                          ...zones[idx],
+                          rhMaxPct: n != null && Number.isFinite(n) ? n : null,
+                        };
+                        return {
+                          ...prev,
+                          cultivation: { ...prev.cultivation, climateAlerts: { ...ca, zones } },
+                        };
+                      });
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setConfig((prev) => {
+                      const ca = prev.cultivation.climateAlerts ?? { ...defaultCultivationClimateAlerts };
+                      const zones = ca.zones.filter((_, j) => j !== idx);
+                      return {
+                        ...prev,
+                        cultivation: { ...prev.cultivation, climateAlerts: { ...ca, zones } },
+                      };
+                    })
+                  }
+                  style={{
+                    ...styles.cultivationBtnDelete,
+                    height: 40,
+                    alignSelf: "end",
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              style={{ ...styles.cultivationBtnSecondary, marginTop: 6 }}
+              onClick={() =>
+                setConfig((prev) => {
+                  const ca = prev.cultivation.climateAlerts ?? { ...defaultCultivationClimateAlerts };
+                  return {
+                    ...prev,
+                    cultivation: {
+                      ...prev.cultivation,
+                      climateAlerts: {
+                        ...ca,
+                        zones: [
+                          ...ca.zones,
+                          {
+                            compIndex: ca.zones.length ? Math.max(...ca.zones.map((x) => x.compIndex)) + 1 : 0,
+                            tempMinF: null,
+                            tempMaxF: null,
+                            rhMinPct: null,
+                            rhMaxPct: null,
+                          },
+                        ],
+                      },
+                    },
+                  };
+                })
+              }
+            >
+              + Add zone row
+            </button>
+          </div>
+        </div>
 
         <div style={styles.configSubCard}>
         <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Cultivation Supplies & Cost</h3>

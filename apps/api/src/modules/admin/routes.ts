@@ -71,6 +71,7 @@ adminRouter.patch("/users/:userId", requireRole(["OWNER", "ADMIN"]), validate({ 
         appPermissions: payload.appPermissions,
         cashLogEodEnabled: payload.cashLogEodEnabled,
         rewardsEnrolled: payload.rewardsEnrolled,
+        cultivationAlertsEnabled: payload.cultivationAlertsEnabled,
     });
     res.json(updated);
 }));

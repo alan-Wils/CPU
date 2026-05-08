@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { isLoggedIn } from "@/lib/auth";
 import { usePeerNotifications } from "@/components/PeerNotificationsContext";
 
@@ -21,16 +21,59 @@ function formatShortTime(iso: string): string {
   }
 }
 
-/** Home header: inbox for peer task/order live events (paired with {@link TaskLiveNotificationHost}). */
+/** Home header: inbox for tasks, orders, and cultivation climate alerts. */
 export default function HomeNotificationBell() {
   const { items, hasUnread, unreadCount, markAllRead, clearAll } = usePeerNotifications();
+  const hasUnreadClimate = useMemo(
+    () => items.some((i) => i.kind === "climate" && !i.read),
+    [items],
+  );
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  /** Horizontal nudge so the panel stays inside the visual viewport (phones in any orientation). */
+  const [panelShiftX, setPanelShiftX] = useState(0);
 
   useEffect(() => {
     if (!open) return;
     markAllRead();
   }, [open, markAllRead]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPanelShiftX(0);
+      return;
+    }
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    function clamp() {
+      const el = panelRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const vv = typeof window !== "undefined" ? window.visualViewport : null;
+      const vw = vv?.width ?? window.innerWidth;
+      const leftInset = vv?.offsetLeft ?? 0;
+      const margin = 12;
+      const minX = leftInset + margin;
+      const maxX = leftInset + vw - margin;
+      let dx = 0;
+      if (r.left < minX) dx = minX - r.left;
+      if (r.right + dx > maxX) dx = maxX - r.right;
+      setPanelShiftX(dx);
+    }
+
+    clamp();
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", clamp);
+    vv?.addEventListener("scroll", clamp);
+    window.addEventListener("resize", clamp);
+    return () => {
+      vv?.removeEventListener("resize", clamp);
+      vv?.removeEventListener("scroll", clamp);
+      window.removeEventListener("resize", clamp);
+    };
+  }, [open, items.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -55,7 +98,11 @@ export default function HomeNotificationBell() {
     <div ref={wrapRef} style={{ position: "relative", flexShrink: 0 }}>
       <button
         type="button"
-        aria-label={hasUnread ? `Notifications, ${unreadCount} unread` : "Notifications"}
+        aria-label={
+          hasUnread
+            ? `Notifications, ${unreadCount} unread${hasUnreadClimate ? ", including cultivation climate" : ""}`
+            : "Notifications"
+        }
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         style={{
@@ -63,20 +110,32 @@ export default function HomeNotificationBell() {
           width: 46,
           height: 46,
           borderRadius: 14,
-          border: `1px solid ${hasUnread ? "rgba(34, 197, 94, 0.55)" : "rgba(148, 163, 184, 0.35)"}`,
-          background: hasUnread
-            ? "linear-gradient(145deg, rgba(6, 78, 59, 0.55), rgba(15, 23, 42, 0.95))"
-            : "rgba(15, 23, 42, 0.75)",
-          color: hasUnread ? "#bbf7d0" : "#94a3b8",
+          border: `1px solid ${
+            hasUnreadClimate
+              ? "rgba(248, 113, 113, 0.65)"
+              : hasUnread
+                ? "rgba(34, 197, 94, 0.55)"
+                : "rgba(148, 163, 184, 0.35)"
+          }`,
+          background: hasUnreadClimate
+            ? "linear-gradient(145deg, rgba(127, 29, 29, 0.55), rgba(15, 23, 42, 0.95))"
+            : hasUnread
+              ? "linear-gradient(145deg, rgba(6, 78, 59, 0.55), rgba(15, 23, 42, 0.95))"
+              : "rgba(15, 23, 42, 0.75)",
+          color: hasUnreadClimate ? "#fecaca" : hasUnread ? "#bbf7d0" : "#94a3b8",
           cursor: "pointer",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          boxShadow: hasUnread
-            ? "0 0 20px rgba(34, 197, 94, 0.2), inset 0 1px 0 rgba(255,255,255,0.06)"
-            : "inset 0 1px 0 rgba(255,255,255,0.04)",
+          boxShadow: hasUnreadClimate
+            ? "0 0 22px rgba(248, 113, 113, 0.35), inset 0 1px 0 rgba(255,255,255,0.06)"
+            : hasUnread
+              ? "0 0 20px rgba(34, 197, 94, 0.2), inset 0 1px 0 rgba(255,255,255,0.06)"
+              : "inset 0 1px 0 rgba(255,255,255,0.04)",
         }}
-        className={hasUnread ? "home-notify-bell--pulse" : undefined}
+        className={
+          hasUnreadClimate ? "home-notify-bell--pulse-red" : hasUnread ? "home-notify-bell--pulse" : undefined
+        }
       >
         <BellIcon />
 
@@ -90,8 +149,8 @@ export default function HomeNotificationBell() {
               height: 18,
               padding: "0 5px",
               borderRadius: 999,
-              background: "#22c55e",
-              color: "#022c22",
+              background: hasUnreadClimate ? "#ef4444" : "#22c55e",
+              color: hasUnreadClimate ? "#fff7ed" : "#022c22",
               fontSize: 11,
               fontWeight: 900,
               display: "flex",
@@ -108,14 +167,15 @@ export default function HomeNotificationBell() {
 
       {open ? (
         <div
+          ref={panelRef}
           role="dialog"
           aria-label="Workspace notifications"
           style={{
             position: "absolute",
             top: "calc(100% + 10px)",
             right: 0,
-            width: "min(400px, calc(100vw - 48px))",
-            maxWidth: 400,
+            width: "min(400px, calc(100vw - 24px))",
+            maxWidth: "min(400px, calc(100vw - 24px))",
             zIndex: 50,
             borderRadius: 16,
             border: "1px solid rgba(148, 163, 184, 0.28)",
@@ -123,6 +183,7 @@ export default function HomeNotificationBell() {
             boxShadow:
               "0 24px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(34, 197, 94, 0.08) inset",
             overflow: "hidden",
+            transform: panelShiftX !== 0 ? `translateX(${panelShiftX}px)` : undefined,
           }}
         >
           <div
@@ -165,7 +226,7 @@ export default function HomeNotificationBell() {
           >
             {items.length === 0 ? (
               <p style={{ margin: 0, color: "#64748b", fontSize: 14, textAlign: "center", lineHeight: 1.5 }}>
-                No notifications yet. When teammates complete tasks or new orders arrive, they will show here.
+                No notifications yet. Tasks, orders, and cultivation climate alerts appear here when configured.
               </p>
             ) : (
               <ul
@@ -186,11 +247,16 @@ export default function HomeNotificationBell() {
                         fontSize: 10,
                         fontWeight: 900,
                         letterSpacing: "0.08em",
-                        color: row.kind === "order" ? "#fcd34d" : "#86efac",
+                        color:
+                          row.kind === "order"
+                            ? "#fcd34d"
+                            : row.kind === "climate"
+                              ? "#fca5a5"
+                              : "#86efac",
                         marginBottom: 4,
                       }}
                     >
-                      {row.kind === "order" ? "ORDER" : "TASK"}
+                      {row.kind === "order" ? "ORDER" : row.kind === "climate" ? "CLIMATE" : "TASK"}
                     </div>
                     <div style={{ color: "#e2e8f0", fontSize: 14, lineHeight: 1.45, fontWeight: 600 }}>
                       {row.message}
