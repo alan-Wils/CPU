@@ -181,7 +181,7 @@ export default function LoginPage() {
           boxSizing: "border-box",
         }}
       >
-        <TopBrandStrip apiBaseUrl={API_BASE_URL} linkNexbatchToHome={false} nexbatchHeight={78} />
+        <TopBrandStrip apiBaseUrl={API_BASE_URL} linkNexbatchToHome={false} nexbatchHeight={234} />
       </div>
       <div
         style={{

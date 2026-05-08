@@ -204,7 +204,7 @@ export default function Nav() {
         apiBaseUrl={API_BASE_URL}
         companyLogoConfiguredUrl={companyHeaderLogoUrl}
         companyLogoMaxHeightPx={isHomePage ? 64 : 56}
-        nexbatchHeight={isHomePage ? 88 : 66}
+        nexbatchHeight={isHomePage ? 264 : 198}
       />
       {staffRewardsQuickLink && (
         <div
