@@ -129,6 +129,21 @@ function toSortableMs(value: string): number {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+/** Distinct Y-axis ticks for small integers — avoids Recharts duplicating labels after rounding. */
+function buildIntegerYTicks(maxRaw: number): number[] {
+  const max = Math.max(0, Math.ceil(Number(maxRaw) || 0));
+  if (max <= 12)
+    return Array.from({ length: max + 1 }, (_, i) => i);
+  const desired = 8;
+  const step = Math.max(1, Math.ceil(max / desired));
+  const out: number[] = [0];
+  for (let v = step; v < max; v += step)
+    out.push(v);
+  if (out[out.length - 1] !== max)
+    out.push(max);
+  return out;
+}
+
 function ChartTooltip(props: {
   active?: boolean;
   payload?: { name?: string; value?: number; color?: string }[];
@@ -305,6 +320,19 @@ export default function OrdersAnalyticsPage() {
     });
   }, [data, selectedCustomers, graphMode]);
 
+  const chartSeriesMax = useMemo(() => {
+    let m = 0;
+    for (const row of chartRows) {
+      for (const s of seriesMeta) {
+        const v = row[s.key];
+        const n = typeof v === "number" ? v : Number(v);
+        if (Number.isFinite(n))
+          m = Math.max(m, n);
+      }
+    }
+    return m;
+  }, [chartRows, seriesMeta]);
+
   const scatterPoints = useMemo((): ScatterPoint[] => {
     if (!data?.qualifyingOrders?.length || !data.customers?.length) return [];
     const labelByKey = new Map(data.customers.map((c) => [c.key, c.label]));
@@ -369,10 +397,16 @@ export default function OrdersAnalyticsPage() {
   const tooltipFormat = useCallback(
     (n: number) => {
       if (graphMode === "revenue") return usd(n);
+      if (graphMode === "orders" || graphMode === "samples")
+        return String(Math.round(Number.isFinite(n) ? n : 0));
       return new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(n);
     },
     [graphMode],
   );
+
+  const lineInterpolation = graphMode === "revenue" ? "linear" : "stepAfter";
+  const yAxisIntegerTicks =
+    graphMode === "revenue" ? undefined : buildIntegerYTicks(chartSeriesMax);
 
   return (
     <PageAccessGate permission="page.orders">
@@ -654,6 +688,8 @@ export default function OrdersAnalyticsPage() {
                 loading={loading}
                 yTickFormatter={yTickFormatter}
                 tooltipFormat={tooltipFormat}
+                lineType={lineInterpolation}
+                yIntegerTicks={yAxisIntegerTicks}
                 emptyHint={
                   data && data.customers.length > 0 && selectedKeys.size === 0
                     ? "Select at least one customer to plot."
@@ -937,6 +973,8 @@ function ChartBlock({
   loading,
   yTickFormatter,
   tooltipFormat,
+  lineType,
+  yIntegerTicks,
   emptyHint,
 }: {
   title: string;
@@ -945,9 +983,16 @@ function ChartBlock({
   loading: boolean;
   yTickFormatter: (v: unknown) => string;
   tooltipFormat: (n: number) => string;
+  /** Straight segments for money; step-after for discrete daily counts. */
+  lineType: "linear" | "stepAfter";
+  /** When set, fixes duplicate Y labels for small integer ranges. */
+  yIntegerTicks?: number[];
   emptyHint?: string;
 }) {
   const show = rows.length > 0 && meta.length > 0;
+  const yDomain: [number, number | string] | undefined = yIntegerTicks?.length
+    ? [0, Math.max(...yIntegerTicks)]
+    : undefined;
   return (
     <div style={{ marginBottom: 28 }}>
       <h2 style={{ margin: "0 0 12px", fontSize: 18, fontWeight: 800, color: "#c4b5fd" }}>{title}</h2>
@@ -957,7 +1002,13 @@ function ChartBlock({
             <LineChart data={rows} margin={{ top: 8, right: 24, left: 8, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" />
               <XAxis dataKey="date" stroke="#64748b" tick={{ fill: "#94a3b8", fontSize: 11 }} />
-              <YAxis stroke="#64748b" tick={{ fill: "#94a3b8", fontSize: 11 }} tickFormatter={yTickFormatter} />
+              <YAxis
+                stroke="#64748b"
+                tick={{ fill: "#94a3b8", fontSize: 11 }}
+                tickFormatter={yTickFormatter}
+                domain={yDomain}
+                ticks={yIntegerTicks}
+              />
               <Tooltip
                 content={(tp) => (
                   <ChartTooltip
@@ -976,12 +1027,13 @@ function ChartBlock({
               {meta.map((s, i) => (
                 <Line
                   key={s.key}
-                  type="monotone"
+                  type={lineType}
                   dataKey={s.key}
                   name={s.label}
                   stroke={LINE_COLORS[i % LINE_COLORS.length]}
-                  strokeWidth={2}
+                  strokeWidth={lineType === "stepAfter" ? 1.5 : 2}
                   dot={false}
+                  isAnimationActive={false}
                   connectNulls
                 />
               ))}
