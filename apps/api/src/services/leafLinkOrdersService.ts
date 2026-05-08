@@ -164,16 +164,16 @@ export type OrdersAnalyticsQualifyingOrderDto = {
 export type OrdersAnalyticsCustomerDto = {
   key: string;
   label: string;
-  /** Latest qualifying order date in range (ISO 8601). */
+  /** Latest order date in range (ISO 8601). */
   lastPurchaseDate: string;
-  /** Total (USD) of that most recent qualifying order in the range. */
+  /** Total (USD) of that most recent order in the range. */
   lastOrderTotal: number;
-  /** Sum of qualifying order totals in range. */
+  /** Sum of order totals in range. */
   orderTotalInRange: number;
   /** Sample line units in range (see sample detection heuristic). */
   sampleUnitsInRange: number;
   samplesByType: OrdersAnalyticsSampleTypeBreakdown[];
-  /** Itemized sample lines from qualifying orders in range. */
+  /** Itemized sample lines from orders in range. */
   sampleLineItems: OrdersAnalyticsSampleLineItemDto[];
   /** Parallel to {@link OrdersAnalyticsDto.days}. */
   revenueByDay: number[];
@@ -187,15 +187,16 @@ export type OrdersAnalyticsDto = {
   integrationEnabled: boolean;
   dateFrom: string;
   dateTo: string;
-  /** Qualifying orders: in range, not cancelled, total ≥ minOrderTotal. */
+  /** Orders in range after Current Customer linkage (invoice headline totals when present; includes cancelled/sample-sized orders — no dollar floor here). */
   ordersIncluded: number;
+  /** Always 0 — no minimum order filter in analytics. Present for backwards-compatible clients. */
   minOrderTotal: number;
   pagesScanned: number;
   truncated: boolean;
   days: string[];
-  /** Customers with at least one qualifying order (active for this report). */
+  /** Buyers with LeafLink CRM “Current Customer” and at least one stored order row in-range. */
   customers: OrdersAnalyticsCustomerDto[];
-  /** One row per qualifying order (for per-order charts). May be truncated — see `qualifyingOrdersTruncated`. */
+  /** One row per order for scatter chart. May be truncated — see `qualifyingOrdersTruncated`. */
   qualifyingOrders: OrdersAnalyticsQualifyingOrderDto[];
   qualifyingOrdersTruncated: boolean;
   /** Series are built from saved orders (see persisted rows when Orders / sync runs). */
@@ -225,8 +226,11 @@ const STORED_ORDERS_LIST_SCAN_LIMIT = 2500;
 const LEAFLINK_CUSTOMERS_CACHE_KEY = "leaflink_customers_snapshot";
 const preferredLeafLinkAuthByTenant = new Map<string, string>();
 
-/** Only orders at or above this total count toward analytics and customer inclusion. */
-export const ORDERS_ANALYTICS_MIN_ORDER_TOTAL = 50;
+/**
+ * Shipped in API responses for compatibility; analytics **does not** exclude small orders (only LeafLink Current Customer + date range).
+ * @deprecated Prefer checking `minOrderTotal === 0` in clients; kept exported to avoid breaking imports.
+ */
+export const ORDERS_ANALYTICS_MIN_ORDER_TOTAL = 0;
 
 const currentCustomersByCompanyCache = new Map<string, { atMs: number; ids: Set<string> }>();
 
@@ -1832,12 +1836,12 @@ export class LeafLinkOrdersService {
   /**
    * Aggregate wholesale orders in a UTC date range from **saved** DB rows (populated whenever Orders loads or Multi-page sync runs).
    * Pass `{ refresh: true }` once to paginate LeafLink and merge into the DB before aggregating (optional).
-   * Only non-cancelled orders with total ≥ {@link ORDERS_ANALYTICS_MIN_ORDER_TOTAL} define “active” customers and series.
+   * **Filter:** buyers must appear in LeafLink CRM with status “Current Customer” (when that snapshot loads). No min total or cancel exclusion.
    * Sample lines: LeafLink `is_sample`, product/listing sample signals, `frozen_data`, plus name/SKU/notes (see {@link isSampleLineItem}).
    */
   async getOrdersAnalytics(
     companyId: string,
-    input: { dateFrom: string; dateTo: string; refresh?: boolean; currentCustomersOnly?: boolean },
+    input: { dateFrom: string; dateTo: string; refresh?: boolean },
   ): Promise<OrdersAnalyticsDto> {
     const dateFrom = cleanString(input.dateFrom);
     const dateTo = cleanString(input.dateTo);
@@ -1889,7 +1893,7 @@ export class LeafLinkOrdersService {
         dateFrom,
         dateTo,
         ordersIncluded: 0,
-        minOrderTotal: ORDERS_ANALYTICS_MIN_ORDER_TOTAL,
+        minOrderTotal: 0,
         pagesScanned: 0,
         truncated: false,
         days: dayList,
@@ -1902,32 +1906,28 @@ export class LeafLinkOrdersService {
 
     await this.assertOrdersCapableOrThrow(creds);
 
-    const currentCustomersOnly = input.currentCustomersOnly !== false;
-
     let currentCustomerIds = new Set<string>();
     let filteredByLeafLinkCurrentCustomerStatus = false;
     let leafLinkCurrentCustomerCount = 0;
-    if (currentCustomersOnly) {
-      try {
-        currentCustomerIds = await this.loadCurrentCustomerIdsFromLeafLink(companyId, creds, creds.source, {
-          /**
-           * Avoid re-paginating all customers on every analytics refresh.
-           * Large customer lists can hit provider-side auth throttles/403s mid-scan;
-           * we prefer persisted snapshot reuse for stability and only refresh when cache is absent.
-           */
-          refresh: false,
-          actorUserId: "system",
-        });
-        leafLinkCurrentCustomerCount = currentCustomerIds.size;
-        filteredByLeafLinkCurrentCustomerStatus = true;
-      }
-      catch (err) {
-        logWarn("[LEAFLINK] orders_analytics_current_customer_filter_unavailable", {
-          companyId,
-          refresh: Boolean(input.refresh),
-          err: err instanceof Error ? err.message : String(err),
-        });
-      }
+    try {
+      currentCustomerIds = await this.loadCurrentCustomerIdsFromLeafLink(companyId, creds, creds.source, {
+        /**
+         * Avoid re-paginating all customers on every analytics refresh.
+         * Large customer lists can hit provider-side auth throttles/403s mid-scan;
+         * we prefer persisted snapshot reuse for stability and only refresh when cache is absent.
+         */
+        refresh: false,
+        actorUserId: "system",
+      });
+      leafLinkCurrentCustomerCount = currentCustomerIds.size;
+      filteredByLeafLinkCurrentCustomerStatus = true;
+    }
+    catch (err) {
+      logWarn("[LEAFLINK] orders_analytics_current_customer_filter_unavailable", {
+        companyId,
+        refresh: Boolean(input.refresh),
+        err: err instanceof Error ? err.message : String(err),
+      });
     }
 
     let pagesScanned = 0;
@@ -2030,12 +2030,11 @@ export class LeafLinkOrdersService {
       const buyerId = cleanString(o.buyerCustomerId);
       if (!buyerId) continue;
       if (filteredByLeafLinkCurrentCustomerStatus && !currentCustomerIds.has(buyerId)) continue;
-      if (isCancelledOrder(o)) continue;
       const createdIsoAgg = cleanString(o.createdAt) || leafLinkOrderCreatedIso(raw);
       const t = Date.parse(createdIsoAgg || "");
       if (!Number.isFinite(t)) continue;
-      const money = effectiveOrderTotalUsd(raw, o);
-      if (money < ORDERS_ANALYTICS_MIN_ORDER_TOTAL) continue;
+      const rawMoney = effectiveOrderTotalUsd(raw, o);
+      const money = typeof rawMoney === "number" && Number.isFinite(rawMoney) ? Math.max(0, rawMoney) : 0;
 
       const day = utcDayKeyFromMs(t);
       const di = dayIndex.get(day);
@@ -2144,7 +2143,7 @@ export class LeafLinkOrdersService {
       dateFrom,
       dateTo,
       ordersIncluded: qualifyingOrderCount,
-      minOrderTotal: ORDERS_ANALYTICS_MIN_ORDER_TOTAL,
+      minOrderTotal: 0,
       pagesScanned,
       truncated,
       days: dayList,

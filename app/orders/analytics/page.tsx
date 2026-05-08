@@ -181,8 +181,6 @@ export default function OrdersAnalyticsPage() {
   const initial = useMemo(() => defaultRange(), []);
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
-  /** When false, LeafLink CRM “Current Customer” filter is not applied — counts include any buyer seen in saved orders that pass totals/cancel filters. */
-  const [currentCustomersOnly, setCurrentCustomersOnly] = useState(true);
   const [loading, setLoading] = useState(true);
   /** Keeps “Apply range” clickable copy while a heavy LeafLink pagination run is in flight on the other button. */
   const [leafLinkPullActive, setLeafLinkPullActive] = useState(false);
@@ -207,7 +205,6 @@ export default function OrdersAnalyticsPage() {
       const cid = getSelectedCompanyId().trim();
       const out = await fetchOrdersAnalytics(from, to, cid || undefined, {
         refreshLeafLink,
-        currentCustomersOnly,
       });
       setData(out);
     }
@@ -223,7 +220,7 @@ export default function OrdersAnalyticsPage() {
         setLeafLinkPullActive(false);
       }
     }
-  }, [from, to, currentCustomersOnly]);
+  }, [from, to]);
 
   useEffect(() => {
     void load();
@@ -359,10 +356,10 @@ export default function OrdersAnalyticsPage() {
     graphMode === "revenue"
       ? "Revenue by customer (per day)"
       : graphMode === "orders"
-        ? "Qualifying orders by customer (per day)"
+        ? "Orders by customer (per day)"
         : graphMode === "samples"
           ? "Sample units by customer (per day)"
-          : "Each qualifying order total (points)";
+          : "Each order total (points)";
 
   const yTickFormatter = useCallback(
     (v: unknown) => {
@@ -386,8 +383,6 @@ export default function OrdersAnalyticsPage() {
     [graphMode],
   );
 
-  const minOrder = data?.minOrderTotal ?? 50;
-
   return (
     <PageAccessGate permission="page.orders">
       <div style={shellStyle}>
@@ -397,12 +392,11 @@ export default function OrdersAnalyticsPage() {
             <div>
               <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900, color: "#f8fafc" }}>Order analytics</h1>
               <p style={{ margin: "8px 0 0", fontSize: 15, color: "#94a3b8", maxWidth: 760, lineHeight: 1.5 }}>
-                The customer list counts buyers with at least one non-cancelled order in range with headline total ≥ {usd(minOrder)}
-                (“qualifying”). By default those buyers must also appear in LeafLink with CRM status{' '}
+                Customers are wholesalers that LeafLink marks with CRM{' '}
                 <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Current Customer</strong>
-                {' — '}uncheck below to chart every buyer in your saved LeafLink orders for this range (still excludes cancelled /
-                tiny invoices). Charts use persisted orders plus any fresh pull you request. Samples use LeafLink is_sample flags,
-                product/sample listing states, and name/SKU/note hints. UTC.
+                {' '}status and have at least one saved order whose order date falls in this UTC window. Orders are included
+                whether paid or unpaid, cancelled or not — only the headline total is rolled into revenue charts when present (no $
+                minimum). Refresh saved data with Pull from LeafLink if counts look low.
               </p>
             </div>
             <Link href="/orders" style={btnGhost}>
@@ -432,26 +426,6 @@ export default function OrdersAnalyticsPage() {
               >
                 {leafLinkPullActive ? "Pulling LeafLink (~1 min max)…" : "Pull from LeafLink → save"}
               </button>
-              <label
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  marginLeft: 4,
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: "#cbd5e1",
-                  cursor: "pointer",
-                  userSelect: "none",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={currentCustomersOnly}
-                  onChange={(e) => setCurrentCustomersOnly(e.target.checked)}
-                />
-                Only LeafLink “Current Customer”
-              </label>
             </div>
 
             {error ? (
@@ -487,14 +461,16 @@ export default function OrdersAnalyticsPage() {
 
             {data?.qualifyingOrdersTruncated ? (
               <p style={{ fontSize: 13, color: "#fbbf24", marginBottom: 12 }}>
-                Per-order scatter list capped at {data.qualifyingOrders.length} newest qualifying orders — narrow the date
-                range to include all orders in the payload.
+                Per-order scatter list capped at {data.qualifyingOrders.length} newest orders — narrow the date range to include
+                all orders in the payload.
               </p>
             ) : null}
 
             {data && data.ordersIncluded === 0 && data.configured && data.integrationEnabled && !loading ? (
               <p style={{ color: "#94a3b8" }}>
-                No qualifying orders in this range (need total ≥ {usd(minOrder)}, not cancelled).
+                No orders in this range for LeafLink Current Customer accounts with matching saved buyer IDs. Broaden dates or pull
+                from LeafLink — if status shows 50 “current” buyers but counts stay low, we may still be syncing order history into the
+                app database.
               </p>
             ) : null}
 
@@ -511,9 +487,9 @@ export default function OrdersAnalyticsPage() {
                   ? `Customer list is restricted to LeafLink status: Current Customer (${data.leafLinkCurrentCustomerCount} total in LeafLink). `
                   : ""}
                 {data.ordersIncluded > 0
-                  ? `${data.ordersIncluded} qualifying order(s) · ${data.customers.length} active customer(s) · UTC dates`
+                  ? `${data.ordersIncluded} order(s) · ${data.customers.length} Current Customer buyer(s) with orders · UTC dates`
                   : data.storedRowsInRange > 0
-                    ? `${data.storedRowsInRange} stored order(s) in range (none meet the ${usd(data.minOrderTotal)} non-cancelled filters).`
+                    ? `${data.storedRowsInRange} stored order row(s) in range (none mapped to LeafLink Current Customer buyer ids — check sync or CRM snapshot).`
                     : null}
                 {data.leafLinkRefreshRan ? ` · LeafLink pull ran this request (${data.pagesScanned} page(s)).` : ""}
               </p>
@@ -691,7 +667,7 @@ export default function OrdersAnalyticsPage() {
                 emptyHint={
                   data && data.customers.length > 0 && selectedKeys.size === 0
                     ? "Select at least one customer to plot."
-                    : "No qualifying orders for selected customers in this range."
+                    : "No orders for selected customers in this range."
                 }
               />
             ) : (
@@ -746,7 +722,7 @@ export default function OrdersAnalyticsPage() {
                 <div>
                   <h3 style={{ margin: 0, fontSize: 20, fontWeight: 900, color: "#f8fafc" }}>{detailCustomer.label}</h3>
                   <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 13 }}>
-                    {detailOrders.length} qualifying order(s) from {from} to {to} UTC
+                    {detailOrders.length} order(s) from {from} to {to} UTC
                   </p>
                 </div>
                 <button type="button" style={btnSmall} onClick={() => setDetailCustomerKey(null)}>
@@ -766,7 +742,7 @@ export default function OrdersAnalyticsPage() {
                     {detailOrders.length === 0 ? (
                       <tr style={{ borderTop: "1px solid rgba(148,163,184,0.12)" }}>
                         <td colSpan={3} style={{ padding: "12px 10px", color: "#94a3b8" }}>
-                          No qualifying orders for this customer in the selected range.
+                          No orders for this customer in the selected range.
                         </td>
                       </tr>
                     ) : (

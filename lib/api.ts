@@ -921,12 +921,10 @@ export async function fetchOrdersAnalytics(
   from: string,
   to: string,
   companyId?: string,
-  opts?: { refreshLeafLink?: boolean; currentCustomersOnly?: boolean },
+  opts?: { refreshLeafLink?: boolean },
 ) {
   const q = new URLSearchParams({ from, to });
   if (opts?.refreshLeafLink) q.set("refresh", "true");
-  if (opts?.currentCustomersOnly === false)
-    q.set("current_only", "0");
   return apiRequest<OrdersAnalyticsDto>(`/api/orders/analytics?${q.toString()}`, {
     companyId,
   });
