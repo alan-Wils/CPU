@@ -9,6 +9,8 @@ import {
   Line,
   LineChart,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
@@ -159,7 +161,16 @@ function ChartTooltip(props: {
   );
 }
 
-type GraphMode = "revenue" | "orders" | "samples";
+type GraphMode = "revenue" | "orders" | "samples" | "orderPoints";
+
+type ScatterPoint = {
+  x: number;
+  y: number;
+  orderNumber: string;
+  createdAt: string;
+  customerKey: string;
+  customerLabel: string;
+};
 
 export default function OrdersAnalyticsPage() {
   const initial = useMemo(() => defaultRange(), []);
@@ -238,19 +249,41 @@ export default function OrdersAnalyticsPage() {
           row[c.key] = c.revenueByDay[i] ?? 0;
         else if (graphMode === "orders")
           row[c.key] = c.orderCountByDay[i] ?? 0;
-        else
+        else if (graphMode === "samples")
           row[c.key] = c.sampleUnitsByDay[i] ?? 0;
       }
       return row;
     });
   }, [data, selectedCustomers, graphMode]);
 
+  const scatterPoints = useMemo((): ScatterPoint[] => {
+    if (!data?.qualifyingOrders?.length || !data.customers?.length) return [];
+    const labelByKey = new Map(data.customers.map((c) => [c.key, c.label]));
+    return data.qualifyingOrders
+      .filter((o) => selectedKeys.has(o.customerKey))
+      .map((o) => {
+        const xm = Date.parse(o.createdAt);
+        if (!Number.isFinite(xm)) return null;
+        return {
+          x: xm,
+          y: o.totalUsd,
+          orderNumber: o.orderNumber,
+          createdAt: o.createdAt,
+          customerKey: o.customerKey,
+          customerLabel: labelByKey.get(o.customerKey) ?? o.customerKey,
+        };
+      })
+      .filter((p): p is ScatterPoint => p != null);
+  }, [data, selectedKeys]);
+
   const chartTitle =
     graphMode === "revenue"
       ? "Revenue by customer (per day)"
       : graphMode === "orders"
         ? "Qualifying orders by customer (per day)"
-        : "Sample units by customer (per day)";
+        : graphMode === "samples"
+          ? "Sample units by customer (per day)"
+          : "Each qualifying order total (points)";
 
   const yTickFormatter = useCallback(
     (v: unknown) => {
@@ -285,9 +318,9 @@ export default function OrdersAnalyticsPage() {
             <div>
               <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900, color: "#f8fafc" }}>Order analytics</h1>
               <p style={{ margin: "8px 0 0", fontSize: 15, color: "#94a3b8", maxWidth: 760, lineHeight: 1.5 }}>
-                Active customers are those with at least one non-cancelled wholesale order totaling {usd(minOrder)} or more
-                in the range (LeafLink, UTC). Sample lines are detected when “sample” appears in the line name, SKU, or
-                notes. Pick any customers below to plot them.
+                Active customers have at least one non-cancelled order in range with headline total ≥ {usd(minOrder)} from
+                LeafLink (invoice total, not a roll-up from embedded lines). Revenue charts sum each qualifying order on its
+                order date. Samples use LeafLink is_sample flags, product sample/listing states, plus name/SKU/note hints. UTC.
               </p>
             </div>
             <Link href="/orders" style={btnGhost}>
@@ -335,6 +368,13 @@ export default function OrdersAnalyticsPage() {
               <p style={{ fontSize: 13, color: "#fbbf24", marginBottom: 12 }}>
                 Showing data from the most recent pages scanned; date range may be incomplete — narrow the range or contact
                 support to raise limits.
+              </p>
+            ) : null}
+
+            {data?.qualifyingOrdersTruncated ? (
+              <p style={{ fontSize: 13, color: "#fbbf24", marginBottom: 12 }}>
+                Per-order scatter list capped at {data.qualifyingOrders.length} newest qualifying orders — narrow the date
+                range to include all orders in the payload.
               </p>
             ) : null}
 
@@ -404,7 +444,8 @@ export default function OrdersAnalyticsPage() {
                             <th style={{ padding: "8px 10px", width: 40 }} />
                             <th style={{ padding: "8px 10px" }}>Customer</th>
                             <th style={{ padding: "8px 10px" }}>Last purchase (UTC)</th>
-                            <th style={{ padding: "8px 10px" }}>Total in range</th>
+                            <th style={{ padding: "8px 10px" }}>Last order</th>
+                            <th style={{ padding: "8px 10px" }}>Sum in range</th>
                             <th style={{ padding: "8px 10px" }}>Sample units</th>
                             <th style={{ padding: "8px 10px", minWidth: 220 }}>Sample types (qty)</th>
                           </tr>
@@ -422,7 +463,12 @@ export default function OrdersAnalyticsPage() {
                               </td>
                               <td style={{ padding: "10px", fontWeight: 700, color: "#f1f5f9" }}>{c.label}</td>
                               <td style={{ padding: "10px", color: "#cbd5e1" }}>{fmtShortDate(c.lastPurchaseDate)}</td>
-                              <td style={{ padding: "10px", color: "#cbd5e1" }}>{usd(c.orderTotalInRange)}</td>
+                              <td style={{ padding: "10px", color: "#cbd5e1", fontVariantNumeric: "tabular-nums" }}>
+                                {usd(c.lastOrderTotal)}
+                              </td>
+                              <td style={{ padding: "10px", color: "#cbd5e1", fontVariantNumeric: "tabular-nums" }}>
+                                {usd(c.orderTotalInRange)}
+                              </td>
                               <td style={{ padding: "10px", color: "#cbd5e1" }}>{c.sampleUnitsInRange}</td>
                               <td style={{ padding: "10px", color: "#94a3b8", lineHeight: 1.45 }}>
                                 {c.samplesByType.length === 0
@@ -446,6 +492,7 @@ export default function OrdersAnalyticsPage() {
                   { id: "revenue" as const, label: "Revenue ($)" },
                   { id: "orders" as const, label: "Order count" },
                   { id: "samples" as const, label: "Sample units" },
+                  { id: "orderPoints" as const, label: "Each order ($)" },
                 ] as const
               ).map((opt) => (
                 <button
@@ -491,6 +538,112 @@ export default function OrdersAnalyticsPage() {
         </div>
       </div>
     </PageAccessGate>
+  );
+}
+
+function OrderScatterTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: readonly { payload?: ScatterPoint }[];
+}) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  if (!d) return null;
+  const when = fmtShortDate(d.createdAt);
+  return (
+    <div
+      style={{
+        background: "rgba(15,23,42,0.95)",
+        border: "1px solid rgba(148,163,184,0.35)",
+        borderRadius: 10,
+        padding: "10px 12px",
+        fontSize: 13,
+      }}
+    >
+      <div style={{ fontWeight: 800, marginBottom: 6, color: "#e2e8f0" }}>{d.customerLabel}</div>
+      <div style={{ color: "#94a3b8" }}>
+        Order #{d.orderNumber} · {when}
+      </div>
+      <div style={{ marginTop: 6, fontWeight: 700, color: "#a78bfa" }}>{usd(d.y)}</div>
+    </div>
+  );
+}
+
+function OrderScatterBlock({
+  title,
+  points,
+  selectedCustomers,
+  loading,
+  emptyHint,
+}: {
+  title: string;
+  points: ScatterPoint[];
+  selectedCustomers: OrdersAnalyticsCustomerDto[];
+  loading: boolean;
+  emptyHint?: string;
+}) {
+  const show = !loading && points.length > 0 && selectedCustomers.length > 0;
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <h2 style={{ margin: "0 0 12px", fontSize: 18, fontWeight: 800, color: "#c4b5fd" }}>{title}</h2>
+      <div style={{ width: "100%", height: 400, opacity: loading ? 0.45 : 1 }}>
+        {show ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <ScatterChart margin={{ top: 12, right: 24, left: 8, bottom: 36 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" />
+              <XAxis
+                type="number"
+                dataKey="x"
+                domain={["dataMin", "dataMax"]}
+                stroke="#64748b"
+                tick={{ fill: "#94a3b8", fontSize: 11 }}
+                tickFormatter={(ms) =>
+                  typeof ms === "number" && Number.isFinite(ms)
+                    ? new Intl.DateTimeFormat("en-US", {
+                        month: "2-digit",
+                        day: "2-digit",
+                        timeZone: "UTC",
+                      }).format(new Date(ms))
+                    : ""
+                }
+                name="Date"
+              />
+              <YAxis
+                type="number"
+                dataKey="y"
+                stroke="#64748b"
+                tick={{ fill: "#94a3b8", fontSize: 11 }}
+                tickFormatter={(v) =>
+                  new Intl.NumberFormat("en-US", {
+                    notation: Number(v as number) >= 1000 ? "compact" : "standard",
+                    maximumFractionDigits: 0,
+                    style: "currency",
+                    currency: "USD",
+                  }).format(typeof v === "number" ? v : Number(v))
+                }
+              />
+              <Tooltip content={<OrderScatterTooltip />} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              {selectedCustomers.map((c, i) => (
+                <Scatter
+                  key={c.key}
+                  name={c.label}
+                  data={points.filter((p) => p.customerKey === c.key)}
+                  fill={LINE_COLORS[i % LINE_COLORS.length]}
+                  line={false}
+                />
+              ))}
+            </ScatterChart>
+          </ResponsiveContainer>
+        ) : (
+          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", textAlign: "center", padding: 16 }}>
+            {loading ? "Loading chart…" : emptyHint ?? "No data"}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

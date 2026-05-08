@@ -750,6 +750,8 @@ export type LeafLinkOrderLineItemDto = {
   lineTotal: number | null;
   notes: string;
   productId: string;
+  /** LeafLink `is_sample` / product sample state (see API). */
+  isSample: boolean;
 };
 
 export type LeafLinkOrderSummaryDto = {
@@ -860,10 +862,20 @@ export type OrdersAnalyticsSampleTypeBreakdown = {
   units: number;
 };
 
+export type OrdersAnalyticsQualifyingOrderDto = {
+  orderId: string;
+  orderNumber: string;
+  customerKey: string;
+  createdAt: string;
+  totalUsd: number;
+};
+
 export type OrdersAnalyticsCustomerDto = {
   key: string;
   label: string;
   lastPurchaseDate: string;
+  /** Most recent qualifying order total in the selected range. */
+  lastOrderTotal: number;
   orderTotalInRange: number;
   sampleUnitsInRange: number;
   samplesByType: OrdersAnalyticsSampleTypeBreakdown[];
@@ -884,6 +896,8 @@ export type OrdersAnalyticsDto = {
   truncated: boolean;
   days: string[];
   customers: OrdersAnalyticsCustomerDto[];
+  qualifyingOrders: OrdersAnalyticsQualifyingOrderDto[];
+  qualifyingOrdersTruncated: boolean;
 };
 
 export async function fetchOrdersAnalytics(

@@ -57,6 +57,8 @@ export type LeafLinkOrderLineItemDto = {
   lineTotal: number | null;
   notes: string;
   productId: string;
+  /** LeafLink wholesale line item flag (see API `is_sample`). */
+  isSample: boolean;
 };
 
 export type LeafLinkOrderSummaryDto = {
@@ -126,11 +128,22 @@ export type OrdersAnalyticsSampleTypeBreakdown = {
   units: number;
 };
 
+export type OrdersAnalyticsQualifyingOrderDto = {
+  orderId: string;
+  orderNumber: string;
+  customerKey: string;
+  createdAt: string;
+  /** Per-order headline total (USD), not lifetime / not line-sum inflation. */
+  totalUsd: number;
+};
+
 export type OrdersAnalyticsCustomerDto = {
   key: string;
   label: string;
   /** Latest qualifying order date in range (ISO 8601). */
   lastPurchaseDate: string;
+  /** Total (USD) of that most recent qualifying order in the range. */
+  lastOrderTotal: number;
   /** Sum of qualifying order totals in range. */
   orderTotalInRange: number;
   /** Sample line units in range (see sample detection heuristic). */
@@ -156,10 +169,17 @@ export type OrdersAnalyticsDto = {
   days: string[];
   /** Customers with at least one qualifying order (active for this report). */
   customers: OrdersAnalyticsCustomerDto[];
+  /** One row per qualifying order (for per-order charts). May be truncated — see `qualifyingOrdersTruncated`. */
+  qualifyingOrders: OrdersAnalyticsQualifyingOrderDto[];
+  qualifyingOrdersTruncated: boolean;
 };
 
 const MAX_ANALYTICS_RANGE_DAYS = 366;
 const MAX_ANALYTICS_PAGES = 50;
+const MAX_QUALIFYING_ORDERS_IN_PAYLOAD = 3500;
+/** If list payload embeds many line rows, summing them is often wrong vs order headline `total`. */
+const MAX_LINE_ITEMS_TO_TRUST_SUM = 120;
+
 /** Only orders at or above this total count toward analytics and customer inclusion. */
 export const ORDERS_ANALYTICS_MIN_ORDER_TOTAL = 50;
 
@@ -209,12 +229,72 @@ function orderTotalMoney(o: LeafLinkOrderSummaryDto): number {
   return Number.isFinite(sum) ? sum : 0;
 }
 
+function nestedOrderRecord(row: Record<string, unknown>): Record<string, unknown> {
+  const o = row.order;
+  return o != null && typeof o === "object" && !Array.isArray(o) ? asRecord(o) : {};
+}
+
+/** Prefer LeafLink headline totals; never substitute a huge embedded line-item sum when headline exists. */
+function effectiveOrderTotalUsd(raw: Record<string, unknown>, summary: LeafLinkOrderSummaryDto): number {
+  const nest = nestedOrderRecord(raw);
+  const headline =
+    moneyAmount(raw.total)
+    ?? moneyAmount(nest.total)
+    ?? moneyAmount(raw.grand_total)
+    ?? moneyAmount(raw.final_total)
+    ?? moneyAmount(raw.order_total);
+
+  const lines = summary.lineItems;
+  const linesSum = lines.reduce((acc, li) => acc + (li.lineTotal ?? 0), 0);
+  const lineCount = lines.length;
+
+  const rawSub = moneyAmount(raw.subtotal) ?? moneyAmount(nest.subtotal);
+
+  if (headline != null && headline > 0) {
+    /** Some list embeds return bloated `line_items`; keep the API order total. */
+    if (lineCount > MAX_LINE_ITEMS_TO_TRUST_SUM && linesSum > headline * 5)
+      return headline;
+    return headline;
+  }
+
+  if (rawSub != null && rawSub > 0)
+    return rawSub;
+
+  if (lineCount === 0 || linesSum <= 0)
+    return 0;
+
+  if (lineCount > MAX_LINE_ITEMS_TO_TRUST_SUM)
+    return 0;
+
+  return linesSum;
+}
+
 function isCancelledOrder(o: LeafLinkOrderSummaryDto): boolean {
   return o.statusNormalized === "Cancelled";
 }
 
-/** Heuristic: product/SKU/notes contain “sample” (wholesale freebies are often labeled explicitly). */
+function productRecordIndicatesSample(p: Record<string, unknown>): boolean {
+  const blob = [
+    p.listing_status,
+    p.seller_listing_state,
+    p.status,
+    p.product_state,
+    p.inventory_status,
+    p.availability_display,
+    p.product_availability_display,
+    p.license_type,
+    p.marketplace_status,
+  ]
+    .map(cleanString)
+    .join(" ")
+    .toLowerCase();
+  return blob.includes("sample");
+}
+
+/** Primary: LeafLink `is_sample` on line item + product/sample status; fallback text match on name/SKU/notes. */
 function isSampleLineItem(li: LeafLinkOrderLineItemDto): boolean {
+  if (li.isSample)
+    return true;
   const name = cleanString(li.productName).toLowerCase();
   const sku = cleanString(li.sku).toLowerCase();
   const notes = cleanString(li.notes).toLowerCase();
@@ -276,6 +356,7 @@ function mergeLineItemsPreferRicher(
   return embedded.map((e) => {
     const a = byId.get(e.id);
     if (!a) return e;
+    const mergedSample = e.isSample || a.isSample;
     const eBad = isPlaceholderProductLabel(e.productName);
     const aGood = !isPlaceholderProductLabel(a.productName);
     if (aGood && eBad) {
@@ -283,10 +364,13 @@ function mergeLineItemsPreferRicher(
         ...e,
         productName: a.productName,
         sku: cleanString(a.sku) || e.sku,
+        isSample: mergedSample,
       };
     }
     if (!cleanString(e.sku) && cleanString(a.sku))
-      return { ...e, sku: a.sku };
+      return { ...e, sku: a.sku, isSample: mergedSample };
+    if (mergedSample !== e.isSample)
+      return { ...e, isSample: mergedSample };
     return e;
   });
 }
@@ -439,15 +523,17 @@ function extractLineItems(raw: Record<string, unknown>): LeafLinkOrderLineItemDt
     else {
       productId = cleanString(prodRaw);
     }
+    const prodObj =
+      prodRaw != null && typeof prodRaw === "object" && !Array.isArray(prodRaw) ? asRecord(prodRaw) : null;
+    const listing =
+      r.listing != null && typeof r.listing === "object" && !Array.isArray(r.listing)
+        ? asRecord(r.listing)
+        : {};
+    const inv =
+      r.inventory_item != null && typeof r.inventory_item === "object" && !Array.isArray(r.inventory_item)
+        ? asRecord(r.inventory_item)
+        : {};
     if (!productName) {
-      const listing =
-        r.listing != null && typeof r.listing === "object" && !Array.isArray(r.listing)
-          ? asRecord(r.listing)
-          : {};
-      const inv =
-        r.inventory_item != null && typeof r.inventory_item === "object" && !Array.isArray(r.inventory_item)
-          ? asRecord(r.inventory_item)
-          : {};
       productName = cleanString(
         r.product_name
         || r.name
@@ -476,6 +562,20 @@ function extractLineItems(raw: Record<string, unknown>): LeafLinkOrderLineItemDt
     let lineTotal: number | null = null;
     if (typeof r.total === "number" && Number.isFinite(r.total)) lineTotal = r.total;
     else if (unitPrice != null && qty > 0) lineTotal = unitPrice * qty;
+
+    const fr = r.frozen_data != null && typeof r.frozen_data === "object" && !Array.isArray(r.frozen_data)
+      ? asRecord(r.frozen_data)
+      : null;
+    const fdSample =
+      fr != null && (fr.is_sample === true || cleanString(fr.is_sample).toLowerCase() === "true");
+    const isSample =
+      r.is_sample === true
+      || cleanString(r.is_sample).toLowerCase() === "true"
+      || fdSample
+      || (prodObj != null && productRecordIndicatesSample(prodObj))
+      || productRecordIndicatesSample(listing)
+      || productRecordIndicatesSample(inv);
+
     out.push({
       id: cleanString(r.id) || `line-${i}`,
       productName: productName || `Product ${productId || `#${i + 1}`}`,
@@ -485,6 +585,7 @@ function extractLineItems(raw: Record<string, unknown>): LeafLinkOrderLineItemDt
       lineTotal,
       notes: cleanString(r.notes),
       productId,
+      isSample,
     });
   }
   return out;
@@ -1045,10 +1146,13 @@ export class LeafLinkOrdersService {
       pageSize: number;
       ordering?: string;
     },
-  ): Promise<{ summaries: LeafLinkOrderSummaryDto[]; hasNext: boolean }> {
+  ): Promise<{
+    rows: { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }[];
+    hasNext: boolean;
+  }> {
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
     if (!creds.integrationEnabled || !baseOutConfiguredForOrders(creds))
-      return { summaries: [], hasNext: false };
+      return { rows: [], hasNext: false };
 
     await this.assertOrdersCapableOrThrow(creds);
     const base = creds.baseUrl.replace(/\/+$/, "");
@@ -1060,19 +1164,22 @@ export class LeafLinkOrdersService {
     const urls = buildOrdersListUrlCandidates(base, creds, searchParams);
     const { body } = await leafLinkAuthedGet(urls, creds, 20_000);
     const { list, totalCount: apiTotal, next } = parseListBody(body);
-    const summaries = list.map((r) => normalizeOrder(r));
+    const rows = list.map((row) => {
+      const raw = typeof row === "object" && row !== null && !Array.isArray(row) ? asRecord(row) : {};
+      return { raw, summary: normalizeOrder(row) };
+    });
     const pageNum = Math.max(1, input.page);
     const ps = Math.min(500, Math.max(1, input.pageSize));
     const nextUrl = typeof next === "string" ? next.trim() : "";
     const hasNextBool =
       Boolean(nextUrl) || (apiTotal ? pageNum * ps < apiTotal : false);
-    return { summaries, hasNext: hasNextBool };
+    return { rows, hasNext: hasNextBool };
   }
 
   /**
    * Aggregate wholesale orders in a UTC date range for charting (paginates LeafLink newest-first until past range).
    * Only non-cancelled orders with total ≥ {@link ORDERS_ANALYTICS_MIN_ORDER_TOTAL} define “active” customers and series.
-   * Sample lines: name/SKU/notes contain “sample” (see {@link isSampleLineItem}).
+   * Sample lines: LeafLink `is_sample`, product/listing sample signals, `frozen_data`, plus name/SKU/notes (see {@link isSampleLineItem}).
    */
   async getOrdersAnalytics(
     companyId: string,
@@ -1110,12 +1217,14 @@ export class LeafLinkOrdersService {
         truncated: false,
         days: dayList,
         customers: [],
+        qualifyingOrders: [],
+        qualifyingOrdersTruncated: false,
       };
     }
 
     await this.assertOrdersCapableOrThrow(creds);
 
-    const collected: LeafLinkOrderSummaryDto[] = [];
+    const collectedByKey = new Map<string, { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }>();
     let pagesScanned = 0;
     let truncated = false;
 
@@ -1126,19 +1235,22 @@ export class LeafLinkOrdersService {
         ordering: "-created_on",
       });
       pagesScanned++;
-      if (!res.summaries.length)
+      if (!res.rows.length)
         break;
 
-      const timestamps = res.summaries.map((o) => Date.parse(o.createdAt));
+      const timestamps = res.rows.map(({ summary: o }) => Date.parse(o.createdAt));
       const maxT = Math.max(...timestamps.filter(Number.isFinite));
       if (Number.isFinite(maxT) && maxT < fromMs)
         break;
 
-      for (const o of res.summaries) {
+      for (const row of res.rows) {
+        const { raw, summary: o } = row;
         const t = Date.parse(o.createdAt);
         if (!Number.isFinite(t)) continue;
-        if (t >= fromMs && t <= toMs)
-          collected.push(o);
+        if (t < fromMs || t > toMs) continue;
+        const dedupeKey = cleanString(o.id) || `${cleanString(o.buyerCustomerId)}|${cleanString(o.orderNumber)}`;
+        if (!dedupeKey) continue;
+        collectedByKey.set(dedupeKey, { raw, summary: o });
       }
 
       const minT = Math.min(...timestamps.filter(Number.isFinite));
@@ -1150,9 +1262,12 @@ export class LeafLinkOrdersService {
         truncated = true;
     }
 
+    const collected = [...collectedByKey.values()];
+
     type CustAgg = {
       label: string;
       lastPurchaseMs: number;
+      lastOrderTotal: number;
       revenueByDay: number[];
       orderCountByDay: number[];
       sampleUnitsByDay: number[];
@@ -1162,27 +1277,37 @@ export class LeafLinkOrdersService {
 
     const agg = new Map<string, CustAgg>();
     let qualifyingOrderCount = 0;
+    const qualifyingOrdersFull: OrdersAnalyticsQualifyingOrderDto[] = [];
 
-    for (const o of collected) {
+    for (const { raw, summary: o } of collected) {
       if (isCancelledOrder(o)) continue;
       const t = Date.parse(o.createdAt);
       if (!Number.isFinite(t)) continue;
-      const money = orderTotalMoney(o);
+      const money = effectiveOrderTotalUsd(raw, o);
       if (money < ORDERS_ANALYTICS_MIN_ORDER_TOTAL) continue;
 
-      qualifyingOrderCount++;
       const day = utcDayKeyFromMs(t);
       const di = dayIndex.get(day);
       if (di === undefined) continue;
 
+      qualifyingOrderCount++;
       const label = cleanString(o.customerName) || "Unknown customer";
       const ck = customerSeriesKey(o.buyerCustomerId, label);
+
+      qualifyingOrdersFull.push({
+        orderId: cleanString(o.id) || cleanString(o.orderNumber),
+        orderNumber: cleanString(o.orderNumber),
+        customerKey: ck,
+        createdAt: o.createdAt,
+        totalUsd: Math.round(money * 100) / 100,
+      });
 
       let row = agg.get(ck);
       if (!row) {
         row = {
           label,
           lastPurchaseMs: t,
+          lastOrderTotal: money,
           revenueByDay: Array.from({ length: nDays }, () => 0),
           orderCountByDay: Array.from({ length: nDays }, () => 0),
           sampleUnitsByDay: Array.from({ length: nDays }, () => 0),
@@ -1192,7 +1317,10 @@ export class LeafLinkOrdersService {
         agg.set(ck, row);
       }
 
-      row.lastPurchaseMs = Math.max(row.lastPurchaseMs, t);
+      if (t >= row.lastPurchaseMs) {
+        row.lastPurchaseMs = t;
+        row.lastOrderTotal = money;
+      }
       row.orderTotalSum += money;
       row.revenueByDay[di] += money;
       row.orderCountByDay[di] += 1;
@@ -1206,11 +1334,20 @@ export class LeafLinkOrdersService {
       }
     }
 
+    qualifyingOrdersFull.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    let qualifyingOrdersTruncated = false;
+    let qualifyingOrders = qualifyingOrdersFull;
+    if (qualifyingOrdersFull.length > MAX_QUALIFYING_ORDERS_IN_PAYLOAD) {
+      qualifyingOrders = qualifyingOrdersFull.slice(0, MAX_QUALIFYING_ORDERS_IN_PAYLOAD);
+      qualifyingOrdersTruncated = true;
+    }
+
     const customers: OrdersAnalyticsCustomerDto[] = [...agg.entries()]
       .map(([key, v]) => ({
         key,
         label: v.label,
         lastPurchaseDate: new Date(v.lastPurchaseMs).toISOString(),
+        lastOrderTotal: Math.round(v.lastOrderTotal * 100) / 100,
         orderTotalInRange: Math.round(v.orderTotalSum * 100) / 100,
         sampleUnitsInRange: [...v.sampleTypeUnits.values()].reduce((a, b) => a + b, 0),
         samplesByType: [...v.sampleTypeUnits.entries()]
@@ -1228,6 +1365,8 @@ export class LeafLinkOrdersService {
       pagesScanned,
       truncated,
       customerCount: customers.length,
+      qualifyingOrdersReturned: qualifyingOrders.length,
+      qualifyingOrdersTruncated,
     });
 
     return {
@@ -1242,6 +1381,8 @@ export class LeafLinkOrdersService {
       truncated,
       days: dayList,
       customers,
+      qualifyingOrders,
+      qualifyingOrdersTruncated,
     };
   }
 
