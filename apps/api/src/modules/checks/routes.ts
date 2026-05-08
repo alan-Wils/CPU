@@ -115,7 +115,7 @@ checksRouter.patch("/:id", requireRole([...adminExportRoles]), validate({ params
     });
     res.json(updated);
 }));
-checksRouter.post("/:id/leaflink-match", requireRole([...adminExportRoles]), validate({ params: checkCaptureIdParam, body: checkLeafLinkMatchSchema }), asyncHandler(async (req, res) => {
+checksRouter.post("/:id/leaflink-match", requireRole([...managerOrAdminRoles]), validate({ params: checkCaptureIdParam, body: checkLeafLinkMatchSchema }), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     if (!companyId) {
         throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");

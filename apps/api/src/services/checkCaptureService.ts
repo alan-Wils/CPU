@@ -475,7 +475,7 @@ export class CheckCaptureService {
         const possibleMatches = candidates.filter((c) => {
             if (exactMatches.find((x) => x.orderNumber === c.orderNumber))
                 return false;
-            const openish = !normalizeText(c.paymentStatus).includes("paid");
+            const openish = normalizeText(c.paymentStatus) !== "paid";
             if (!openish)
                 return false;
             const nameOk = payeeNeedle ? normalizeText(c.customerName).includes(payeeNeedle) : false;

@@ -1475,6 +1475,10 @@ export default function AdminPage() {
     setEditCheckWrittenDate(cd ? String(cd).slice(0, 10) : "");
     setEditCheckRemoveStub(false);
     setEditCheckError("");
+    setLeafLinkMatchError("");
+    setLeafLinkMatchChoices([]);
+    setLeafLinkSelectedOrderNumber("");
+    setLeafLinkMatchModalOpen(false);
     setEditCheckFieldKey((k) => k + 1);
   }, [checkBeingEdited]);
 
@@ -3791,6 +3795,41 @@ export default function AdminPage() {
                   />
                   Remove stub image from record
                 </label>
+                <div
+                  style={{
+                    marginTop: 6,
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(56, 189, 248, 0.35)",
+                    background: "rgba(8, 47, 73, 0.35)",
+                  }}
+                >
+                  <div style={{ fontSize: 12, color: "#bae6fd", marginBottom: 8, fontWeight: 800 }}>
+                    LeafLink invoice/payment sync
+                  </div>
+                  <div style={{ fontSize: 12, color: "#cbd5e1", marginBottom: 8 }}>
+                    Status: <strong>{checkBeingEdited.paymentSyncStatus || "not_matched"}</strong>
+                    {checkBeingEdited.leaflinkOrderNumber ? ` | Order: ${checkBeingEdited.leaflinkOrderNumber}` : ""}
+                    {checkBeingEdited.leaflinkPaymentId ? ` | Payment: ${checkBeingEdited.leaflinkPaymentId}` : ""}
+                  </div>
+                  {leafLinkMatchError ? (
+                    <div style={{ color: "#fecaca", fontSize: 12, marginBottom: 8 }}>{leafLinkMatchError}</div>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void findLeafLinkInvoiceForCheck()}
+                    disabled={leafLinkMatchLoading || editCheckSaving}
+                    style={{
+                      ...smallButtonStyle,
+                      background: leafLinkMatchLoading ? "rgba(71, 85, 105, 0.5)" : "rgba(14, 116, 144, 0.45)",
+                      border: "1px solid rgba(34, 211, 238, 0.5)",
+                      color: "#cffafe",
+                      cursor: leafLinkMatchLoading ? "wait" : "pointer",
+                    }}
+                  >
+                    {leafLinkMatchLoading ? "Searching…" : "Find LeafLink Invoice"}
+                  </button>
+                </div>
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 18 }}>
                 <button
@@ -3808,6 +3847,86 @@ export default function AdminPage() {
                   {editCheckSaving ? "Saving…" : "Save changes"}
                 </button>
                 <button type="button" disabled={editCheckSaving} onClick={() => setCheckBeingEdited(null)} style={modalButtonStyle}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {leafLinkMatchModalOpen && checkBeingEdited ? (
+          <div style={{ ...modalOverlayStyle, zIndex: 1180 }}>
+            <div style={{ ...modalStyle, maxWidth: 760, width: "100%", maxHeight: "92vh", overflowY: "auto" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 12 }}>
+                <h2 style={{ ...sectionTitleStyle, marginBottom: 0 }}>Confirm LeafLink invoice match</h2>
+                <button type="button" onClick={() => setLeafLinkMatchModalOpen(false)} style={{ ...modalButtonStyle }}>
+                  Close
+                </button>
+              </div>
+              <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: 12, lineHeight: 1.5, fontSize: 13 }}>
+                Select the invoice/order to mark paid. This action updates LeafLink and does not run automatically.
+              </p>
+              {leafLinkMatchChoices.map((m) => (
+                <label
+                  key={`${m.orderNumber}-${m.leafLinkKey}`}
+                  style={{
+                    display: "block",
+                    border: "1px solid rgba(148,163,184,0.25)",
+                    borderRadius: 10,
+                    padding: 10,
+                    marginBottom: 10,
+                    background:
+                      leafLinkSelectedOrderNumber === m.orderNumber ? "rgba(30, 64, 175, 0.35)" : "rgba(15,23,42,0.45)",
+                    cursor: "pointer",
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <input
+                      type="radio"
+                      checked={leafLinkSelectedOrderNumber === m.orderNumber}
+                      onChange={() => setLeafLinkSelectedOrderNumber(m.orderNumber)}
+                    />
+                    <div style={{ fontSize: 13, color: "#e2e8f0", lineHeight: 1.45 }}>
+                      <div><strong>Order:</strong> {m.orderNumber}</div>
+                      <div><strong>Customer:</strong> {m.customerName || "—"}</div>
+                      <div>
+                        <strong>Total:</strong> {String(m.total)} | <strong>Outstanding:</strong>{" "}
+                        {m.outstandingBalance == null ? "—" : String(m.outstandingBalance)}
+                      </div>
+                      <div>
+                        <strong>Status:</strong> {m.status || "—"} | <strong>Payment:</strong> {m.paymentStatus || "—"}
+                      </div>
+                      <div>
+                        <strong>Delivery:</strong> {m.deliveryDate ? String(m.deliveryDate).slice(0, 10) : "—"} |{" "}
+                        <strong>Matched by:</strong> {m.matchedBy.join(", ")}
+                      </div>
+                      <div style={{ marginTop: 4, color: "#93c5fd" }}>
+                        <strong>Line items:</strong>{" "}
+                        {m.lineItems?.length
+                          ? m.lineItems.slice(0, 3).map((li) => `${li.productName || li.sku || "item"} x${li.quantity}`).join(" | ")
+                          : "—"}
+                      </div>
+                    </div>
+                  </div>
+                </label>
+              ))}
+              {leafLinkMatchError ? <div style={{ color: "#fecaca", marginBottom: 8 }}>{leafLinkMatchError}</div> : null}
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+                <button
+                  type="button"
+                  disabled={!leafLinkSelectedOrderNumber || leafLinkPostingPayment}
+                  onClick={() => void markLeafLinkInvoicePaidForCheck()}
+                  style={{
+                    ...smallButtonStyle,
+                    background: leafLinkPostingPayment ? "rgba(71, 85, 105, 0.5)" : "rgba(22, 163, 74, 0.55)",
+                    border: "1px solid rgba(74, 222, 128, 0.55)",
+                    color: "#dcfce7",
+                    cursor: leafLinkPostingPayment ? "wait" : "pointer",
+                  }}
+                >
+                  {leafLinkPostingPayment ? "Posting…" : "Mark Paid in LeafLink"}
+                </button>
+                <button type="button" onClick={() => setLeafLinkMatchModalOpen(false)} style={modalButtonStyle}>
                   Cancel
                 </button>
               </div>
