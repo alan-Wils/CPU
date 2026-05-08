@@ -2,8 +2,8 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import BrandLogo from "@/components/BrandLogo";
-import { acceptNexBatchInvite } from "@/lib/api";
+import TopBrandStrip from "@/components/TopBrandStrip";
+import { acceptNexBatchInvite, API_BASE_URL } from "@/lib/api";
 import { saveAuthSession } from "@/lib/auth";
 
 function AcceptNexBatchInviteInner() {
@@ -66,13 +66,24 @@ function AcceptNexBatchInviteInner() {
         color: "white",
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 28,
-        padding: 24,
+        alignItems: "stretch",
+        padding: 0,
       }}
     >
-      <BrandLogo height={120} maxWidth={560} />
+      <div style={{ padding: "16px 24px", boxSizing: "border-box" }}>
+        <TopBrandStrip apiBaseUrl={API_BASE_URL} linkNexbatchToHome={false} nexbatchHeight={44} />
+      </div>
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 28,
+          padding: 24,
+        }}
+      >
       <form
         onSubmit={submit}
         style={{
@@ -164,6 +175,7 @@ function AcceptNexBatchInviteInner() {
           {saving ? "Saving…" : "Activate account"}
         </button>
       </form>
+      </div>
     </main>
   );
 }

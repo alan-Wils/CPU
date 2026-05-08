@@ -99,6 +99,8 @@ type AppConfig = {
       displayTimezone?: string;
       /** Facility-day wall times (24h HH:mm). Subtracts from start→end cultivation labor when overlap applies. */
       laborBreaks?: { id: string; label: string; start: string; end: string }[];
+      /** When false, suppresses green realtime “peer completed a task” banners. Default true. */
+      liveTaskNotifications?: boolean;
       rewards?: {
         enabled: boolean;
         primaryWindowDays: number;
@@ -192,6 +194,7 @@ const emptyConfig: AppConfig = {
       companyWideNotes: "",
       displayTimezone: "",
       laborBreaks: [],
+      liveTaskNotifications: true,
       rewards: {
         enabled: false,
         primaryWindowDays: 30,
@@ -2239,6 +2242,32 @@ export default function ConfigPage() {
               }))
             }
           />
+        </label>
+        </div>
+
+        <div style={styles.configSubCard}>
+        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Live task banners</h3>
+        <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+          When teammates complete a logged task, other signed-in devices can show a short green notice. Disable here if your team finds it distracting (task history continues to refresh as today).
+        </p>
+        <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 10 }}>
+          <input
+            type="checkbox"
+            checked={(config.company.settings.liveTaskNotifications ?? true) !== false}
+            onChange={(e) =>
+              setConfig((prev) => ({
+                ...prev,
+                company: {
+                  ...prev.company,
+                  settings: {
+                    ...prev.company.settings,
+                    liveTaskNotifications: e.target.checked,
+                  },
+                },
+              }))
+            }
+          />
+          Show live task banners for teammate activity
         </label>
         </div>
 

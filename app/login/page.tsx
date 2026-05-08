@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 import {
+  API_BASE_URL,
   clearSelectedCompanyId,
   loginCompany,
   setSelectedCompanyId,
 } from "@/lib/api";
 import { clearAuthSession, saveAuthSession } from "@/lib/auth";
 import { loadBackendStore } from "@/lib/backendStore";
-import BrandLogo from "@/components/BrandLogo";
+import TopBrandStrip from "@/components/TopBrandStrip";
 
 const SAVED_LOGIN_KEY = "cannabis_cpu_saved_login";
 /** Persists preference for longer JWT (`remember` on `/api/auth/login`). */
@@ -170,11 +171,27 @@ export default function LoginPage() {
           "radial-gradient(circle at top, #1e293b 0, #020617 45%, #000 100%)",
         color: "white",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
+        flexDirection: "column",
+        alignItems: "stretch",
       }}
     >
+      <div
+        style={{
+          padding: "16px 24px",
+          boxSizing: "border-box",
+        }}
+      >
+        <TopBrandStrip apiBaseUrl={API_BASE_URL} linkNexbatchToHome={false} nexbatchHeight={48} />
+      </div>
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+        }}
+      >
       <form
         onSubmit={handleLogin}
         style={{
@@ -189,23 +206,7 @@ export default function LoginPage() {
         }}
       >
         <div style={{ marginBottom: 28, textAlign: "center" }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              marginBottom: 18,
-            }}
-          >
-            <BrandLogo
-              linkToHome={false}
-              height={360}
-              maxWidth={520}
-              fitWithinParent
-              loginGlow
-            />
-          </div>
-
-          <p style={{ color: "#93c5fd", margin: 0, fontSize: 20 }}>
+          <p style={{ color: "#93c5fd", margin: 0, fontSize: 22, fontWeight: 800 }}>
             Sign in to your workspace
           </p>
 
@@ -425,6 +426,7 @@ export default function LoginPage() {
           saves company code and username in this browser (not your password).
         </div>
       </form>
+      </div>
     </main>
   );
 }

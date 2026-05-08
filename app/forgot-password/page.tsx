@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import BrandLogo from "@/components/BrandLogo";
-import { requestPasswordResetEmail } from "@/lib/api";
+import TopBrandStrip from "@/components/TopBrandStrip";
+import { API_BASE_URL, requestPasswordResetEmail } from "@/lib/api";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -38,11 +38,22 @@ export default function ForgotPasswordPage() {
           "radial-gradient(circle at top, #1e293b 0, #020617 45%, #000 100%)",
         color: "white",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
+        flexDirection: "column",
+        alignItems: "stretch",
       }}
     >
+      <div style={{ padding: "16px 24px", boxSizing: "border-box" }}>
+        <TopBrandStrip apiBaseUrl={API_BASE_URL} linkNexbatchToHome={false} nexbatchHeight={44} />
+      </div>
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+        }}
+      >
       <form
         onSubmit={submit}
         style={{
@@ -56,8 +67,7 @@ export default function ForgotPasswordPage() {
         }}
       >
         <div style={{ marginBottom: 24, textAlign: "center" }}>
-          <BrandLogo linkToHome height={180} maxWidth={360} fitWithinParent />
-          <p style={{ color: "#93c5fd", margin: "16px 0 0", fontSize: 18, fontWeight: 800 }}>
+          <p style={{ color: "#93c5fd", margin: 0, fontSize: 18, fontWeight: 800 }}>
             Forgot password
           </p>
         </div>
@@ -135,6 +145,7 @@ export default function ForgotPasswordPage() {
           </Link>
         </p>
       </form>
+      </div>
     </main>
   );
 }

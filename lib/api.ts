@@ -460,6 +460,24 @@ export async function getLogs(companyId?: string) {
   });
 }
 
+/** Latest task row for realtime peer notifications (`GET /api/logs/latest-live`). */
+export type LatestTaskLogLiveDto = {
+  id: string;
+  createdAt: string;
+  actorUserId: string;
+  actorEmail: string | null;
+  area: string;
+  task: string;
+};
+
+export async function fetchLatestTaskLogLive(
+  companyId?: string,
+): Promise<LatestTaskLogLiveDto | null> {
+  return apiRequest<LatestTaskLogLiveDto | null>("/api/logs/latest-live", {
+    companyId,
+  });
+}
+
 export async function saveLog(
   log: {
     area: string;

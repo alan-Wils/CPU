@@ -1,4 +1,3 @@
-import BrandLogo from "@/components/BrandLogo";
 import HomeCurrentAccess from "@/components/HomeCurrentAccess";
 import HomeDashboardCards from "@/components/HomeDashboardCards";
 import Nav from "@/components/Nav";
@@ -56,16 +55,6 @@ export default function Home() {
                 }}
               >
                 Live Company Workspace
-              </div>
-
-              <div
-                style={{
-                  margin: 0,
-                  maxWidth: "min(720px, 100%)",
-                  width: "100%",
-                }}
-              >
-                <BrandLogo height={160} fitWithinParent linkToHome={false} />
               </div>
 
               <p

@@ -2,8 +2,8 @@
 
 import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import BrandLogo from "@/components/BrandLogo";
-import { acceptInvite, getInvitePreview } from "@/lib/api";
+import TopBrandStrip from "@/components/TopBrandStrip";
+import { acceptInvite, API_BASE_URL, getInvitePreview } from "@/lib/api";
 import { saveAuthSession } from "@/lib/auth";
 
 function AcceptInvitePageInner() {
@@ -88,13 +88,24 @@ function AcceptInvitePageInner() {
         color: "white",
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 28,
-        padding: 24,
+        alignItems: "stretch",
+        padding: 0,
       }}
     >
-      <BrandLogo height={120} maxWidth={560} />
+      <div style={{ padding: "16px 24px", boxSizing: "border-box" }}>
+        <TopBrandStrip apiBaseUrl={API_BASE_URL} linkNexbatchToHome={false} nexbatchHeight={44} />
+      </div>
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 28,
+          padding: 24,
+        }}
+      >
       <form
         onSubmit={submit}
         style={{
@@ -192,6 +203,7 @@ function AcceptInvitePageInner() {
           {saving ? "Saving..." : "Set Password"}
         </button>
       </form>
+      </div>
     </main>
   );
 }

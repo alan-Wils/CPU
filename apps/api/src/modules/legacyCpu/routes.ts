@@ -106,6 +106,7 @@ function taskRowToLegacyLog(row) {
                     : undefined);
             return {
                 id: row.id,
+                actorUserId: row.actorUserId,
                 area: parsed.area ?? "System",
                 batch: parsed.batch ?? row.referenceId ?? "",
                 task: parsed.task ?? "Log",
@@ -128,6 +129,7 @@ function taskRowToLegacyLog(row) {
     const area = stage === "EXTRACTION" ? "Extraction" : stage === "PACKAGING" ? "Packaging" : "Cultivation";
     return {
         id: row.id,
+        actorUserId: row.actorUserId,
         area,
         batch: row.referenceId ?? "",
         task: "Task",
@@ -468,6 +470,31 @@ legacyCpuRouter.get("/logs", asyncHandler(async (req, res) => {
         take: 500
     });
     res.json(rows.map(taskRowToLegacyLog));
+}));
+/** Compact latest task log for realtime “peer task” UI toasts (SPA poll). */
+legacyCpuRouter.get("/logs/latest-live", asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const row = await prisma.taskLog.findFirst({
+        where: { companyId },
+        orderBy: { createdAt: "desc" }
+    });
+    if (!row) {
+        res.json(null);
+        return;
+    }
+    const legacy = taskRowToLegacyLog(row);
+    const actor = await prisma.user.findUnique({
+        where: { id: row.actorUserId },
+        select: { email: true }
+    });
+    res.json({
+        id: row.id,
+        createdAt: row.createdAt.toISOString(),
+        actorUserId: row.actorUserId,
+        actorEmail: actor?.email ?? null,
+        area: legacy.area,
+        task: legacy.task
+    });
 }));
 /** SPA `lib/logsApi.deleteAllLogs` — must be registered before `DELETE /logs/:id`. */
 legacyCpuRouter.delete("/logs/all/clear", asyncHandler(async (req, res) => {

@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   apiRequest,
+  API_BASE_URL,
   clearSelectedCompanyId,
   deletePlatformCompany,
   fetchCompanyUsageCosts,
@@ -27,6 +28,7 @@ import {
 } from "@/lib/auth";
 
 type NexBatchInviteTier = "owner" | "nexbatch_admin" | "management" | "staff";
+import TopBrandStrip from "@/components/TopBrandStrip";
 import { loadBackendStore } from "@/lib/backendStore";
 import { formatCompanyTimestamp } from "@/lib/companyTimezone";
 
@@ -828,12 +830,32 @@ function PortalBody() {
             "radial-gradient(circle at top, #1e293b 0, #020617 45%, #000 100%)",
           color: "white",
           display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 24,
+          flexDirection: "column",
+          alignItems: "stretch",
         }}
       >
-        <p style={{ color: "#93c5fd", fontWeight: 800 }}>Loading companies…</p>
+        <div
+          style={{
+            padding: "16px 24px 0",
+            maxWidth: 720,
+            margin: "0 auto",
+            width: "100%",
+            boxSizing: "border-box",
+          }}
+        >
+          <TopBrandStrip apiBaseUrl={API_BASE_URL} linkNexbatchToHome={false} />
+        </div>
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+          }}
+        >
+          <p style={{ color: "#93c5fd", fontWeight: 800 }}>Loading companies…</p>
+        </div>
       </main>
     );
   }
@@ -846,11 +868,30 @@ function PortalBody() {
           "radial-gradient(circle at top, #1e293b 0, #020617 45%, #000 100%)",
         color: "white",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
+        flexDirection: "column",
+        alignItems: "stretch",
       }}
     >
+      <div
+        style={{
+          padding: "16px 24px 0",
+          maxWidth: canCreate ? 720 : 560,
+          margin: "0 auto",
+          width: "100%",
+          boxSizing: "border-box",
+        }}
+      >
+        <TopBrandStrip apiBaseUrl={API_BASE_URL} linkNexbatchToHome={false} />
+      </div>
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+        }}
+      >
       <div
         style={{
           width: "100%",
@@ -1765,6 +1806,7 @@ function PortalBody() {
           </section>
         )}
       </div>
+      </div>
       {usageCostsCompanyId ? (
         <UsageCostsModal
           companyId={usageCostsCompanyId}
@@ -1791,12 +1833,32 @@ export default function PortalSelectCompanyPage() {
               "radial-gradient(circle at top, #1e293b 0, #020617 45%, #000 100%)",
             color: "white",
             display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 24,
+            flexDirection: "column",
+            alignItems: "stretch",
           }}
         >
-          <p style={{ color: "#93c5fd", fontWeight: 800 }}>Loading…</p>
+          <div
+            style={{
+              padding: "16px 24px 0",
+              maxWidth: 720,
+              margin: "0 auto",
+              width: "100%",
+              boxSizing: "border-box",
+            }}
+          >
+            <TopBrandStrip apiBaseUrl={API_BASE_URL} linkNexbatchToHome={false} />
+          </div>
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 24,
+            }}
+          >
+            <p style={{ color: "#93c5fd", fontWeight: 800 }}>Loading…</p>
+          </div>
         </main>
       }
     >

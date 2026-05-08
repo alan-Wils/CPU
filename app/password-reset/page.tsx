@@ -3,8 +3,8 @@
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Suspense, useState } from "react";
-import BrandLogo from "@/components/BrandLogo";
-import { confirmPasswordReset } from "@/lib/api";
+import TopBrandStrip from "@/components/TopBrandStrip";
+import { API_BASE_URL, confirmPasswordReset } from "@/lib/api";
 
 function PasswordResetPageInner() {
   const searchParams = useSearchParams();
@@ -56,13 +56,24 @@ function PasswordResetPageInner() {
         color: "white",
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 28,
-        padding: 24,
+        alignItems: "stretch",
+        padding: 0,
       }}
     >
-      <BrandLogo height={72} maxWidth={400} />
+      <div style={{ padding: "16px 24px", boxSizing: "border-box" }}>
+        <TopBrandStrip apiBaseUrl={API_BASE_URL} linkNexbatchToHome={false} nexbatchHeight={44} />
+      </div>
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 28,
+          padding: 24,
+        }}
+      >
       <form
         onSubmit={submit}
         style={{
@@ -142,6 +153,7 @@ function PasswordResetPageInner() {
           </Link>
         </p>
       </form>
+      </div>
     </main>
   );
 }

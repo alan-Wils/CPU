@@ -9,7 +9,17 @@ import {
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { apiRequest, getMe, getSelectedCompanyId } from "@/lib/api";
+import {
+  apiRequest,
+  API_BASE_URL,
+  clearSelectedCompanyId,
+  getMe,
+  getSelectedCompanyId,
+  selectPortalCompany,
+  setSelectedCompanyId,
+} from "@/lib/api";
+import TopBrandStrip from "@/components/TopBrandStrip";
+import { extractCompanyInventoryLogoUrl } from "@/lib/companyConfigLogo";
 import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
 import {
   clearAuthSession,
@@ -23,7 +33,6 @@ import {
   type CpuCompany,
   type CpuUser,
 } from "@/lib/auth";
-import { clearSelectedCompanyId, selectPortalCompany, setSelectedCompanyId } from "@/lib/api";
 
 function canNavToPage(permission: string): boolean {
   if (!isLoggedIn())
@@ -45,6 +54,7 @@ export default function Nav() {
   const company = getAuthCompany();
   const [portalCompanies, setPortalCompaniesState] = useState<CpuCompany[]>([]);
   const [rewardsProgramEnabled, setRewardsProgramEnabled] = useState(false);
+  const [companyHeaderLogoUrl, setCompanyHeaderLogoUrl] = useState("");
   /** Bumps after `/auth/me` merges so `getAuthUser()` (e.g. rewards enrollment) re-reads. */
   const [sessionBump, setSessionBump] = useState(0);
 
@@ -52,8 +62,12 @@ export default function Nav() {
     setPortalCompaniesState(getPortalCompanies());
   }, [pathname]);
 
+  const authCompanyId = company?.id ?? "";
   useEffect(() => {
-    if (!isLoggedIn()) return;
+    if (!isLoggedIn()) {
+      setCompanyHeaderLogoUrl("");
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -62,14 +76,18 @@ export default function Nav() {
         });
         if (cancelled) return;
         setRewardsProgramEnabled(extractRewardsFromCompanyConfig(data).enabled);
+        setCompanyHeaderLogoUrl(extractCompanyInventoryLogoUrl(data));
       } catch {
-        if (!cancelled) setRewardsProgramEnabled(false);
+        if (!cancelled) {
+          setRewardsProgramEnabled(false);
+          setCompanyHeaderLogoUrl("");
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [pathname]);
+  }, [pathname, authCompanyId]);
 
   useEffect(() => {
     if (!isLoggedIn())
@@ -182,6 +200,11 @@ export default function Nav() {
 
   return (
     <div style={{ marginBottom: 20, width: "100%" }}>
+      <TopBrandStrip
+        apiBaseUrl={API_BASE_URL}
+        companyLogoConfiguredUrl={companyHeaderLogoUrl}
+        nexbatchHeight={isHomePage ? 52 : 40}
+      />
       {staffRewardsQuickLink && (
         <div
           style={{

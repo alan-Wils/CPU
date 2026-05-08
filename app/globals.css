@@ -48,3 +48,14 @@ span.login-brand-logo-glow-link img {
 nextjs-portal {
   display: none !important;
 }
+
+@keyframes cpu-task-live-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
