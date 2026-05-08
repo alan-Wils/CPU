@@ -24,20 +24,6 @@ import {
   type OrdersAnalyticsDto,
 } from "@/lib/api";
 
-function utcYmd(d: Date): string {
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function defaultRange(): { from: string; to: string } {
-  const to = new Date();
-  const from = new Date(to.getTime());
-  from.setUTCDate(from.getUTCDate() - 90);
-  return { from: utcYmd(from), to: utcYmd(to) };
-}
-
 const LINE_COLORS = [
   "#a78bfa",
   "#22d3ee",
@@ -178,9 +164,6 @@ type ScatterPoint = {
 };
 
 export default function OrdersAnalyticsPage() {
-  const initial = useMemo(() => defaultRange(), []);
-  const [from, setFrom] = useState(initial.from);
-  const [to, setTo] = useState(initial.to);
   const [loading, setLoading] = useState(true);
   /** Keeps “Apply range” clickable copy while a heavy LeafLink pagination run is in flight on the other button. */
   const [leafLinkPullActive, setLeafLinkPullActive] = useState(false);
@@ -203,7 +186,7 @@ export default function OrdersAnalyticsPage() {
     }
     try {
       const cid = getSelectedCompanyId().trim();
-      const out = await fetchOrdersAnalytics(from, to, cid || undefined, {
+      const out = await fetchOrdersAnalytics(cid || undefined, {
         refreshLeafLink,
       });
       setData(out);
@@ -220,7 +203,7 @@ export default function OrdersAnalyticsPage() {
         setLeafLinkPullActive(false);
       }
     }
-  }, [from, to]);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -392,14 +375,10 @@ export default function OrdersAnalyticsPage() {
             <div>
               <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900, color: "#f8fafc" }}>Order analytics</h1>
               <p style={{ margin: "8px 0 0", fontSize: 15, color: "#94a3b8", maxWidth: 760, lineHeight: 1.5 }}>
-                Same saved order pool as the <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Orders</strong> page: every wholesaler that has at least one saved
-                order whose order date falls in this UTC window appears here (no LeafLink CRM status filter).{' '}
-                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Pull from LeafLink → save</strong> runs a <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>
-                  full LeafLink order-history sync
-                </strong>{' '}
-                into this app (paginates until done or the API page cap). The <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>From / To</strong> dates only filter
-                what the charts show from data already saved here. Orders are included whether paid or unpaid, cancelled or not — headline totals feed revenue when
-                present (no dollar minimum).
+                Uses the <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>same saved orders</strong> as the Orders page (full catalogue up to the server scan cap
+                — no status search, no date filter). Charts bucket revenue and counts by <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>UTC calendar day</strong>{' '}
+                from your earliest to latest <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>parsed order date</strong> in that snapshot.{' '}
+                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Pull from LeafLink → save</strong> re-syncs the full LeafLink history into Postgres first.
               </p>
             </div>
             <Link href="/orders" style={btnGhost}>
@@ -409,23 +388,15 @@ export default function OrdersAnalyticsPage() {
 
           <div style={glassPanel}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end", marginBottom: 18 }}>
-              <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, fontWeight: 700, color: "#94a3b8" }}>
-                From (UTC)
-                <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={{ ...filterInputStyle, minWidth: 160 }} />
-              </label>
-              <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, fontWeight: 700, color: "#94a3b8" }}>
-                To (UTC)
-                <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={{ ...filterInputStyle, minWidth: 160 }} />
-              </label>
               <button type="button" style={btnPrimary} onClick={() => void load()} disabled={loading}>
-                {loading && !leafLinkPullActive ? "Loading…" : "Apply range"}
+                {loading && !leafLinkPullActive ? "Loading…" : "Refresh"}
               </button>
               <button
                 type="button"
                 style={btnGhost}
                 onClick={() => void load({ refreshLeafLink: true })}
                 disabled={loading}
-                title="Full catalogue: fetches all LeafLink orders-received pages until complete (or LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES). Large histories can take several minutes. Charts still use From/To to slice saved rows."
+                title="Full catalogue: fetches all LeafLink orders-received pages until complete (or LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES). Large histories can take several minutes."
               >
                 {leafLinkPullActive ? "Pulling LeafLink (full history)…" : "Pull from LeafLink → save"}
               </button>
@@ -458,41 +429,48 @@ export default function OrdersAnalyticsPage() {
                 <code style={{ fontSize: 12 }}>LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES</code> higher on the API if needed). Charts still
                 reflect orders saved so far — run{' '}
                 <strong style={{ fontWeight: 700, color: "#fcd34d" }}>Pull from LeafLink → save</strong> again after raising the cap, or{' '}
-                <strong style={{ fontWeight: 700, color: "#fcd34d" }}>Apply range</strong> without pull for a faster refresh.
+                <strong style={{ fontWeight: 700, color: "#fcd34d" }}>Refresh</strong> without pull for a faster reload.
+              </p>
+            ) : null}
+
+            {data?.chartDaysCapped ? (
+              <p style={{ fontSize: 13, color: "#fbbf24", marginBottom: 12 }}>
+                Daily chart shows the most recent slice of UTC days (very long history). Customer totals and order counts still include{' '}
+                <strong style={{ fontWeight: 700, color: "#fcd34d" }}>every</strong> saved order with a parseable date.
               </p>
             ) : null}
 
             {data?.qualifyingOrdersTruncated ? (
               <p style={{ fontSize: 13, color: "#fbbf24", marginBottom: 12 }}>
-                Per-order scatter list capped at {data.qualifyingOrders.length} newest orders — narrow the date range to include
-                all orders in the payload.
+                Per-order scatter list capped at {data.qualifyingOrders.length} rows in the API payload (oldest orders omitted from that list only).
               </p>
             ) : null}
 
             {data && data.ordersIncluded === 0 && data.configured && data.integrationEnabled && !loading ? (
               <p style={{ color: "#94a3b8" }}>
-                No saved orders overlap this UTC window yet. Broaden dates or use{' '}
-                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Pull from LeafLink → save</strong> to backfill full LeafLink history (then narrow From/To as
-                needed).
+                No saved orders with a parseable order date yet. Open the <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Orders</strong> page or run{' '}
+                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Pull from LeafLink → save</strong>.
               </p>
             ) : null}
 
             {data && data.configured && data.integrationEnabled && !loading ? (
               <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16, lineHeight: 1.55 }}>
-                Charts use saved orders in this app ({data.storedRowsInRange} stored row
-                {data.storedRowsInRange === 1 ? "" : "s"} overlapping this UTC range
+                <strong style={{ fontWeight: 700, color: "#94a3b8" }}>Reporting span (UTC):</strong>{" "}
+                {data.dateFrom && data.dateTo ? `${data.dateFrom} → ${data.dateTo}` : "—"} (from order dates in this snapshot). Loaded{" "}
+                <strong style={{ fontWeight: 700, color: "#94a3b8" }}>{data.storedRowsInRange}</strong> stored row
+                {data.storedRowsInRange === 1 ? "" : "s"}
                 {typeof data.totalStoredOrders === "number"
-                  ? ` · ${data.totalStoredOrders.toLocaleString()} total synced (same pool as the Orders page)`
+                  ? ` · ${data.totalStoredOrders.toLocaleString()} total in database (Orders page pool)`
                   : ""}
                 {data.storedSnapshotMaxUpdatedAt
                   ? ` · newest save ${fmtShortDate(data.storedSnapshotMaxUpdatedAt)}`
                   : ""}
-                ).
+                .
                 {data.storedRowsInRange === 0 ? " Open the Orders page or run Multi-page sync, or use “Pull from LeafLink → save”." : ""}{" "}
                 {data.ordersIncluded > 0
-                  ? `${data.ordersIncluded} order(s) · ${data.customers.length} customer(s) with orders in range · UTC dates`
+                  ? `${data.ordersIncluded} order(s) with parseable dates · ${data.customers.length} customer(s) · daily axes are UTC`
                   : data.storedRowsInRange > 0
-                    ? `${data.storedRowsInRange} stored row(s) overlap this range but none produced analytics rows — try widening dates or Pull from LeafLink → save.`
+                    ? "Saved rows exist but no order dates could be parsed for analytics — check LeafLink payloads or re-sync."
                     : null}
                 {data.leafLinkRefreshRan ? ` · LeafLink pull ran this request (${data.pagesScanned} page(s)).` : ""}
               </p>
@@ -725,7 +703,8 @@ export default function OrdersAnalyticsPage() {
                 <div>
                   <h3 style={{ margin: 0, fontSize: 20, fontWeight: 900, color: "#f8fafc" }}>{detailCustomer.label}</h3>
                   <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 13 }}>
-                    {detailOrders.length} order(s) from {from} to {to} UTC
+                    {detailOrders.length} order(s)
+                    {data?.dateFrom && data?.dateTo ? ` · span ${data.dateFrom} → ${data.dateTo} UTC (analytics snapshot)` : ""}
                   </p>
                 </div>
                 <button type="button" style={btnSmall} onClick={() => setDetailCustomerKey(null)}>
@@ -800,7 +779,8 @@ export default function OrdersAnalyticsPage() {
                     {sampleCustomer.label} sample items
                   </h3>
                   <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 13 }}>
-                    {sampleCustomer.sampleLineItems.length} sample line item(s) from {from} to {to} UTC
+                    {sampleCustomer.sampleLineItems.length} sample line item(s)
+                    {data?.dateFrom && data?.dateTo ? ` · span ${data.dateFrom} → ${data.dateTo} UTC` : ""}
                   </p>
                 </div>
                 <button type="button" style={btnSmall} onClick={() => setSampleCustomerKey(null)}>

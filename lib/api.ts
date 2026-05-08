@@ -1,4 +1,5 @@
 import { clearAuthSession, getAuthToken, type LoginResponse } from "./auth";
+import type { PeerNotificationItem } from "./peerNotificationsTypes";
 
 function resolveApiBaseUrl(): string {
   const raw =
@@ -460,6 +461,72 @@ export async function getLogs(companyId?: string) {
   });
 }
 
+/** Latest task row for realtime peer notifications (`GET /api/logs/latest-live`). */
+export type LatestTaskLogLiveDto = {
+  id: string;
+  createdAt: string;
+  actorUserId: string;
+  actorEmail: string | null;
+  area: string;
+  task: string;
+};
+
+export async function fetchLatestTaskLogLive(
+  companyId?: string,
+): Promise<LatestTaskLogLiveDto | null> {
+  return apiRequest<LatestTaskLogLiveDto | null>("/api/logs/latest-live", {
+    companyId,
+    omitCompanyHeader: true,
+  });
+}
+
+/** Newest stored LeafLink order for realtime toasts (`GET /api/orders/latest-live`). Requires `page.orders`. */
+export type LatestOrderLiveDto = {
+  id: string;
+  leafLinkKey: string;
+  customerName: string;
+  totalUsd: number | null;
+  createdOn: string | null;
+};
+
+export async function fetchLatestOrderLive(): Promise<LatestOrderLiveDto | null> {
+  return apiRequest<LatestOrderLiveDto | null>("/api/orders/latest-live", {
+    omitCompanyHeader: true,
+  });
+}
+
+/** Per-user per-company peer notification inbox (`PeerNotificationInbox` rows). */
+export type PeerNotifyInboxResponse = {
+  items: PeerNotificationItem[];
+  updatedAt: string | null;
+};
+
+export async function fetchPeerNotifyInbox(): Promise<PeerNotifyInboxResponse> {
+  return apiRequest<PeerNotifyInboxResponse>("/api/notifications/inbox", {
+    omitCompanyHeader: true,
+  });
+}
+
+export async function pushPeerNotifyItem(
+  item: PeerNotificationItem,
+): Promise<{ items: PeerNotificationItem[] }> {
+  return apiRequest<{ items: PeerNotificationItem[] }>("/api/notifications/inbox/push", {
+    method: "POST",
+    body: { item },
+    omitCompanyHeader: true,
+  });
+}
+
+export async function replacePeerNotifyInbox(
+  items: PeerNotificationItem[],
+): Promise<{ items: PeerNotificationItem[] }> {
+  return apiRequest<{ items: PeerNotificationItem[] }>("/api/notifications/inbox", {
+    method: "PUT",
+    body: { items },
+    omitCompanyHeader: true,
+  });
+}
+
 export async function saveLog(
   log: {
     area: string;
@@ -917,6 +984,7 @@ export type OrdersAnalyticsDto = {
   /** Total synced wholesale orders in DB for this company (Orders page pool). */
   totalStoredOrders: number;
   storedSnapshotMaxUpdatedAt: string | null;
+  chartDaysCapped: boolean;
   /** Always false — analytics uses saved orders only (no LeafLink CRM customer-status gate). */
   filteredByLeafLinkCurrentCustomerStatus: boolean;
   /** Always 0 — retained for older clients. */
@@ -924,14 +992,16 @@ export type OrdersAnalyticsDto = {
 };
 
 export async function fetchOrdersAnalytics(
-  from: string,
-  to: string,
   companyId?: string,
   opts?: { refreshLeafLink?: boolean },
 ) {
-  const q = new URLSearchParams({ from, to });
+  const q = new URLSearchParams();
   if (opts?.refreshLeafLink) q.set("refresh", "true");
-  return apiRequest<OrdersAnalyticsDto>(`/api/orders/analytics?${q.toString()}`, {
-    companyId,
-  });
+  const qs = q.toString();
+  return apiRequest<OrdersAnalyticsDto>(
+    `/api/orders/analytics${qs ? `?${qs}` : ""}`,
+    {
+      companyId,
+    },
+  );
 }
