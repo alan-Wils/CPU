@@ -374,12 +374,7 @@ export default function MarketplacePage() {
                   flexDirection: "column",
                 }}
               >
-                <div
-                  style={{
-                    height: 130,
-                    background: marketplaceProductHeroBackground(p),
-                  }}
-                />
+                <div style={marketplaceProductHeroStyle(p)} />
                 <div style={{ padding: 14, flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
                   <div style={{ fontSize: 12, color: "#a78bfa", fontWeight: 700 }}>
                     {p.company?.name || "Seller"}
@@ -596,9 +591,23 @@ function btnSecondary(): CSSProperties {
   };
 }
 
-function marketplaceProductHeroBackground(p: MarketplaceProductDto): string {
+function marketplaceProductHeroStyle(p: MarketplaceProductDto): CSSProperties {
   const raw = (p.imageUrl || "").trim() || (p.companyInventoryLogoUrl || "").trim();
-  if (!raw) return marketplaceCardPlaceholder;
+  if (!raw) {
+    return {
+      flexShrink: 0,
+      height: 100,
+      background: marketplaceCardPlaceholder,
+    };
+  }
   const url = resolveCompanyLogoImgSrc(raw, API_BASE_URL);
-  return `url(${url}) center/cover`;
+  return {
+    flexShrink: 0,
+    height: 100,
+    backgroundColor: "#020617",
+    backgroundImage: `url(${url})`,
+    backgroundSize: "contain",
+    backgroundPosition: "center",
+    backgroundRepeat: "no-repeat",
+  };
 }

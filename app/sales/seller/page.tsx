@@ -510,12 +510,7 @@ export default function SellerPlatformPage() {
                   flexDirection: "column",
                 }}
               >
-                <div
-                  style={{
-                    height: 140,
-                    background: productHeroBackground(p),
-                  }}
-                />
+                <div style={productHeroStyle(p)} />
                 <div style={{ padding: 14, flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
                   <div style={{ fontWeight: 800, fontSize: 16 }}>{p.name}</div>
                   <div style={{ fontSize: 12, color: "#94a3b8" }}>
@@ -718,15 +713,7 @@ export default function SellerPlatformPage() {
             <h3 style={{ marginTop: 0 }}>{editId ? "Edit product" : "Add product"}</h3>
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 13, color: "#94a3b8", fontWeight: 700, marginBottom: 6 }}>Product photo</div>
-              <div
-                style={{
-                  height: 120,
-                  borderRadius: 12,
-                  marginBottom: 8,
-                  border: "1px solid rgba(148,163,184,0.25)",
-                  background: modalCoverPreview(imagePick, editSnapshot, products),
-                }}
-              />
+              <div style={modalPhotoPreviewStyle(imagePick, editSnapshot, products)} />
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
@@ -845,25 +832,52 @@ function actionBtn(color: string): CSSProperties {
   };
 }
 
-function productHeroBackground(p: MarketplaceProductDto): string {
+/** Card hero: `contain` shows full logo/photo in the frame instead of zoom-cropping with `cover`. */
+function productHeroStyle(p: MarketplaceProductDto): CSSProperties {
   const raw = (p.imageUrl || "").trim() || (p.companyInventoryLogoUrl || "").trim();
-  if (!raw) return placeholderImg;
+  if (!raw) {
+    return {
+      flexShrink: 0,
+      height: 100,
+      background: placeholderImg,
+    };
+  }
   const url = resolveCompanyLogoImgSrc(raw, API_BASE_URL);
-  return `url(${url}) center/cover`;
+  return {
+    flexShrink: 0,
+    height: 100,
+    backgroundColor: "#020617",
+    backgroundImage: `url(${url})`,
+    backgroundSize: "contain",
+    backgroundPosition: "center",
+    backgroundRepeat: "no-repeat",
+  };
 }
 
-function modalCoverPreview(
+function modalPhotoPreviewStyle(
   imagePick: { url: string } | null,
   editSnapshot: MarketplaceProductDto | null,
   products: MarketplaceProductDto[],
-): string {
-  if (imagePick?.url) return `url(${imagePick.url}) center/cover`;
+): CSSProperties {
+  const frame: CSSProperties = {
+    height: 96,
+    borderRadius: 12,
+    marginBottom: 8,
+    border: "1px solid rgba(148,163,184,0.25)",
+    backgroundColor: "#020617",
+    backgroundSize: "contain",
+    backgroundPosition: "center",
+    backgroundRepeat: "no-repeat",
+  };
+  if (imagePick?.url) return { ...frame, backgroundImage: `url(${imagePick.url})` };
   if (editSnapshot) {
     const raw =
       (editSnapshot.imageUrl || "").trim() || (editSnapshot.companyInventoryLogoUrl || "").trim();
-    if (raw) return `url(${resolveCompanyLogoImgSrc(raw, API_BASE_URL)}) center/cover`;
+    if (raw)
+      return { ...frame, backgroundImage: `url(${resolveCompanyLogoImgSrc(raw, API_BASE_URL)})` };
   }
   const fallback = (products[0]?.companyInventoryLogoUrl || "").trim();
-  if (fallback) return `url(${resolveCompanyLogoImgSrc(fallback, API_BASE_URL)}) center/cover`;
-  return placeholderImg;
+  if (fallback)
+    return { ...frame, backgroundImage: `url(${resolveCompanyLogoImgSrc(fallback, API_BASE_URL)})` };
+  return { ...frame, background: placeholderImg };
 }
