@@ -1114,6 +1114,13 @@ function parseListBody(body: unknown): { list: unknown[]; totalCount: number; ne
 function buildCustomerStatusesUrlCandidates(base: string, creds: LeafLinkRuntimeCredentials, searchParams: URLSearchParams): string[] {
   const root = base.replace(/\/+$/, "");
   const urls: string[] = [];
+  /**
+   * Prefer global v2 customer-status endpoints first.
+   * Some tenants reject company-scoped variants with 401/403 even when global endpoints are valid,
+   * and this function is called in paging loops where repeated failed first-attempts can stall history loads.
+   */
+  urls.push(`${root}/v2/customer-statuses/?${searchParams.toString()}`);
+  urls.push(`${root}/v2/customer_statuses/?${searchParams.toString()}`);
   if (creds.companyId) {
     urls.push(`${root}/v2/companies/${encodeURIComponent(creds.companyId)}/customer-statuses/?${searchParams.toString()}`);
     urls.push(`${root}/v2/companies/${encodeURIComponent(creds.companyId)}/customer_statuses/?${searchParams.toString()}`);
@@ -1124,8 +1131,6 @@ function buildCustomerStatusesUrlCandidates(base: string, creds: LeafLinkRuntime
     urls.push(`${root}/v2/customer-statuses/?${q.toString()}`);
     urls.push(`${root}/v2/customer_statuses/?${q.toString()}`);
   }
-  urls.push(`${root}/v2/customer-statuses/?${searchParams.toString()}`);
-  urls.push(`${root}/v2/customer_statuses/?${searchParams.toString()}`);
   const seen = new Set<string>();
   return urls.filter((u) => {
     if (!u || seen.has(u)) return false;
@@ -1137,6 +1142,11 @@ function buildCustomerStatusesUrlCandidates(base: string, creds: LeafLinkRuntime
 function buildCustomersUrlCandidates(base: string, creds: LeafLinkRuntimeCredentials, searchParams: URLSearchParams): string[] {
   const root = base.replace(/\/+$/, "");
   const urls: string[] = [];
+  /**
+   * Same ordering rationale as customer-status candidates: use broad endpoint first to avoid
+   * repeated auth failures when company-scoped customer routes are unavailable for a valid API key.
+   */
+  urls.push(`${root}/v2/customers/?${searchParams.toString()}`);
   if (creds.companyId) {
     urls.push(`${root}/v2/companies/${encodeURIComponent(creds.companyId)}/customers/?${searchParams.toString()}`);
   }
@@ -1145,7 +1155,6 @@ function buildCustomersUrlCandidates(base: string, creds: LeafLinkRuntimeCredent
     q.set("company_slug", creds.companySlug);
     urls.push(`${root}/v2/customers/?${q.toString()}`);
   }
-  urls.push(`${root}/v2/customers/?${searchParams.toString()}`);
   const seen = new Set<string>();
   return urls.filter((u) => {
     if (!u || seen.has(u)) return false;
