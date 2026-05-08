@@ -16,6 +16,15 @@ function cleanString(v: unknown): string {
   return String(v ?? "").trim();
 }
 
+function looksLikeUuidOrHash(v: string): boolean {
+  const s = cleanString(v).toLowerCase();
+  if (!s) return false;
+  if (/^[0-9a-f]{8}$/.test(s)) return true;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(s))
+    return true;
+  return false;
+}
+
 function toNumber(v: unknown): number {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -191,16 +200,33 @@ function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
     : {};
   /** API lookup key (stable internal id when present). */
   const lookupId = cleanString(row.id || row.order_id || row.number || row.order_number);
+  const nestedOrder = row.order != null && typeof row.order === "object" && !Array.isArray(row.order)
+    ? asRecord(row.order)
+    : {};
   /** Human-facing order number shown in LeafLink UI where available. */
-  const displayOrderNumber = cleanString(
-    row.number
-    || row.order_number
-    || row.order_seller_number
-    || row.order_short_number
-    || row.short_id
-    || row.po_number
-    || lookupId,
-  );
+  const displayCandidates = [
+    row.number,
+    row.order_number,
+    row.order_seller_number,
+    row.seller_order_number,
+    row.display_number,
+    row.human_readable_id,
+    row.reference_number,
+    row.order_reference,
+    row.external_order_number,
+    row.external_id,
+    row.code,
+    row.name,
+    nestedOrder.number,
+    nestedOrder.order_number,
+    nestedOrder.display_number,
+    nestedOrder.human_readable_id,
+    row.order_short_number,
+    row.short_id,
+    row.po_number,
+  ].map(cleanString).filter(Boolean);
+  const displayPreferred = displayCandidates.find((c) => !looksLikeUuidOrHash(c)) || displayCandidates[0];
+  const displayOrderNumber = cleanString(displayPreferred || lookupId);
 
   let salesRep = "";
   const sr = row.sales_reps;

@@ -160,6 +160,29 @@ const stickyHeaderStyle: React.CSSProperties = {
   gap: 12,
 };
 
+function statusBadgeStyle(colors: { bg: string; border: string; color: string }): React.CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    whiteSpace: "nowrap",
+    lineHeight: 1,
+    height: 22,
+    padding: "0 10px",
+    borderRadius: 9999,
+    boxSizing: "border-box",
+    flex: "0 0 auto",
+    alignSelf: "flex-start",
+    fontSize: 11,
+    fontWeight: 800,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    border: `1px solid ${colors.border}`,
+    background: colors.bg,
+    color: colors.color,
+  };
+}
+
 function OrderCard({
   order,
   onOpen,
@@ -190,19 +213,7 @@ function OrderCard({
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
         <div style={{ fontWeight: 900, fontSize: 17, color: "#f8fafc" }}>#{order.orderNumber}</div>
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 800,
-            textTransform: "uppercase",
-            letterSpacing: 0.4,
-            padding: "4px 10px",
-            borderRadius: 999,
-            border: `1px solid ${st.border}`,
-            background: st.bg,
-            color: st.color,
-          }}
-        >
+        <span style={statusBadgeStyle(st)}>
           {order.statusNormalized}
         </span>
       </div>
@@ -307,18 +318,7 @@ function OrderDetailBody({
   return (
     <div style={{ padding: "10px 20px 22px", overflowY: "auto", flex: 1 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 800,
-            textTransform: "uppercase",
-            padding: "4px 10px",
-            borderRadius: 999,
-            border: `1px solid ${st.border}`,
-            background: st.bg,
-            color: st.color,
-          }}
-        >
+        <span style={statusBadgeStyle(st)}>
           {order.statusNormalized}
         </span>
         <span style={{ fontSize: 13, color: "#94a3b8" }}>
