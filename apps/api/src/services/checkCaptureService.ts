@@ -13,6 +13,8 @@ import {
     uploadsUseS3
 } from "../lib/uploadStorage.js";
 import { logDatabaseActivity, recordUsageEventSafe } from "./usageEventRecord.js";
+import { AuditService } from "./auditService.js";
+import { LeafLinkOrdersService, type LeafLinkPaymentMatchCandidateDto } from "./leafLinkOrdersService.js";
 
 function extForMime(mimeType) {
     if (mimeType === "image/png")
@@ -183,7 +185,21 @@ function csvEscape(value) {
         return `"${s.replace(/"/g, '""')}"`;
     return s;
 }
+const AMOUNT_TOLERANCE = 0.01;
+function normalizeText(v) {
+    return String(v || "").trim().toLowerCase();
+}
+function sameMoney(a, b) {
+    return Math.abs(Number(a || 0) - Number(b || 0)) <= AMOUNT_TOLERANCE;
+}
+export type CheckLeafLinkMatchResult = {
+    checkId: string;
+    exactMatches: LeafLinkPaymentMatchCandidateDto[];
+    possibleMatches: LeafLinkPaymentMatchCandidateDto[];
+};
 export class CheckCaptureService {
+    leafLinkOrdersService = new LeafLinkOrdersService();
+    auditService = new AuditService();
     async uploadImage(input) {
         const base64 = String(input.dataBase64 || "").replace(/^data:[^;]+;base64,/, "");
         const buffer = Buffer.from(base64, "base64");
@@ -300,7 +316,8 @@ export class CheckCaptureService {
                 invoiceNumber: input.invoiceNumber,
                 imageUrl: input.imageUrl,
                 stubImageUrl: input.stubImageUrl,
-                rawOcrJson: input.rawOcrJson ? JSON.stringify(input.rawOcrJson) : undefined
+                rawOcrJson: input.rawOcrJson ? JSON.stringify(input.rawOcrJson) : undefined,
+                paymentSyncStatus: "not_matched"
             }
         });
         void logDatabaseActivity({
@@ -331,7 +348,15 @@ export class CheckCaptureService {
                 accountNumber: true,
                 bankName: true,
                 memo: true,
-                invoiceNumber: true
+                invoiceNumber: true,
+                leaflinkOrderId: true,
+                leaflinkOrderNumber: true,
+                leaflinkPaymentId: true,
+                leaflinkPaymentStatus: true,
+                leaflinkMatchedAt: true,
+                leaflinkPaidAt: true,
+                paymentSyncStatus: true,
+                paymentSyncError: true
             }
         });
         if (!row) {
@@ -393,6 +418,14 @@ export class CheckCaptureService {
                 invoiceNumber: true,
                 imageUrl: true,
                 stubImageUrl: true,
+                leaflinkOrderId: true,
+                leaflinkOrderNumber: true,
+                leaflinkPaymentId: true,
+                leaflinkPaymentStatus: true,
+                leaflinkMatchedAt: true,
+                leaflinkPaidAt: true,
+                paymentSyncStatus: true,
+                paymentSyncError: true,
                 createdAt: true,
                 updatedAt: true
             }
@@ -473,6 +506,14 @@ export class CheckCaptureService {
                 invoiceNumber: true,
                 imageUrl: true,
                 stubImageUrl: true,
+                leaflinkOrderId: true,
+                leaflinkOrderNumber: true,
+                leaflinkPaymentId: true,
+                leaflinkPaymentStatus: true,
+                leaflinkMatchedAt: true,
+                leaflinkPaidAt: true,
+                paymentSyncStatus: true,
+                paymentSyncError: true,
                 createdAt: true,
                 updatedAt: true
             }

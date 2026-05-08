@@ -598,11 +598,22 @@ model CheckCapture {
   imageUrl        String
   stubImageUrl    String?
   rawOcrJson      String?
+  leaflinkOrderId String?
+  leaflinkOrderNumber String?
+  leaflinkPaymentId String?
+  leaflinkPaymentStatus String?
+  leaflinkMatchedAt DateTime?
+  leaflinkPaidAt DateTime?
+  leaflinkPaymentResponseJson String?
+  /// not_matched | matched | payment_posted | failed
+  paymentSyncStatus String @default("not_matched")
+  paymentSyncError String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   @@index([companyId, createdAt])
   @@index([createdByUserId, createdAt])
+  @@index([companyId, paymentSyncStatus, createdAt])
 }
 
 model CashLogEntry {

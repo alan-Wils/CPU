@@ -525,9 +525,12 @@ export default function OrdersPage() {
   }, [debouncedSearch, status, sort]);
 
   const loadList = useCallback(
-    async (opts?: { refresh?: boolean }) => {
-      setLoading(true);
-      setError("");
+    async (opts?: { refresh?: boolean; silent?: boolean }) => {
+      const silent = Boolean(opts?.silent);
+      if (!silent) {
+        setLoading(true);
+        setError("");
+      }
       try {
         const cid = getSelectedCompanyId().trim();
         const out = await fetchLeafLinkOrdersList({
@@ -542,10 +545,10 @@ export default function OrdersPage() {
         setListPayload(out);
       }
       catch (e: unknown) {
-        setError(e instanceof Error ? e.message : "Could not load orders.");
+        if (!silent) setError(e instanceof Error ? e.message : "Could not load orders.");
       }
       finally {
-        setLoading(false);
+        if (!silent) setLoading(false);
       }
     },
     [page, pageSize, status, sort, debouncedSearch],
@@ -577,36 +580,52 @@ export default function OrdersPage() {
 
   useEffect(() => {
     let cancelled = false;
-    let inFlight = false;
+    let lightInFlight = false;
+    let fullInFlight = false;
 
-    const runAutoSync = async () => {
-      if (cancelled || inFlight) return;
-      inFlight = true;
+    const runLightPoll = async () => {
+      if (cancelled || lightInFlight || document.hidden) return;
+      lightInFlight = true;
+      try {
+        await loadList({ refresh: false, silent: true });
+      }
+      catch {
+        // Keep polling alive even if one attempt fails.
+      }
+      finally {
+        lightInFlight = false;
+      }
+    };
+
+    const runFullSync = async () => {
+      if (cancelled || fullInFlight || document.hidden) return;
+      fullInFlight = true;
       setSyncing(true);
       try {
         const cid = getSelectedCompanyId().trim();
         await syncLeafLinkOrders(cid || undefined);
-        if (!cancelled) {
-          await loadList({ refresh: true });
-        }
+        if (!cancelled) await loadList({ refresh: true, silent: true });
       }
       catch {
-        // Keep polling alive even if a single sync attempt fails.
+        // Keep polling alive even if one sync fails.
       }
       finally {
-        inFlight = false;
+        fullInFlight = false;
         if (!cancelled) setSyncing(false);
       }
     };
 
-    void runAutoSync();
-    const timer = window.setInterval(() => {
-      void runAutoSync();
+    const lightTimer = window.setInterval(() => {
+      void runLightPoll();
     }, 15000);
+    const fullTimer = window.setInterval(() => {
+      void runFullSync();
+    }, 120000);
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearInterval(lightTimer);
+      window.clearInterval(fullTimer);
     };
   }, [loadList]);
 

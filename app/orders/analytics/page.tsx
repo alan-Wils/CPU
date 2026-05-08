@@ -190,55 +190,73 @@ export default function OrdersAnalyticsPage() {
   const [detailCustomerKey, setDetailCustomerKey] = useState<string | null>(null);
   const [sampleCustomerKey, setSampleCustomerKey] = useState<string | null>(null);
 
-  const load = useCallback(async (refreshLeafLink?: boolean) => {
-    setLoading(true);
-    setError("");
+  const load = useCallback(async (opts?: { refreshLeafLink?: boolean; silent?: boolean }) => {
+    const refreshLeafLink = Boolean(opts?.refreshLeafLink);
+    const silent = Boolean(opts?.silent);
+    if (!silent) {
+      setLoading(true);
+      setError("");
+    }
     try {
       const cid = getSelectedCompanyId().trim();
       const out = await fetchOrdersAnalytics(from, to, cid || undefined, {
-        refreshLeafLink: Boolean(refreshLeafLink),
+        refreshLeafLink,
       });
       setData(out);
     }
     catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Could not load analytics.");
-      setData(null);
+      if (!silent) {
+        setError(e instanceof Error ? e.message : "Could not load analytics.");
+        setData(null);
+      }
     }
     finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [from, to]);
 
   useEffect(() => {
-    void load(false);
+    void load();
   }, [load]);
 
   useEffect(() => {
     let cancelled = false;
-    let inFlight = false;
+    let lightInFlight = false;
+    let fullInFlight = false;
 
-    const runAutoSync = async () => {
-      if (cancelled || inFlight) return;
-      inFlight = true;
+    const runLightPoll = async () => {
+      if (cancelled || lightInFlight || document.hidden) return;
+      lightInFlight = true;
       try {
-        await load(true);
-      }
-      catch {
-        // Keep polling alive even if one refresh fails.
+        await load({ refreshLeafLink: false, silent: true });
       }
       finally {
-        inFlight = false;
+        lightInFlight = false;
       }
     };
 
-    void runAutoSync();
-    const timer = window.setInterval(() => {
-      void runAutoSync();
+    const runFullPull = async () => {
+      if (cancelled || fullInFlight || document.hidden) return;
+      fullInFlight = true;
+      try {
+        await load({ refreshLeafLink: true, silent: true });
+      }
+      finally {
+        fullInFlight = false;
+      }
+    };
+
+    const lightTimer = window.setInterval(() => {
+      void runLightPoll();
     }, 15000);
+    const fullTimer = window.setInterval(() => {
+      void runFullPull();
+    }, 120000);
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearInterval(lightTimer);
+      window.clearInterval(fullTimer);
     };
   }, [load]);
 
@@ -405,13 +423,13 @@ export default function OrdersAnalyticsPage() {
                 To (UTC)
                 <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={{ ...filterInputStyle, minWidth: 160 }} />
               </label>
-              <button type="button" style={btnPrimary} onClick={() => void load(false)} disabled={loading}>
+              <button type="button" style={btnPrimary} onClick={() => void load()} disabled={loading}>
                 {loading ? "Loading…" : "Apply range"}
               </button>
               <button
                 type="button"
                 style={btnGhost}
-                onClick={() => void load(true)}
+                onClick={() => void load({ refreshLeafLink: true })}
                 disabled={loading}
                 title="Paginate LeafLink now, merge into saved orders, then chart from the database"
               >

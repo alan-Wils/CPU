@@ -655,7 +655,7 @@ function normalizeStatusLabel(raw: string): string {
   return map[s] || (raw ? raw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Unknown");
 }
 
-function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
+export function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
   const row = asRecord(raw);
   const customer = row.customer != null && typeof row.customer === "object" && !Array.isArray(row.customer)
     ? asRecord(row.customer)
@@ -778,6 +778,21 @@ export function orderToCardDto(o: LeafLinkOrderSummaryDto): LeafLinkOrderCardDto
   const { lineItems, ...rest } = o;
   return { ...rest, itemCount: lineItems.length };
 }
+
+export type LeafLinkPaymentMatchCandidateDto = {
+  leafLinkKey: string;
+  orderId: string;
+  orderNumber: string;
+  customerName: string;
+  total: number;
+  outstandingBalance: number | null;
+  status: string;
+  paymentStatus: string;
+  deliveryDate: string | null;
+  lineItems: LeafLinkOrderLineItemDto[];
+  score: number;
+  matchedBy: string[];
+};
 
 /** Detail upserts wrap our normalized summary so sample flags & enriched lines stay intact. */
 const CPU_DETAIL_V = 1 as const;
@@ -982,6 +997,63 @@ async function leafLinkAuthedGet(
   }
   if (lastErr instanceof AppError) throw lastErr;
   throw lastErr instanceof Error ? lastErr : new AppError("LeafLink orders request failed.", 502, "LEAFLINK_ORDERS_FAILED");
+}
+
+async function leafLinkAuthedRequest(
+  urls: string[],
+  creds: LeafLinkRuntimeCredentials,
+  timeoutMs: number,
+  method: "POST" | "PATCH",
+  body: Record<string, unknown>,
+): Promise<{ url: string; authMode: string; body: unknown }> {
+  const basicAuth = creds.username ? Buffer.from(`${creds.username}:${creds.apiKey}`, "utf8").toString("base64") : "";
+  const authCandidates = [
+    `App ${creds.apiKey}`,
+    `Token ${creds.apiKey}`,
+    `Bearer ${creds.apiKey}`,
+    ...(basicAuth ? [`Basic ${basicAuth}`] : []),
+  ];
+  let lastErr: unknown;
+  for (const url of urls) {
+    if (!url) continue;
+    for (const authValue of authCandidates) {
+      const authMode = authValue.startsWith("App ")
+        ? "App"
+        : authValue.startsWith("Token ")
+          ? "Token"
+          : authValue.startsWith("Bearer ")
+            ? "Bearer"
+            : "Basic";
+      const init: RequestInit = {
+        method,
+        headers: {
+          ...leafLinkHeaders(creds, authValue),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      };
+      try {
+        logInfo("[LEAFLINK] orders_write_request", { url: url.slice(0, 200), authMode, method });
+        const json = await fetchJsonWithRetry(url, init, timeoutMs);
+        return { url, authMode, body: json };
+      } catch (err) {
+        lastErr = err;
+        const code = err instanceof AppError ? err.code : "";
+        if (
+          code === "LEAFLINK_INVALID_CREDENTIALS"
+          || code === "LEAFLINK_REQUEST_FAILED"
+          || code === "LEAFLINK_HTML_ERROR"
+          || code === "LEAFLINK_NON_JSON_RESPONSE"
+          || code === "LEAFLINK_TEMPORARY"
+        ) {
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+  if (lastErr instanceof AppError) throw lastErr;
+  throw lastErr instanceof Error ? lastErr : new AppError("LeafLink request failed.", 502, "LEAFLINK_ORDERS_FAILED");
 }
 
 function buildOrdersListUrlCandidates(
@@ -1632,7 +1704,7 @@ export class LeafLinkOrdersService {
       leafLinkRefreshRan: Boolean(input.refresh),
       storedRowsInRange: 0,
       storedSnapshotMaxUpdatedAt: null,
-      filteredByLeafLinkCurrentCustomerStatus: true,
+      filteredByLeafLinkCurrentCustomerStatus: false,
       leafLinkCurrentCustomerCount: 0,
     });
 
@@ -1670,10 +1742,24 @@ export class LeafLinkOrdersService {
     }
 
     await this.assertOrdersCapableOrThrow(creds);
-    const currentCustomerIds = await this.loadCurrentCustomerIdsFromLeafLink(companyId, creds, {
-      refresh: Boolean(input.refresh),
-      actorUserId: "system",
-    });
+    let currentCustomerIds = new Set<string>();
+    let filteredByLeafLinkCurrentCustomerStatus = false;
+    let leafLinkCurrentCustomerCount = 0;
+    try {
+      currentCustomerIds = await this.loadCurrentCustomerIdsFromLeafLink(companyId, creds, {
+        refresh: Boolean(input.refresh),
+        actorUserId: "system",
+      });
+      leafLinkCurrentCustomerCount = currentCustomerIds.size;
+      filteredByLeafLinkCurrentCustomerStatus = true;
+    }
+    catch (err) {
+      logWarn("[LEAFLINK] orders_analytics_current_customer_filter_unavailable", {
+        companyId,
+        refresh: Boolean(input.refresh),
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     let pagesScanned = 0;
     let truncated = false;
@@ -1740,7 +1826,8 @@ export class LeafLinkOrdersService {
 
     for (const { raw, summary: o } of collected) {
       const buyerId = cleanString(o.buyerCustomerId);
-      if (!buyerId || !currentCustomerIds.has(buyerId)) continue;
+      if (!buyerId) continue;
+      if (filteredByLeafLinkCurrentCustomerStatus && !currentCustomerIds.has(buyerId)) continue;
       if (isCancelledOrder(o)) continue;
       const t = Date.parse(o.createdAt);
       if (!Number.isFinite(t)) continue;
@@ -1843,7 +1930,8 @@ export class LeafLinkOrdersService {
       qualifyingOrdersTruncated,
       storedRowsInRange: storedDb.length,
       refresh: Boolean(input.refresh),
-      leafLinkCurrentCustomerCount: currentCustomerIds.size,
+      leafLinkCurrentCustomerCount,
+      filteredByLeafLinkCurrentCustomerStatus,
     });
 
     return {
@@ -1864,8 +1952,8 @@ export class LeafLinkOrdersService {
       leafLinkRefreshRan: Boolean(input.refresh),
       storedRowsInRange: storedDb.length,
       storedSnapshotMaxUpdatedAt,
-      filteredByLeafLinkCurrentCustomerStatus: true,
-      leafLinkCurrentCustomerCount: currentCustomerIds.size,
+      filteredByLeafLinkCurrentCustomerStatus,
+      leafLinkCurrentCustomerCount,
     };
   }
 
@@ -1910,6 +1998,122 @@ export class LeafLinkOrdersService {
       ordersSeen,
       lastFetchedAt: new Date().toISOString(),
     };
+  }
+
+  async findOpenPaymentCandidatesForCheck(
+    companyId: string,
+    input: { invoiceNumber?: string; payerName?: string; amount?: number },
+  ): Promise<LeafLinkPaymentMatchCandidateDto[]> {
+    const invoiceNeedle = cleanString(input.invoiceNumber).toLowerCase();
+    const payerNeedle = cleanString(input.payerName).toLowerCase();
+    const amountNeedle = typeof input.amount === "number" && Number.isFinite(input.amount) ? input.amount : null;
+    const rows = await findRecentLeafLinkStoredOrdersForCompany(companyId, 4000);
+    const out: LeafLinkPaymentMatchCandidateDto[] = [];
+    for (const row of rows) {
+      const pair = collectedPairFromStoredPayload(row.payload);
+      if (!pair) continue;
+      const summary = pair.summary;
+      const statusNorm = cleanString(summary.statusNormalized || summary.status).toLowerCase();
+      if (statusNorm.includes("cancel")) continue;
+      const paid = summary.paid || cleanString(summary.paymentStatus).toLowerCase() === "paid";
+      if (paid) continue;
+      const orderNumber = cleanString(summary.orderNumber || summary.shortNumber || summary.id);
+      const customerName = cleanString(summary.customerName);
+      const total = typeof summary.total === "number" ? summary.total : (typeof row.totalUsd === "number" ? row.totalUsd : orderTotalMoney(summary));
+      const outstandingBalance = paid ? 0 : total;
+      const matchedBy: string[] = [];
+      let score = 0;
+      if (invoiceNeedle) {
+        const ordLower = orderNumber.toLowerCase();
+        if (ordLower === invoiceNeedle) {
+          matchedBy.push("invoice_exact");
+          score += 100;
+        } else if (ordLower.includes(invoiceNeedle) || invoiceNeedle.includes(ordLower)) {
+          matchedBy.push("invoice_partial");
+          score += 40;
+        }
+      }
+      if (!matchedBy.includes("invoice_exact") && payerNeedle && customerName.toLowerCase().includes(payerNeedle)) {
+        matchedBy.push("payee_name");
+        score += 20;
+      }
+      if (amountNeedle != null) {
+        const diffTotal = Math.abs(total - amountNeedle);
+        const diffOutstanding = outstandingBalance == null ? Number.POSITIVE_INFINITY : Math.abs(outstandingBalance - amountNeedle);
+        if (diffTotal <= 0.01 || diffOutstanding <= 0.01) {
+          matchedBy.push("amount");
+          score += 25;
+        }
+      }
+      if (matchedBy.length === 0) continue;
+      out.push({
+        leafLinkKey: row.leafLinkKey,
+        orderId: summary.id,
+        orderNumber,
+        customerName,
+        total,
+        outstandingBalance,
+        status: summary.statusNormalized || summary.status,
+        paymentStatus: summary.paymentStatus,
+        deliveryDate: summary.deliveryDate,
+        lineItems: summary.lineItems,
+        score,
+        matchedBy,
+      });
+    }
+    return out.sort((a, b) => b.score - a.score || a.orderNumber.localeCompare(b.orderNumber));
+  }
+
+  async postCheckPayment(
+    companyId: string,
+    input: { orderNumber: string; amount: number; paymentDateIso: string; note: string; reference?: string | null },
+  ): Promise<{ paymentId: string; paymentStatus: string; rawResponse: unknown }> {
+    const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    if (!creds.integrationEnabled || !creds.apiKey || (!creds.companyId && !creds.companySlug)) {
+      throw new AppError("LeafLink is not configured.", 400, "LEAFLINK_MISSING_CONFIG");
+    }
+    await this.assertOrdersCapableOrThrow(creds);
+    const base = creds.baseUrl.replace(/\/+$/, "");
+    const orderNumEsc = encodeURIComponent(cleanString(input.orderNumber));
+    const urls: string[] = [];
+    if (creds.companyId) {
+      urls.push(`${base}/v2/companies/${encodeURIComponent(creds.companyId)}/orders-received/${orderNumEsc}/payments/`);
+      urls.push(`${base}/v2/companies/${encodeURIComponent(creds.companyId)}/order-payments/`);
+    }
+    urls.push(`${base}/v2/orders-received/${orderNumEsc}/payments/`);
+    urls.push(`${base}/v2/order-payments/`);
+    const payloads: Record<string, unknown>[] = [
+      {
+        order_number: input.orderNumber,
+        amount: input.amount,
+        payment_method: "Check",
+        payment_date: input.paymentDateIso,
+        reference: cleanString(input.reference),
+        notes: input.note,
+      },
+      {
+        order: input.orderNumber,
+        amount: input.amount,
+        payment_method: "Check",
+        date: input.paymentDateIso,
+        reference: cleanString(input.reference),
+        notes: input.note,
+      },
+    ];
+    let lastErr: unknown;
+    for (const payload of payloads) {
+      try {
+        const { body } = await leafLinkAuthedRequest(urls, creds, 25_000, "POST", payload);
+        const rec = asRecord(body);
+        const paymentId = cleanString(rec.id || rec.payment_id || rec.uuid || rec.reference || rec.order_payment_id) || `leaflink-${Date.now()}`;
+        const paymentStatus = cleanString(rec.status || rec.payment_status || rec.state) || "posted";
+        return { paymentId, paymentStatus, rawResponse: body };
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (lastErr instanceof AppError) throw lastErr;
+    throw new AppError("LeafLink payment post failed.", 502, "LEAFLINK_PAYMENT_POST_FAILED");
   }
 }
 
