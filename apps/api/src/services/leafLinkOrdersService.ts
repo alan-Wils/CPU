@@ -9,6 +9,7 @@ import {
   pickListSource,
   LeafLinkService,
   type LeafLinkCredentialSource,
+  type LeafLinkResolvedCredentials,
   type LeafLinkRuntimeCredentials,
 } from "./leaflinkService.js";
 import {
@@ -372,18 +373,32 @@ function fieldIsoDate(v: unknown): string {
  */
 function leafLinkOrderCreatedIso(row: Record<string, unknown>): string {
   const nest = nestedOrderRecord(row);
+  /** Cover list vs detail quirks so `LeafLinkStoredOrder.createdOn` is rarely null (range queries + analytics). */
   const keys: unknown[] = [
     row.created_on,
     row.created_at,
     row.created,
     row.date_created,
     row.order_date,
+    row.order_date_datetime,
+    row.date_ordered,
+    row.timestamp,
+    row.placed_at,
+    row.order_placed_date,
     row.submitted_on,
     row.submitted_at,
+    row.submitted_date,
+    row.inserted_at,
     nest.created_on,
     nest.created_at,
     nest.created,
     nest.order_date,
+    nest.order_date_datetime,
+    nest.date_ordered,
+    nest.submitted_on,
+    nest.submitted_at,
+    nest.timestamp,
+    nest.placed_at,
   ];
   for (const k of keys) {
     const iso = fieldIsoDate(k);
@@ -1004,8 +1019,8 @@ function toUpsertInputFromLeafLinkPayload(
 ): LeafLinkStoredOrderUpsertInput | null {
   const leafLinkKey = cleanString(summary.id) || cleanString(summary.orderNumber);
   if (!leafLinkKey) return null;
-  const createdIso = cleanString(summary.createdAt) || leafLinkOrderCreatedIso(raw);
-  const cp = Date.parse(createdIso || "");
+  const createdIsoText = cleanString(summary.createdAt) || leafLinkOrderCreatedIso(raw);
+  const cp = Date.parse(createdIsoText || "");
   const createdOn = Number.isFinite(cp) ? new Date(cp) : null;
   const money = effectiveOrderTotalUsd(raw, summary);
   return {
@@ -1693,6 +1708,55 @@ export class LeafLinkOrdersService {
   }
 
   /**
+   * One HTTP page of order summaries (`fields_add=line_items`) using already-resolved credentials.
+   * Avoids resolving credentials/logging on every page (full sync loops).
+   */
+  private async fetchOrdersSummariesPageWithCreds(
+    creds: LeafLinkResolvedCredentials,
+    input: {
+      page: number;
+      pageSize: number;
+      ordering?: string;
+      /** LeafLink `created_on__gte` (ISO 8601). */
+      createdOnGteIso?: string;
+      /** LeafLink `created_on__lte` (ISO 8601). */
+      createdOnLteIso?: string;
+    },
+  ): Promise<{
+    rows: { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }[];
+    hasNext: boolean;
+  }> {
+    if (!creds.integrationEnabled || !baseOutConfiguredForOrders(creds))
+      return { rows: [], hasNext: false };
+
+    const base = creds.baseUrl.replace(/\/+$/, "");
+    const ordering = cleanString(input.ordering) || "-created_on";
+    const searchParams = new URLSearchParams();
+    searchParams.set("page", String(Math.max(1, input.page)));
+    searchParams.set("page_size", String(Math.min(500, Math.max(1, input.pageSize))));
+    searchParams.set("ordering", ordering);
+    const gte = cleanString(input.createdOnGteIso);
+    const lte = cleanString(input.createdOnLteIso);
+    if (gte)
+      searchParams.set("created_on__gte", gte);
+    if (lte)
+      searchParams.set("created_on__lte", lte);
+    const urls = buildOrdersListUrlCandidates(base, creds, searchParams);
+    const { body } = await leafLinkAuthedGet(urls, creds, creds.source, 20_000);
+    const { list, totalCount: apiTotal, next } = parseListBody(body);
+    const rows = list.map((row) => {
+      const raw = typeof row === "object" && row !== null && !Array.isArray(row) ? asRecord(row) : {};
+      return { raw, summary: normalizeOrder(row) };
+    });
+    const pageNum = Math.max(1, input.page);
+    const ps = Math.min(500, Math.max(1, input.pageSize));
+    const nextUrl = typeof next === "string" ? next.trim() : "";
+    const hasNextBool =
+      Boolean(nextUrl) || (apiTotal ? pageNum * ps < apiTotal : false);
+    return { rows, hasNext: hasNextBool };
+  }
+
+  /**
    * One page of order summaries including embedded line items (`fields_add=line_items` on list API).
    * Does not use the short list cache (callers control freshness).
    */
@@ -1722,41 +1786,19 @@ export class LeafLinkOrdersService {
       return { rows: [], hasNext: false };
 
     await this.assertOrdersCapableOrThrow(creds);
-    const base = creds.baseUrl.replace(/\/+$/, "");
-    const ordering = cleanString(input.ordering) || "-created_on";
-    const searchParams = new URLSearchParams();
-    searchParams.set("page", String(Math.max(1, input.page)));
-    searchParams.set("page_size", String(Math.min(500, Math.max(1, input.pageSize))));
-    searchParams.set("ordering", ordering);
-    const gte = cleanString(input.createdOnGteIso);
-    const lte = cleanString(input.createdOnLteIso);
-    if (gte)
-      searchParams.set("created_on__gte", gte);
-    if (lte)
-      searchParams.set("created_on__lte", lte);
-    const urls = buildOrdersListUrlCandidates(base, creds, searchParams);
-    const { body } = await leafLinkAuthedGet(urls, creds, creds.source, 20_000);
-    const { list, totalCount: apiTotal, next } = parseListBody(body);
-    const rows = list.map((row) => {
-      const raw = typeof row === "object" && row !== null && !Array.isArray(row) ? asRecord(row) : {};
-      return { raw, summary: normalizeOrder(row) };
-    });
-    const pageNum = Math.max(1, input.page);
-    const ps = Math.min(500, Math.max(1, input.pageSize));
-    const nextUrl = typeof next === "string" ? next.trim() : "";
-    const hasNextBool =
-      Boolean(nextUrl) || (apiTotal ? pageNum * ps < apiTotal : false);
-    return { rows, hasNext: hasNextBool };
+    return this.fetchOrdersSummariesPageWithCreds(creds, input);
   }
 
   /**
    * Paginate LeafLink `orders-received` until the API reports no next page (or until the configurable page cap).
    * Persists each page — same backing store as the Orders page (`leafLinkStoredOrder`).
    * Omit `filters` to sync the full catalogue; pass `createdOn*` to scope to LeafLink order `created_on`.
+   * Pass {@link reuseCreds} when the caller already resolved credentials so each page does not resolve/log again.
    */
   async pullLeafLinkOrdersReceivedToDb(
     companyId: string,
     filters?: PullLeafLinkOrdersReceivedOpts,
+    reuseCreds?: LeafLinkResolvedCredentials,
   ): Promise<{
     pagesPulled: number;
     ordersPersisted: number;
@@ -1771,6 +1813,20 @@ export class LeafLinkOrdersService {
     const createdOnGteIso = cleanString(filters?.createdOnGteIso);
     const createdOnLteIso = cleanString(filters?.createdOnLteIso);
 
+    const creds = reuseCreds ?? await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    if (!reuseCreds) {
+      logInfo("[LEAFLINK] credentials_resolved", {
+        companyId,
+        authSource: creds.source,
+        fromDb: creds.source === "db",
+        fromEnv: creds.source === "env",
+      });
+    }
+    if (!creds.integrationEnabled || !baseOutConfiguredForOrders(creds))
+      return { pagesPulled: 0, ordersPersisted: 0, syncComplete: true, hitPageCap: false };
+
+    await this.assertOrdersCapableOrThrow(creds);
+
     logInfo("[LEAFLINK] orders_full_sync_start", {
       companyId,
       maxPages,
@@ -1779,7 +1835,7 @@ export class LeafLinkOrdersService {
     });
 
     for (let page = 1; page <= maxPages; page++) {
-      const res = await this.listOrdersSummaries(companyId, {
+      const res = await this.fetchOrdersSummariesPageWithCreds(creds, {
         page,
         pageSize: 100,
         ordering: "-created_on",
@@ -1815,7 +1871,7 @@ export class LeafLinkOrdersService {
 
   /**
    * Aggregate wholesale orders in a UTC date range from **saved** DB rows (same pool as the Orders page when loaded from cache).
-   * Pass `{ refresh: true }` to paginate LeafLink for **this same `dateFrom`–`dateTo` UTC window** (`created_on__gte` / `created_on__lte`) and merge into the DB before aggregating.
+   * Pass `{ refresh: true }` to **full-catalog paginate** LeafLink (`orders-received` until done or page cap), upsert into the DB, then aggregate from rows in `dateFrom`–`dateTo` (ranges only affect analytics display, not what gets synced).
    * **No LeafLink CRM customer-status filter** — every stored order whose date falls in the range is counted.
    * Sample lines: LeafLink `is_sample`, product/listing sample signals, `frozen_data`, plus name/SKU/notes (see {@link isSampleLineItem}).
    */
@@ -1893,10 +1949,7 @@ export class LeafLinkOrdersService {
     let truncated = false;
 
     if (input.refresh) {
-      const pulled = await this.pullLeafLinkOrdersReceivedToDb(companyId, {
-        createdOnGteIso: new Date(fromMs).toISOString(),
-        createdOnLteIso: new Date(toMs).toISOString(),
-      });
+      const pulled = await this.pullLeafLinkOrdersReceivedToDb(companyId, undefined, creds);
       pagesScanned = pulled.pagesPulled;
       truncated = pulled.hitPageCap || !pulled.syncComplete;
     }
@@ -1909,7 +1962,8 @@ export class LeafLinkOrdersService {
     const seenIds = new Set(storedDbRange.map((r) => r.id));
     /** Repair path: payloads with missing persisted `createdOn` often still embed order dates — merge when in-range after parse. */
     /** Keeps analytics reads fast — wide ranges already hit indexed `createdOn`; repair is capped. */
-    const nullRepairCap = storedDbRange.length < 200 ? 2200 : 900;
+    /** Widen repairs so analytics still sees legacy rows with missing `createdOn` after payloads improve with `leafLinkOrderCreatedIso`. */
+    const nullRepairCap = Math.min(12_000, Math.max(2_800, storedDbRange.length * 35));
     const storedDbNullRepair = await findRecentLeafLinkStoredOrdersWithNullCreatedOn(companyId, nullRepairCap);
 
     function rowOrderMsFromPayload(pair: { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }): number | null {
@@ -2160,7 +2214,7 @@ export class LeafLinkOrdersService {
     }
     await this.assertOrdersCapableOrThrow(creds);
 
-    const pulled = await this.pullLeafLinkOrdersReceivedToDb(companyId);
+    const pulled = await this.pullLeafLinkOrdersReceivedToDb(companyId, undefined, creds);
 
     logInfo("[LEAFLINK] orders_sync_complete", {
       companyId,

@@ -394,10 +394,12 @@ export default function OrdersAnalyticsPage() {
               <p style={{ margin: "8px 0 0", fontSize: 15, color: "#94a3b8", maxWidth: 760, lineHeight: 1.5 }}>
                 Same saved order pool as the <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Orders</strong> page: every wholesaler that has at least one saved
                 order whose order date falls in this UTC window appears here (no LeafLink CRM status filter).{' '}
-                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Pull from LeafLink → save</strong> fetches only LeafLink orders whose{' '}
-                <code style={{ fontSize: 12 }}>created_on</code> is inside the <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>From / To</strong> dates (then charts
-                from DB). Full catalogue sync still lives on the Orders page. Orders are included whether paid or unpaid, cancelled or not — headline totals feed revenue
-                when present (no dollar minimum).
+                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Pull from LeafLink → save</strong> runs a <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>
+                  full LeafLink order-history sync
+                </strong>{' '}
+                into this app (paginates until done or the API page cap). The <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>From / To</strong> dates only filter
+                what the charts show from data already saved here. Orders are included whether paid or unpaid, cancelled or not — headline totals feed revenue when
+                present (no dollar minimum).
               </p>
             </div>
             <Link href="/orders" style={btnGhost}>
@@ -423,9 +425,9 @@ export default function OrdersAnalyticsPage() {
                 style={btnGhost}
                 onClick={() => void load({ refreshLeafLink: true })}
                 disabled={loading}
-                title="Fetches all LeafLink pages for orders with created_on in the selected From/To (UTC). May take a while for wide ranges. Page cap: LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES on the API."
+                title="Full catalogue: fetches all LeafLink orders-received pages until complete (or LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES). Large histories can take several minutes. Charts still use From/To to slice saved rows."
               >
-                {leafLinkPullActive ? "Pulling LeafLink (date range)…" : "Pull from LeafLink → save"}
+                {leafLinkPullActive ? "Pulling LeafLink (full history)…" : "Pull from LeafLink → save"}
               </button>
             </div>
 
@@ -470,8 +472,8 @@ export default function OrdersAnalyticsPage() {
             {data && data.ordersIncluded === 0 && data.configured && data.integrationEnabled && !loading ? (
               <p style={{ color: "#94a3b8" }}>
                 No saved orders overlap this UTC window yet. Broaden dates or use{' '}
-                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Pull from LeafLink → save</strong> to load LeafLink orders whose created date falls in the current
-                From/To into the app.
+                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Pull from LeafLink → save</strong> to backfill full LeafLink history (then narrow From/To as
+                needed).
               </p>
             ) : null}
 

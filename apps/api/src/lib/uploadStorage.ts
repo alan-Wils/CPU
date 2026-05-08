@@ -1,3 +1,4 @@
+import "../polyfills/nodeWebCryptoGlobal.js";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { unlink } from "fs/promises";
 import path from "path";
