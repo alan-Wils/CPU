@@ -120,6 +120,75 @@ export type LeafLinkOrdersSyncDto = {
   lastFetchedAt: string;
 };
 
+/** One row per calendar day for Recharts — dynamic keys from {@link OrdersAnalyticsDto.seriesMeta}. */
+export type OrdersAnalyticsSeriesRow = {
+  date: string;
+  dateLabel: string;
+  [seriesKey: string]: string | number;
+};
+
+export type OrdersAnalyticsSeriesMeta = {
+  key: string;
+  label: string;
+};
+
+export type OrdersAnalyticsDto = {
+  source: "leaflink";
+  configured: boolean;
+  integrationEnabled: boolean;
+  dateFrom: string;
+  dateTo: string;
+  ordersIncluded: number;
+  pagesScanned: number;
+  truncated: boolean;
+  revenueByDay: OrdersAnalyticsSeriesRow[];
+  orderCountByDay: OrdersAnalyticsSeriesRow[];
+  seriesMeta: OrdersAnalyticsSeriesMeta[];
+};
+
+const MAX_ANALYTICS_RANGE_DAYS = 366;
+const MAX_ANALYTICS_PAGES = 50;
+const TOP_CUSTOMERS_CHART = 10;
+
+function utcDayKeyFromMs(ms: number): string {
+  const d = new Date(ms);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function parseUtcDateOnlyToMs(isoDate: string, endOfDay: boolean): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate.trim());
+  if (!m) return NaN;
+  const y = Number(m[1]);
+  const mo = Number(m[2]) - 1;
+  const d = Number(m[3]);
+  if (endOfDay)
+    return Date.UTC(y, mo, d, 23, 59, 59, 999);
+  return Date.UTC(y, mo, d, 0, 0, 0, 0);
+}
+
+function enumerateUtcDaysInclusive(fromStr: string, toStr: string): string[] {
+  const fromMs = parseUtcDateOnlyToMs(fromStr, false);
+  const toMs = parseUtcDateOnlyToMs(toStr, true);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs)
+    return [];
+  const out: string[] = [];
+  let cursor = fromMs;
+  const dayMs = 86_400_000;
+  while (cursor <= toMs) {
+    out.push(utcDayKeyFromMs(cursor));
+    cursor += dayMs;
+  }
+  return out;
+}
+
+function customerSeriesKey(id: string, name: string): string {
+  const base = cleanString(id) || cleanString(name).slice(0, 40) || "unknown";
+  return `c_${base.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80)}`;
+}
+
 /** Snapshot fields LeafLink stores on line items at order time (often has real product labels when `product` is only an id). */
 function hintsFromFrozenData(r: Record<string, unknown>): { name: string; sku: string } {
   const fr = r.frozen_data;
@@ -919,6 +988,191 @@ export class LeafLinkOrdersService {
       ...summary,
       lineItems,
       itemCount: lineItems.length,
+    };
+  }
+
+  /**
+   * Aggregate wholesale orders in a UTC date range for charting (paginates LeafLink newest-first until past range).
+   */
+  async getOrdersAnalytics(
+    companyId: string,
+    input: { dateFrom: string; dateTo: string },
+  ): Promise<OrdersAnalyticsDto> {
+    const dateFrom = cleanString(input.dateFrom);
+    const dateTo = cleanString(input.dateTo);
+    const fromMs = parseUtcDateOnlyToMs(dateFrom, false);
+    const toMs = parseUtcDateOnlyToMs(dateTo, true);
+    const nowIso = new Date().toISOString();
+
+    const emptySeries = (days: string[]): {
+      revenueByDay: OrdersAnalyticsSeriesRow[];
+      orderCountByDay: OrdersAnalyticsSeriesRow[];
+      seriesMeta: OrdersAnalyticsSeriesMeta[];
+    } => ({
+      revenueByDay: days.map((date) => ({
+        date,
+        dateLabel: date,
+      })),
+      orderCountByDay: days.map((date) => ({
+        date,
+        dateLabel: date,
+      })),
+      seriesMeta: [],
+    });
+
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) {
+      throw new AppError("Invalid date range.", 400, "ORDERS_ANALYTICS_BAD_RANGE");
+    }
+    if ((toMs - fromMs) / 86_400_000 > MAX_ANALYTICS_RANGE_DAYS) {
+      throw new AppError(`Date range cannot exceed ${MAX_ANALYTICS_RANGE_DAYS} days.`, 400, "ORDERS_ANALYTICS_RANGE_TOO_WIDE");
+    }
+
+    const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    const baseConfigured = Boolean(creds.apiKey && (creds.companyId || creds.companySlug));
+    const days = enumerateUtcDaysInclusive(dateFrom, dateTo);
+    if (!creds.integrationEnabled || !baseConfigured) {
+      const e = emptySeries(days);
+      return {
+        source: "leaflink",
+        configured: baseConfigured,
+        integrationEnabled: creds.integrationEnabled,
+        dateFrom,
+        dateTo,
+        ordersIncluded: 0,
+        pagesScanned: 0,
+        truncated: false,
+        ...e,
+      };
+    }
+
+    await this.assertOrdersCapableOrThrow(creds);
+
+    const collected: LeafLinkOrderCardDto[] = [];
+    let pagesScanned = 0;
+    let truncated = false;
+
+    for (let page = 1; page <= MAX_ANALYTICS_PAGES; page++) {
+      const res = await this.listOrders(companyId, {
+        page,
+        pageSize: 100,
+        ordering: "-created_on",
+        refresh: true,
+      });
+      pagesScanned++;
+      if (!res.orders.length)
+        break;
+
+      const timestamps = res.orders.map((o) => Date.parse(o.createdAt));
+      const maxT = Math.max(...timestamps.filter(Number.isFinite));
+      if (Number.isFinite(maxT) && maxT < fromMs)
+        break;
+
+      for (const o of res.orders) {
+        const t = Date.parse(o.createdAt);
+        if (!Number.isFinite(t)) continue;
+        if (t >= fromMs && t <= toMs)
+          collected.push(o);
+      }
+
+      const minT = Math.min(...timestamps.filter(Number.isFinite));
+      if (Number.isFinite(minT) && minT < fromMs && !res.hasNext)
+        break;
+      if (!res.hasNext)
+        break;
+      if (page === MAX_ANALYTICS_PAGES && res.hasNext)
+        truncated = true;
+    }
+
+    /** customerKey -> day -> { total, count } */
+    const agg = new Map<string, { label: string; dayTotal: Map<string, number>; dayCount: Map<string, number> }>();
+
+    for (const o of collected) {
+      const t = Date.parse(o.createdAt);
+      if (!Number.isFinite(t)) continue;
+      const day = utcDayKeyFromMs(t);
+      const label = cleanString(o.customerName) || "Unknown customer";
+      const ck = customerSeriesKey(o.buyerCustomerId, label);
+
+      let row = agg.get(ck);
+      if (!row) {
+        row = { label, dayTotal: new Map(), dayCount: new Map() };
+        agg.set(ck, row);
+      }
+      const total = typeof o.total === "number" && Number.isFinite(o.total) ? o.total : 0;
+      row.dayTotal.set(day, (row.dayTotal.get(day) ?? 0) + total);
+      row.dayCount.set(day, (row.dayCount.get(day) ?? 0) + 1);
+    }
+
+    const totalsByCustomer = [...agg.entries()].map(([key, v]) => ({
+      key,
+      label: v.label,
+      sum: [...v.dayTotal.values()].reduce((a, b) => a + b, 0),
+      dayTotal: v.dayTotal,
+      dayCount: v.dayCount,
+    }));
+    totalsByCustomer.sort((a, b) => b.sum - a.sum);
+
+    const top = totalsByCustomer.slice(0, TOP_CUSTOMERS_CHART);
+    const rest = totalsByCustomer.slice(TOP_CUSTOMERS_CHART);
+
+    const seriesMeta: OrdersAnalyticsSeriesMeta[] = top.map((t) => ({ key: t.key, label: t.label }));
+    if (rest.length > 0) {
+      seriesMeta.push({ key: "c_other", label: `Other (${rest.length} customers)` });
+    }
+
+    const revenueByDay: OrdersAnalyticsSeriesRow[] = [];
+    const orderCountByDay: OrdersAnalyticsSeriesRow[] = [];
+
+    for (const date of days) {
+      const revRow: OrdersAnalyticsSeriesRow = {
+        date,
+        dateLabel: date,
+      };
+      const cntRow: OrdersAnalyticsSeriesRow = {
+        date,
+        dateLabel: date,
+      };
+
+      let otherRev = 0;
+      let otherCnt = 0;
+      for (const r of rest) {
+        otherRev += r.dayTotal.get(date) ?? 0;
+        otherCnt += r.dayCount.get(date) ?? 0;
+      }
+
+      for (const t of top) {
+        revRow[t.key] = Math.round((t.dayTotal.get(date) ?? 0) * 100) / 100;
+        cntRow[t.key] = t.dayCount.get(date) ?? 0;
+      }
+      if (rest.length > 0) {
+        revRow.c_other = Math.round(otherRev * 100) / 100;
+        cntRow.c_other = otherCnt;
+      }
+
+      revenueByDay.push(revRow);
+      orderCountByDay.push(cntRow);
+    }
+
+    logInfo("[LEAFLINK] orders_analytics_done", {
+      companyId,
+      ordersIncluded: collected.length,
+      pagesScanned,
+      truncated,
+      seriesCount: seriesMeta.length,
+    });
+
+    return {
+      source: "leaflink",
+      configured: true,
+      integrationEnabled: true,
+      dateFrom,
+      dateTo,
+      ordersIncluded: collected.length,
+      pagesScanned,
+      truncated,
+      revenueByDay,
+      orderCountByDay,
+      seriesMeta,
     };
   }
 

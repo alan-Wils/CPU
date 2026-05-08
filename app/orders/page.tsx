@@ -119,6 +119,13 @@ const btnGhost: React.CSSProperties = {
   cursor: "pointer",
 };
 
+const linkGhost: React.CSSProperties = {
+  ...btnGhost,
+  textDecoration: "none",
+  display: "inline-flex",
+  alignItems: "center",
+};
+
 const backdropStyle: React.CSSProperties = {
   position: "fixed",
   inset: 0,
@@ -629,12 +636,26 @@ export default function OrdersPage() {
       <div style={shellStyle}>
         <Nav />
         <div style={{ maxWidth: 1240, margin: "0 auto" }}>
-          <div style={{ marginBottom: 18 }}>
-            <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900, color: "#f8fafc" }}>Orders</h1>
-            <p style={{ margin: "8px 0 0", fontSize: 15, color: "#94a3b8", maxWidth: 720, lineHeight: 1.5 }}>
-              Current LeafLink wholesale orders for the selected company. Data is read live from LeafLink using secure
-              credentials stored in company config (API keys never leave the server).
-            </p>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 16,
+              marginBottom: 18,
+            }}
+          >
+            <div>
+              <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900, color: "#f8fafc" }}>Orders</h1>
+              <p style={{ margin: "8px 0 0", fontSize: 15, color: "#94a3b8", maxWidth: 720, lineHeight: 1.5 }}>
+                Current LeafLink wholesale orders for the selected company. Data is read live from LeafLink using secure
+                credentials stored in company config (API keys never leave the server).
+              </p>
+            </div>
+            <Link href="/orders/analytics" style={linkGhost}>
+              Order analytics →
+            </Link>
           </div>
 
           <div style={glassPanel}>

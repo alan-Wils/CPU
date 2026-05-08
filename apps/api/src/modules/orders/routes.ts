@@ -75,6 +75,26 @@ ordersRouter.post("/sync", ordersPermissionGuard, asyncHandler(async (req, res) 
   res.json(out);
 }));
 
+const analyticsQuerySchema = z.object({
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+ordersRouter.get(
+  "/analytics",
+  ordersPermissionGuard,
+  validate({ query: analyticsQuerySchema }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const q = req.query as z.infer<typeof analyticsQuerySchema>;
+    const out = await ordersService.getOrdersAnalytics(companyId, {
+      dateFrom: q.from,
+      dateTo: q.to,
+    });
+    res.json(out);
+  }),
+);
+
 ordersRouter.get(
   "/:orderId",
   ordersPermissionGuard,

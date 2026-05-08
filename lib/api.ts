@@ -854,3 +854,39 @@ export async function syncLeafLinkOrders(companyId?: string) {
     { method: "POST", companyId },
   );
 }
+
+export type OrdersAnalyticsSeriesMeta = {
+  key: string;
+  label: string;
+};
+
+export type OrdersAnalyticsSeriesRow = {
+  date: string;
+  dateLabel: string;
+  [seriesKey: string]: string | number;
+};
+
+export type OrdersAnalyticsDto = {
+  source: "leaflink";
+  configured: boolean;
+  integrationEnabled: boolean;
+  dateFrom: string;
+  dateTo: string;
+  ordersIncluded: number;
+  pagesScanned: number;
+  truncated: boolean;
+  revenueByDay: OrdersAnalyticsSeriesRow[];
+  orderCountByDay: OrdersAnalyticsSeriesRow[];
+  seriesMeta: OrdersAnalyticsSeriesMeta[];
+};
+
+export async function fetchOrdersAnalytics(
+  from: string,
+  to: string,
+  companyId?: string,
+) {
+  const q = new URLSearchParams({ from, to });
+  return apiRequest<OrdersAnalyticsDto>(`/api/orders/analytics?${q.toString()}`, {
+    companyId,
+  });
+}
