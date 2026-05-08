@@ -7,6 +7,7 @@ import {
 } from "@cpu/shared";
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { usePathname } from "next/navigation";
+import { usePeerNotifications } from "@/components/PeerNotificationsContext";
 import { apiRequest, fetchLatestOrderLive, fetchLatestTaskLogLive } from "@/lib/api";
 import { CPU_AUTH_CHANGED_EVENT, getAuthUser, isLoggedIn } from "@/lib/auth";
 import {
@@ -69,6 +70,7 @@ type ToastLine = { message: string; key: string };
  */
 export default function TaskLiveNotificationHost() {
   const pathname = usePathname();
+  const { emitTask, emitOrder } = usePeerNotifications();
   const [authBump, setAuthBump] = useState(0);
   const [taskToast, setTaskToast] = useState<ToastLine | null>(null);
   const [orderToast, setOrderToast] = useState<ToastLine | null>(null);
@@ -199,6 +201,8 @@ export default function TaskLiveNotificationHost() {
         const message = `${who} performed "${task}" · ${area}`;
         const key = `${latest.id}:${latest.createdAt}`;
 
+        emitTask({ logId: latest.id, message });
+
         if (typeof document !== "undefined" && document.visibilityState === "visible") {
           toastTaskNow(message, key);
         } else {
@@ -241,6 +245,8 @@ export default function TaskLiveNotificationHost() {
         const message = `New order: ${buyer} · ${amt}`;
         const key = `ord:${latest.id}:${latest.leafLinkKey}`;
 
+        emitOrder({ orderId: latest.id, message });
+
         if (typeof document !== "undefined" && document.visibilityState === "visible") {
           toastOrderNow(message, key);
         } else {
@@ -282,7 +288,7 @@ export default function TaskLiveNotificationHost() {
       pendingTaskRef.current = null;
       pendingOrderRef.current = null;
     };
-  }, [pathname, authBump]);
+  }, [pathname, authBump, emitTask, emitOrder]);
 
   useEffect(() => {
     return () => {

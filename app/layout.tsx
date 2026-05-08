@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import CompanyTimezoneSync from "@/components/CompanyTimezoneSync";
+import { PeerNotificationsProvider } from "@/components/PeerNotificationsContext";
 import TaskLiveNotificationHost from "@/components/TaskLiveNotificationHost";
 
 const geistSans = Geist({
@@ -33,9 +34,11 @@ export default function RootLayout({
         <meta charSet="utf-8" />
       </head>
       <body className="min-h-full flex flex-col">
-        <CompanyTimezoneSync />
-        <TaskLiveNotificationHost />
-        {children}
+        <PeerNotificationsProvider>
+          <CompanyTimezoneSync />
+          <TaskLiveNotificationHost />
+          {children}
+        </PeerNotificationsProvider>
       </body>
     </html>
   );

@@ -1,4 +1,5 @@
 import HomeCurrentAccess from "@/components/HomeCurrentAccess";
+import HomeNotificationBell from "@/components/HomeNotificationBell";
 import HomeDashboardCards from "@/components/HomeDashboardCards";
 import Nav from "@/components/Nav";
 
@@ -73,7 +74,17 @@ export default function Home() {
               </p>
             </div>
 
-            <HomeCurrentAccess />
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-end",
+                gap: 14,
+              }}
+            >
+              <HomeNotificationBell />
+              <HomeCurrentAccess />
+            </div>
           </div>
 
           <div style={{ marginTop: 24 }}>
