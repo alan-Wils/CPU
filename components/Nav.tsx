@@ -203,7 +203,8 @@ export default function Nav() {
       <TopBrandStrip
         apiBaseUrl={API_BASE_URL}
         companyLogoConfiguredUrl={companyHeaderLogoUrl}
-        nexbatchHeight={isHomePage ? 52 : 40}
+        companyLogoMaxHeightPx={isHomePage ? 64 : 56}
+        nexbatchHeight={isHomePage ? 88 : 66}
       />
       {staffRewardsQuickLink && (
         <div

@@ -43,7 +43,7 @@ export default function ForgotPasswordPage() {
       }}
     >
       <div style={{ padding: "16px 24px", boxSizing: "border-box" }}>
-        <TopBrandStrip apiBaseUrl={API_BASE_URL} linkNexbatchToHome={false} nexbatchHeight={44} />
+        <TopBrandStrip apiBaseUrl={API_BASE_URL} linkNexbatchToHome={false} />
       </div>
       <div
         style={{

@@ -19,8 +19,8 @@ export type TopBrandStripProps = {
 export default function TopBrandStrip({
   companyLogoConfiguredUrl,
   apiBaseUrl,
-  companyLogoMaxHeightPx = 40,
-  nexbatchHeight = 40,
+  companyLogoMaxHeightPx = 54,
+  nexbatchHeight = 62,
   linkNexbatchToHome = true,
 }: TopBrandStripProps) {
   const raw = (companyLogoConfiguredUrl || "").trim();
@@ -34,7 +34,7 @@ export default function TopBrandStrip({
     gap: 16,
     width: "100%",
     boxSizing: "border-box",
-    padding: "12px 16px",
+    padding: "14px 20px",
     marginBottom: 14,
     background:
       "linear-gradient(90deg, rgba(2, 6, 23, 0.95) 0%, rgba(15, 23, 42, 0.95) 50%, rgba(30, 41, 59, 0.9) 100%)",
@@ -50,7 +50,7 @@ export default function TopBrandStrip({
           alt="Company logo"
           style={{
             maxHeight: companyLogoMaxHeightPx,
-            maxWidth: Math.min(320, Math.max(80, Math.round(companyLogoMaxHeightPx * 6))),
+            maxWidth: Math.min(360, Math.max(96, Math.round(companyLogoMaxHeightPx * 6))),
             width: "auto",
             height: "auto",
             objectFit: "contain",
@@ -71,7 +71,7 @@ export default function TopBrandStrip({
       ) : null}
       <BrandLogo
         height={nexbatchHeight}
-        maxWidth={Math.min(440, Math.round(nexbatchHeight * 6))}
+        maxWidth={Math.min(620, Math.round(nexbatchHeight * 6.2))}
         linkToHome={linkNexbatchToHome}
       />
     </div>
