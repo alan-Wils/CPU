@@ -132,6 +132,10 @@ export type LeafLinkOrdersSyncDto = {
   pagesPulled: number;
   ordersSeen: number;
   lastFetchedAt: string;
+  /** True when every LeafLink page was fetched (no `hasNext`) before hitting the page cap. */
+  syncComplete?: boolean;
+  /** True when stopping only because `LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES` was reached. */
+  hitPageCap?: boolean;
 };
 
 export type OrdersAnalyticsSampleTypeBreakdown = {
@@ -211,14 +215,22 @@ export type OrdersAnalyticsDto = {
 };
 
 const MAX_ANALYTICS_RANGE_DAYS = 366;
-const MAX_ANALYTICS_PAGES = 250;
-/** One HTTP analytics request cannot paginate LeafLink unbounded — proxies time out (~60–120s) and browsers look “stuck”. */
-const ANALYTICS_REFRESH_TIME_BUDGET_MS = 50_000;
+/** Hard safety: full sync stops after this many list pages (override with `LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES`). */
+const DEFAULT_LEAF_LINK_FULL_SYNC_MAX_PAGES = 5000;
+const ABS_LEAF_LINK_FULL_SYNC_MAX_PAGES = 50_000;
 const MAX_QUALIFYING_ORDERS_IN_PAYLOAD = 3500;
 /** If list payload embeds many line rows, summing them is often wrong vs order headline `total`. */
 const MAX_LINE_ITEMS_TO_TRUST_SUM = 120;
 const STORED_ORDERS_LIST_SCAN_LIMIT = 2500;
 const preferredLeafLinkAuthByTenant = new Map<string, string>();
+
+function leafLinkOrdersFullSyncMaxPages(): number {
+  const raw = String(process.env.LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES ?? "").trim();
+  const n = raw ? Number.parseInt(raw, 10) : DEFAULT_LEAF_LINK_FULL_SYNC_MAX_PAGES;
+  if (!Number.isFinite(n) || n < 1)
+    return DEFAULT_LEAF_LINK_FULL_SYNC_MAX_PAGES;
+  return Math.min(Math.floor(n), ABS_LEAF_LINK_FULL_SYNC_MAX_PAGES);
+}
 
 /**
  * Shipped in API responses for compatibility; analytics does not exclude small orders (date range only on saved orders).
@@ -1720,6 +1732,56 @@ export class LeafLinkOrdersService {
   }
 
   /**
+   * Paginate LeafLink `orders-received` until the API reports no next page (or until the configurable page cap).
+   * Persists each page — same backing store as the Orders page (`leafLinkStoredOrder`).
+   */
+  async pullAllLeafLinkOrdersReceivedToDb(companyId: string): Promise<{
+    pagesPulled: number;
+    ordersPersisted: number;
+    syncComplete: boolean;
+    hitPageCap: boolean;
+  }> {
+    clearTenantOrderCachePrefix(companyId);
+    const maxPages = leafLinkOrdersFullSyncMaxPages();
+    let pagesPulled = 0;
+    let ordersPersisted = 0;
+
+    logInfo("[LEAFLINK] orders_full_sync_start", { companyId, maxPages });
+
+    for (let page = 1; page <= maxPages; page++) {
+      const res = await this.listOrdersSummaries(companyId, {
+        page,
+        pageSize: 100,
+        ordering: "-created_on",
+      });
+
+      if (!res.rows.length)
+        return { pagesPulled, ordersPersisted, syncComplete: true, hitPageCap: false };
+
+      pagesPulled += 1;
+      await persistLeafLinkFetchedOrderPairs(companyId, res.rows, page);
+      ordersPersisted += res.rows.length;
+
+      if (pagesPulled % 25 === 0 || !res.hasNext) {
+        logInfo("[LEAFLINK] orders_full_sync_progress", {
+          companyId,
+          pagesPulled,
+          ordersPersisted,
+          hasNext: res.hasNext,
+        });
+      }
+
+      if (!res.hasNext) {
+        logInfo("[LEAFLINK] orders_full_sync_complete", { companyId, pagesPulled, ordersPersisted });
+        return { pagesPulled, ordersPersisted, syncComplete: true, hitPageCap: false };
+      }
+    }
+
+    logWarn("[LEAFLINK] orders_full_sync_page_cap", { companyId, maxPages, ordersPersisted });
+    return { pagesPulled: maxPages, ordersPersisted, syncComplete: false, hitPageCap: true };
+  }
+
+  /**
    * Aggregate wholesale orders in a UTC date range from **saved** DB rows (same pool as the Orders page when loaded from cache).
    * Pass `{ refresh: true }` once to paginate LeafLink and merge into the DB before aggregating (optional).
    * **No LeafLink CRM customer-status filter** — every stored order whose date falls in the range is counted.
@@ -1799,40 +1861,9 @@ export class LeafLinkOrdersService {
     let truncated = false;
 
     if (input.refresh) {
-      const refreshDeadline = Date.now() + ANALYTICS_REFRESH_TIME_BUDGET_MS;
-      for (let page = 1; page <= MAX_ANALYTICS_PAGES; page++) {
-        if (Date.now() >= refreshDeadline) {
-          truncated = true;
-          logWarn("[LEAFLINK] orders_analytics_refresh_time_budget_hit", {
-            companyId,
-            pagesScanned,
-            budgetMs: ANALYTICS_REFRESH_TIME_BUDGET_MS,
-          });
-          break;
-        }
-        const res = await this.listOrdersSummaries(companyId, {
-          page,
-          pageSize: 100,
-          ordering: "-created_on",
-        });
-        pagesScanned++;
-        await persistLeafLinkFetchedOrderPairs(companyId, res.rows, page);
-        if (!res.rows.length)
-          break;
-
-        const timestamps = res.rows.map(({ summary: o }) => Date.parse(o.createdAt));
-        const maxT = Math.max(...timestamps.filter(Number.isFinite));
-        if (Number.isFinite(maxT) && maxT < fromMs)
-          break;
-
-        const minT = Math.min(...timestamps.filter(Number.isFinite));
-        if (Number.isFinite(minT) && minT < fromMs && !res.hasNext)
-          break;
-        if (!res.hasNext)
-          break;
-        if (page === MAX_ANALYTICS_PAGES && res.hasNext)
-          truncated = true;
-      }
+      const pulled = await this.pullAllLeafLinkOrdersReceivedToDb(companyId);
+      pagesScanned = pulled.pagesPulled;
+      truncated = pulled.hitPageCap || !pulled.syncComplete;
     }
 
     const storedDbRange = await findLeafLinkStoredOrdersForCompanyInRange(companyId, {
@@ -2073,7 +2104,6 @@ export class LeafLinkOrdersService {
 
   /** Pull paginated summaries (warm cache + bookkeeping). Does not overwrite inventory. */
   async syncOrdersWarm(companyId: string): Promise<LeafLinkOrdersSyncDto> {
-    clearTenantOrderCachePrefix(companyId);
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
     logInfo("[LEAFLINK] credentials_resolved", {
       companyId,
@@ -2095,27 +2125,23 @@ export class LeafLinkOrdersService {
     }
     await this.assertOrdersCapableOrThrow(creds);
 
-    let pages = 0;
-    let ordersSeen = 0;
-    for (let p = 1; p <= 8; p++) {
-      const res = await this.listOrders(companyId, {
-        page: p,
-        pageSize: 100,
-        refresh: true,
-        ordering: "-modified",
-      });
-      pages++;
-      ordersSeen += res.orders.length;
-      if (!res.hasNext) break;
-    }
+    const pulled = await this.pullAllLeafLinkOrdersReceivedToDb(companyId);
 
-    logInfo("[LEAFLINK] orders_sync_complete", { companyId, pages, ordersSeen });
+    logInfo("[LEAFLINK] orders_sync_complete", {
+      companyId,
+      pages: pulled.pagesPulled,
+      ordersSeen: pulled.ordersPersisted,
+      syncComplete: pulled.syncComplete,
+      hitPageCap: pulled.hitPageCap,
+    });
     return {
       ok: true,
       configured: true,
       integrationEnabled: true,
-      pagesPulled: pages,
-      ordersSeen,
+      pagesPulled: pulled.pagesPulled,
+      ordersSeen: pulled.ordersPersisted,
+      syncComplete: pulled.syncComplete,
+      hitPageCap: pulled.hitPageCap,
       lastFetchedAt: new Date().toISOString(),
     };
   }

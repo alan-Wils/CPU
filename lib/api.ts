@@ -812,6 +812,8 @@ export type LeafLinkOrdersSyncDto = {
   pagesPulled: number;
   ordersSeen: number;
   lastFetchedAt: string;
+  syncComplete?: boolean;
+  hitPageCap?: boolean;
 };
 
 export async function fetchLeafLinkOrdersList(

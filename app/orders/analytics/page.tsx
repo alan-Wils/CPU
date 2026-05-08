@@ -422,9 +422,9 @@ export default function OrdersAnalyticsPage() {
                 style={btnGhost}
                 onClick={() => void load({ refreshLeafLink: true })}
                 disabled={loading}
-                title="Paginates LeafLink in ~50s slices so the request can finish; repeat to backfill deep history"
+                title="Loads every page of LeafLink orders into this app (may take several minutes). If it stops early, raise LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES on the API."
               >
-                {leafLinkPullActive ? "Pulling LeafLink (~1 min max)…" : "Pull from LeafLink → save"}
+                {leafLinkPullActive ? "Pulling LeafLink (full sync)…" : "Pull from LeafLink → save"}
               </button>
             </div>
 
@@ -451,11 +451,11 @@ export default function OrdersAnalyticsPage() {
 
             {data?.truncated ? (
               <p style={{ fontSize: 13, color: "#fbbf24", marginBottom: 12 }}>
-                LeafLink sync paused at the server&apos;s pagination limit or ~50 second safety budget (so requests don&apos;t
-                hang forever). Charts still reflect orders saved so far — click{' '}
-                <strong style={{ fontWeight: 700, color: "#fcd34d" }}>Pull from LeafLink → save</strong> again once or twice to
-                backfill deeper history, then use <strong style={{ fontWeight: 700, color: "#fcd34d" }}>Apply range</strong> without
-                pull for a faster refresh.
+                LeafLink sync hit the server&apos;s page cap (default 5000 pages — set{' '}
+                <code style={{ fontSize: 12 }}>LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES</code> higher on the API if needed). Charts still
+                reflect orders saved so far — run{' '}
+                <strong style={{ fontWeight: 700, color: "#fcd34d" }}>Pull from LeafLink → save</strong> again after raising the cap, or{' '}
+                <strong style={{ fontWeight: 700, color: "#fcd34d" }}>Apply range</strong> without pull for a faster refresh.
               </p>
             ) : null}
 
