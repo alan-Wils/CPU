@@ -1105,3 +1105,57 @@ export async function salesSellerOrderSetStatus(
     { method: "PATCH", body: { status } },
   );
 }
+
+/** Home notification bell (`GET /api/notifications/inbox`). */
+export type PeerNotificationItemDto = {
+  id: string;
+  kind: "task" | "order" | "climate";
+  message: string;
+  at: string;
+  read: boolean;
+};
+
+export async function fetchPeerNotifyInbox() {
+  return apiRequest<{ items: PeerNotificationItemDto[]; updatedAt?: string }>("/api/notifications/inbox");
+}
+
+export async function pushPeerNotifyItem(item: PeerNotificationItemDto) {
+  return apiRequest<{ items: PeerNotificationItemDto[] }>("/api/notifications/inbox/push", {
+    method: "POST",
+    body: { item },
+  });
+}
+
+export async function replacePeerNotifyInbox(items: PeerNotificationItemDto[]) {
+  return apiRequest<{ items: PeerNotificationItemDto[] }>("/api/notifications/inbox", {
+    method: "PUT",
+    body: { items },
+  });
+}
+
+/** `GET /api/logs/latest-live` — newest task log row for realtime toasts. */
+export type LatestTaskLogLiveDto = {
+  id: string;
+  createdAt: string;
+  actorUserId: string;
+  actorEmail: string | null;
+  area: string;
+  task: string;
+};
+
+export async function fetchLatestTaskLogLive(): Promise<LatestTaskLogLiveDto | null> {
+  return apiRequest<LatestTaskLogLiveDto | null>("/api/logs/latest-live");
+}
+
+/** `GET /api/orders/latest-live` — newest stored LeafLink order for realtime toasts. */
+export type LatestOrderLiveDto = {
+  id: string;
+  leafLinkKey: string;
+  customerName: string;
+  totalUsd: number | null;
+  createdOn: string | null;
+};
+
+export async function fetchLatestOrderLive(): Promise<LatestOrderLiveDto | null> {
+  return apiRequest<LatestOrderLiveDto | null>("/api/orders/latest-live");
+}
