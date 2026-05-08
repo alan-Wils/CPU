@@ -134,6 +134,16 @@ export type OrdersAnalyticsSampleTypeBreakdown = {
   units: number;
 };
 
+export type OrdersAnalyticsSampleLineItemDto = {
+  orderId: string;
+  orderNumber: string;
+  createdAt: string;
+  productName: string;
+  sku: string;
+  quantity: number;
+  typeLabel: string;
+};
+
 export type OrdersAnalyticsQualifyingOrderDto = {
   orderId: string;
   orderNumber: string;
@@ -155,6 +165,8 @@ export type OrdersAnalyticsCustomerDto = {
   /** Sample line units in range (see sample detection heuristic). */
   sampleUnitsInRange: number;
   samplesByType: OrdersAnalyticsSampleTypeBreakdown[];
+  /** Itemized sample lines from qualifying orders in range. */
+  sampleLineItems: OrdersAnalyticsSampleLineItemDto[];
   /** Parallel to {@link OrdersAnalyticsDto.days}. */
   revenueByDay: number[];
   orderCountByDay: number[];
@@ -1574,6 +1586,7 @@ export class LeafLinkOrdersService {
       sampleUnitsByDay: number[];
       orderTotalSum: number;
       sampleTypeUnits: Map<string, number>;
+      sampleLineItems: OrdersAnalyticsSampleLineItemDto[];
     };
 
     const agg = new Map<string, CustAgg>();
@@ -1616,6 +1629,7 @@ export class LeafLinkOrdersService {
           sampleUnitsByDay: Array.from({ length: nDays }, () => 0),
           orderTotalSum: 0,
           sampleTypeUnits: new Map(),
+          sampleLineItems: [],
         };
         agg.set(ck, row);
       }
@@ -1634,6 +1648,15 @@ export class LeafLinkOrdersService {
         row.sampleUnitsByDay[di] += q;
         const tl = sampleTypeLabelForLine(li);
         row.sampleTypeUnits.set(tl, (row.sampleTypeUnits.get(tl) ?? 0) + q);
+        row.sampleLineItems.push({
+          orderId: cleanString(o.id) || cleanString(o.orderNumber),
+          orderNumber: cleanString(o.orderNumber),
+          createdAt: o.createdAt,
+          productName: cleanString(li.productName) || "Unknown sample",
+          sku: cleanString(li.sku),
+          quantity: q,
+          typeLabel: tl,
+        });
       }
     }
 
@@ -1656,6 +1679,9 @@ export class LeafLinkOrdersService {
         samplesByType: [...v.sampleTypeUnits.entries()]
           .map(([typeLabel, units]) => ({ typeLabel, units }))
           .sort((a, b) => b.units - a.units),
+        sampleLineItems: v.sampleLineItems
+          .slice()
+          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
         revenueByDay: v.revenueByDay.map((x) => Math.round(x * 100) / 100),
         orderCountByDay: v.orderCountByDay.map((x) => x),
         sampleUnitsByDay: v.sampleUnitsByDay.map((x) => x),

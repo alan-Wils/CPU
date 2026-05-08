@@ -862,6 +862,16 @@ export type OrdersAnalyticsSampleTypeBreakdown = {
   units: number;
 };
 
+export type OrdersAnalyticsSampleLineItemDto = {
+  orderId: string;
+  orderNumber: string;
+  createdAt: string;
+  productName: string;
+  sku: string;
+  quantity: number;
+  typeLabel: string;
+};
+
 export type OrdersAnalyticsQualifyingOrderDto = {
   orderId: string;
   orderNumber: string;
@@ -879,6 +889,7 @@ export type OrdersAnalyticsCustomerDto = {
   orderTotalInRange: number;
   sampleUnitsInRange: number;
   samplesByType: OrdersAnalyticsSampleTypeBreakdown[];
+  sampleLineItems: OrdersAnalyticsSampleLineItemDto[];
   revenueByDay: number[];
   orderCountByDay: number[];
   sampleUnitsByDay: number[];

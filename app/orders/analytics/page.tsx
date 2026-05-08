@@ -188,6 +188,7 @@ export default function OrdersAnalyticsPage() {
   const [customerListOpen, setCustomerListOpen] = useState(true);
   const [graphMode, setGraphMode] = useState<GraphMode>("revenue");
   const [detailCustomerKey, setDetailCustomerKey] = useState<string | null>(null);
+  const [sampleCustomerKey, setSampleCustomerKey] = useState<string | null>(null);
 
   const load = useCallback(async (refreshLeafLink?: boolean) => {
     setLoading(true);
@@ -336,6 +337,11 @@ export default function OrdersAnalyticsPage() {
       .slice()
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   }, [data, detailCustomerKey]);
+
+  const sampleCustomer = useMemo(() => {
+    if (!sampleCustomerKey || !data?.customers?.length) return null;
+    return data.customers.find((c) => c.key === sampleCustomerKey) ?? null;
+  }, [data, sampleCustomerKey]);
 
   const chartTitle =
     graphMode === "revenue"
@@ -571,9 +577,26 @@ export default function OrdersAnalyticsPage() {
                               </td>
                               <td style={{ padding: "10px", color: "#cbd5e1" }}>{c.sampleUnitsInRange}</td>
                               <td style={{ padding: "10px", color: "#94a3b8", lineHeight: 1.45 }}>
-                                {c.samplesByType.length === 0
-                                  ? "—"
-                                  : c.samplesByType.map((s) => `${s.typeLabel} (${s.units})`).join(" · ")}
+                                {c.samplesByType.length === 0 ? (
+                                  "—"
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSampleCustomerKey(c.key)}
+                                    style={{
+                                      border: "none",
+                                      background: "transparent",
+                                      color: "#93c5fd",
+                                      cursor: "pointer",
+                                      fontWeight: 700,
+                                      padding: 0,
+                                      textAlign: "left",
+                                    }}
+                                    title={`View itemized sample list for ${c.label}`}
+                                  >
+                                    {c.samplesByType.map((s) => `${s.typeLabel} (${s.units})`).join(" · ")}
+                                  </button>
+                                )}
                               </td>
                             </tr>
                           ))}
@@ -714,6 +737,87 @@ export default function OrdersAnalyticsPage() {
                           <td style={{ padding: "10px", color: "#c4b5fd", fontWeight: 700 }}>{o.orderNumber}</td>
                           <td style={{ padding: "10px", color: "#cbd5e1" }}>{fmtShortDate(o.createdAt)}</td>
                           <td style={{ padding: "10px", color: "#cbd5e1", fontVariantNumeric: "tabular-nums" }}>{usd(o.totalUsd)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {sampleCustomer ? (
+          <div
+            role="presentation"
+            onClick={() => setSampleCustomerKey(null)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(2,6,23,0.78)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 20,
+              zIndex: 91,
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={`${sampleCustomer.label} sample items`}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: "min(1100px, 96vw)",
+                maxHeight: "86vh",
+                overflow: "auto",
+                borderRadius: 18,
+                border: "1px solid rgba(148,163,184,0.3)",
+                background: "linear-gradient(135deg, rgba(15,23,42,0.96), rgba(2,6,23,0.96))",
+                boxShadow: "0 26px 80px rgba(0,0,0,0.6)",
+                padding: 18,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 20, fontWeight: 900, color: "#f8fafc" }}>
+                    {sampleCustomer.label} sample items
+                  </h3>
+                  <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 13 }}>
+                    {sampleCustomer.sampleLineItems.length} sample line item(s) from {from} to {to} UTC
+                  </p>
+                </div>
+                <button type="button" style={btnSmall} onClick={() => setSampleCustomerKey(null)}>
+                  Close
+                </button>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+                      <th style={{ padding: "8px 10px" }}>Date (UTC)</th>
+                      <th style={{ padding: "8px 10px" }}>Order #</th>
+                      <th style={{ padding: "8px 10px" }}>Sample item</th>
+                      <th style={{ padding: "8px 10px" }}>SKU</th>
+                      <th style={{ padding: "8px 10px" }}>Type</th>
+                      <th style={{ padding: "8px 10px" }}>Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sampleCustomer.sampleLineItems.length === 0 ? (
+                      <tr style={{ borderTop: "1px solid rgba(148,163,184,0.12)" }}>
+                        <td colSpan={6} style={{ padding: "12px 10px", color: "#94a3b8" }}>
+                          No sample items for this customer in the selected range.
+                        </td>
+                      </tr>
+                    ) : (
+                      sampleCustomer.sampleLineItems.map((item, idx) => (
+                        <tr key={`${item.orderId}:${item.productName}:${idx}`} style={{ borderTop: "1px solid rgba(148,163,184,0.12)" }}>
+                          <td style={{ padding: "10px", color: "#cbd5e1" }}>{fmtShortDate(item.createdAt)}</td>
+                          <td style={{ padding: "10px", color: "#c4b5fd", fontWeight: 700 }}>{item.orderNumber}</td>
+                          <td style={{ padding: "10px", color: "#e2e8f0" }}>{item.productName}</td>
+                          <td style={{ padding: "10px", color: "#94a3b8" }}>{item.sku || "—"}</td>
+                          <td style={{ padding: "10px", color: "#93c5fd" }}>{item.typeLabel}</td>
+                          <td style={{ padding: "10px", color: "#cbd5e1", fontVariantNumeric: "tabular-nums" }}>{item.quantity}</td>
                         </tr>
                       ))
                     )}
