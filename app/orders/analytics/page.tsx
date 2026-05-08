@@ -18,8 +18,8 @@ import PageAccessGate from "@/components/PageAccessGate";
 import {
   fetchOrdersAnalytics,
   getSelectedCompanyId,
+  type OrdersAnalyticsCustomerDto,
   type OrdersAnalyticsDto,
-  type OrdersAnalyticsSeriesMeta,
 } from "@/lib/api";
 
 function utcYmd(d: Date): string {
@@ -101,12 +101,36 @@ const btnGhost: CSSProperties = {
   alignItems: "center",
 };
 
-function RevenueTooltip(props: {
+const btnSmall: CSSProperties = {
+  padding: "6px 12px",
+  borderRadius: 10,
+  border: "1px solid rgba(148,163,184,0.35)",
+  background: "rgba(2,6,23,0.65)",
+  color: "#cbd5e1",
+  fontWeight: 600,
+  fontSize: 12,
+  cursor: "pointer",
+};
+
+function fmtShortDate(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "—";
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(t));
+}
+
+function usd(n: number): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
+}
+
+function ChartTooltip(props: {
   active?: boolean;
   payload?: { name?: string; value?: number; color?: string }[];
   label?: string;
+  valuePrefix?: string;
+  valueSuffix?: string;
+  formatValue?: (n: number) => string;
 }) {
-  const { active, payload, label } = props;
+  const { active, payload, label, formatValue } = props;
   if (!active || !payload?.length) return null;
   return (
     <div
@@ -123,15 +147,19 @@ function RevenueTooltip(props: {
         <div key={i} style={{ color: "#cbd5e1", display: "flex", justifyContent: "space-between", gap: 16 }}>
           <span style={{ color: p.color }}>{p.name}</span>
           <span>
-            {typeof p.value === "number"
-              ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(p.value)
-              : p.value}
+            {formatValue && typeof p.value === "number"
+              ? formatValue(p.value)
+              : typeof p.value === "number"
+                ? String(p.value)
+                : p.value}
           </span>
         </div>
       ))}
     </div>
   );
 }
+
+type GraphMode = "revenue" | "orders" | "samples";
 
 export default function OrdersAnalyticsPage() {
   const initial = useMemo(() => defaultRange(), []);
@@ -140,6 +168,9 @@ export default function OrdersAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [data, setData] = useState<OrdersAnalyticsDto | null>(null);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [customerListOpen, setCustomerListOpen] = useState(true);
+  const [graphMode, setGraphMode] = useState<GraphMode>("revenue");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -162,7 +193,88 @@ export default function OrdersAnalyticsPage() {
     void load();
   }, [load]);
 
-  const lines = data?.seriesMeta ?? [];
+  useEffect(() => {
+    if (!data?.customers?.length) {
+      setSelectedKeys(new Set());
+      return;
+    }
+    setSelectedKeys(new Set(data.customers.map((c) => c.key)));
+  }, [data]);
+
+  const toggleKey = useCallback((key: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    if (!data?.customers) return;
+    setSelectedKeys(new Set(data.customers.map((c) => c.key)));
+  }, [data]);
+
+  const selectNone = useCallback(() => {
+    setSelectedKeys(new Set());
+  }, []);
+
+  const selectedCustomers = useMemo(() => {
+    if (!data?.customers) return [];
+    return data.customers.filter((c) => selectedKeys.has(c.key));
+  }, [data, selectedKeys]);
+
+  const seriesMeta = useMemo(
+    () => selectedCustomers.map((c) => ({ key: c.key, label: c.label })),
+    [selectedCustomers],
+  );
+
+  const chartRows = useMemo(() => {
+    if (!data?.days?.length) return [];
+    return data.days.map((date, i) => {
+      const row: Record<string, unknown> = { date, dateLabel: date };
+      for (const c of selectedCustomers) {
+        if (graphMode === "revenue")
+          row[c.key] = c.revenueByDay[i] ?? 0;
+        else if (graphMode === "orders")
+          row[c.key] = c.orderCountByDay[i] ?? 0;
+        else
+          row[c.key] = c.sampleUnitsByDay[i] ?? 0;
+      }
+      return row;
+    });
+  }, [data, selectedCustomers, graphMode]);
+
+  const chartTitle =
+    graphMode === "revenue"
+      ? "Revenue by customer (per day)"
+      : graphMode === "orders"
+        ? "Qualifying orders by customer (per day)"
+        : "Sample units by customer (per day)";
+
+  const yTickFormatter = useCallback(
+    (v: unknown) => {
+      const n = typeof v === "number" ? v : Number(v);
+      if (graphMode === "revenue") {
+        return new Intl.NumberFormat("en-US", {
+          notation: Number.isFinite(n) && n >= 1000 ? "compact" : "standard",
+          maximumFractionDigits: 0,
+        }).format(Number.isFinite(n) ? n : 0);
+      }
+      return String(Number.isFinite(n) ? Math.round(n) : 0);
+    },
+    [graphMode],
+  );
+
+  const tooltipFormat = useCallback(
+    (n: number) => {
+      if (graphMode === "revenue") return usd(n);
+      return new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(n);
+    },
+    [graphMode],
+  );
+
+  const minOrder = data?.minOrderTotal ?? 50;
 
   return (
     <PageAccessGate permission="page.orders">
@@ -172,9 +284,10 @@ export default function OrdersAnalyticsPage() {
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", justifyContent: "space-between", gap: 16, marginBottom: 18 }}>
             <div>
               <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900, color: "#f8fafc" }}>Order analytics</h1>
-              <p style={{ margin: "8px 0 0", fontSize: 15, color: "#94a3b8", maxWidth: 720, lineHeight: 1.5 }}>
-                Wholesale orders by customer over time (LeafLink). Revenue is order total per day; second chart is order
-                count per day.
+              <p style={{ margin: "8px 0 0", fontSize: 15, color: "#94a3b8", maxWidth: 760, lineHeight: 1.5 }}>
+                Active customers are those with at least one non-cancelled wholesale order totaling {usd(minOrder)} or more
+                in the range (LeafLink, UTC). Sample lines are detected when “sample” appears in the line name, SKU, or
+                notes. Pick any customers below to plot them.
               </p>
             </div>
             <Link href="/orders" style={btnGhost}>
@@ -226,41 +339,153 @@ export default function OrdersAnalyticsPage() {
             ) : null}
 
             {data && data.ordersIncluded === 0 && data.configured && data.integrationEnabled && !loading ? (
-              <p style={{ color: "#94a3b8" }}>No orders in this date range.</p>
+              <p style={{ color: "#94a3b8" }}>
+                No qualifying orders in this range (need total ≥ {usd(minOrder)}, not cancelled).
+              </p>
             ) : null}
 
             {data && data.ordersIncluded > 0 ? (
               <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>
-                {data.ordersIncluded} orders · {data.pagesScanned} LeafLink page(s) scanned · UTC dates
+                {data.ordersIncluded} qualifying order(s) · {data.customers.length} active customer(s) · {data.pagesScanned}{" "}
+                LeafLink page(s) · UTC dates
               </p>
             ) : null}
 
-            {!loading && lines.length === 0 && data?.configured && data?.integrationEnabled && data.ordersIncluded > 0 ? (
-              <p style={{ color: "#94a3b8" }}>Could not build customer series (unexpected).</p>
+            {data && data.customers.length > 0 ? (
+              <div
+                style={{
+                  marginBottom: 22,
+                  borderRadius: 16,
+                  border: "1px solid rgba(148,163,184,0.22)",
+                  overflow: "hidden",
+                  background: "rgba(2,6,23,0.45)",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setCustomerListOpen((o) => !o)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    padding: "14px 16px",
+                    border: "none",
+                    background: "rgba(15,23,42,0.55)",
+                    color: "#e2e8f0",
+                    cursor: "pointer",
+                    fontWeight: 800,
+                    fontSize: 15,
+                    textAlign: "left",
+                  }}
+                >
+                  <span>
+                    {customerListOpen ? "▼" : "▶"} Active customers ({data.customers.length}) — choose who to graph
+                  </span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8" }}>
+                    {selectedKeys.size} selected
+                  </span>
+                </button>
+                {customerListOpen ? (
+                  <div style={{ padding: "12px 14px 16px" }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                      <button type="button" style={btnSmall} onClick={selectAll}>
+                        Select all
+                      </button>
+                      <button type="button" style={btnSmall} onClick={selectNone}>
+                        Select none
+                      </button>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+                            <th style={{ padding: "8px 10px", width: 40 }} />
+                            <th style={{ padding: "8px 10px" }}>Customer</th>
+                            <th style={{ padding: "8px 10px" }}>Last purchase (UTC)</th>
+                            <th style={{ padding: "8px 10px" }}>Total in range</th>
+                            <th style={{ padding: "8px 10px" }}>Sample units</th>
+                            <th style={{ padding: "8px 10px", minWidth: 220 }}>Sample types (qty)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.customers.map((c: OrdersAnalyticsCustomerDto) => (
+                            <tr key={c.key} style={{ borderTop: "1px solid rgba(148,163,184,0.12)" }}>
+                              <td style={{ padding: "10px" }}>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedKeys.has(c.key)}
+                                  onChange={() => toggleKey(c.key)}
+                                  aria-label={`Include ${c.label} on chart`}
+                                />
+                              </td>
+                              <td style={{ padding: "10px", fontWeight: 700, color: "#f1f5f9" }}>{c.label}</td>
+                              <td style={{ padding: "10px", color: "#cbd5e1" }}>{fmtShortDate(c.lastPurchaseDate)}</td>
+                              <td style={{ padding: "10px", color: "#cbd5e1" }}>{usd(c.orderTotalInRange)}</td>
+                              <td style={{ padding: "10px", color: "#cbd5e1" }}>{c.sampleUnitsInRange}</td>
+                              <td style={{ padding: "10px", color: "#94a3b8", lineHeight: 1.45 }}>
+                                {c.samplesByType.length === 0
+                                  ? "—"
+                                  : c.samplesByType.map((s) => `${s.typeLabel} (${s.units})`).join(" · ")}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
 
-            <ChartBlock
-              title="Revenue by customer (order total per day)"
-              rows={data?.revenueByDay ?? []}
-              meta={lines}
-              loading={loading}
-              revenueTooltip
-              yTickFormatter={(v) => {
-                const n = typeof v === "number" ? v : Number(v);
-                return new Intl.NumberFormat("en-US", {
-                  notation: Number.isFinite(n) && n >= 1000 ? "compact" : "standard",
-                  maximumFractionDigits: 0,
-                }).format(Number.isFinite(n) ? n : 0);
-              }}
-            />
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 14 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "#94a3b8", marginRight: 4 }}>Chart</span>
+              {(
+                [
+                  { id: "revenue" as const, label: "Revenue ($)" },
+                  { id: "orders" as const, label: "Order count" },
+                  { id: "samples" as const, label: "Sample units" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setGraphMode(opt.id)}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 10,
+                    border:
+                      graphMode === opt.id
+                        ? "1px solid rgba(167,139,250,0.7)"
+                        : "1px solid rgba(148,163,184,0.3)",
+                    background:
+                      graphMode === opt.id
+                        ? "linear-gradient(135deg, rgba(91,33,182,0.45), rgba(76,29,149,0.35))"
+                        : "rgba(2,6,23,0.55)",
+                    color: graphMode === opt.id ? "#f8fafc" : "#cbd5e1",
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
 
             <ChartBlock
-              title="Orders per customer (count per day)"
-              rows={data?.orderCountByDay ?? []}
-              meta={lines}
+              title={chartTitle}
+              rows={chartRows}
+              meta={seriesMeta}
               loading={loading}
-              revenueTooltip={false}
-              yTickFormatter={(v) => String(v)}
+              yTickFormatter={yTickFormatter}
+              tooltipFormat={tooltipFormat}
+              emptyHint={
+                data && data.customers.length > 0 && selectedKeys.size === 0
+                  ? "Select at least one customer to plot."
+                  : undefined
+              }
             />
           </div>
         </div>
@@ -274,42 +499,42 @@ function ChartBlock({
   rows,
   meta,
   loading,
-  revenueTooltip,
   yTickFormatter,
+  tooltipFormat,
+  emptyHint,
 }: {
   title: string;
   rows: Record<string, unknown>[];
-  meta: OrdersAnalyticsSeriesMeta[];
+  meta: { key: string; label: string }[];
   loading: boolean;
-  revenueTooltip?: boolean;
   yTickFormatter: (v: unknown) => string;
+  tooltipFormat: (n: number) => string;
+  emptyHint?: string;
 }) {
+  const show = rows.length > 0 && meta.length > 0;
   return (
     <div style={{ marginBottom: 28 }}>
       <h2 style={{ margin: "0 0 12px", fontSize: 18, fontWeight: 800, color: "#c4b5fd" }}>{title}</h2>
-      <div style={{ width: "100%", height: 360, opacity: loading ? 0.45 : 1 }}>
-        {rows.length > 0 && meta.length > 0 ? (
+      <div style={{ width: "100%", height: 400, opacity: loading ? 0.45 : 1 }}>
+        {show ? (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={rows} margin={{ top: 8, right: 24, left: 8, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" />
               <XAxis dataKey="date" stroke="#64748b" tick={{ fill: "#94a3b8", fontSize: 11 }} />
               <YAxis stroke="#64748b" tick={{ fill: "#94a3b8", fontSize: 11 }} tickFormatter={yTickFormatter} />
               <Tooltip
-                content={
-                  revenueTooltip
-                    ? (tp) => (
-                        <RevenueTooltip
-                          active={tp.active}
-                          label={typeof tp.label === "string" ? tp.label : tp.label != null ? String(tp.label) : undefined}
-                          payload={tp.payload?.map((p) => ({
-                            name: p.name != null ? String(p.name) : undefined,
-                            value: typeof p.value === "number" ? p.value : Number(p.value),
-                            color: typeof p.color === "string" ? p.color : undefined,
-                          }))}
-                        />
-                      )
-                    : undefined
-                }
+                content={(tp) => (
+                  <ChartTooltip
+                    active={tp.active}
+                    label={typeof tp.label === "string" ? tp.label : tp.label != null ? String(tp.label) : undefined}
+                    payload={tp.payload?.map((p) => ({
+                      name: p.name != null ? String(p.name) : undefined,
+                      value: typeof p.value === "number" ? p.value : Number(p.value),
+                      color: typeof p.color === "string" ? p.color : undefined,
+                    }))}
+                    formatValue={tooltipFormat}
+                  />
+                )}
               />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               {meta.map((s, i) => (
@@ -327,8 +552,8 @@ function ChartBlock({
             </LineChart>
           </ResponsiveContainer>
         ) : (
-          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b" }}>
-            {loading ? "Loading chart…" : "No data"}
+          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", textAlign: "center", padding: 16 }}>
+            {loading ? "Loading chart…" : emptyHint ?? "No data"}
           </div>
         )}
       </div>

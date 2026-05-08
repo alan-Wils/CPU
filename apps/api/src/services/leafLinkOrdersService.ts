@@ -120,16 +120,26 @@ export type LeafLinkOrdersSyncDto = {
   lastFetchedAt: string;
 };
 
-/** One row per calendar day for Recharts — dynamic keys from {@link OrdersAnalyticsDto.seriesMeta}. */
-export type OrdersAnalyticsSeriesRow = {
-  date: string;
-  dateLabel: string;
-  [seriesKey: string]: string | number;
+export type OrdersAnalyticsSampleTypeBreakdown = {
+  typeLabel: string;
+  /** Units = sum of line quantities for that product label. */
+  units: number;
 };
 
-export type OrdersAnalyticsSeriesMeta = {
+export type OrdersAnalyticsCustomerDto = {
   key: string;
   label: string;
+  /** Latest qualifying order date in range (ISO 8601). */
+  lastPurchaseDate: string;
+  /** Sum of qualifying order totals in range. */
+  orderTotalInRange: number;
+  /** Sample line units in range (see sample detection heuristic). */
+  sampleUnitsInRange: number;
+  samplesByType: OrdersAnalyticsSampleTypeBreakdown[];
+  /** Parallel to {@link OrdersAnalyticsDto.days}. */
+  revenueByDay: number[];
+  orderCountByDay: number[];
+  sampleUnitsByDay: number[];
 };
 
 export type OrdersAnalyticsDto = {
@@ -138,17 +148,20 @@ export type OrdersAnalyticsDto = {
   integrationEnabled: boolean;
   dateFrom: string;
   dateTo: string;
+  /** Qualifying orders: in range, not cancelled, total ≥ minOrderTotal. */
   ordersIncluded: number;
+  minOrderTotal: number;
   pagesScanned: number;
   truncated: boolean;
-  revenueByDay: OrdersAnalyticsSeriesRow[];
-  orderCountByDay: OrdersAnalyticsSeriesRow[];
-  seriesMeta: OrdersAnalyticsSeriesMeta[];
+  days: string[];
+  /** Customers with at least one qualifying order (active for this report). */
+  customers: OrdersAnalyticsCustomerDto[];
 };
 
 const MAX_ANALYTICS_RANGE_DAYS = 366;
 const MAX_ANALYTICS_PAGES = 50;
-const TOP_CUSTOMERS_CHART = 10;
+/** Only orders at or above this total count toward analytics and customer inclusion. */
+export const ORDERS_ANALYTICS_MIN_ORDER_TOTAL = 50;
 
 function utcDayKeyFromMs(ms: number): string {
   const d = new Date(ms);
@@ -187,6 +200,36 @@ function enumerateUtcDaysInclusive(fromStr: string, toStr: string): string[] {
 function customerSeriesKey(id: string, name: string): string {
   const base = cleanString(id) || cleanString(name).slice(0, 40) || "unknown";
   return `c_${base.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80)}`;
+}
+
+function orderTotalMoney(o: LeafLinkOrderSummaryDto): number {
+  if (typeof o.total === "number" && Number.isFinite(o.total)) return o.total;
+  if (typeof o.subtotal === "number" && Number.isFinite(o.subtotal)) return o.subtotal;
+  const sum = o.lineItems.reduce((acc, li) => acc + (li.lineTotal ?? 0), 0);
+  return Number.isFinite(sum) ? sum : 0;
+}
+
+function isCancelledOrder(o: LeafLinkOrderSummaryDto): boolean {
+  return o.statusNormalized === "Cancelled";
+}
+
+/** Heuristic: product/SKU/notes contain “sample” (wholesale freebies are often labeled explicitly). */
+function isSampleLineItem(li: LeafLinkOrderLineItemDto): boolean {
+  const name = cleanString(li.productName).toLowerCase();
+  const sku = cleanString(li.sku).toLowerCase();
+  const notes = cleanString(li.notes).toLowerCase();
+  if (/\bsample\b/.test(name)) return true;
+  if (/\bsample\b/.test(sku) || /\bsmpl\b/.test(sku)) return true;
+  if (notes.includes("sample")) return true;
+  return false;
+}
+
+function sampleTypeLabelForLine(li: LeafLinkOrderLineItemDto): string {
+  const name = cleanString(li.productName);
+  if (name) return name.length > 120 ? `${name.slice(0, 117)}…` : name;
+  const s = cleanString(li.sku);
+  if (s) return s;
+  return "Sample";
 }
 
 /** Snapshot fields LeafLink stores on line items at order time (often has real product labels when `product` is only an id). */
@@ -992,7 +1035,44 @@ export class LeafLinkOrdersService {
   }
 
   /**
+   * One page of order summaries including embedded line items (`fields_add=line_items` on list API).
+   * Does not use the short list cache (callers control freshness).
+   */
+  async listOrdersSummaries(
+    companyId: string,
+    input: {
+      page: number;
+      pageSize: number;
+      ordering?: string;
+    },
+  ): Promise<{ summaries: LeafLinkOrderSummaryDto[]; hasNext: boolean }> {
+    const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    if (!creds.integrationEnabled || !baseOutConfiguredForOrders(creds))
+      return { summaries: [], hasNext: false };
+
+    await this.assertOrdersCapableOrThrow(creds);
+    const base = creds.baseUrl.replace(/\/+$/, "");
+    const ordering = cleanString(input.ordering) || "-created_on";
+    const searchParams = new URLSearchParams();
+    searchParams.set("page", String(Math.max(1, input.page)));
+    searchParams.set("page_size", String(Math.min(500, Math.max(1, input.pageSize))));
+    searchParams.set("ordering", ordering);
+    const urls = buildOrdersListUrlCandidates(base, creds, searchParams);
+    const { body } = await leafLinkAuthedGet(urls, creds, 20_000);
+    const { list, totalCount: apiTotal, next } = parseListBody(body);
+    const summaries = list.map((r) => normalizeOrder(r));
+    const pageNum = Math.max(1, input.page);
+    const ps = Math.min(500, Math.max(1, input.pageSize));
+    const nextUrl = typeof next === "string" ? next.trim() : "";
+    const hasNextBool =
+      Boolean(nextUrl) || (apiTotal ? pageNum * ps < apiTotal : false);
+    return { summaries, hasNext: hasNextBool };
+  }
+
+  /**
    * Aggregate wholesale orders in a UTC date range for charting (paginates LeafLink newest-first until past range).
+   * Only non-cancelled orders with total ≥ {@link ORDERS_ANALYTICS_MIN_ORDER_TOTAL} define “active” customers and series.
+   * Sample lines: name/SKU/notes contain “sample” (see {@link isSampleLineItem}).
    */
   async getOrdersAnalytics(
     companyId: string,
@@ -1002,23 +1082,6 @@ export class LeafLinkOrdersService {
     const dateTo = cleanString(input.dateTo);
     const fromMs = parseUtcDateOnlyToMs(dateFrom, false);
     const toMs = parseUtcDateOnlyToMs(dateTo, true);
-    const nowIso = new Date().toISOString();
-
-    const emptySeries = (days: string[]): {
-      revenueByDay: OrdersAnalyticsSeriesRow[];
-      orderCountByDay: OrdersAnalyticsSeriesRow[];
-      seriesMeta: OrdersAnalyticsSeriesMeta[];
-    } => ({
-      revenueByDay: days.map((date) => ({
-        date,
-        dateLabel: date,
-      })),
-      orderCountByDay: days.map((date) => ({
-        date,
-        dateLabel: date,
-      })),
-      seriesMeta: [],
-    });
 
     if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) {
       throw new AppError("Invalid date range.", 400, "ORDERS_ANALYTICS_BAD_RANGE");
@@ -1029,9 +1092,12 @@ export class LeafLinkOrdersService {
 
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
     const baseConfigured = Boolean(creds.apiKey && (creds.companyId || creds.companySlug));
-    const days = enumerateUtcDaysInclusive(dateFrom, dateTo);
+    const dayList = enumerateUtcDaysInclusive(dateFrom, dateTo);
+    const nDays = dayList.length;
+    const dayIndex = new Map<string, number>();
+    dayList.forEach((d, i) => dayIndex.set(d, i));
+
     if (!creds.integrationEnabled || !baseConfigured) {
-      const e = emptySeries(days);
       return {
         source: "leaflink",
         configured: baseConfigured,
@@ -1039,35 +1105,36 @@ export class LeafLinkOrdersService {
         dateFrom,
         dateTo,
         ordersIncluded: 0,
+        minOrderTotal: ORDERS_ANALYTICS_MIN_ORDER_TOTAL,
         pagesScanned: 0,
         truncated: false,
-        ...e,
+        days: dayList,
+        customers: [],
       };
     }
 
     await this.assertOrdersCapableOrThrow(creds);
 
-    const collected: LeafLinkOrderCardDto[] = [];
+    const collected: LeafLinkOrderSummaryDto[] = [];
     let pagesScanned = 0;
     let truncated = false;
 
     for (let page = 1; page <= MAX_ANALYTICS_PAGES; page++) {
-      const res = await this.listOrders(companyId, {
+      const res = await this.listOrdersSummaries(companyId, {
         page,
         pageSize: 100,
         ordering: "-created_on",
-        refresh: true,
       });
       pagesScanned++;
-      if (!res.orders.length)
+      if (!res.summaries.length)
         break;
 
-      const timestamps = res.orders.map((o) => Date.parse(o.createdAt));
+      const timestamps = res.summaries.map((o) => Date.parse(o.createdAt));
       const maxT = Math.max(...timestamps.filter(Number.isFinite));
       if (Number.isFinite(maxT) && maxT < fromMs)
         break;
 
-      for (const o of res.orders) {
+      for (const o of res.summaries) {
         const t = Date.parse(o.createdAt);
         if (!Number.isFinite(t)) continue;
         if (t >= fromMs && t <= toMs)
@@ -1083,82 +1150,84 @@ export class LeafLinkOrdersService {
         truncated = true;
     }
 
-    /** customerKey -> day -> { total, count } */
-    const agg = new Map<string, { label: string; dayTotal: Map<string, number>; dayCount: Map<string, number> }>();
+    type CustAgg = {
+      label: string;
+      lastPurchaseMs: number;
+      revenueByDay: number[];
+      orderCountByDay: number[];
+      sampleUnitsByDay: number[];
+      orderTotalSum: number;
+      sampleTypeUnits: Map<string, number>;
+    };
+
+    const agg = new Map<string, CustAgg>();
+    let qualifyingOrderCount = 0;
 
     for (const o of collected) {
+      if (isCancelledOrder(o)) continue;
       const t = Date.parse(o.createdAt);
       if (!Number.isFinite(t)) continue;
+      const money = orderTotalMoney(o);
+      if (money < ORDERS_ANALYTICS_MIN_ORDER_TOTAL) continue;
+
+      qualifyingOrderCount++;
       const day = utcDayKeyFromMs(t);
+      const di = dayIndex.get(day);
+      if (di === undefined) continue;
+
       const label = cleanString(o.customerName) || "Unknown customer";
       const ck = customerSeriesKey(o.buyerCustomerId, label);
 
       let row = agg.get(ck);
       if (!row) {
-        row = { label, dayTotal: new Map(), dayCount: new Map() };
+        row = {
+          label,
+          lastPurchaseMs: t,
+          revenueByDay: Array.from({ length: nDays }, () => 0),
+          orderCountByDay: Array.from({ length: nDays }, () => 0),
+          sampleUnitsByDay: Array.from({ length: nDays }, () => 0),
+          orderTotalSum: 0,
+          sampleTypeUnits: new Map(),
+        };
         agg.set(ck, row);
       }
-      const total = typeof o.total === "number" && Number.isFinite(o.total) ? o.total : 0;
-      row.dayTotal.set(day, (row.dayTotal.get(day) ?? 0) + total);
-      row.dayCount.set(day, (row.dayCount.get(day) ?? 0) + 1);
+
+      row.lastPurchaseMs = Math.max(row.lastPurchaseMs, t);
+      row.orderTotalSum += money;
+      row.revenueByDay[di] += money;
+      row.orderCountByDay[di] += 1;
+
+      for (const li of o.lineItems) {
+        if (!isSampleLineItem(li)) continue;
+        const q = li.quantity > 0 ? li.quantity : 1;
+        row.sampleUnitsByDay[di] += q;
+        const tl = sampleTypeLabelForLine(li);
+        row.sampleTypeUnits.set(tl, (row.sampleTypeUnits.get(tl) ?? 0) + q);
+      }
     }
 
-    const totalsByCustomer = [...agg.entries()].map(([key, v]) => ({
-      key,
-      label: v.label,
-      sum: [...v.dayTotal.values()].reduce((a, b) => a + b, 0),
-      dayTotal: v.dayTotal,
-      dayCount: v.dayCount,
-    }));
-    totalsByCustomer.sort((a, b) => b.sum - a.sum);
-
-    const top = totalsByCustomer.slice(0, TOP_CUSTOMERS_CHART);
-    const rest = totalsByCustomer.slice(TOP_CUSTOMERS_CHART);
-
-    const seriesMeta: OrdersAnalyticsSeriesMeta[] = top.map((t) => ({ key: t.key, label: t.label }));
-    if (rest.length > 0) {
-      seriesMeta.push({ key: "c_other", label: `Other (${rest.length} customers)` });
-    }
-
-    const revenueByDay: OrdersAnalyticsSeriesRow[] = [];
-    const orderCountByDay: OrdersAnalyticsSeriesRow[] = [];
-
-    for (const date of days) {
-      const revRow: OrdersAnalyticsSeriesRow = {
-        date,
-        dateLabel: date,
-      };
-      const cntRow: OrdersAnalyticsSeriesRow = {
-        date,
-        dateLabel: date,
-      };
-
-      let otherRev = 0;
-      let otherCnt = 0;
-      for (const r of rest) {
-        otherRev += r.dayTotal.get(date) ?? 0;
-        otherCnt += r.dayCount.get(date) ?? 0;
-      }
-
-      for (const t of top) {
-        revRow[t.key] = Math.round((t.dayTotal.get(date) ?? 0) * 100) / 100;
-        cntRow[t.key] = t.dayCount.get(date) ?? 0;
-      }
-      if (rest.length > 0) {
-        revRow.c_other = Math.round(otherRev * 100) / 100;
-        cntRow.c_other = otherCnt;
-      }
-
-      revenueByDay.push(revRow);
-      orderCountByDay.push(cntRow);
-    }
+    const customers: OrdersAnalyticsCustomerDto[] = [...agg.entries()]
+      .map(([key, v]) => ({
+        key,
+        label: v.label,
+        lastPurchaseDate: new Date(v.lastPurchaseMs).toISOString(),
+        orderTotalInRange: Math.round(v.orderTotalSum * 100) / 100,
+        sampleUnitsInRange: [...v.sampleTypeUnits.values()].reduce((a, b) => a + b, 0),
+        samplesByType: [...v.sampleTypeUnits.entries()]
+          .map(([typeLabel, units]) => ({ typeLabel, units }))
+          .sort((a, b) => b.units - a.units),
+        revenueByDay: v.revenueByDay.map((x) => Math.round(x * 100) / 100),
+        orderCountByDay: v.orderCountByDay.map((x) => x),
+        sampleUnitsByDay: v.sampleUnitsByDay.map((x) => x),
+      }))
+      .sort((a, b) => b.orderTotalInRange - a.orderTotalInRange);
 
     logInfo("[LEAFLINK] orders_analytics_done", {
       companyId,
-      ordersIncluded: collected.length,
+      ordersIncluded: qualifyingOrderCount,
       pagesScanned,
       truncated,
-      seriesCount: seriesMeta.length,
+      customerCount: customers.length,
     });
 
     return {
@@ -1167,12 +1236,12 @@ export class LeafLinkOrdersService {
       integrationEnabled: true,
       dateFrom,
       dateTo,
-      ordersIncluded: collected.length,
+      ordersIncluded: qualifyingOrderCount,
+      minOrderTotal: ORDERS_ANALYTICS_MIN_ORDER_TOTAL,
       pagesScanned,
       truncated,
-      revenueByDay,
-      orderCountByDay,
-      seriesMeta,
+      days: dayList,
+      customers,
     };
   }
 

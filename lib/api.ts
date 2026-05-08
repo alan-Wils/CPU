@@ -855,15 +855,21 @@ export async function syncLeafLinkOrders(companyId?: string) {
   );
 }
 
-export type OrdersAnalyticsSeriesMeta = {
-  key: string;
-  label: string;
+export type OrdersAnalyticsSampleTypeBreakdown = {
+  typeLabel: string;
+  units: number;
 };
 
-export type OrdersAnalyticsSeriesRow = {
-  date: string;
-  dateLabel: string;
-  [seriesKey: string]: string | number;
+export type OrdersAnalyticsCustomerDto = {
+  key: string;
+  label: string;
+  lastPurchaseDate: string;
+  orderTotalInRange: number;
+  sampleUnitsInRange: number;
+  samplesByType: OrdersAnalyticsSampleTypeBreakdown[];
+  revenueByDay: number[];
+  orderCountByDay: number[];
+  sampleUnitsByDay: number[];
 };
 
 export type OrdersAnalyticsDto = {
@@ -873,11 +879,11 @@ export type OrdersAnalyticsDto = {
   dateFrom: string;
   dateTo: string;
   ordersIncluded: number;
+  minOrderTotal: number;
   pagesScanned: number;
   truncated: boolean;
-  revenueByDay: OrdersAnalyticsSeriesRow[];
-  orderCountByDay: OrdersAnalyticsSeriesRow[];
-  seriesMeta: OrdersAnalyticsSeriesMeta[];
+  days: string[];
+  customers: OrdersAnalyticsCustomerDto[];
 };
 
 export async function fetchOrdersAnalytics(
