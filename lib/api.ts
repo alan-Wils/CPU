@@ -460,41 +460,6 @@ export async function getLogs(companyId?: string) {
   });
 }
 
-/** Latest task row for realtime peer notifications (`GET /api/logs/latest-live`). */
-export type LatestTaskLogLiveDto = {
-  id: string;
-  createdAt: string;
-  actorUserId: string;
-  actorEmail: string | null;
-  area: string;
-  task: string;
-};
-
-export async function fetchLatestTaskLogLive(
-  companyId?: string,
-): Promise<LatestTaskLogLiveDto | null> {
-  return apiRequest<LatestTaskLogLiveDto | null>("/api/logs/latest-live", {
-    companyId,
-    /** Tenant scope comes from JWT only (`companyScope`). Avoid empty/wrong localStorage blocking other devices. */
-    omitCompanyHeader: true,
-  });
-}
-
-/** Newest stored LeafLink order for realtime toasts (`GET /api/orders/latest-live`). Requires `page.orders`. */
-export type LatestOrderLiveDto = {
-  id: string;
-  leafLinkKey: string;
-  customerName: string;
-  totalUsd: number | null;
-  createdOn: string | null;
-};
-
-export async function fetchLatestOrderLive(): Promise<LatestOrderLiveDto | null> {
-  return apiRequest<LatestOrderLiveDto | null>("/api/orders/latest-live", {
-    omitCompanyHeader: true,
-  });
-}
-
 export async function saveLog(
   log: {
     area: string;
@@ -949,6 +914,8 @@ export type OrdersAnalyticsDto = {
   readFromDatabase: boolean;
   leafLinkRefreshRan: boolean;
   storedRowsInRange: number;
+  /** Total synced wholesale orders in DB for this company (Orders page pool). */
+  totalStoredOrders: number;
   storedSnapshotMaxUpdatedAt: string | null;
   /** Always false — analytics uses saved orders only (no LeafLink CRM customer-status gate). */
   filteredByLeafLinkCurrentCustomerStatus: boolean;

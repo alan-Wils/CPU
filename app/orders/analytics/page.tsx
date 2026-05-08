@@ -480,7 +480,10 @@ export default function OrdersAnalyticsPage() {
             {data && data.configured && data.integrationEnabled && !loading ? (
               <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16, lineHeight: 1.55 }}>
                 Charts use saved orders in this app ({data.storedRowsInRange} stored row
-                {data.storedRowsInRange === 1 ? "" : "s"} overlapping this range
+                {data.storedRowsInRange === 1 ? "" : "s"} overlapping this UTC range
+                {typeof data.totalStoredOrders === "number"
+                  ? ` · ${data.totalStoredOrders.toLocaleString()} total synced (same pool as the Orders page)`
+                  : ""}
                 {data.storedSnapshotMaxUpdatedAt
                   ? ` · newest save ${fmtShortDate(data.storedSnapshotMaxUpdatedAt)}`
                   : ""}

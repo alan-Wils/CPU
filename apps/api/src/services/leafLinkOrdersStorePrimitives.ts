@@ -13,8 +13,8 @@ export type LeafLinkStoredOrderUpsertInput = {
   sourcePage: number | null;
 };
 
-/** Hard ceiling for wholesale order catalogue reads from Postgres (`findRecent…`). Matches service-side scan caps. */
-const STORED_ORDER_FETCH_HARD_CAP = 25_000;
+/** Hard ceiling for wholesale order catalogue reads from Postgres (`findRecent…`, analytics null repair). */
+export const STORED_ORDER_FETCH_HARD_CAP = 25_000;
 
 export async function countLeafLinkStoredOrdersForCompany(companyId: string): Promise<number> {
   const cid = String(companyId ?? "").trim();
@@ -22,7 +22,10 @@ export async function countLeafLinkStoredOrdersForCompany(companyId: string): Pr
   return prisma.leafLinkStoredOrder.count({ where: { companyId: cid } });
 }
 
-/** Newest Postgres row (`updatedAt`) — compact shape for realtime toasts (`GET /api/orders/latest-live`). */
+/**
+ * Newest **placed** wholesale order for realtime toasts (`GET /api/orders/latest-live`).
+ * Uses LeafLink `createdOn` (not `updatedAt`) so bulk re-sync does not flip “latest” across random rows.
+ */
 export async function findLatestLeafLinkStoredOrderLive(
   companyId: string,
 ): Promise<{
@@ -34,17 +37,26 @@ export async function findLatestLeafLinkStoredOrderLive(
 } | null> {
   const cid = String(companyId ?? "").trim();
   if (!cid) return null;
-  const row = await prisma.leafLinkStoredOrder.findFirst({
-    where: { companyId: cid },
-    orderBy: { updatedAt: "desc" },
-    select: {
-      id: true,
-      leafLinkKey: true,
-      customerName: true,
-      totalUsd: true,
-      createdOn: true,
-    },
+  const select = {
+    id: true,
+    leafLinkKey: true,
+    customerName: true,
+    totalUsd: true,
+    createdOn: true,
+  } as const;
+
+  const withDate = await prisma.leafLinkStoredOrder.findFirst({
+    where: { companyId: cid, createdOn: { not: null } },
+    orderBy: [{ createdOn: "desc" }, { updatedAt: "desc" }],
+    select,
   });
+  const row =
+    withDate
+    ?? (await prisma.leafLinkStoredOrder.findFirst({
+      where: { companyId: cid },
+      orderBy: { updatedAt: "desc" },
+      select,
+    }));
   if (!row) return null;
   return {
     id: row.id,
@@ -121,7 +133,7 @@ export async function findRecentLeafLinkStoredOrdersWithNullCreatedOn(
 ): Promise<{ id: string; payload: unknown; updatedAt: Date }[]> {
   const cid = String(companyId ?? "").trim();
   if (!cid) return [];
-  const cap = Math.max(1, Math.min(5000, Math.floor(limit || 1)));
+  const cap = Math.max(1, Math.min(STORED_ORDER_FETCH_HARD_CAP, Math.floor(limit || 1)));
   return prisma.leafLinkStoredOrder.findMany({
     where: { companyId: cid, createdOn: null },
     select: { id: true, payload: true, updatedAt: true },

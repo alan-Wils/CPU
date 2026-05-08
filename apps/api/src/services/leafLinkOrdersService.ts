@@ -15,6 +15,7 @@ import {
 import {
   upsertLeafLinkStoredOrders,
   countLeafLinkStoredOrdersForCompany,
+  STORED_ORDER_FETCH_HARD_CAP,
   findLeafLinkStoredOrdersForCompanyInRange,
   findRecentLeafLinkStoredOrdersWithNullCreatedOn,
   findRecentLeafLinkStoredOrdersForCompany,
@@ -217,6 +218,8 @@ export type OrdersAnalyticsDto = {
   leafLinkRefreshRan: boolean;
   /** Stored rows overlapping the UTC date span (may exceed orders included after filters). */
   storedRowsInRange: number;
+  /** All `LeafLinkStoredOrder` rows for this company (same pool as Orders page cache). */
+  totalStoredOrders: number;
   /** Latest `updatedAt` among rows read for this range (`null` if none). */
   storedSnapshotMaxUpdatedAt: string | null;
   /** Legacy field — analytics no longer gates on LeafLink CRM customer status (always false / 0). */
@@ -1978,6 +1981,7 @@ export class LeafLinkOrdersService {
       | "readFromDatabase"
       | "leafLinkRefreshRan"
       | "storedRowsInRange"
+      | "totalStoredOrders"
       | "storedSnapshotMaxUpdatedAt"
       | "filteredByLeafLinkCurrentCustomerStatus"
       | "leafLinkCurrentCustomerCount"
@@ -1985,6 +1989,7 @@ export class LeafLinkOrdersService {
       readFromDatabase: true,
       leafLinkRefreshRan: Boolean(input.refresh),
       storedRowsInRange: 0,
+      totalStoredOrders: 0,
       storedSnapshotMaxUpdatedAt: null,
       filteredByLeafLinkCurrentCustomerStatus: false,
       leafLinkCurrentCustomerCount: 0,
@@ -2011,6 +2016,7 @@ export class LeafLinkOrdersService {
     dayList.forEach((d, i) => dayIndex.set(d, i));
 
     if (!creds.integrationEnabled || !baseConfigured) {
+      const totalStoredOrders = await countLeafLinkStoredOrdersForCompany(companyId);
       return {
         source: "leaflink",
         configured: baseConfigured,
@@ -2026,10 +2032,13 @@ export class LeafLinkOrdersService {
         qualifyingOrders: [],
         qualifyingOrdersTruncated: false,
         ...emptyMeta(),
+        totalStoredOrders,
       };
     }
 
     await this.assertOrdersCapableOrThrow(creds);
+
+    const totalStoredOrders = await countLeafLinkStoredOrdersForCompany(companyId);
 
     const filteredByLeafLinkCurrentCustomerStatus = false;
     const leafLinkCurrentCustomerCount = 0;
@@ -2049,10 +2058,12 @@ export class LeafLinkOrdersService {
     });
 
     const seenIds = new Set(storedDbRange.map((r) => r.id));
-    /** Repair path: payloads with missing persisted `createdOn` often still embed order dates — merge when in-range after parse. */
-    /** Keeps analytics reads fast — wide ranges already hit indexed `createdOn`; repair is capped. */
-    /** Widen repairs so analytics still sees legacy rows with missing `createdOn` after payloads improve with `leafLinkOrderCreatedIso`. */
-    const nullRepairCap = Math.min(12_000, Math.max(2_800, storedDbRange.length * 35));
+    /** Repair path: payloads with missing persisted `createdOn` still embed order dates — merge when in-range after parse. */
+    const outsideIndexedRange = Math.max(0, totalStoredOrders - storedDbRange.length);
+    const nullRepairCap = Math.min(
+      STORED_ORDER_FETCH_HARD_CAP,
+      Math.max(5_000, outsideIndexedRange, storedDbRange.length * 35),
+    );
     const storedDbNullRepair = await findRecentLeafLinkStoredOrdersWithNullCreatedOn(companyId, nullRepairCap);
 
     function rowOrderMsFromPayload(pair: { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }): number | null {
@@ -2257,6 +2268,8 @@ export class LeafLinkOrdersService {
       qualifyingOrdersReturned: qualifyingOrders.length,
       qualifyingOrdersTruncated,
       storedRowsInRange: storedDb.length,
+      totalStoredOrders,
+      nullRepairCap,
       refresh: Boolean(input.refresh),
       leafLinkCurrentCustomerCount,
       filteredByLeafLinkCurrentCustomerStatus,
@@ -2279,6 +2292,7 @@ export class LeafLinkOrdersService {
       readFromDatabase: true,
       leafLinkRefreshRan: Boolean(input.refresh),
       storedRowsInRange: storedDb.length,
+      totalStoredOrders,
       storedSnapshotMaxUpdatedAt,
       filteredByLeafLinkCurrentCustomerStatus,
       leafLinkCurrentCustomerCount,

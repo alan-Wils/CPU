@@ -83,7 +83,8 @@ export default function TaskLiveNotificationHost() {
   const pendingTaskRef = useRef<ToastLine | null>(null);
 
   const orderPrimedRef = useRef(false);
-  const orderLastIdRef = useRef<string | null>(null);
+  /** Stable LeafLink order key — internal DB `id` changes meaning when “latest” is sorted wrong during sync. */
+  const orderLastLeafLinkKeyRef = useRef<string | null>(null);
   const pendingOrderRef = useRef<ToastLine | null>(null);
 
   const hideTaskTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -138,7 +139,7 @@ export default function TaskLiveNotificationHost() {
     taskLastIdRef.current = null;
     pendingTaskRef.current = null;
     orderPrimedRef.current = false;
-    orderLastIdRef.current = null;
+    orderLastLeafLinkKeyRef.current = null;
     pendingOrderRef.current = null;
 
     if (!isLoggedIn() || skipListeningForPath(pathname)) return;
@@ -225,27 +226,29 @@ export default function TaskLiveNotificationHost() {
         if (!latest) {
           if (!orderPrimedRef.current) {
             orderPrimedRef.current = true;
-            orderLastIdRef.current = null;
+            orderLastLeafLinkKeyRef.current = null;
           }
           return;
         }
 
+        const stableKey = String(latest.leafLinkKey || "").trim() || latest.id;
+
         if (!orderPrimedRef.current) {
           orderPrimedRef.current = true;
-          orderLastIdRef.current = latest.id;
+          orderLastLeafLinkKeyRef.current = stableKey;
           return;
         }
 
-        if (latest.id === orderLastIdRef.current) return;
+        if (stableKey === orderLastLeafLinkKeyRef.current) return;
 
-        orderLastIdRef.current = latest.id;
+        orderLastLeafLinkKeyRef.current = stableKey;
 
         const buyer = String(latest.customerName || "").trim() || "Customer";
         const amt = formatUsd(latest.totalUsd);
         const message = `New order: ${buyer} · ${amt}`;
-        const key = `ord:${latest.id}:${latest.leafLinkKey}`;
+        const key = `ord:${stableKey}`;
 
-        emitOrder({ orderId: latest.id, message });
+        emitOrder({ orderId: stableKey, message });
 
         if (typeof document !== "undefined" && document.visibilityState === "visible") {
           toastOrderNow(message, key);
