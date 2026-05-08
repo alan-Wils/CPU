@@ -147,6 +147,8 @@ model Company {
   usageEvents                 UsageEvent[]
   nexbatchCompanyUsageLogs    NexbatchCompanyUsageLog[]
 
+  leafLinkStoredOrders LeafLinkStoredOrder[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -556,6 +558,26 @@ model CompanyStore {
   updatedAt  DateTime @updatedAt
 
   @@unique([companyId, key])
+}
+
+/// LeafLink orders-received rows persisted when Orders page or sync pulls from LeafLink (analytics reads from here).
+model LeafLinkStoredOrder {
+  id              String    @id @default(cuid())
+  companyId       String
+  company         Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  leafLinkKey     String
+  buyerCustomerId String    @default("")
+  customerName    String    @default("")
+  statusRaw       String    @default("")
+  createdOn       DateTime?
+  totalUsd        Float?
+  payload         Json
+  sourcePage      Int?
+  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime  @default(now())
+
+  @@unique([companyId, leafLinkKey])
+  @@index([companyId, createdOn])
 }
 
 model CheckCapture {

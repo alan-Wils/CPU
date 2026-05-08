@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { AppError } from "../errors/AppError.js";
 import { logInfo, logWarn } from "../lib/logger.js";
 import {
@@ -6,6 +7,11 @@ import {
   LeafLinkService,
   type LeafLinkRuntimeCredentials,
 } from "./leaflinkService.js";
+import {
+  upsertLeafLinkStoredOrders,
+  findLeafLinkStoredOrdersForCompanyInRange,
+  type LeafLinkStoredOrderUpsertInput,
+} from "./leafLinkOrdersStorePrimitives.js";
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -172,6 +178,14 @@ export type OrdersAnalyticsDto = {
   /** One row per qualifying order (for per-order charts). May be truncated — see `qualifyingOrdersTruncated`. */
   qualifyingOrders: OrdersAnalyticsQualifyingOrderDto[];
   qualifyingOrdersTruncated: boolean;
+  /** Series are built from saved orders (see persisted rows when Orders / sync runs). */
+  readFromDatabase: boolean;
+  /** This request refreshed LeafLink into the DB before aggregating (`refresh=true`). */
+  leafLinkRefreshRan: boolean;
+  /** Stored rows overlapping the UTC date span (may exceed orders included after filters). */
+  storedRowsInRange: number;
+  /** Latest `updatedAt` among rows read for this range (`null` if none). */
+  storedSnapshotMaxUpdatedAt: string | null;
 };
 
 const MAX_ANALYTICS_RANGE_DAYS = 366;
@@ -733,6 +747,143 @@ export function orderToCardDto(o: LeafLinkOrderSummaryDto): LeafLinkOrderCardDto
   return { ...rest, itemCount: lineItems.length };
 }
 
+/** Detail upserts wrap our normalized summary so sample flags & enriched lines stay intact. */
+const CPU_DETAIL_V = 1 as const;
+type CpuDetailPayload = { _cpu_v: typeof CPU_DETAIL_V; summary: LeafLinkOrderSummaryDto };
+
+function isCpuDetailPayload(p: unknown): p is CpuDetailPayload {
+  return (
+    typeof p === "object"
+    && p !== null
+    && (p as CpuDetailPayload)._cpu_v === CPU_DETAIL_V
+    && typeof (p as CpuDetailPayload).summary === "object"
+    && (p as CpuDetailPayload).summary !== null
+  );
+}
+
+function syntheticRawForTotalsFromSummary(summary: LeafLinkOrderSummaryDto): Record<string, unknown> {
+  const raw: Record<string, unknown> = {};
+  if (summary.total !== null && summary.total !== undefined)
+    raw.total = summary.total;
+  if (summary.subtotal !== null && summary.subtotal !== undefined)
+    raw.subtotal = summary.subtotal;
+  return raw;
+}
+
+function collectedPairFromStoredPayload(payload: unknown): { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto } | null {
+  if (isCpuDetailPayload(payload)) {
+    const summary = payload.summary;
+    return { raw: syntheticRawForTotalsFromSummary(summary), summary };
+  }
+  if (payload != null && typeof payload === "object" && !Array.isArray(payload))
+    return { raw: payload as Record<string, unknown>, summary: normalizeOrder(payload) };
+  return null;
+}
+
+function toUpsertInputFromLeafLinkPayload(
+  raw: Record<string, unknown>,
+  summary: LeafLinkOrderSummaryDto,
+  sourcePage?: number | null,
+): LeafLinkStoredOrderUpsertInput | null {
+  const leafLinkKey = cleanString(summary.id) || cleanString(summary.orderNumber);
+  if (!leafLinkKey) return null;
+  const cp = Date.parse(summary.createdAt || "");
+  const createdOn = Number.isFinite(cp) ? new Date(cp) : null;
+  const money = effectiveOrderTotalUsd(raw, summary);
+  return {
+    leafLinkKey,
+    buyerCustomerId: summary.buyerCustomerId || "",
+    customerName: summary.customerName || "",
+    statusRaw: summary.status || "",
+    createdOn,
+    totalUsd: Number.isFinite(money) ? money : null,
+    payload: raw as Prisma.InputJsonValue,
+    sourcePage: sourcePage ?? null,
+  };
+}
+
+async function persistLeafLinkOrderListRows(
+  companyId: string,
+  apiRows: unknown[],
+  sourcePage?: number,
+): Promise<void> {
+  const cid = cleanString(companyId);
+  if (!cid || !Array.isArray(apiRows) || apiRows.length === 0)
+    return;
+  try {
+    const inputs: LeafLinkStoredOrderUpsertInput[] = [];
+    for (const item of apiRows) {
+      const raw =
+        item != null && typeof item === "object" && !Array.isArray(item)
+          ? (item as Record<string, unknown>)
+          : null;
+      if (!raw) continue;
+      const summary = normalizeOrder(item);
+      const row = toUpsertInputFromLeafLinkPayload(raw, summary, sourcePage ?? null);
+      if (row) inputs.push(row);
+    }
+    if (inputs.length) {
+      await upsertLeafLinkStoredOrders(cid, inputs);
+      logInfo("[LEAFLINK] orders_saved_to_db", { companyId: cid, rows: inputs.length, sourcePage });
+    }
+  }
+  catch (err) {
+    logWarn("[LEAFLINK] orders_save_to_db_failed", { err: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function persistLeafLinkFetchedOrderPairs(
+  companyId: string,
+  pairs: { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }[],
+  sourcePage?: number,
+): Promise<void> {
+  const cid = cleanString(companyId);
+  if (!cid || !pairs.length) return;
+  try {
+    const inputs: LeafLinkStoredOrderUpsertInput[] = [];
+    for (const { raw, summary } of pairs) {
+      const row = toUpsertInputFromLeafLinkPayload(raw, summary, sourcePage ?? null);
+      if (row) inputs.push(row);
+    }
+    if (inputs.length) {
+      await upsertLeafLinkStoredOrders(cid, inputs);
+      logInfo("[LEAFLINK] orders_saved_to_db_pairs", { companyId: cid, rows: inputs.length, sourcePage });
+    }
+  }
+  catch (err) {
+    logWarn("[LEAFLINK] orders_save_pairs_failed", { err: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function persistLeafLinkDetailSummaryRow(companyId: string, summary: LeafLinkOrderSummaryDto): Promise<void> {
+  const cid = cleanString(companyId);
+  const leafLinkKey = cleanString(summary.id) || cleanString(summary.orderNumber);
+  if (!cid || !leafLinkKey) return;
+  try {
+    const rawTotals = syntheticRawForTotalsFromSummary(summary);
+    const money = effectiveOrderTotalUsd(rawTotals, summary);
+    const cp = Date.parse(summary.createdAt || "");
+    const createdOn = Number.isFinite(cp) ? new Date(cp) : null;
+    const boxed: CpuDetailPayload = { _cpu_v: CPU_DETAIL_V, summary };
+    await upsertLeafLinkStoredOrders(cid, [
+      {
+        leafLinkKey,
+        buyerCustomerId: summary.buyerCustomerId || "",
+        customerName: summary.customerName || "",
+        statusRaw: summary.status || "",
+        createdOn,
+        totalUsd: Number.isFinite(money) ? money : null,
+        payload: boxed as unknown as Prisma.InputJsonValue,
+        sourcePage: null,
+      },
+    ]);
+    logInfo("[LEAFLINK] orders_saved_detail_db", { companyId: cid, leafLinkKey });
+  }
+  catch (err) {
+    logWarn("[LEAFLINK] orders_detail_save_to_db_failed", { err: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 function leafLinkHeaders(creds: LeafLinkRuntimeCredentials, authValue: string): Record<string, string> {
   return {
     Accept: "application/json",
@@ -978,6 +1129,8 @@ export class LeafLinkOrdersService {
 
         const { list } = parseListBody(body);
 
+        await persistLeafLinkOrderListRows(companyId, list, pg);
+
         logInfo("[LEAFLINK] orders_search_pull_page", {
           authMode,
           pageInPull: pg,
@@ -1063,6 +1216,9 @@ export class LeafLinkOrdersService {
     let totalCount = apiTotal || orders.length;
     const ps = Number(searchParams.get("page_size")) || orders.length || 18;
     const pageNum = Number(searchParams.get("page")) || 1;
+
+    await persistLeafLinkOrderListRows(companyId, list, pageNum);
+
     const hasNextBool =
       Boolean(nextUrl) || (apiTotal ? pageNum * ps < apiTotal : false);
     const hasPrevBool = pageNum > 1;
@@ -1128,11 +1284,13 @@ export class LeafLinkOrdersService {
 
     const summary = normalizeOrder(body);
     const lineItems = await enrichDetailLineItems(creds, base, r, summary.lineItems);
-    return {
+    const full: LeafLinkOrderSummaryDto = {
       ...summary,
       lineItems,
       itemCount: lineItems.length,
     };
+    await persistLeafLinkDetailSummaryRow(companyId, full);
+    return full;
   }
 
   /**
@@ -1177,18 +1335,32 @@ export class LeafLinkOrdersService {
   }
 
   /**
-   * Aggregate wholesale orders in a UTC date range for charting (paginates LeafLink newest-first until past range).
+   * Aggregate wholesale orders in a UTC date range from **saved** DB rows (populated whenever Orders loads or Multi-page sync runs).
+   * Pass `{ refresh: true }` once to paginate LeafLink and merge into the DB before aggregating (optional).
    * Only non-cancelled orders with total ≥ {@link ORDERS_ANALYTICS_MIN_ORDER_TOTAL} define “active” customers and series.
    * Sample lines: LeafLink `is_sample`, product/listing sample signals, `frozen_data`, plus name/SKU/notes (see {@link isSampleLineItem}).
    */
   async getOrdersAnalytics(
     companyId: string,
-    input: { dateFrom: string; dateTo: string },
+    input: { dateFrom: string; dateTo: string; refresh?: boolean },
   ): Promise<OrdersAnalyticsDto> {
     const dateFrom = cleanString(input.dateFrom);
     const dateTo = cleanString(input.dateTo);
     const fromMs = parseUtcDateOnlyToMs(dateFrom, false);
     const toMs = parseUtcDateOnlyToMs(dateTo, true);
+
+    const emptyMeta = (): Pick<
+      OrdersAnalyticsDto,
+      | "readFromDatabase"
+      | "leafLinkRefreshRan"
+      | "storedRowsInRange"
+      | "storedSnapshotMaxUpdatedAt"
+    > => ({
+      readFromDatabase: true,
+      leafLinkRefreshRan: Boolean(input.refresh),
+      storedRowsInRange: 0,
+      storedSnapshotMaxUpdatedAt: null,
+    });
 
     if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) {
       throw new AppError("Invalid date range.", 400, "ORDERS_ANALYTICS_BAD_RANGE");
@@ -1219,50 +1391,58 @@ export class LeafLinkOrdersService {
         customers: [],
         qualifyingOrders: [],
         qualifyingOrdersTruncated: false,
+        ...emptyMeta(),
       };
     }
 
     await this.assertOrdersCapableOrThrow(creds);
 
-    const collectedByKey = new Map<string, { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }>();
     let pagesScanned = 0;
     let truncated = false;
 
-    for (let page = 1; page <= MAX_ANALYTICS_PAGES; page++) {
-      const res = await this.listOrdersSummaries(companyId, {
-        page,
-        pageSize: 100,
-        ordering: "-created_on",
-      });
-      pagesScanned++;
-      if (!res.rows.length)
-        break;
+    if (input.refresh) {
+      for (let page = 1; page <= MAX_ANALYTICS_PAGES; page++) {
+        const res = await this.listOrdersSummaries(companyId, {
+          page,
+          pageSize: 100,
+          ordering: "-created_on",
+        });
+        pagesScanned++;
+        await persistLeafLinkFetchedOrderPairs(companyId, res.rows, page);
+        if (!res.rows.length)
+          break;
 
-      const timestamps = res.rows.map(({ summary: o }) => Date.parse(o.createdAt));
-      const maxT = Math.max(...timestamps.filter(Number.isFinite));
-      if (Number.isFinite(maxT) && maxT < fromMs)
-        break;
+        const timestamps = res.rows.map(({ summary: o }) => Date.parse(o.createdAt));
+        const maxT = Math.max(...timestamps.filter(Number.isFinite));
+        if (Number.isFinite(maxT) && maxT < fromMs)
+          break;
 
-      for (const row of res.rows) {
-        const { raw, summary: o } = row;
-        const t = Date.parse(o.createdAt);
-        if (!Number.isFinite(t)) continue;
-        if (t < fromMs || t > toMs) continue;
-        const dedupeKey = cleanString(o.id) || `${cleanString(o.buyerCustomerId)}|${cleanString(o.orderNumber)}`;
-        if (!dedupeKey) continue;
-        collectedByKey.set(dedupeKey, { raw, summary: o });
+        const minT = Math.min(...timestamps.filter(Number.isFinite));
+        if (Number.isFinite(minT) && minT < fromMs && !res.hasNext)
+          break;
+        if (!res.hasNext)
+          break;
+        if (page === MAX_ANALYTICS_PAGES && res.hasNext)
+          truncated = true;
       }
-
-      const minT = Math.min(...timestamps.filter(Number.isFinite));
-      if (Number.isFinite(minT) && minT < fromMs && !res.hasNext)
-        break;
-      if (!res.hasNext)
-        break;
-      if (page === MAX_ANALYTICS_PAGES && res.hasNext)
-        truncated = true;
     }
 
-    const collected = [...collectedByKey.values()];
+    const storedDb = await findLeafLinkStoredOrdersForCompanyInRange(companyId, {
+      from: new Date(fromMs),
+      to: new Date(toMs),
+    });
+    const storedSnapshotMaxUpdatedAt =
+      storedDb.reduce<Date | null>(
+        (acc, r) => (!acc || r.updatedAt > acc ? r.updatedAt : acc),
+        null,
+      )?.toISOString() ?? null;
+
+    const collected: { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }[] = [];
+    for (const r of storedDb) {
+      const pair = collectedPairFromStoredPayload(r.payload);
+      if (pair)
+        collected.push(pair);
+    }
 
     type CustAgg = {
       label: string;
@@ -1367,6 +1547,8 @@ export class LeafLinkOrdersService {
       customerCount: customers.length,
       qualifyingOrdersReturned: qualifyingOrders.length,
       qualifyingOrdersTruncated,
+      storedRowsInRange: storedDb.length,
+      refresh: Boolean(input.refresh),
     });
 
     return {
@@ -1383,6 +1565,10 @@ export class LeafLinkOrdersService {
       customers,
       qualifyingOrders,
       qualifyingOrdersTruncated,
+      readFromDatabase: true,
+      leafLinkRefreshRan: Boolean(input.refresh),
+      storedRowsInRange: storedDb.length,
+      storedSnapshotMaxUpdatedAt,
     };
   }
 

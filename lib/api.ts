@@ -898,14 +898,20 @@ export type OrdersAnalyticsDto = {
   customers: OrdersAnalyticsCustomerDto[];
   qualifyingOrders: OrdersAnalyticsQualifyingOrderDto[];
   qualifyingOrdersTruncated: boolean;
+  readFromDatabase: boolean;
+  leafLinkRefreshRan: boolean;
+  storedRowsInRange: number;
+  storedSnapshotMaxUpdatedAt: string | null;
 };
 
 export async function fetchOrdersAnalytics(
   from: string,
   to: string,
   companyId?: string,
+  opts?: { refreshLeafLink?: boolean },
 ) {
   const q = new URLSearchParams({ from, to });
+  if (opts?.refreshLeafLink) q.set("refresh", "true");
   return apiRequest<OrdersAnalyticsDto>(`/api/orders/analytics?${q.toString()}`, {
     companyId,
   });

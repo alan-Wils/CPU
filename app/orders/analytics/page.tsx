@@ -182,13 +182,16 @@ export default function OrdersAnalyticsPage() {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [customerListOpen, setCustomerListOpen] = useState(true);
   const [graphMode, setGraphMode] = useState<GraphMode>("revenue");
+  const [detailCustomerKey, setDetailCustomerKey] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (refreshLeafLink?: boolean) => {
     setLoading(true);
     setError("");
     try {
       const cid = getSelectedCompanyId().trim();
-      const out = await fetchOrdersAnalytics(from, to, cid || undefined);
+      const out = await fetchOrdersAnalytics(from, to, cid || undefined, {
+        refreshLeafLink: Boolean(refreshLeafLink),
+      });
       setData(out);
     }
     catch (e: unknown) {
@@ -201,7 +204,7 @@ export default function OrdersAnalyticsPage() {
   }, [from, to]);
 
   useEffect(() => {
-    void load();
+    void load(false);
   }, [load]);
 
   useEffect(() => {
@@ -276,6 +279,19 @@ export default function OrdersAnalyticsPage() {
       .filter((p): p is ScatterPoint => p != null);
   }, [data, selectedKeys]);
 
+  const detailCustomer = useMemo(() => {
+    if (!detailCustomerKey || !data?.customers?.length) return null;
+    return data.customers.find((c) => c.key === detailCustomerKey) ?? null;
+  }, [data, detailCustomerKey]);
+
+  const detailOrders = useMemo(() => {
+    if (!detailCustomerKey || !data?.qualifyingOrders?.length) return [];
+    return data.qualifyingOrders
+      .filter((o) => o.customerKey === detailCustomerKey)
+      .slice()
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  }, [data, detailCustomerKey]);
+
   const chartTitle =
     graphMode === "revenue"
       ? "Revenue by customer (per day)"
@@ -338,8 +354,17 @@ export default function OrdersAnalyticsPage() {
                 To (UTC)
                 <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={{ ...filterInputStyle, minWidth: 160 }} />
               </label>
-              <button type="button" style={btnPrimary} onClick={() => void load()} disabled={loading}>
+              <button type="button" style={btnPrimary} onClick={() => void load(false)} disabled={loading}>
                 {loading ? "Loading…" : "Apply range"}
+              </button>
+              <button
+                type="button"
+                style={btnGhost}
+                onClick={() => void load(true)}
+                disabled={loading}
+                title="Paginate LeafLink now, merge into saved orders, then chart from the database"
+              >
+                {loading ? "…" : "Pull from LeafLink → save"}
               </button>
             </div>
 
@@ -384,10 +409,21 @@ export default function OrdersAnalyticsPage() {
               </p>
             ) : null}
 
-            {data && data.ordersIncluded > 0 ? (
-              <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>
-                {data.ordersIncluded} qualifying order(s) · {data.customers.length} active customer(s) · {data.pagesScanned}{" "}
-                LeafLink page(s) · UTC dates
+            {data && data.configured && data.integrationEnabled && !loading ? (
+              <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16, lineHeight: 1.55 }}>
+                Charts use saved orders in this app ({data.storedRowsInRange} stored row
+                {data.storedRowsInRange === 1 ? "" : "s"} overlapping this range
+                {data.storedSnapshotMaxUpdatedAt
+                  ? ` · newest save ${fmtShortDate(data.storedSnapshotMaxUpdatedAt)}`
+                  : ""}
+                ).
+                {data.storedRowsInRange === 0 ? " Open the Orders page or run Multi-page sync, or use “Pull from LeafLink → save”." : ""}{" "}
+                {data.ordersIncluded > 0
+                  ? `${data.ordersIncluded} qualifying order(s) · ${data.customers.length} active customer(s) · UTC dates`
+                  : data.storedRowsInRange > 0
+                    ? `${data.storedRowsInRange} stored order(s) in range (none meet the ${usd(data.minOrderTotal)} non-cancelled filters).`
+                    : null}
+                {data.leafLinkRefreshRan ? ` · LeafLink pull ran this request (${data.pagesScanned} page(s)).` : ""}
               </p>
             ) : null}
 
@@ -461,7 +497,23 @@ export default function OrdersAnalyticsPage() {
                                   aria-label={`Include ${c.label} on chart`}
                                 />
                               </td>
-                              <td style={{ padding: "10px", fontWeight: 700, color: "#f1f5f9" }}>{c.label}</td>
+                              <td style={{ padding: "10px", fontWeight: 700 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setDetailCustomerKey(c.key)}
+                                  style={{
+                                    border: "none",
+                                    background: "transparent",
+                                    color: "#c4b5fd",
+                                    cursor: "pointer",
+                                    fontWeight: 800,
+                                    padding: 0,
+                                  }}
+                                  title={`View all ${c.label} orders in range`}
+                                >
+                                  {c.label}
+                                </button>
+                              </td>
                               <td style={{ padding: "10px", color: "#cbd5e1" }}>{fmtShortDate(c.lastPurchaseDate)}</td>
                               <td style={{ padding: "10px", color: "#cbd5e1", fontVariantNumeric: "tabular-nums" }}>
                                 {usd(c.lastOrderTotal)}
@@ -521,21 +573,108 @@ export default function OrdersAnalyticsPage() {
               ))}
             </div>
 
-            <ChartBlock
-              title={chartTitle}
-              rows={chartRows}
-              meta={seriesMeta}
-              loading={loading}
-              yTickFormatter={yTickFormatter}
-              tooltipFormat={tooltipFormat}
-              emptyHint={
-                data && data.customers.length > 0 && selectedKeys.size === 0
-                  ? "Select at least one customer to plot."
-                  : undefined
-              }
-            />
+            {graphMode === "orderPoints" ? (
+              <OrderScatterBlock
+                title={chartTitle}
+                points={scatterPoints}
+                selectedCustomers={selectedCustomers}
+                loading={loading}
+                emptyHint={
+                  data && data.customers.length > 0 && selectedKeys.size === 0
+                    ? "Select at least one customer to plot."
+                    : "No qualifying orders for selected customers in this range."
+                }
+              />
+            ) : (
+              <ChartBlock
+                title={chartTitle}
+                rows={chartRows}
+                meta={seriesMeta}
+                loading={loading}
+                yTickFormatter={yTickFormatter}
+                tooltipFormat={tooltipFormat}
+                emptyHint={
+                  data && data.customers.length > 0 && selectedKeys.size === 0
+                    ? "Select at least one customer to plot."
+                    : undefined
+                }
+              />
+            )}
           </div>
         </div>
+        {detailCustomer ? (
+          <div
+            role="presentation"
+            onClick={() => setDetailCustomerKey(null)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(2,6,23,0.78)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 20,
+              zIndex: 90,
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={`${detailCustomer.label} orders`}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: "min(980px, 96vw)",
+                maxHeight: "86vh",
+                overflow: "auto",
+                borderRadius: 18,
+                border: "1px solid rgba(148,163,184,0.3)",
+                background: "linear-gradient(135deg, rgba(15,23,42,0.96), rgba(2,6,23,0.96))",
+                boxShadow: "0 26px 80px rgba(0,0,0,0.6)",
+                padding: 18,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 20, fontWeight: 900, color: "#f8fafc" }}>{detailCustomer.label}</h3>
+                  <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 13 }}>
+                    {detailOrders.length} qualifying order(s) from {from} to {to} UTC
+                  </p>
+                </div>
+                <button type="button" style={btnSmall} onClick={() => setDetailCustomerKey(null)}>
+                  Close
+                </button>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+                      <th style={{ padding: "8px 10px" }}>Order #</th>
+                      <th style={{ padding: "8px 10px" }}>Date (UTC)</th>
+                      <th style={{ padding: "8px 10px" }}>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detailOrders.length === 0 ? (
+                      <tr style={{ borderTop: "1px solid rgba(148,163,184,0.12)" }}>
+                        <td colSpan={3} style={{ padding: "12px 10px", color: "#94a3b8" }}>
+                          No qualifying orders for this customer in the selected range.
+                        </td>
+                      </tr>
+                    ) : (
+                      detailOrders.map((o) => (
+                        <tr key={o.orderId} style={{ borderTop: "1px solid rgba(148,163,184,0.12)" }}>
+                          <td style={{ padding: "10px", color: "#c4b5fd", fontWeight: 700 }}>{o.orderNumber}</td>
+                          <td style={{ padding: "10px", color: "#cbd5e1" }}>{fmtShortDate(o.createdAt)}</td>
+                          <td style={{ padding: "10px", color: "#cbd5e1", fontVariantNumeric: "tabular-nums" }}>{usd(o.totalUsd)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </PageAccessGate>
   );
