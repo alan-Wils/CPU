@@ -565,7 +565,7 @@ export default function OrdersPage() {
     finally {
       setSyncing(false);
     }
-  }, [companyId, loadList]);
+  }, [loadList]);
 
   const openDetail = useCallback((id: string) => {
     setDetailKey(id);
