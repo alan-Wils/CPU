@@ -1231,6 +1231,7 @@ export class LeafLinkOrdersService {
   private async loadCurrentCustomerIdsFromLeafLink(
     companyId: string,
     creds: LeafLinkRuntimeCredentials,
+    authSource: LeafLinkCredentialSource,
     opts?: { refresh?: boolean; actorUserId?: string },
   ): Promise<Set<string>> {
     const cid = cleanString(companyId);
@@ -1256,7 +1257,7 @@ export class LeafLinkOrdersService {
       qp.set("page", String(page));
       qp.set("page_size", "200");
       const urls = buildCustomerStatusesUrlCandidates(base, creds, qp);
-      const { body } = await leafLinkAuthedGet(urls, creds, creds.source, 20_000);
+      const { body } = await leafLinkAuthedGet(urls, creds, authSource, 20_000);
       const { list, next } = parseListBody(body);
       for (const item of list) {
         const row = asRecord(item);
@@ -1281,7 +1282,7 @@ export class LeafLinkOrdersService {
       qp.set("page_size", "200");
       qp.set("status", currentStatusId);
       const urls = buildCustomersUrlCandidates(base, creds, qp);
-      const { body } = await leafLinkAuthedGet(urls, creds, creds.source, 25_000);
+      const { body } = await leafLinkAuthedGet(urls, creds, authSource, 25_000);
       const { list, next } = parseListBody(body);
       for (const item of list) {
         const row = asRecord(item);
@@ -1765,7 +1766,7 @@ export class LeafLinkOrdersService {
     let filteredByLeafLinkCurrentCustomerStatus = false;
     let leafLinkCurrentCustomerCount = 0;
     try {
-      currentCustomerIds = await this.loadCurrentCustomerIdsFromLeafLink(companyId, creds, {
+      currentCustomerIds = await this.loadCurrentCustomerIdsFromLeafLink(companyId, creds, creds.source, {
         refresh: Boolean(input.refresh),
         actorUserId: "system",
       });
