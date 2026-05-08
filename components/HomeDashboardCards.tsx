@@ -39,6 +39,30 @@ const dashboardCards: {
     permission: "page.packaging",
   },
   {
+    title: "Inventory",
+    description:
+      "Track lots, manifests, labeling, METRC-aligned inventory snapshots, movement, and reconciliation.",
+    href: "/inventory",
+    accent: "#10b981",
+    permission: "page.inventory",
+  },
+  {
+    title: "Orders",
+    description:
+      "Stored LeafLink sales orders with customer totals, syncing, and outbound workflow context.",
+    href: "/orders",
+    accent: "#fbbf24",
+    permission: "page.orders",
+  },
+  {
+    title: "Analytics",
+    description:
+      "Company-wide metrics, trends, and reporting across cultivation and production performance.",
+    href: "/analytics",
+    accent: "#6366f1",
+    permission: "page.analytics",
+  },
+  {
     title: "Data Hub",
     description:
       "Review batch chains, source material flow, production history, labor cost, yield, and company-wide batch data.",

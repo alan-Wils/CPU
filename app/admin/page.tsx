@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  ALL_APP_PERMISSION_IDS,
+  ADMIN_PERMISSION_SECTIONS,
   APP_PERMISSION_LABELS,
   defaultPagePermissionsForRole,
   fullAccessPermissionIds,
@@ -4268,37 +4268,65 @@ export default function AdminPage() {
                         : "Choose which areas this employee can open and whether they may delete workflow records."}
                     </p>
                   )}
-                  <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
-                    {(ALL_APP_PERMISSION_IDS as readonly string[]).map((pid) => {
-                      const locked = isOwnerOrAdminRoleKey(editRole);
-                      const checked = locked || editAppPermissions.includes(pid);
-                      return (
-                        <label
-                          key={pid}
+                  <div style={{ display: "grid", gap: 14, marginBottom: 12 }}>
+                    {ADMIN_PERMISSION_SECTIONS.map((section) => (
+                      <div key={section.title} style={{ display: "grid", gap: 8 }}>
+                        <div
                           style={{
-                            display: "flex",
-                            alignItems: "flex-start",
-                            gap: 10,
-                            cursor: locked ? "not-allowed" : "pointer",
-                            color: "#e2e8f0",
-                            fontSize: 14,
-                            opacity: locked ? 0.92 : 1,
+                            fontSize: 12,
+                            fontWeight: 800,
+                            letterSpacing: "0.04em",
+                            textTransform: "uppercase",
+                            color: "#64748b",
                           }}
                         >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={locked}
-                            onChange={() => toggleEditPermission(pid)}
-                            style={{ marginTop: 3 }}
-                          />
-                          <span>
-                            {APP_PERMISSION_LABELS[pid as keyof typeof APP_PERMISSION_LABELS]}
-                            {locked ? " (always on)" : ""}
-                          </span>
-                        </label>
-                      );
-                    })}
+                          {section.title}
+                        </div>
+                        {!isOwnerOrAdminRoleKey(editRole) && section.subtitle ? (
+                          <p
+                            style={{
+                              color: "#64748b",
+                              fontSize: 12,
+                              margin: 0,
+                              lineHeight: 1.5,
+                              paddingLeft: 2,
+                            }}
+                          >
+                            {section.subtitle}
+                          </p>
+                        ) : null}
+                        {(section.ids as readonly string[]).map((pid) => {
+                          const locked = isOwnerOrAdminRoleKey(editRole);
+                          const checked = locked || editAppPermissions.includes(pid);
+                          return (
+                            <label
+                              key={pid}
+                              style={{
+                                display: "flex",
+                                alignItems: "flex-start",
+                                gap: 10,
+                                cursor: locked ? "not-allowed" : "pointer",
+                                color: "#e2e8f0",
+                                fontSize: 14,
+                                opacity: locked ? 0.92 : 1,
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={locked}
+                                onChange={() => toggleEditPermission(pid)}
+                                style={{ marginTop: 3 }}
+                              />
+                              <span>
+                                {APP_PERMISSION_LABELS[pid as keyof typeof APP_PERMISSION_LABELS]}
+                                {locked ? " (always on)" : ""}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ))}
                   </div>
                   {!isOwnerOrAdminRoleKey(editRole) && (
                     <button

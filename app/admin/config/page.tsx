@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Nav from "@/components/Nav";
 import { CollapsibleConfigSection } from "@/components/admin/CollapsibleConfigSection";
@@ -2296,6 +2297,19 @@ export default function ConfigPage() {
           />
           Show live order banners (customer name and order total)
         </label>
+        </div>
+
+        <div style={styles.configSubCard}>
+          <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Which employees see Inventory, Orders, and Analytics</h3>
+          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 0, lineHeight: 1.5 }}>
+            Per-person page access is not stored here. Open{" "}
+            <Link href="/admin" style={{ color: "#38bdf8", fontWeight: 800 }}>
+              Admin → Users
+            </Link>
+            , choose <b>Edit</b>, and under{" "}
+            <b style={{ color: "#e2e8f0" }}>Inventory, orders, and analytics</b>{" "}
+            uncheck Inventory, Orders, or Analytics for that employee. That hides the nav links and home shortcuts for everyone except Owners and Company Admins.
+          </p>
         </div>
 
         <div style={styles.configSubCard}>

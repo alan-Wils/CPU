@@ -7,6 +7,7 @@ export const ALL_APP_PERMISSION_IDS = [
   "page.extraction",
   "page.packaging",
   "page.inventory",
+  "page.orders",
   "page.data-hub",
   "page.analytics",
   "page.rewards",
@@ -19,18 +20,46 @@ export const APP_PERMISSION_LABELS: Record<AdminUiPermissionId, string> = {
   "page.cultivation": "Cultivation",
   "page.extraction": "Extraction",
   "page.packaging": "Packaging",
-  "page.inventory": "Show Inventory Page",
+  "page.inventory": "Inventory",
+  "page.orders": "Orders",
   "page.data-hub": "Data Hub",
   "page.analytics": "Analytics",
   "page.rewards": "Rewards",
   "workflow.delete": "Delete workflow records (batches, runs, lots, source packages)",
 };
 
+/** Grouped for Admin → Users → Edit employee (same ids as {@link ALL_APP_PERMISSION_IDS}). */
+export const ADMIN_PERMISSION_SECTIONS: ReadonlyArray<{
+  title: string;
+  subtitle?: string;
+  ids: readonly AdminUiPermissionId[];
+}> = [
+  {
+    title: "Production floor",
+    ids: ["page.cultivation", "page.extraction", "page.packaging"],
+  },
+  {
+    title: "Inventory, orders, and analytics",
+    subtitle:
+      "Uncheck to hide these pages from the navigation bar and home dashboard for this employee.",
+    ids: ["page.inventory", "page.orders", "page.analytics"],
+  },
+  {
+    title: "Data and rewards",
+    ids: ["page.data-hub", "page.rewards"],
+  },
+  {
+    title: "Dangerous actions",
+    ids: ["workflow.delete"],
+  },
+];
+
 const PAGE_SET_ALL: AdminUiPermissionId[] = [
   "page.cultivation",
   "page.extraction",
   "page.packaging",
   "page.inventory",
+  "page.orders",
   "page.data-hub",
   "page.analytics",
   "page.rewards",
