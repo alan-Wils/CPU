@@ -2019,7 +2019,7 @@ export class LeafLinkOrdersService {
       if (paid) continue;
       const orderNumber = cleanString(summary.orderNumber || summary.shortNumber || summary.id);
       const customerName = cleanString(summary.customerName);
-      const total = typeof summary.total === "number" ? summary.total : (typeof row.totalUsd === "number" ? row.totalUsd : orderTotalMoney(summary));
+      const total = typeof summary.total === "number" ? summary.total : orderTotalMoney(summary);
       const outstandingBalance = paid ? 0 : total;
       const matchedBy: string[] = [];
       let score = 0;
@@ -2047,7 +2047,7 @@ export class LeafLinkOrdersService {
       }
       if (matchedBy.length === 0) continue;
       out.push({
-        leafLinkKey: row.leafLinkKey,
+        leafLinkKey: cleanString(summary.id) || cleanString(row.id) || orderNumber,
         orderId: summary.id,
         orderNumber,
         customerName,

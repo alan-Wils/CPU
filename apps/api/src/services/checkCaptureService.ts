@@ -440,6 +440,165 @@ export class CheckCaptureService {
         });
         return updated;
     }
+    async matchLeafLinkInvoice(companyId, checkId, input) {
+        const check = await prisma.checkCapture.findFirst({
+            where: { id: checkId, companyId },
+            select: {
+                id: true,
+                amount: true,
+                payerName: true,
+                invoiceNumber: true,
+                leaflinkPaymentId: true
+            }
+        });
+        if (!check) {
+            throw new AppError("Check capture not found.", 404, "CHECK_CAPTURE_NOT_FOUND");
+        }
+        const refresh = Boolean(input?.refreshIfNoMatch);
+        let candidates = await this.leafLinkOrdersService.findOpenPaymentCandidatesForCheck(companyId, {
+            invoiceNumber: check.invoiceNumber ?? undefined,
+            payerName: check.payerName ?? undefined,
+            amount: typeof check.amount === "number" ? check.amount : undefined
+        });
+        if (!candidates.length && refresh) {
+            await this.leafLinkOrdersService.syncOrdersWarm(companyId);
+            candidates = await this.leafLinkOrdersService.findOpenPaymentCandidatesForCheck(companyId, {
+                invoiceNumber: check.invoiceNumber ?? undefined,
+                payerName: check.payerName ?? undefined,
+                amount: typeof check.amount === "number" ? check.amount : undefined
+            });
+        }
+        const invoiceNeedle = normalizeText(check.invoiceNumber);
+        const payeeNeedle = normalizeText(check.payerName);
+        const checkAmount = typeof check.amount === "number" ? check.amount : null;
+        const exactMatches = candidates.filter((c) => c.matchedBy.includes("invoice_exact"));
+        const possibleMatches = candidates.filter((c) => {
+            if (exactMatches.find((x) => x.orderNumber === c.orderNumber))
+                return false;
+            const openish = !normalizeText(c.paymentStatus).includes("paid");
+            if (!openish)
+                return false;
+            const nameOk = payeeNeedle ? normalizeText(c.customerName).includes(payeeNeedle) : false;
+            const amountOk = checkAmount == null ? false : (sameMoney(c.total, checkAmount) || sameMoney(c.outstandingBalance, checkAmount));
+            const invoicePartial = invoiceNeedle ? c.matchedBy.includes("invoice_partial") : false;
+            return Boolean(invoicePartial || (nameOk && amountOk));
+        });
+        if (exactMatches.length > 0) {
+            const chosen = exactMatches[0];
+            await prisma.checkCapture.update({
+                where: { id: check.id },
+                data: {
+                    leaflinkOrderId: chosen.orderId || chosen.leafLinkKey,
+                    leaflinkOrderNumber: chosen.orderNumber,
+                    leaflinkMatchedAt: new Date(),
+                    paymentSyncStatus: "matched",
+                    paymentSyncError: null
+                }
+            });
+        }
+        return {
+            checkId: check.id,
+            exactMatches,
+            possibleMatches
+        };
+    }
+    async markLeafLinkInvoicePaid(companyId, actorUserId, checkId, input) {
+        const check = await prisma.checkCapture.findFirst({
+            where: { id: checkId, companyId },
+            select: {
+                id: true,
+                checkDate: true,
+                checkNumber: true,
+                amount: true,
+                payerName: true,
+                invoiceNumber: true,
+                leaflinkPaymentId: true
+            }
+        });
+        if (!check) {
+            throw new AppError("Check capture not found.", 404, "CHECK_CAPTURE_NOT_FOUND");
+        }
+        if (check.leaflinkPaymentId) {
+            throw new AppError("This check already has a LeafLink payment posted.", 409, "CHECK_LEAFLINK_DUPLICATE_PAYMENT");
+        }
+        const amount = typeof check.amount === "number" ? check.amount : NaN;
+        if (!Number.isFinite(amount) || amount < 0) {
+            throw new AppError("Check amount is required before posting payment.", 400, "CHECK_AMOUNT_REQUIRED");
+        }
+        const candidates = await this.leafLinkOrdersService.findOpenPaymentCandidatesForCheck(companyId, {
+            invoiceNumber: check.invoiceNumber ?? undefined,
+            payerName: check.payerName ?? undefined,
+            amount
+        });
+        const selected = candidates.find((c) => c.orderNumber === input.orderNumber || c.orderId === input.orderId || c.leafLinkKey === input.orderId);
+        if (!selected) {
+            throw new AppError("Selected LeafLink order was not found or is not open.", 404, "LEAFLINK_ORDER_NOT_OPEN");
+        }
+        const expectedBalance = selected.outstandingBalance ?? selected.total;
+        const amountMatches = sameMoney(expectedBalance, amount) || sameMoney(selected.total, amount);
+        if (!amountMatches && !input.allowAmountOverride) {
+            throw new AppError("Check amount does not match invoice balance.", 409, "CHECK_AMOUNT_MISMATCH");
+        }
+        const paymentDateIso = check.checkDate ? new Date(check.checkDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+        try {
+            const posted = await this.leafLinkOrdersService.postCheckPayment(companyId, {
+                orderNumber: selected.orderNumber,
+                amount,
+                paymentDateIso,
+                reference: check.checkNumber ?? check.invoiceNumber ?? null,
+                note: `CPU check capture ${check.id}`
+            });
+            await prisma.checkCapture.update({
+                where: { id: check.id },
+                data: {
+                    leaflinkOrderId: selected.orderId || selected.leafLinkKey,
+                    leaflinkOrderNumber: selected.orderNumber,
+                    leaflinkPaymentId: posted.paymentId,
+                    leaflinkPaymentStatus: posted.paymentStatus,
+                    leaflinkMatchedAt: new Date(),
+                    leaflinkPaidAt: new Date(),
+                    leaflinkPaymentResponseJson: JSON.stringify(posted.rawResponse),
+                    paymentSyncStatus: "payment_posted",
+                    paymentSyncError: null
+                }
+            });
+            await this.auditService.logAction({
+                companyId,
+                actorUserId,
+                action: "check_capture_leaflink_payment_posted",
+                entityType: "CheckCapture",
+                entityId: check.id,
+                before: {
+                    checkId: check.id
+                },
+                after: {
+                    orderNumber: selected.orderNumber,
+                    amount,
+                    paymentId: posted.paymentId,
+                    result: posted.paymentStatus
+                }
+            });
+            return {
+                ok: true,
+                paymentId: posted.paymentId,
+                paymentStatus: posted.paymentStatus,
+                orderNumber: selected.orderNumber
+            };
+        }
+        catch (err) {
+            await prisma.checkCapture.update({
+                where: { id: check.id },
+                data: {
+                    leaflinkOrderId: selected.orderId || selected.leafLinkKey,
+                    leaflinkOrderNumber: selected.orderNumber,
+                    paymentSyncStatus: "failed",
+                    paymentSyncError: err instanceof Error ? err.message : String(err),
+                    leaflinkPaymentResponseJson: JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+                }
+            });
+            throw err;
+        }
+    }
     buildDateFilter(opts) {
         const from = opts?.from ? parseUtcDayStart(opts.from) : undefined;
         const to = opts?.to ? parseUtcDayEnd(opts.to) : undefined;

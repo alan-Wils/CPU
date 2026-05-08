@@ -310,6 +310,29 @@ type CheckCaptureRow = {
   invoiceNumber?: string | null;
   imageUrl: string;
   stubImageUrl?: string | null;
+  leaflinkOrderId?: string | null;
+  leaflinkOrderNumber?: string | null;
+  leaflinkPaymentId?: string | null;
+  leaflinkPaymentStatus?: string | null;
+  leaflinkMatchedAt?: string | null;
+  leaflinkPaidAt?: string | null;
+  paymentSyncStatus?: string | null;
+  paymentSyncError?: string | null;
+};
+
+type CheckLeafLinkMatchCandidate = {
+  leafLinkKey: string;
+  orderId: string;
+  orderNumber: string;
+  customerName: string;
+  total: number;
+  outstandingBalance: number | null;
+  status: string;
+  paymentStatus: string;
+  deliveryDate: string | null;
+  lineItems: Array<{ productName: string; sku: string; quantity: number }>;
+  score: number;
+  matchedBy: string[];
 };
 
 type CashLogDepartment = "CULTIVATION" | "EXTRACTION" | "PACKAGING" | "GENERAL";
@@ -471,6 +494,12 @@ export default function AdminPage() {
   const [editCheckRemoveStub, setEditCheckRemoveStub] = useState(false);
   const [editCheckSaving, setEditCheckSaving] = useState(false);
   const [editCheckError, setEditCheckError] = useState("");
+  const [leafLinkMatchLoading, setLeafLinkMatchLoading] = useState(false);
+  const [leafLinkMatchError, setLeafLinkMatchError] = useState("");
+  const [leafLinkMatchChoices, setLeafLinkMatchChoices] = useState<CheckLeafLinkMatchCandidate[]>([]);
+  const [leafLinkMatchModalOpen, setLeafLinkMatchModalOpen] = useState(false);
+  const [leafLinkSelectedOrderNumber, setLeafLinkSelectedOrderNumber] = useState("");
+  const [leafLinkPostingPayment, setLeafLinkPostingPayment] = useState(false);
 
   const [cashBeingEdited, setCashBeingEdited] = useState<CashLogRow | null>(null);
   const editCashReceiptInputRef = useRef<HTMLInputElement | null>(null);
@@ -1101,6 +1130,73 @@ export default function AdminPage() {
       setEditCheckError(e?.message || "Could not update check.");
     } finally {
       setEditCheckSaving(false);
+    }
+  }
+
+  async function findLeafLinkInvoiceForCheck() {
+    if (!checkBeingEdited) return;
+    if (!canManageUsers(currentUser?.role || "")) return;
+    const cid = checksCompanyId();
+    if (!cid) {
+      setEditCheckError("Select a company context before matching.");
+      return;
+    }
+    setLeafLinkMatchLoading(true);
+    setLeafLinkMatchError("");
+    setLeafLinkMatchChoices([]);
+    setLeafLinkSelectedOrderNumber("");
+    try {
+      const data = await apiRequest<{
+        exactMatches?: CheckLeafLinkMatchCandidate[];
+        possibleMatches?: CheckLeafLinkMatchCandidate[];
+      }>(withCompanyQuery(`/api/checks/${encodeURIComponent(checkBeingEdited.id)}/leaflink-match`, cid), {
+        method: "POST",
+        companyId: cid,
+        body: { refreshIfNoMatch: true },
+      });
+      const exact = Array.isArray(data?.exactMatches) ? data.exactMatches : [];
+      const possible = Array.isArray(data?.possibleMatches) ? data.possibleMatches : [];
+      const combined = [...exact, ...possible];
+      if (!combined.length) {
+        setLeafLinkMatchError("No open LeafLink invoice found.");
+        return;
+      }
+      setLeafLinkMatchChoices(combined);
+      setLeafLinkSelectedOrderNumber(combined[0]?.orderNumber || "");
+      setLeafLinkMatchModalOpen(true);
+    } catch (e: any) {
+      setLeafLinkMatchError(e?.message || "Could not search LeafLink invoices.");
+    } finally {
+      setLeafLinkMatchLoading(false);
+    }
+  }
+
+  async function markLeafLinkInvoicePaidForCheck() {
+    if (!checkBeingEdited || !leafLinkSelectedOrderNumber) return;
+    const cid = checksCompanyId();
+    if (!cid) return;
+    setLeafLinkPostingPayment(true);
+    setLeafLinkMatchError("");
+    try {
+      await apiRequest(withCompanyQuery(`/api/checks/${encodeURIComponent(checkBeingEdited.id)}/leaflink-mark-paid`, cid), {
+        method: "POST",
+        companyId: cid,
+        body: {
+          orderNumber: leafLinkSelectedOrderNumber,
+          allowAmountOverride: canManageUsers(currentUser?.role || ""),
+        },
+      });
+      setLeafLinkMatchModalOpen(false);
+      setCheckFormSuccess("LeafLink payment posted successfully.");
+      await loadCheckCaptures();
+      if (checkBeingEdited?.id) {
+        const fresh = checkRows.find((r) => r.id === checkBeingEdited.id);
+        if (fresh) setCheckBeingEdited(fresh);
+      }
+    } catch (e: any) {
+      setLeafLinkMatchError(e?.message || "Could not post payment to LeafLink.");
+    } finally {
+      setLeafLinkPostingPayment(false);
     }
   }
 

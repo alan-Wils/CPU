@@ -281,6 +281,22 @@ export const checkCaptureUpdateSchema = checkSaveSchema
             });
         }
     });
+export const checkLeafLinkMatchSchema = z.object({
+    refreshIfNoMatch: z.boolean().optional()
+});
+export const checkLeafLinkMarkPaidSchema = z.object({
+    orderId: z.string().min(1).max(120).optional(),
+    orderNumber: z.string().min(1).max(120).optional(),
+    allowAmountOverride: z.boolean().optional()
+}).superRefine((data, ctx) => {
+    if (!data.orderId && !data.orderNumber) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Provide orderId or orderNumber.",
+            path: ["orderId"]
+        });
+    }
+});
 const cashLogDepartmentSchema = z.enum(["CULTIVATION", "EXTRACTION", "PACKAGING", "GENERAL"]);
 export const cashLogCreateSchema = z
     .object({

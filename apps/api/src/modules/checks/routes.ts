@@ -4,7 +4,14 @@ import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { requireRole } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
-import { checkCaptureUpdateSchema, checkExtractSchema, checkSaveSchema, checkUploadSchema } from "../../validation/schemas.js";
+import {
+    checkCaptureUpdateSchema,
+    checkExtractSchema,
+    checkLeafLinkMarkPaidSchema,
+    checkLeafLinkMatchSchema,
+    checkSaveSchema,
+    checkUploadSchema
+} from "../../validation/schemas.js";
 import { CheckCaptureService } from "../../services/checkCaptureService.js";
 import { AppError } from "../../errors/AppError.js";
 import { logInfo } from "../../lib/logger.js";
@@ -17,6 +24,7 @@ const writeRoles = [
     "PACKAGING_SPECIALIST"
 ];
 const adminExportRoles = ["OWNER", "ADMIN"];
+const managerOrAdminRoles = ["OWNER", "ADMIN", "OPERATIONS_MANAGER"];
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const listQuerySchema = z.object({
     take: z.coerce.number().int().positive().max(200).optional(),
@@ -106,6 +114,22 @@ checksRouter.patch("/:id", requireRole([...adminExportRoles]), validate({ params
         actorUserId: req.auth?.userId
     });
     res.json(updated);
+}));
+checksRouter.post("/:id/leaflink-match", requireRole([...adminExportRoles]), validate({ params: checkCaptureIdParam, body: checkLeafLinkMatchSchema }), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    if (!companyId) {
+        throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
+    }
+    const matches = await service.matchLeafLinkInvoice(companyId, req.params.id, req.body);
+    res.json(matches);
+}));
+checksRouter.post("/:id/leaflink-mark-paid", requireRole([...managerOrAdminRoles]), validate({ params: checkCaptureIdParam, body: checkLeafLinkMarkPaidSchema }), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    if (!companyId) {
+        throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
+    }
+    const result = await service.markLeafLinkInvoicePaid(companyId, req.auth.userId, req.params.id, req.body);
+    res.json(result);
 }));
 checksRouter.delete("/:id", requireRole([...adminExportRoles]), validate({ params: checkCaptureIdParam }), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);

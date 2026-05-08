@@ -72,13 +72,15 @@ export async function findLeafLinkStoredOrdersForCompanyInRange(
 export async function findRecentLeafLinkStoredOrdersForCompany(
   companyId: string,
   limit: number,
-): Promise<{ id: string; payload: unknown; createdOn: Date | null; updatedAt: Date }[]> {
+): Promise<{ id: string; leafLinkKey: string; totalUsd: number | null; payload: unknown; createdOn: Date | null; updatedAt: Date }[]> {
   const cid = String(companyId ?? "").trim();
   if (!cid) return [];
   const rows = await prisma.leafLinkStoredOrder.findMany({
     where: { companyId: cid },
     select: {
       id: true,
+      leafLinkKey: true,
+      totalUsd: true,
       payload: true,
       createdOn: true,
       updatedAt: true,
