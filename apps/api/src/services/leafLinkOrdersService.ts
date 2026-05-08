@@ -10,8 +10,11 @@ import {
 import {
   upsertLeafLinkStoredOrders,
   findLeafLinkStoredOrdersForCompanyInRange,
+  findRecentLeafLinkStoredOrdersForCompany,
   type LeafLinkStoredOrderUpsertInput,
 } from "./leafLinkOrdersStorePrimitives.js";
+import { ConfigRepository } from "../repositories/configRepository.js";
+import { ConfigService } from "./configService.js";
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -211,11 +214,20 @@ const MAX_LINE_ITEMS_TO_TRUST_SUM = 120;
 const CURRENT_CUSTOMERS_CACHE_TTL_MS = 10 * 60 * 1000;
 const MAX_CUSTOMER_STATUS_PAGES = 20;
 const MAX_CURRENT_CUSTOMER_PAGES = 40;
+const STORED_ORDERS_LIST_SCAN_LIMIT = 2500;
+const LEAFLINK_CUSTOMERS_CACHE_KEY = "leaflink_customers_snapshot";
 
 /** Only orders at or above this total count toward analytics and customer inclusion. */
 export const ORDERS_ANALYTICS_MIN_ORDER_TOTAL = 50;
 
 const currentCustomersByCompanyCache = new Map<string, { atMs: number; ids: Set<string> }>();
+
+type LeafLinkCustomersSnapshot = {
+  currentCustomerIds: string[];
+  statusId: string;
+  statusLabel: string;
+  fetchedAt: string;
+};
 
 function utcDayKeyFromMs(ms: number): string {
   const d = new Date(ms);
@@ -1105,6 +1117,8 @@ function clearTenantOrderCachePrefix(companyId: string): void {
 
 export class LeafLinkOrdersService {
   leafLinkService = new LeafLinkService();
+  configService = new ConfigService();
+  configRepo = new ConfigRepository();
 
   async assertOrdersCapableOrThrow(creds: LeafLinkRuntimeCredentials): Promise<void> {
     if (!creds.apiKey || (!creds.companyId && !creds.companySlug)) {
@@ -1116,11 +1130,56 @@ export class LeafLinkOrdersService {
     }
   }
 
-  private async loadCurrentCustomerIdsFromLeafLink(companyId: string, creds: LeafLinkRuntimeCredentials): Promise<Set<string>> {
+  private async loadPersistedCurrentCustomers(companyId: string): Promise<LeafLinkCustomersSnapshot | null> {
+    const row = await this.configRepo.getConfigRaw(companyId, LEAFLINK_CUSTOMERS_CACHE_KEY);
+    if (!row?.valueJson) return null;
+    try {
+      const v = JSON.parse(row.valueJson) as LeafLinkCustomersSnapshot;
+      if (!Array.isArray(v.currentCustomerIds)) return null;
+      return {
+        currentCustomerIds: v.currentCustomerIds.map((x) => cleanString(x)).filter(Boolean),
+        statusId: cleanString(v.statusId),
+        statusLabel: cleanString(v.statusLabel) || "Current Customer",
+        fetchedAt: cleanString(v.fetchedAt),
+      };
+    }
+    catch {
+      return null;
+    }
+  }
+
+  private async persistCurrentCustomersSnapshot(
+    companyId: string,
+    actorUserId: string,
+    snapshot: LeafLinkCustomersSnapshot,
+  ): Promise<void> {
+    await this.configService.upsert({
+      companyId,
+      actorUserId: actorUserId || "system",
+      key: LEAFLINK_CUSTOMERS_CACHE_KEY,
+      value: snapshot,
+    });
+  }
+
+  private async loadCurrentCustomerIdsFromLeafLink(
+    companyId: string,
+    creds: LeafLinkRuntimeCredentials,
+    opts?: { refresh?: boolean; actorUserId?: string },
+  ): Promise<Set<string>> {
     const cid = cleanString(companyId);
+    const refresh = Boolean(opts?.refresh);
     const cacheHit = currentCustomersByCompanyCache.get(cid);
-    if (cacheHit && Date.now() - cacheHit.atMs < CURRENT_CUSTOMERS_CACHE_TTL_MS)
+    if (!refresh && cacheHit && Date.now() - cacheHit.atMs < CURRENT_CUSTOMERS_CACHE_TTL_MS)
       return new Set(cacheHit.ids);
+
+    if (!refresh) {
+      const persisted = await this.loadPersistedCurrentCustomers(cid);
+      if (persisted?.currentCustomerIds?.length) {
+        const ids = new Set(persisted.currentCustomerIds);
+        currentCustomersByCompanyCache.set(cid, { atMs: Date.now(), ids });
+        return new Set(ids);
+      }
+    }
 
     const base = creds.baseUrl.replace(/\/+$/, "");
     let currentStatusId = "";
@@ -1165,8 +1224,85 @@ export class LeafLinkOrdersService {
       if (!next) break;
     }
 
+    const idsArr = [...ids];
+    await this.persistCurrentCustomersSnapshot(cid, opts?.actorUserId || "system", {
+      currentCustomerIds: idsArr,
+      statusId: currentStatusId,
+      statusLabel: "Current Customer",
+      fetchedAt: new Date().toISOString(),
+    });
+
     currentCustomersByCompanyCache.set(cid, { atMs: Date.now(), ids });
     return new Set(ids);
+  }
+
+  private async listOrdersFromStored(
+    companyId: string,
+    input: {
+      page: number;
+      pageSize: number;
+      status?: string;
+      ordering?: string;
+      search?: string;
+    },
+    baseOut: Omit<LeafLinkOrdersListDto, "orders" | "totalCount" | "hasNext" | "hasPrevious" | "lastFetchedAt" | "fromCache">,
+  ): Promise<LeafLinkOrdersListDto | null> {
+    const storedRows = await findRecentLeafLinkStoredOrdersForCompany(companyId, STORED_ORDERS_LIST_SCAN_LIMIT);
+    if (!storedRows.length) return null;
+
+    const statusFilter = cleanString(input.status).toLowerCase();
+    const needleRaw = cleanString(input.search).toLowerCase();
+    const needle = needleRaw.length >= 2 ? needleRaw : "";
+    const ordering = cleanString(input.ordering) || "-created_on";
+
+    let cards = storedRows
+      .map((r) => {
+        const pair = collectedPairFromStoredPayload(r.payload);
+        return pair ? orderToCardDto(pair.summary) : null;
+      })
+      .filter((c): c is LeafLinkOrderCardDto => Boolean(c));
+
+    if (statusFilter && statusFilter !== "all") {
+      cards = cards.filter((c) => {
+        const raw = cleanString(c.status).toLowerCase();
+        const norm = cleanString(c.statusNormalized).toLowerCase();
+        return raw === statusFilter || norm === statusFilter;
+      });
+    }
+
+    if (needle) {
+      cards = cards.filter((c) => {
+        const on = cleanString(c.orderNumber).toLowerCase();
+        const cn = cleanString(c.customerName).toLowerCase();
+        return on.includes(needle) || cn.includes(needle);
+      });
+    }
+
+    cards.sort((a, b) => {
+      const ta = Date.parse(a.createdAt || "") || 0;
+      const tb = Date.parse(b.createdAt || "") || 0;
+      return ordering.startsWith("-") ? tb - ta : ta - tb;
+    });
+
+    const page = Math.max(1, input.page);
+    const pageSize = Math.min(500, Math.max(1, input.pageSize));
+    const totalCount = cards.length;
+    const start = (page - 1) * pageSize;
+    const orders = cards.slice(start, start + pageSize);
+    const nowIso = new Date().toISOString();
+
+    return {
+      ...baseOut,
+      page,
+      pageSize,
+      ordering,
+      orders,
+      totalCount,
+      hasNext: start + pageSize < totalCount,
+      hasPrevious: page > 1,
+      lastFetchedAt: nowIso,
+      fromCache: true,
+    };
   }
 
   async listOrders(
@@ -1205,6 +1341,12 @@ export class LeafLinkOrdersService {
     }
 
     await this.assertOrdersCapableOrThrow(creds);
+
+    if (!input.refresh) {
+      const cached = await this.listOrdersFromStored(companyId, input, baseOut);
+      if (cached)
+        return cached;
+    }
 
     const base = creds.baseUrl.replace(/\/+$/, "");
     const ordering = cleanString(input.ordering) || "-created_on";
@@ -1528,7 +1670,10 @@ export class LeafLinkOrdersService {
     }
 
     await this.assertOrdersCapableOrThrow(creds);
-    const currentCustomerIds = await this.loadCurrentCustomerIdsFromLeafLink(companyId, creds);
+    const currentCustomerIds = await this.loadCurrentCustomerIdsFromLeafLink(companyId, creds, {
+      refresh: Boolean(input.refresh),
+      actorUserId: "system",
+    });
 
     let pagesScanned = 0;
     let truncated = false;

@@ -68,3 +68,23 @@ export async function findLeafLinkStoredOrdersForCompanyInRange(
   });
   return rows;
 }
+
+export async function findRecentLeafLinkStoredOrdersForCompany(
+  companyId: string,
+  limit: number,
+): Promise<{ id: string; payload: unknown; createdOn: Date | null; updatedAt: Date }[]> {
+  const cid = String(companyId ?? "").trim();
+  if (!cid) return [];
+  const rows = await prisma.leafLinkStoredOrder.findMany({
+    where: { companyId: cid },
+    select: {
+      id: true,
+      payload: true,
+      createdOn: true,
+      updatedAt: true,
+    },
+    orderBy: [{ createdOn: "desc" }, { updatedAt: "desc" }],
+    take: Math.max(1, Math.min(5000, Math.floor(limit || 500))),
+  });
+  return rows;
+}
