@@ -16,13 +16,11 @@ function cleanString(v: unknown): string {
   return String(v ?? "").trim();
 }
 
-function looksLikeUuidOrHash(v: string): boolean {
+/** Only full UUIDs are “bad” display values — 8-char hex is often LeafLink’s human order # (e.g. d83a9509). */
+function looksLikeFullUuid(v: string): boolean {
   const s = cleanString(v).toLowerCase();
   if (!s) return false;
-  if (/^[0-9a-f]{8}$/.test(s)) return true;
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(s))
-    return true;
-  return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(s);
 }
 
 function toNumber(v: unknown): number {
@@ -143,6 +141,14 @@ function extractLineItems(raw: Record<string, unknown>): LeafLinkOrderLineItemDt
       productId = cleanString(prodRaw);
     }
     if (!productName) {
+      const listing =
+        r.listing != null && typeof r.listing === "object" && !Array.isArray(r.listing)
+          ? asRecord(r.listing)
+          : {};
+      const inv =
+        r.inventory_item != null && typeof r.inventory_item === "object" && !Array.isArray(r.inventory_item)
+          ? asRecord(r.inventory_item)
+          : {};
       productName = cleanString(
         r.product_name
         || r.name
@@ -150,7 +156,13 @@ function extractLineItems(raw: Record<string, unknown>): LeafLinkOrderLineItemDt
         || r.item_name
         || r.inventory_name
         || r.listing_name
-        || r.display_name,
+        || r.display_name
+        || listing.name
+        || listing.title
+        || listing.product_name
+        || inv.name
+        || inv.product_name
+        || inv.sku,
       );
     }
     if (!sku) {
@@ -203,29 +215,35 @@ function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
   const nestedOrder = row.order != null && typeof row.order === "object" && !Array.isArray(row.order)
     ? asRecord(row.order)
     : {};
-  /** Human-facing order number shown in LeafLink UI where available. */
+  /** Human-facing order number — seller short refs first; `number` is often a UUID in v2 payloads. */
   const displayCandidates = [
-    row.number,
-    row.order_number,
+    row.order_short_number,
+    row.short_id,
     row.order_seller_number,
     row.seller_order_number,
     row.display_number,
     row.human_readable_id,
     row.reference_number,
     row.order_reference,
+    row.retailer_order_number,
     row.external_order_number,
-    row.external_id,
-    row.code,
-    row.name,
+    row.invoice_number,
+    row.order_code,
+    row.confirmation_number,
+    row.number,
+    row.order_number,
     nestedOrder.number,
     nestedOrder.order_number,
     nestedOrder.display_number,
     nestedOrder.human_readable_id,
-    row.order_short_number,
-    row.short_id,
+    nestedOrder.short_id,
+    row.external_id,
+    row.code,
+    row.name,
     row.po_number,
   ].map(cleanString).filter(Boolean);
-  const displayPreferred = displayCandidates.find((c) => !looksLikeUuidOrHash(c)) || displayCandidates[0];
+  const displayPreferred =
+    displayCandidates.find((c) => !looksLikeFullUuid(c)) || displayCandidates[0];
   const displayOrderNumber = cleanString(displayPreferred || lookupId);
 
   let salesRep = "";
