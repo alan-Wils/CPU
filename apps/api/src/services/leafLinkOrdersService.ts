@@ -1004,6 +1004,19 @@ export type LeafLinkPaymentMatchCandidateDto = {
   lineItems: LeafLinkOrderLineItemDto[];
   score: number;
   matchedBy: string[];
+  /** From synced LeafLink order: true when the order is already fully paid (posting another payment is usually unnecessary). */
+  markedPaidInLeafLink: boolean;
+};
+
+/** One-line summary for cash/check list rows vs synced LeafLink orders (read from DB cache, no live API). */
+export type LeafLinkInvoiceLineStatusDto = {
+  hasInvoiceTokens: boolean;
+  matchedOrderNumber: string | null;
+  matchedOrderId: string | null;
+  markedPaidInLeafLink: boolean;
+  outstandingBalance: number | null;
+  paymentStatus: string | null;
+  summary: string;
 };
 
 /** Detail upserts wrap our normalized summary so sample flags & enriched lines stay intact. */
@@ -1037,6 +1050,145 @@ function collectedPairFromStoredPayload(payload: unknown): { raw: Record<string,
   if (payload != null && typeof payload === "object" && !Array.isArray(payload))
     return { raw: payload as Record<string, unknown>, summary: normalizeOrder(payload) };
   return null;
+}
+
+type LeafLinkStoredOrderScanRow = {
+  id: string;
+  leafLinkKey: string;
+  totalUsd: number | null;
+  payload: unknown;
+  createdOn: Date | null;
+  updatedAt: Date;
+};
+
+/**
+ * Match stored LeafLink orders to an invoice / payee / amount (same rules as check & cash log matching).
+ * Includes **paid** orders with `markedPaidInLeafLink: true` so UIs can show “already paid in LeafLink”.
+ */
+export function collectPaymentMatchCandidatesFromStoredRows(
+  rows: LeafLinkStoredOrderScanRow[],
+  input: { invoiceNumber?: string | undefined; payerName?: string | undefined; amount?: number | null | undefined },
+): LeafLinkPaymentMatchCandidateDto[] {
+  const invoiceTokens = splitInvoiceNumberTokens(input.invoiceNumber);
+  const payerNeedle = cleanString(input.payerName).toLowerCase();
+  const amountNeedle = typeof input.amount === "number" && Number.isFinite(input.amount) ? input.amount : null;
+  const out: LeafLinkPaymentMatchCandidateDto[] = [];
+  for (const row of rows) {
+    const pair = collectedPairFromStoredPayload(row.payload);
+    if (!pair) continue;
+    const summary = pair.summary;
+    const statusNorm = cleanString(summary.statusNormalized || summary.status).toLowerCase();
+    if (statusNorm.includes("cancel")) continue;
+    const paid = summary.paid || cleanString(summary.paymentStatus).toLowerCase() === "paid";
+    const orderNumber = cleanString(summary.orderNumber || summary.shortNumber || summary.id);
+    const customerName = cleanString(summary.customerName);
+    const total = typeof summary.total === "number" ? summary.total : orderTotalMoney(summary);
+    const outstandingBalance = paid ? 0 : total;
+    const matchedBySet = new Set<string>();
+    let score = 0;
+
+    if (invoiceTokens.length > 0) {
+      for (const rawTok of invoiceTokens) {
+        const tok = cleanString(rawTok);
+        if (!tok) continue;
+        const ordLower = orderNumber.toLowerCase();
+        const tokLower = tok.toLowerCase();
+        const tokDigits = invoiceDigitsOnly(tok);
+        const ordTail4 = orderTailDigits(orderNumber, 4);
+        const normOrd = ordLower.replace(/^#/, "");
+        const normTok = tokLower.replace(/^#/, "");
+        if (normOrd === normTok || ordLower === tokLower) {
+          matchedBySet.add("invoice_exact");
+          score += 100;
+        }
+        else if (tokDigits.length >= 4 && ordTail4.length >= 4 && tokDigits.slice(-4) === ordTail4) {
+          matchedBySet.add("invoice_last4");
+          score += 95;
+        }
+        else if (normOrd.includes(normTok) || normTok.includes(normOrd)) {
+          matchedBySet.add("invoice_partial");
+          score += 40;
+        }
+      }
+    }
+
+    if (!matchedBySet.has("invoice_exact") && payerNeedle && customerName.toLowerCase().includes(payerNeedle)) {
+      matchedBySet.add("payee_name");
+      score += 20;
+    }
+    if (amountNeedle != null) {
+      const diffTotal = Math.abs(total - amountNeedle);
+      const diffOutstanding =
+        outstandingBalance == null ? Number.POSITIVE_INFINITY : Math.abs(outstandingBalance - amountNeedle);
+      if (diffTotal <= 0.01 || diffOutstanding <= 0.01) {
+        matchedBySet.add("amount");
+        score += 25;
+      }
+    }
+    if (matchedBySet.size === 0) continue;
+    out.push({
+      leafLinkKey: cleanString(summary.id) || cleanString(row.id) || orderNumber,
+      orderId: summary.id,
+      orderNumber,
+      customerName,
+      total,
+      outstandingBalance,
+      status: summary.statusNormalized || summary.status,
+      paymentStatus: summary.paymentStatus,
+      deliveryDate: summary.deliveryDate,
+      lineItems: summary.lineItems,
+      score,
+      matchedBy: [...matchedBySet],
+      markedPaidInLeafLink: paid,
+    });
+  }
+  return out.sort((a, b) => b.score - a.score || a.orderNumber.localeCompare(b.orderNumber));
+}
+
+export function summarizeLeafLinkInvoiceFromStoredRows(
+  rows: LeafLinkStoredOrderScanRow[],
+  input: { invoiceNumber?: string | null; payerName?: string | null; amount?: number | null },
+): LeafLinkInvoiceLineStatusDto | null {
+  const tokens = splitInvoiceNumberTokens(input.invoiceNumber ?? undefined);
+  if (!tokens.length) return null;
+  const all = collectPaymentMatchCandidatesFromStoredRows(rows, {
+    invoiceNumber: input.invoiceNumber ?? undefined,
+    payerName: input.payerName ?? undefined,
+    amount: input.amount,
+  });
+  if (!all.length) {
+    return {
+      hasInvoiceTokens: true,
+      matchedOrderNumber: null,
+      matchedOrderId: null,
+      markedPaidInLeafLink: false,
+      outstandingBalance: null,
+      paymentStatus: null,
+      summary: "No matching LeafLink order in recently synced orders.",
+    };
+  }
+  const best = all[0];
+  const ob = best.outstandingBalance ?? best.total;
+  if (best.markedPaidInLeafLink) {
+    return {
+      hasInvoiceTokens: true,
+      matchedOrderNumber: best.orderNumber,
+      matchedOrderId: best.orderId,
+      markedPaidInLeafLink: true,
+      outstandingBalance: 0,
+      paymentStatus: best.paymentStatus || null,
+      summary: `Order ${best.orderNumber}: marked paid in LeafLink (${best.paymentStatus || "paid"}).`,
+    };
+  }
+  return {
+    hasInvoiceTokens: true,
+    matchedOrderNumber: best.orderNumber,
+    matchedOrderId: best.orderId,
+    markedPaidInLeafLink: false,
+    outstandingBalance: ob,
+    paymentStatus: best.paymentStatus || null,
+    summary: `Order ${best.orderNumber}: open — outstanding ${typeof ob === "number" ? ob.toFixed(2) : String(ob)}.`,
+  };
 }
 
 function toUpsertInputFromLeafLinkPayload(
@@ -2365,85 +2517,22 @@ export class LeafLinkOrdersService {
     };
   }
 
+  /** All matches (including orders already paid in LeafLink) for UI status and modals. */
+  async findPaymentMatchCandidatesIncludingPaidForCheck(
+    companyId: string,
+    input: { invoiceNumber?: string; payerName?: string; amount?: number },
+  ): Promise<LeafLinkPaymentMatchCandidateDto[]> {
+    const rows = await findRecentLeafLinkStoredOrdersForCompany(companyId, 4000);
+    return collectPaymentMatchCandidatesFromStoredRows(rows, input);
+  }
+
+  /** Open orders only — used when resolving which order to post payment against. */
   async findOpenPaymentCandidatesForCheck(
     companyId: string,
     input: { invoiceNumber?: string; payerName?: string; amount?: number },
   ): Promise<LeafLinkPaymentMatchCandidateDto[]> {
-    const invoiceTokens = splitInvoiceNumberTokens(input.invoiceNumber);
-    const payerNeedle = cleanString(input.payerName).toLowerCase();
-    const amountNeedle = typeof input.amount === "number" && Number.isFinite(input.amount) ? input.amount : null;
-    const rows = await findRecentLeafLinkStoredOrdersForCompany(companyId, 4000);
-    const out: LeafLinkPaymentMatchCandidateDto[] = [];
-    for (const row of rows) {
-      const pair = collectedPairFromStoredPayload(row.payload);
-      if (!pair) continue;
-      const summary = pair.summary;
-      const statusNorm = cleanString(summary.statusNormalized || summary.status).toLowerCase();
-      if (statusNorm.includes("cancel")) continue;
-      const paid = summary.paid || cleanString(summary.paymentStatus).toLowerCase() === "paid";
-      if (paid) continue;
-      const orderNumber = cleanString(summary.orderNumber || summary.shortNumber || summary.id);
-      const customerName = cleanString(summary.customerName);
-      const total = typeof summary.total === "number" ? summary.total : orderTotalMoney(summary);
-      const outstandingBalance = paid ? 0 : total;
-      const matchedBySet = new Set<string>();
-      let score = 0;
-
-      if (invoiceTokens.length > 0) {
-        for (const rawTok of invoiceTokens) {
-          const tok = cleanString(rawTok);
-          if (!tok) continue;
-          const ordLower = orderNumber.toLowerCase();
-          const tokLower = tok.toLowerCase();
-          const tokDigits = invoiceDigitsOnly(tok);
-          const ordTail4 = orderTailDigits(orderNumber, 4);
-          const normOrd = ordLower.replace(/^#/, "");
-          const normTok = tokLower.replace(/^#/, "");
-          if (normOrd === normTok || ordLower === tokLower) {
-            matchedBySet.add("invoice_exact");
-            score += 100;
-          }
-          else if (tokDigits.length >= 4 && ordTail4.length >= 4 && tokDigits.slice(-4) === ordTail4) {
-            matchedBySet.add("invoice_last4");
-            score += 95;
-          }
-          else if (normOrd.includes(normTok) || normTok.includes(normOrd)) {
-            matchedBySet.add("invoice_partial");
-            score += 40;
-          }
-        }
-      }
-
-      if (!matchedBySet.has("invoice_exact") && payerNeedle && customerName.toLowerCase().includes(payerNeedle)) {
-        matchedBySet.add("payee_name");
-        score += 20;
-      }
-      if (amountNeedle != null) {
-        const diffTotal = Math.abs(total - amountNeedle);
-        const diffOutstanding =
-          outstandingBalance == null ? Number.POSITIVE_INFINITY : Math.abs(outstandingBalance - amountNeedle);
-        if (diffTotal <= 0.01 || diffOutstanding <= 0.01) {
-          matchedBySet.add("amount");
-          score += 25;
-        }
-      }
-      if (matchedBySet.size === 0) continue;
-      out.push({
-        leafLinkKey: cleanString(summary.id) || cleanString(row.id) || orderNumber,
-        orderId: summary.id,
-        orderNumber,
-        customerName,
-        total,
-        outstandingBalance,
-        status: summary.statusNormalized || summary.status,
-        paymentStatus: summary.paymentStatus,
-        deliveryDate: summary.deliveryDate,
-        lineItems: summary.lineItems,
-        score,
-        matchedBy: [...matchedBySet],
-      });
-    }
-    return out.sort((a, b) => b.score - a.score || a.orderNumber.localeCompare(b.orderNumber));
+    const all = await this.findPaymentMatchCandidatesIncludingPaidForCheck(companyId, input);
+    return all.filter((c) => !c.markedPaidInLeafLink);
   }
 
   /** @deprecated Use {@link postOrderPayment} */

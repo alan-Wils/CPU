@@ -20,7 +20,12 @@ import {
     parsePostedPaymentsJson,
     type LeafLinkPostedPaymentRow
 } from "../lib/leaflinkPostedPayments.js";
-import { LeafLinkOrdersService, type LeafLinkPaymentMatchCandidateDto } from "./leafLinkOrdersService.js";
+import { findRecentLeafLinkStoredOrdersForCompany } from "./leafLinkOrdersStorePrimitives.js";
+import {
+    LeafLinkOrdersService,
+    type LeafLinkPaymentMatchCandidateDto,
+    summarizeLeafLinkInvoiceFromStoredRows,
+} from "./leafLinkOrdersService.js";
 
 function extForMime(mimeType) {
     if (mimeType === "image/png")
@@ -202,6 +207,8 @@ export type CheckLeafLinkMatchResult = {
     checkId: string;
     exactMatches: LeafLinkPaymentMatchCandidateDto[];
     possibleMatches: LeafLinkPaymentMatchCandidateDto[];
+    /** All invoice-related matches from synced orders, including already-paid (for UI status). */
+    linkedOrders: LeafLinkPaymentMatchCandidateDto[];
 };
 export class CheckCaptureService {
     leafLinkOrdersService = new LeafLinkOrdersService();
@@ -461,19 +468,17 @@ export class CheckCaptureService {
             throw new AppError("Check capture not found.", 404, "CHECK_CAPTURE_NOT_FOUND");
         }
         const refresh = Boolean(input?.refreshIfNoMatch);
-        let candidates = await this.leafLinkOrdersService.findOpenPaymentCandidatesForCheck(companyId, {
+        const matchInput = {
             invoiceNumber: check.invoiceNumber ?? undefined,
             payerName: check.payerName ?? undefined,
             amount: typeof check.amount === "number" ? check.amount : undefined
-        });
-        if (!candidates.length && refresh) {
+        };
+        let linkedOrders = await this.leafLinkOrdersService.findPaymentMatchCandidatesIncludingPaidForCheck(companyId, matchInput);
+        if (!linkedOrders.length && refresh) {
             await this.leafLinkOrdersService.syncOrdersWarm(companyId);
-            candidates = await this.leafLinkOrdersService.findOpenPaymentCandidatesForCheck(companyId, {
-                invoiceNumber: check.invoiceNumber ?? undefined,
-                payerName: check.payerName ?? undefined,
-                amount: typeof check.amount === "number" ? check.amount : undefined
-            });
+            linkedOrders = await this.leafLinkOrdersService.findPaymentMatchCandidatesIncludingPaidForCheck(companyId, matchInput);
         }
+        const candidates = linkedOrders.filter((c) => !c.markedPaidInLeafLink);
         const hasInvoiceTokens = Boolean(normalizeText(check.invoiceNumber));
         const payeeNeedle = normalizeText(check.payerName);
         const checkAmount = typeof check.amount === "number" ? check.amount : null;
@@ -507,7 +512,8 @@ export class CheckCaptureService {
         return {
             checkId: check.id,
             exactMatches,
-            possibleMatches
+            possibleMatches,
+            linkedOrders
         };
     }
     async markLeafLinkInvoicePaid(companyId, actorUserId, checkId, input) {
@@ -713,7 +719,15 @@ export class CheckCaptureService {
             queryCount: 1,
             metadata: { table: "check_capture", op: "list" },
         });
-        return rows;
+        const storedScan = await findRecentLeafLinkStoredOrdersForCompany(companyId, 4000);
+        return rows.map((r) => ({
+            ...r,
+            leafLinkInvoiceStatus: summarizeLeafLinkInvoiceFromStoredRows(storedScan, {
+                invoiceNumber: r.invoiceNumber,
+                payerName: r.payerName,
+                amount: typeof r.amount === "number" ? r.amount : null,
+            }),
+        }));
     }
     async listChecksForExport(companyId, opts) {
         const createdAt = this.buildDateFilter(opts);

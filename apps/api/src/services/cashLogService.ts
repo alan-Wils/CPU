@@ -19,7 +19,19 @@ import {
     type LeafLinkPostedPaymentRow,
 } from "../lib/leaflinkPostedPayments.js";
 import { AuditService } from "./auditService.js";
-import { LeafLinkOrdersService, type LeafLinkPaymentMatchCandidateDto } from "./leafLinkOrdersService.js";
+import { findRecentLeafLinkStoredOrdersForCompany } from "./leafLinkOrdersStorePrimitives.js";
+import {
+    LeafLinkOrdersService,
+    type LeafLinkPaymentMatchCandidateDto,
+    summarizeLeafLinkInvoiceFromStoredRows,
+} from "./leafLinkOrdersService.js";
+
+export type CashLeafLinkMatchResult = {
+    cashEntryId: string;
+    exactMatches: LeafLinkPaymentMatchCandidateDto[];
+    possibleMatches: LeafLinkPaymentMatchCandidateDto[];
+    linkedOrders: LeafLinkPaymentMatchCandidateDto[];
+};
 
 function extForReceiptMime(mimeType: string) {
     if (mimeType === "image/png")
@@ -327,7 +339,18 @@ export class CashLogService {
             queryCount: 1,
             metadata: { table: "cash_log_entry", op: "list" },
         });
-        return rows;
+        const storedScan = await findRecentLeafLinkStoredOrdersForCompany(companyId, 4000);
+        return rows.map((r) => ({
+            ...r,
+            leafLinkInvoiceStatus:
+                r.direction === "INCOMING"
+                    ? summarizeLeafLinkInvoiceFromStoredRows(storedScan, {
+                          invoiceNumber: r.invoiceNumber,
+                          payerName: r.payeeCompany,
+                          amount: typeof r.amount === "number" ? r.amount : null,
+                      })
+                    : null,
+        }));
     }
     /**
      * Digest / automation: rolling window `[from, to]` (inclusive UTC instants).
@@ -458,19 +481,23 @@ export class CashLogService {
             throw new AppError("Only incoming entries with optional invoice refs can match LeafLink orders.", 400, "CASH_LOG_LEAF_BAD_ENTRY");
         }
         const refresh = Boolean(input?.refreshIfNoMatch);
-        let candidates = await this.leafLinkOrdersService.findOpenPaymentCandidatesForCheck(companyId, {
+        const matchInput = {
             invoiceNumber: entry.invoiceNumber ?? undefined,
             payerName: entry.payeeCompany ?? undefined,
             amount: typeof entry.amount === "number" ? entry.amount : undefined,
-        });
-        if (!candidates.length && refresh) {
+        };
+        let linkedOrders = await this.leafLinkOrdersService.findPaymentMatchCandidatesIncludingPaidForCheck(
+            companyId,
+            matchInput,
+        );
+        if (!linkedOrders.length && refresh) {
             await this.leafLinkOrdersService.syncOrdersWarm(companyId);
-            candidates = await this.leafLinkOrdersService.findOpenPaymentCandidatesForCheck(companyId, {
-                invoiceNumber: entry.invoiceNumber ?? undefined,
-                payerName: entry.payeeCompany ?? undefined,
-                amount: typeof entry.amount === "number" ? entry.amount : undefined,
-            });
+            linkedOrders = await this.leafLinkOrdersService.findPaymentMatchCandidatesIncludingPaidForCheck(
+                companyId,
+                matchInput,
+            );
         }
+        const candidates = linkedOrders.filter((c) => !c.markedPaidInLeafLink);
         const strongInvoice = (c: LeafLinkPaymentMatchCandidateDto) =>
             c.matchedBy.includes("invoice_exact") || c.matchedBy.includes("invoice_last4");
         const exactMatches = candidates.filter((c) => strongInvoice(c));
@@ -505,6 +532,7 @@ export class CashLogService {
             cashEntryId: entry.id,
             exactMatches,
             possibleMatches,
+            linkedOrders,
         };
     }
 
