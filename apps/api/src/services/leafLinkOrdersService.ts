@@ -120,6 +120,192 @@ export type LeafLinkOrdersSyncDto = {
   lastFetchedAt: string;
 };
 
+/** Snapshot fields LeafLink stores on line items at order time (often has real product labels when `product` is only an id). */
+function hintsFromFrozenData(r: Record<string, unknown>): { name: string; sku: string } {
+  const fr = r.frozen_data;
+  if (fr == null || typeof fr !== "object" || Array.isArray(fr))
+    return { name: "", sku: "" };
+  const f = asRecord(fr);
+  let name = cleanString(
+    f.display_name
+    || f.product_display_name
+    || f.product_name
+    || f.name
+    || f.title
+    || f.listing_name,
+  );
+  let sku = cleanString(f.sku || f.product_sku);
+  const nested = f.product;
+  if (nested != null && typeof nested === "object" && !Array.isArray(nested)) {
+    const p = asRecord(nested);
+    if (!name)
+      name = cleanString(p.display_name || p.name || p.product_name || p.title);
+    if (!sku)
+      sku = cleanString(p.sku || p.product_sku);
+  }
+  return { name, sku };
+}
+
+function isPlaceholderProductLabel(name: string): boolean {
+  const n = cleanString(name);
+  if (!n) return true;
+  return /^product\s+\d+$/i.test(n);
+}
+
+function countResolvedLineProductNames(items: LeafLinkOrderLineItemDto[]): number {
+  return items.filter((li) => !isPlaceholderProductLabel(li.productName)).length;
+}
+
+function mergeLineItemsPreferRicher(
+  embedded: LeafLinkOrderLineItemDto[],
+  fromApi: LeafLinkOrderLineItemDto[],
+): LeafLinkOrderLineItemDto[] {
+  const byId = new Map(fromApi.map((li) => [li.id, li]));
+  return embedded.map((e) => {
+    const a = byId.get(e.id);
+    if (!a) return e;
+    const eBad = isPlaceholderProductLabel(e.productName);
+    const aGood = !isPlaceholderProductLabel(a.productName);
+    if (aGood && eBad) {
+      return {
+        ...e,
+        productName: a.productName,
+        sku: cleanString(a.sku) || e.sku,
+      };
+    }
+    if (!cleanString(e.sku) && cleanString(a.sku))
+      return { ...e, sku: a.sku };
+    return e;
+  });
+}
+
+async function fetchOrderLineItemsRaw(
+  creds: LeafLinkRuntimeCredentials,
+  baseRaw: string,
+  orderApiKey: string,
+): Promise<unknown[]> {
+  const base = baseRaw.replace(/\/+$/, "");
+  const enc = encodeURIComponent(orderApiKey.trim());
+  const qs = new URLSearchParams({ page_size: "500", page: "1" }).toString();
+  const urls: string[] = [];
+  if (creds.companyId) {
+    urls.push(
+      `${base}/v2/companies/${encodeURIComponent(creds.companyId)}/orders-received/${enc}/line-items/?${qs}`,
+    );
+  }
+  urls.push(`${base}/v2/orders-received/${enc}/line-items/?${qs}`);
+  const { body } = await leafLinkAuthedGet(urls, creds, 30_000);
+  if (Array.isArray(body)) return body;
+  const root = asRecord(body);
+  if (Array.isArray(root.results)) return root.results;
+  const { list } = pickListSource(body);
+  return list;
+}
+
+function buildProductDetailUrlCandidates(
+  baseRaw: string,
+  creds: LeafLinkRuntimeCredentials,
+  productId: string,
+): string[] {
+  const base = baseRaw.replace(/\/+$/, "");
+  const id = encodeURIComponent(productId.trim());
+  const cands: string[] = [];
+  if (creds.companyId) {
+    cands.push(`${base}/v2/companies/${encodeURIComponent(creds.companyId)}/products/${id}/`);
+  }
+  cands.push(`${base}/v2/products/${id}/`, `${base}/products/${id}/`);
+  const seen = new Set<string>();
+  return cands.filter((u) => {
+    if (!u || seen.has(u)) return false;
+    seen.add(u);
+    return true;
+  });
+}
+
+function lineItemNeedsProductHydration(li: LeafLinkOrderLineItemDto): boolean {
+  if (!cleanString(li.productId)) return false;
+  if (isPlaceholderProductLabel(li.productName)) return true;
+  if (!cleanString(li.sku)) return true;
+  return false;
+}
+
+async function hydrateLineItemsViaProductDetails(
+  creds: LeafLinkRuntimeCredentials,
+  baseRaw: string,
+  items: LeafLinkOrderLineItemDto[],
+): Promise<LeafLinkOrderLineItemDto[]> {
+  const ids = [...new Set(items.filter(lineItemNeedsProductHydration).map((li) => li.productId))];
+  const cap = 40;
+  const cache = new Map<string, { name: string; sku: string }>();
+  for (const pid of ids.slice(0, cap)) {
+    if (!pid || cache.has(pid)) continue;
+    try {
+      const urls = buildProductDetailUrlCandidates(baseRaw, creds, pid);
+      const { body } = await leafLinkAuthedGet(urls, creds, 12_000);
+      if (body && typeof body === "object" && !Array.isArray(body)) {
+        const p = asRecord(body);
+        cache.set(pid, {
+          name: cleanString(p.display_name || p.name || p.product_name),
+          sku: cleanString(p.sku),
+        });
+      }
+    }
+    catch {
+      logWarn("[LEAFLINK] orders_product_hydrate_skip", { productId: pid });
+    }
+  }
+  return items.map((li) => {
+    const pid = li.productId;
+    if (!pid || !lineItemNeedsProductHydration(li)) return li;
+    const hit = cache.get(pid);
+    if (!hit) return li;
+    return {
+      ...li,
+      productName: !isPlaceholderProductLabel(hit.name) ? hit.name : li.productName,
+      sku: cleanString(hit.sku) || li.sku,
+    };
+  });
+}
+
+async function enrichDetailLineItems(
+  creds: LeafLinkRuntimeCredentials,
+  baseRaw: string,
+  orderRow: Record<string, unknown>,
+  embedded: LeafLinkOrderLineItemDto[],
+): Promise<LeafLinkOrderLineItemDto[]> {
+  const orderApiKey = cleanString(
+    orderRow.number
+    || orderRow.order_number
+    || orderRow.id
+    || orderRow.order_id,
+  );
+  if (!orderApiKey)
+    return hydrateLineItemsViaProductDetails(creds, baseRaw, embedded);
+
+  let items = embedded;
+  try {
+    const rawLines = await fetchOrderLineItemsRaw(creds, baseRaw, orderApiKey);
+    if (rawLines.length > 0) {
+      const fromDedicated = extractLineItems({ line_items: rawLines });
+      const embeddedScore = countResolvedLineProductNames(embedded);
+      const apiScore = countResolvedLineProductNames(fromDedicated);
+      if (fromDedicated.length >= embedded.length && apiScore >= embeddedScore)
+        items = fromDedicated;
+      else if (apiScore > embeddedScore)
+        items = mergeLineItemsPreferRicher(embedded, fromDedicated);
+      else if (fromDedicated.length > embedded.length)
+        items = fromDedicated;
+    }
+  }
+  catch (err) {
+    logWarn("[LEAFLINK] orders_line_items_extra_fetch_failed", {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  return hydrateLineItemsViaProductDetails(creds, baseRaw, items);
+}
+
 function extractLineItems(raw: Record<string, unknown>): LeafLinkOrderLineItemDto[] {
   const arr = raw.line_items;
   if (!Array.isArray(arr)) return [];
@@ -127,6 +313,7 @@ function extractLineItems(raw: Record<string, unknown>): LeafLinkOrderLineItemDt
   for (let i = 0; i < arr.length; i++) {
     const li = arr[i];
     const r = asRecord(li);
+    const frozenHints = hintsFromFrozenData(r);
     const prodRaw = r.product;
     let productName = "";
     let sku = "";
@@ -168,6 +355,10 @@ function extractLineItems(raw: Record<string, unknown>): LeafLinkOrderLineItemDt
     if (!sku) {
       sku = cleanString(r.sku || r.product_sku || r.item_sku || r.inventory_sku);
     }
+    if (!productName && frozenHints.name)
+      productName = frozenHints.name;
+    if (!sku && frozenHints.sku)
+      sku = frozenHints.sku;
     const qty = toNumber(r.quantity);
     const unitPrice = moneyAmount(r.ordered_unit_price) ?? moneyAmount(r.sale_price) ?? moneyAmount(r.wholesale_price);
     let lineTotal: number | null = null;
@@ -719,9 +910,16 @@ export class LeafLinkOrdersService {
 
     /** Single-object detail may omit results wrapper */
     const r = row as Record<string, unknown>;
-    if (cleanString(r.id || r.order_id || r.number || r.order_number || r.short_id || r.order_short_number))
-      return normalizeOrder(body);
-    return null;
+    if (!cleanString(r.id || r.order_id || r.number || r.order_number || r.short_id || r.order_short_number))
+      return null;
+
+    const summary = normalizeOrder(body);
+    const lineItems = await enrichDetailLineItems(creds, base, r, summary.lineItems);
+    return {
+      ...summary,
+      lineItems,
+      itemCount: lineItems.length,
+    };
   }
 
   /** Pull paginated summaries (warm cache + bookkeeping). Does not overwrite inventory. */
