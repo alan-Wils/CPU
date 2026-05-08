@@ -2,7 +2,7 @@
 
 import type { CSSProperties } from "react";
 import BrandLogo from "@/components/BrandLogo";
-import { preferHttpsInSecurePage, resolveAssetUrlForPrint } from "@/lib/inventoryExport";
+import { resolveCompanyLogoImgSrc } from "@/lib/inventoryExport";
 
 export type TopBrandStripProps = {
   /** Stored config path or absolute URL (`sales.inventoryPrintLogoUrl`). */
@@ -24,7 +24,7 @@ export default function TopBrandStrip({
   linkNexbatchToHome = true,
 }: TopBrandStripProps) {
   const raw = (companyLogoConfiguredUrl || "").trim();
-  const resolved = raw ? preferHttpsInSecurePage(resolveAssetUrlForPrint(raw, apiBaseUrl)) : "";
+  const resolved = raw ? resolveCompanyLogoImgSrc(raw, apiBaseUrl) : "";
 
   const rowStyle: CSSProperties = {
     display: "flex",

@@ -8,6 +8,7 @@ import { ConfigService } from "../../services/configService.js";
 import { CompanyLogoUploadService } from "../../services/companyLogoUploadService.js";
 import { requireRole } from "../../middleware/rbac.js";
 import { AppError } from "../../errors/AppError.js";
+import { requestPublicOrigin } from "../../lib/requestPublicOrigin.js";
 export const configRouter = Router();
 const configService = new ConfigService();
 const companyLogoUploadService = new CompanyLogoUploadService();
@@ -51,7 +52,7 @@ configRouter.post(
         if (!companyId) {
             throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
         }
-        const origin = `${req.protocol}://${req.get("host") || ""}`;
+        const origin = requestPublicOrigin(req);
         const uploaded = await companyLogoUploadService.uploadLogo({
             companyId,
             mimeType: req.body.mimeType,

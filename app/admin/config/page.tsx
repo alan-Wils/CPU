@@ -24,7 +24,11 @@ import {
   type MetrcLastConnectionStatus,
   resolveMetrcApiBaseUrl,
 } from "@/lib/metrcCompanyConfig";
-import { clampInventoryLogoMaxWidthPx, resolveAssetUrlForPrint } from "@/lib/inventoryExport";
+import {
+  clampInventoryLogoMaxWidthPx,
+  resolveAssetUrlForPrint,
+  resolveCompanyLogoImgSrc,
+} from "@/lib/inventoryExport";
 import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
 import {
   defaultAutogrowCompanyConfig,
@@ -3343,7 +3347,7 @@ export default function ConfigPage() {
               <div style={{ gridColumn: "1 / -1" }}>
                 <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 8 }}>Preview</div>
                 <img
-                  src={resolveAssetUrlForPrint(
+                  src={resolveCompanyLogoImgSrc(
                     (config.sales.inventoryPrintLogoUrl || "").trim(),
                     API_BASE_URL,
                   )}

@@ -153,6 +153,29 @@ export function resolveAssetUrlForPrint(url: string, apiBaseUrl: string): string
   return `${base}/${u}`;
 }
 
+/**
+ * Upload responses often save an absolute URL using whatever host the API saw (`req.get("host")`), which breaks
+ * behind proxies or when the public API URL differs. If the path is under `/uploads/`, rebuild the origin from
+ * `NEXT_PUBLIC_API_URL` so `<img src>` hits the same host the rest of the app uses.
+ */
+export function resolveCompanyLogoImgSrc(url: string, apiBaseUrl: string): string {
+  const u = (url || "").trim();
+  if (!u) return "";
+  const base = apiStaticOriginFromApiBase(apiBaseUrl);
+  if (/^https?:\/\//i.test(u)) {
+    try {
+      const parsed = new URL(u);
+      if (parsed.pathname.startsWith("/uploads/") && base) {
+        return preferHttpsInSecurePage(`${base}${parsed.pathname}${parsed.search}`);
+      }
+    } catch {
+      /* use raw */
+    }
+    return preferHttpsInSecurePage(u);
+  }
+  return preferHttpsInSecurePage(resolveAssetUrlForPrint(u, apiBaseUrl));
+}
+
 /** When the app runs under HTTPS, try HTTPS for logo fetch (avoids mixed-content blocking of `http://` URLs). */
 export function preferHttpsInSecurePage(url: string): string {
   const u = (url || "").trim();

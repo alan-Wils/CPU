@@ -132,9 +132,8 @@ export default function TaskLiveNotificationHost() {
         lastIdRef.current = latest.id;
 
         const selfId = String(getAuthUser()?.id || "").trim();
-        if (selfId && latest.actorUserId === selfId) return;
-
-        const who = actorShortLabel(latest.actorEmail);
+        const who =
+          selfId && latest.actorUserId === selfId ? "You" : actorShortLabel(latest.actorEmail);
         const area = String(latest.area || "Workspace").trim() || "Workspace";
         const task = String(latest.task || "a task").trim() || "a task";
         const message = `${who} completed "${task}" · ${area}`;

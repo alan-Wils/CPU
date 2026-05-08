@@ -7,6 +7,7 @@ import {
   normalizeInventoryExportColumns,
   parseStoredExportColumns,
   resolveAssetUrlForPrint,
+  resolveCompanyLogoImgSrc,
 } from "@/lib/inventoryExport";
 
 describe("describeInventoryFilters", () => {
@@ -104,5 +105,22 @@ describe("apiStaticOriginFromApiBase", () => {
   it("removes trailing /api", () => {
     expect(apiStaticOriginFromApiBase("https://host/api")).toBe("https://host");
     expect(apiStaticOriginFromApiBase("https://host/API")).toBe("https://host");
+  });
+});
+
+describe("resolveCompanyLogoImgSrc", () => {
+  it("rebases /uploads/ URLs onto NEXT_PUBLIC_API origin when stored host is wrong", () => {
+    expect(
+      resolveCompanyLogoImgSrc(
+        "https://wrong-internal:8080/uploads/company-logos/c1/logo.png",
+        "https://public-api.example/api",
+      ),
+    ).toBe("https://public-api.example/uploads/company-logos/c1/logo.png");
+  });
+
+  it("does not rewrite absolute CDN URLs outside /uploads/", () => {
+    expect(resolveCompanyLogoImgSrc("https://cdn.example/logo.png", "https://public-api.example/api")).toBe(
+      "https://cdn.example/logo.png",
+    );
   });
 });
