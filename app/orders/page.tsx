@@ -575,6 +575,41 @@ export default function OrdersPage() {
     }
   }, [loadList]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+
+    const runAutoSync = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      setSyncing(true);
+      try {
+        const cid = getSelectedCompanyId().trim();
+        await syncLeafLinkOrders(cid || undefined);
+        if (!cancelled) {
+          await loadList({ refresh: true });
+        }
+      }
+      catch {
+        // Keep polling alive even if a single sync attempt fails.
+      }
+      finally {
+        inFlight = false;
+        if (!cancelled) setSyncing(false);
+      }
+    };
+
+    void runAutoSync();
+    const timer = window.setInterval(() => {
+      void runAutoSync();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [loadList]);
+
   const openDetail = useCallback((id: string, orderNumber: string) => {
     setDetailKey(id);
     setDetailDisplayOrderNumber(orderNumber || id);

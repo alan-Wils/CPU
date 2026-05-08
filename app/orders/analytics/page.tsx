@@ -208,6 +208,35 @@ export default function OrdersAnalyticsPage() {
   }, [load]);
 
   useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+
+    const runAutoSync = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        await load(true);
+      }
+      catch {
+        // Keep polling alive even if one refresh fails.
+      }
+      finally {
+        inFlight = false;
+      }
+    };
+
+    void runAutoSync();
+    const timer = window.setInterval(() => {
+      void runAutoSync();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [load]);
+
+  useEffect(() => {
     if (!data?.customers?.length) {
       setSelectedKeys(new Set());
       return;

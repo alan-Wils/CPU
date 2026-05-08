@@ -193,9 +193,14 @@ const MAX_ANALYTICS_PAGES = 50;
 const MAX_QUALIFYING_ORDERS_IN_PAYLOAD = 3500;
 /** If list payload embeds many line rows, summing them is often wrong vs order headline `total`. */
 const MAX_LINE_ITEMS_TO_TRUST_SUM = 120;
+const CURRENT_CUSTOMERS_CACHE_TTL_MS = 10 * 60 * 1000;
+const MAX_CUSTOMER_STATUS_PAGES = 20;
+const MAX_CURRENT_CUSTOMER_PAGES = 40;
 
 /** Only orders at or above this total count toward analytics and customer inclusion. */
 export const ORDERS_ANALYTICS_MIN_ORDER_TOTAL = 50;
+
+const currentCustomersByCompanyCache = new Map<string, { atMs: number; ids: Set<string> }>();
 
 function utcDayKeyFromMs(ms: number): string {
   const d = new Date(ms);
