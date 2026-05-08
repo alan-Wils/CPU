@@ -165,7 +165,7 @@ function OrderCard({
   onOpen,
 }: {
   order: LeafLinkOrderCardDto;
-  onOpen: (id: string) => void;
+  onOpen: (id: string, orderNumber: string) => void;
 }) {
   const st = statusStyles(order.statusNormalized);
   return (
@@ -175,7 +175,7 @@ function OrderCard({
       whileHover={{ y: -3, scale: 1.01 }}
       whileTap={{ scale: 0.995 }}
       transition={{ type: "spring", stiffness: 420, damping: 28 }}
-      onClick={() => onOpen(order.id)}
+      onClick={() => onOpen(order.id, order.orderNumber)}
       style={{
         textAlign: "left",
         cursor: "pointer",
@@ -503,6 +503,7 @@ export default function OrdersPage() {
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailKey, setDetailKey] = useState<string>("");
+  const [detailDisplayOrderNumber, setDetailDisplayOrderNumber] = useState<string>("");
   const [detailOrder, setDetailOrder] = useState<LeafLinkOrderSummaryDto | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
@@ -567,8 +568,9 @@ export default function OrdersPage() {
     }
   }, [loadList]);
 
-  const openDetail = useCallback((id: string) => {
+  const openDetail = useCallback((id: string, orderNumber: string) => {
     setDetailKey(id);
+    setDetailDisplayOrderNumber(orderNumber || id);
     setDetailOrder(null);
     setDetailError("");
     setDetailOpen(true);
@@ -577,6 +579,7 @@ export default function OrdersPage() {
   const closeDetail = useCallback(() => {
     setDetailOpen(false);
     setDetailKey("");
+    setDetailDisplayOrderNumber("");
     setDetailOrder(null);
     setDetailError("");
   }, []);
@@ -823,7 +826,7 @@ export default function OrdersPage() {
                 <div style={stickyHeaderStyle}>
                   <div>
                     <div id="order-detail-title" style={{ margin: 0, fontSize: 22, fontWeight: 900, color: "#a5b4fc" }}>
-                      Order #{detailKey}
+                      Order #{detailOrder?.orderNumber || detailDisplayOrderNumber || detailKey}
                     </div>
                     <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>
                       Full detail from LeafLink (line items, taxes, notes).
