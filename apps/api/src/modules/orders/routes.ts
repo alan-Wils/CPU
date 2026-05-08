@@ -79,7 +79,15 @@ const analyticsQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   refresh: refreshQuery,
+  /** When `0` / `false`, include all buyers seen in stored orders in range (still subject to $min + non-cancelled filters). */
+  current_only: z.string().max(8).optional(),
 });
+
+function queryBoolTrueByDefault(v: string | undefined): boolean {
+  const t = String(v ?? "").trim().toLowerCase();
+  if (!t) return true;
+  return !["0", "false", "no", "off"].includes(t);
+}
 
 ordersRouter.get(
   "/analytics",
@@ -89,10 +97,12 @@ ordersRouter.get(
     const companyId = getScopedCompanyId(req);
     const q = req.query as z.infer<typeof analyticsQuerySchema>;
     const refreshLeafLink = q?.refresh === "1" || q?.refresh === "true";
+    const currentCustomersOnly = queryBoolTrueByDefault(q.current_only);
     const out = await ordersService.getOrdersAnalytics(companyId, {
       dateFrom: q.from,
       dateTo: q.to,
       refresh: refreshLeafLink,
+      currentCustomersOnly,
     });
     res.json(out);
   }),

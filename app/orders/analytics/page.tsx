@@ -181,6 +181,8 @@ export default function OrdersAnalyticsPage() {
   const initial = useMemo(() => defaultRange(), []);
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
+  /** When false, LeafLink CRM “Current Customer” filter is not applied — counts include any buyer seen in saved orders that pass totals/cancel filters. */
+  const [currentCustomersOnly, setCurrentCustomersOnly] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [data, setData] = useState<OrdersAnalyticsDto | null>(null);
@@ -201,6 +203,7 @@ export default function OrdersAnalyticsPage() {
       const cid = getSelectedCompanyId().trim();
       const out = await fetchOrdersAnalytics(from, to, cid || undefined, {
         refreshLeafLink,
+        currentCustomersOnly,
       });
       setData(out);
     }
@@ -213,7 +216,7 @@ export default function OrdersAnalyticsPage() {
     finally {
       if (!silent) setLoading(false);
     }
-  }, [from, to]);
+  }, [from, to, currentCustomersOnly]);
 
   useEffect(() => {
     void load();
@@ -403,9 +406,12 @@ export default function OrdersAnalyticsPage() {
             <div>
               <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900, color: "#f8fafc" }}>Order analytics</h1>
               <p style={{ margin: "8px 0 0", fontSize: 15, color: "#94a3b8", maxWidth: 760, lineHeight: 1.5 }}>
-                Active customers have at least one non-cancelled order in range with headline total ≥ {usd(minOrder)} from
-                LeafLink (invoice total, not a roll-up from embedded lines). Revenue charts sum each qualifying order on its
-                order date. Samples use LeafLink is_sample flags, product sample/listing states, plus name/SKU/note hints. UTC.
+                The customer list counts buyers with at least one non-cancelled order in range with headline total ≥ {usd(minOrder)}
+                (“qualifying”). By default those buyers must also appear in LeafLink with CRM status{' '}
+                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Current Customer</strong>
+                {' — '}uncheck below to chart every buyer in your saved LeafLink orders for this range (still excludes cancelled /
+                tiny invoices). Charts use persisted orders plus any fresh pull you request. Samples use LeafLink is_sample flags,
+                product/sample listing states, and name/SKU/note hints. UTC.
               </p>
             </div>
             <Link href="/orders" style={btnGhost}>
@@ -435,6 +441,26 @@ export default function OrdersAnalyticsPage() {
               >
                 {loading ? "…" : "Pull from LeafLink → save"}
               </button>
+              <label
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginLeft: 4,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "#cbd5e1",
+                  cursor: "pointer",
+                  userSelect: "none",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={currentCustomersOnly}
+                  onChange={(e) => setCurrentCustomersOnly(e.target.checked)}
+                />
+                Only LeafLink “Current Customer”
+              </label>
             </div>
 
             {error ? (

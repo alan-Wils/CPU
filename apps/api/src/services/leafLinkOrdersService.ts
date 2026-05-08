@@ -14,6 +14,7 @@ import {
 import {
   upsertLeafLinkStoredOrders,
   findLeafLinkStoredOrdersForCompanyInRange,
+  findRecentLeafLinkStoredOrdersWithNullCreatedOn,
   findRecentLeafLinkStoredOrdersForCompany,
   type LeafLinkStoredOrderUpsertInput,
 } from "./leafLinkOrdersStorePrimitives.js";
@@ -283,6 +284,81 @@ function orderTotalMoney(o: LeafLinkOrderSummaryDto): number {
 function nestedOrderRecord(row: Record<string, unknown>): Record<string, unknown> {
   const o = row.order;
   return o != null && typeof o === "object" && !Array.isArray(o) ? asRecord(o) : {};
+}
+
+function fieldIsoDate(v: unknown): string {
+  if (v instanceof Date && Number.isFinite(v.getTime())) return v.toISOString();
+  const s = cleanString(typeof v === "string" ? v : String(v ?? ""));
+  if (!s || s.includes("</")) return "";
+  /** Accept RFC3339 or date-only strings */
+  const ms = Date.parse(s);
+  return Number.isFinite(ms) ? s : "";
+}
+
+/**
+ * Wholesale order payloads differ by endpoint; normalize created timestamps so DB range queries & analytics UTC bucketing agree.
+ */
+function leafLinkOrderCreatedIso(row: Record<string, unknown>): string {
+  const nest = nestedOrderRecord(row);
+  const keys: unknown[] = [
+    row.created_on,
+    row.created_at,
+    row.created,
+    row.date_created,
+    row.order_date,
+    row.submitted_on,
+    row.submitted_at,
+    nest.created_on,
+    nest.created_at,
+    nest.created,
+    nest.order_date,
+  ];
+  for (const k of keys) {
+    const iso = fieldIsoDate(k);
+    if (iso) return iso;
+  }
+  return "";
+}
+
+function idLikeFromBuyerObject(o: Record<string, unknown>): string {
+  /** Prefer opaque ids; reject full URLs mistaken for ids. */
+  const direct =
+    cleanString(o.id ?? o.customer_id ?? o.pk ?? o.uuid ?? o.buyer_customer_id ?? o.buyer ?? o.retailer_id ?? o.retailer);
+  if (!direct || direct.includes("http") || direct.includes("://"))
+    return "";
+  return direct;
+}
+
+/**
+ * Buyer linkage varies (nested customer, FK int, `{ id }`). Must align with LeafLink Customers API ids used in Current Customer filter.
+ */
+function leafLinkBuyerCustomerId(row: Record<string, unknown>): string {
+  const customer =
+    row.customer != null && typeof row.customer === "object" && !Array.isArray(row.customer)
+      ? asRecord(row.customer)
+      : {};
+  const nest = nestedOrderRecord(row);
+  const nestCust =
+    nest.customer != null && typeof nest.customer === "object" && !Array.isArray(nest.customer)
+      ? asRecord(nest.customer)
+      : {};
+
+  let id = idLikeFromBuyerObject(customer);
+  if (id) return id;
+
+  id = idLikeFromBuyerObject(nestCust);
+  if (id) return id;
+
+  const b = row.buyer ?? nest.buyer;
+  if (typeof b === "number" && Number.isFinite(b)) return String(Math.trunc(b));
+
+  const bs = cleanString(b);
+  if (bs && !bs.includes("://")) return bs;
+
+  if (b != null && typeof b === "object" && !Array.isArray(b))
+    return idLikeFromBuyerObject(asRecord(b));
+
+  return cleanString(row.buyer_id ?? row.buyer_company_id ?? row.customer_id ?? row.retailer ?? row.buyer_company);
 }
 
 /** Prefer LeafLink headline totals; never substitute a huge embedded line-item sum when headline exists. */
@@ -756,7 +832,8 @@ export function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
     customerName: cleanString(customer.display_name || customer.name || customer.company_name || row.buyer_company),
     status: statusRaw,
     statusNormalized: normalizeStatusLabel(statusRaw),
-    createdAt: cleanString(row.created_on || row.created_at || ""),
+    createdAt:
+      leafLinkOrderCreatedIso(row) || cleanString(row.created_on || row.created_at || ""),
     updatedAt: cleanString(row.modified || row.updated_at || row.modified_at || ""),
     subtotal,
     total,
@@ -778,7 +855,7 @@ export function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
     deliveryPreferences: cleanString(row.delivery_preferences) || null,
     shippingDetails: cleanString(row.shipping_details) || null,
     classification: cleanString(row.classification),
-    buyerCustomerId: cleanString(customer.id ?? row.buyer),
+    buyerCustomerId: leafLinkBuyerCustomerId(row) || cleanString(customer.id ?? row.buyer),
   };
 }
 
@@ -842,7 +919,8 @@ function toUpsertInputFromLeafLinkPayload(
 ): LeafLinkStoredOrderUpsertInput | null {
   const leafLinkKey = cleanString(summary.id) || cleanString(summary.orderNumber);
   if (!leafLinkKey) return null;
-  const cp = Date.parse(summary.createdAt || "");
+  const createdIso = cleanString(summary.createdAt) || leafLinkOrderCreatedIso(raw);
+  const cp = Date.parse(createdIso || "");
   const createdOn = Number.isFinite(cp) ? new Date(cp) : null;
   const money = effectiveOrderTotalUsd(raw, summary);
   return {
@@ -1757,7 +1835,7 @@ export class LeafLinkOrdersService {
    */
   async getOrdersAnalytics(
     companyId: string,
-    input: { dateFrom: string; dateTo: string; refresh?: boolean },
+    input: { dateFrom: string; dateTo: string; refresh?: boolean; currentCustomersOnly?: boolean },
   ): Promise<OrdersAnalyticsDto> {
     const dateFrom = cleanString(input.dateFrom);
     const dateTo = cleanString(input.dateTo);
@@ -1821,28 +1899,33 @@ export class LeafLinkOrdersService {
     }
 
     await this.assertOrdersCapableOrThrow(creds);
+
+    const currentCustomersOnly = input.currentCustomersOnly !== false;
+
     let currentCustomerIds = new Set<string>();
     let filteredByLeafLinkCurrentCustomerStatus = false;
     let leafLinkCurrentCustomerCount = 0;
-    try {
-      currentCustomerIds = await this.loadCurrentCustomerIdsFromLeafLink(companyId, creds, creds.source, {
-        /**
-         * Avoid re-paginating all customers on every analytics refresh.
-         * Large customer lists can hit provider-side auth throttles/403s mid-scan;
-         * we prefer persisted snapshot reuse for stability and only refresh when cache is absent.
-         */
-        refresh: false,
-        actorUserId: "system",
-      });
-      leafLinkCurrentCustomerCount = currentCustomerIds.size;
-      filteredByLeafLinkCurrentCustomerStatus = true;
-    }
-    catch (err) {
-      logWarn("[LEAFLINK] orders_analytics_current_customer_filter_unavailable", {
-        companyId,
-        refresh: Boolean(input.refresh),
-        err: err instanceof Error ? err.message : String(err),
-      });
+    if (currentCustomersOnly) {
+      try {
+        currentCustomerIds = await this.loadCurrentCustomerIdsFromLeafLink(companyId, creds, creds.source, {
+          /**
+           * Avoid re-paginating all customers on every analytics refresh.
+           * Large customer lists can hit provider-side auth throttles/403s mid-scan;
+           * we prefer persisted snapshot reuse for stability and only refresh when cache is absent.
+           */
+          refresh: false,
+          actorUserId: "system",
+        });
+        leafLinkCurrentCustomerCount = currentCustomerIds.size;
+        filteredByLeafLinkCurrentCustomerStatus = true;
+      }
+      catch (err) {
+        logWarn("[LEAFLINK] orders_analytics_current_customer_filter_unavailable", {
+          companyId,
+          refresh: Boolean(input.refresh),
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     let pagesScanned = 0;
@@ -1875,10 +1958,31 @@ export class LeafLinkOrdersService {
       }
     }
 
-    const storedDb = await findLeafLinkStoredOrdersForCompanyInRange(companyId, {
+    const storedDbRange = await findLeafLinkStoredOrdersForCompanyInRange(companyId, {
       from: new Date(fromMs),
       to: new Date(toMs),
     });
+
+    const seenIds = new Set(storedDbRange.map((r) => r.id));
+    /** Repair path: payloads with missing persisted `createdOn` often still embed order dates — merge when in-range after parse. */
+    const storedDbNullRepair = await findRecentLeafLinkStoredOrdersWithNullCreatedOn(companyId, 4500);
+
+    function rowOrderMsFromPayload(pair: { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }): number | null {
+      const iso = cleanString(pair.summary.createdAt) || leafLinkOrderCreatedIso(pair.raw);
+      const ms = Date.parse(iso || "");
+      return Number.isFinite(ms) ? ms : null;
+    }
+
+    const extraInRange = storedDbNullRepair.filter((r) => {
+      if (seenIds.has(r.id)) return false;
+      const pair = collectedPairFromStoredPayload(r.payload);
+      if (!pair) return false;
+      const ms = rowOrderMsFromPayload(pair);
+      return ms != null && ms >= fromMs && ms <= toMs;
+    });
+
+    const storedDb = [...storedDbRange, ...extraInRange];
+
     const storedSnapshotMaxUpdatedAt =
       storedDb.reduce<Date | null>(
         (acc, r) => (!acc || r.updatedAt > acc ? r.updatedAt : acc),
@@ -1913,7 +2017,8 @@ export class LeafLinkOrdersService {
       if (!buyerId) continue;
       if (filteredByLeafLinkCurrentCustomerStatus && !currentCustomerIds.has(buyerId)) continue;
       if (isCancelledOrder(o)) continue;
-      const t = Date.parse(o.createdAt);
+      const createdIsoAgg = cleanString(o.createdAt) || leafLinkOrderCreatedIso(raw);
+      const t = Date.parse(createdIsoAgg || "");
       if (!Number.isFinite(t)) continue;
       const money = effectiveOrderTotalUsd(raw, o);
       if (money < ORDERS_ANALYTICS_MIN_ORDER_TOTAL) continue;
@@ -1930,7 +2035,7 @@ export class LeafLinkOrdersService {
         orderId: cleanString(o.id) || cleanString(o.orderNumber),
         orderNumber: cleanString(o.orderNumber),
         customerKey: ck,
-        createdAt: o.createdAt,
+        createdAt: new Date(t).toISOString(),
         totalUsd: Math.round(money * 100) / 100,
       });
 

@@ -69,6 +69,25 @@ export async function findLeafLinkStoredOrdersForCompanyInRange(
   return rows;
 }
 
+/**
+ * Rows upserted before we parsed full LeafLink `created_on` fields can have `createdOn: null`; they won't match the range query above.
+ * Analytics merges a capped recent-null set filtered in-memory by payload dates.
+ */
+export async function findRecentLeafLinkStoredOrdersWithNullCreatedOn(
+  companyId: string,
+  limit: number,
+): Promise<{ id: string; payload: unknown; updatedAt: Date }[]> {
+  const cid = String(companyId ?? "").trim();
+  if (!cid) return [];
+  const cap = Math.max(1, Math.min(5000, Math.floor(limit || 1)));
+  return prisma.leafLinkStoredOrder.findMany({
+    where: { companyId: cid, createdOn: null },
+    select: { id: true, payload: true, updatedAt: true },
+    orderBy: { updatedAt: "desc" },
+    take: cap,
+  });
+}
+
 export async function findRecentLeafLinkStoredOrdersForCompany(
   companyId: string,
   limit: number,
