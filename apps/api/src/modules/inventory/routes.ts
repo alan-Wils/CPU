@@ -5,10 +5,12 @@ import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { requireRole, requireRoleOrAppPermission } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
 import { LeafLinkInventoryService, LeafLinkService } from "../../services/leaflinkService.js";
+import { LeafLinkConnectionService } from "../../services/leafLinkConnectionService.js";
 
 export const inventoryRouter = Router();
 const leafLinkInventoryService = new LeafLinkInventoryService();
 const leafLinkService = new LeafLinkService();
+const leafLinkConnectionService = new LeafLinkConnectionService();
 
 const leafLinkConfigWriteSchema = z.object({
   integrationEnabled: z.boolean(),
@@ -67,6 +69,19 @@ inventoryRouter.put(
     const body = req.body as z.infer<typeof leafLinkConfigWriteSchema>;
     const out = await leafLinkService.upsertConfig(companyId, req.auth.userId, body);
     res.json(out);
+  }),
+);
+
+inventoryRouter.get(
+  "/leaflink/test-connection",
+  requireRole(["OWNER", "ADMIN", "OPERATIONS_MANAGER"]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const out = await leafLinkConnectionService.runTestConnection({
+      companyId,
+      actorUserId: req.auth.userId,
+    });
+    res.status(200).json(out);
   }),
 );
 

@@ -2,9 +2,13 @@ import type { Prisma } from "@prisma/client";
 import { AppError } from "../errors/AppError.js";
 import { logInfo, logWarn } from "../lib/logger.js";
 import {
+  buildLeafLinkAuthCandidates,
+  buildLeafLinkHeaders,
   fetchJsonWithRetry,
+  leafLinkAuthMode,
   pickListSource,
   LeafLinkService,
+  type LeafLinkCredentialSource,
   type LeafLinkRuntimeCredentials,
 } from "./leaflinkService.js";
 import {
@@ -423,6 +427,7 @@ function mergeLineItemsPreferRicher(
 
 async function fetchOrderLineItemsRaw(
   creds: LeafLinkRuntimeCredentials,
+  authSource: LeafLinkCredentialSource,
   baseRaw: string,
   orderApiKey: string,
 ): Promise<unknown[]> {
@@ -436,7 +441,7 @@ async function fetchOrderLineItemsRaw(
     );
   }
   urls.push(`${base}/v2/orders-received/${enc}/line-items/?${qs}`);
-  const { body } = await leafLinkAuthedGet(urls, creds, 30_000);
+  const { body } = await leafLinkAuthedGet(urls, creds, authSource, 30_000);
   if (Array.isArray(body)) return body;
   const root = asRecord(body);
   if (Array.isArray(root.results)) return root.results;
@@ -473,6 +478,7 @@ function lineItemNeedsProductHydration(li: LeafLinkOrderLineItemDto): boolean {
 
 async function hydrateLineItemsViaProductDetails(
   creds: LeafLinkRuntimeCredentials,
+  authSource: LeafLinkCredentialSource,
   baseRaw: string,
   items: LeafLinkOrderLineItemDto[],
 ): Promise<LeafLinkOrderLineItemDto[]> {
@@ -483,7 +489,7 @@ async function hydrateLineItemsViaProductDetails(
     if (!pid || cache.has(pid)) continue;
     try {
       const urls = buildProductDetailUrlCandidates(baseRaw, creds, pid);
-      const { body } = await leafLinkAuthedGet(urls, creds, 12_000);
+      const { body } = await leafLinkAuthedGet(urls, creds, authSource, 12_000);
       if (body && typeof body === "object" && !Array.isArray(body)) {
         const p = asRecord(body);
         cache.set(pid, {
@@ -511,6 +517,7 @@ async function hydrateLineItemsViaProductDetails(
 
 async function enrichDetailLineItems(
   creds: LeafLinkRuntimeCredentials,
+  authSource: LeafLinkCredentialSource,
   baseRaw: string,
   orderRow: Record<string, unknown>,
   embedded: LeafLinkOrderLineItemDto[],
@@ -522,11 +529,11 @@ async function enrichDetailLineItems(
     || orderRow.order_id,
   );
   if (!orderApiKey)
-    return hydrateLineItemsViaProductDetails(creds, baseRaw, embedded);
+    return hydrateLineItemsViaProductDetails(creds, authSource, baseRaw, embedded);
 
   let items = embedded;
   try {
-    const rawLines = await fetchOrderLineItemsRaw(creds, baseRaw, orderApiKey);
+    const rawLines = await fetchOrderLineItemsRaw(creds, authSource, baseRaw, orderApiKey);
     if (rawLines.length > 0) {
       const fromDedicated = extractLineItems({ line_items: rawLines });
       const embeddedScore = countResolvedLineProductNames(embedded);
@@ -545,7 +552,7 @@ async function enrichDetailLineItems(
     });
   }
 
-  return hydrateLineItemsViaProductDetails(creds, baseRaw, items);
+  return hydrateLineItemsViaProductDetails(creds, authSource, baseRaw, items);
 }
 
 function extractLineItems(raw: Record<string, unknown>): LeafLinkOrderLineItemDto[] {
@@ -931,47 +938,29 @@ async function persistLeafLinkDetailSummaryRow(companyId: string, summary: LeafL
   }
 }
 
-function leafLinkHeaders(creds: LeafLinkRuntimeCredentials, authValue: string): Record<string, string> {
-  return {
-    Accept: "application/json",
-    Authorization: authValue,
-    "X-API-KEY": creds.apiKey,
-    "x-api-key": creds.apiKey,
-    "X-Company-Slug": creds.companySlug,
-    "X-LeafLink-Company-Id": creds.companyId,
-    "X-LeafLink-Username": creds.username,
-  };
-}
-
 async function leafLinkAuthedGet(
   urls: string[],
   creds: LeafLinkRuntimeCredentials,
+  authSource: LeafLinkCredentialSource,
   timeoutMs: number,
 ): Promise<{ url: string; authMode: string; body: unknown }> {
-  const basicAuth = creds.username ? Buffer.from(`${creds.username}:${creds.apiKey}`, "utf8").toString("base64") : "";
-  const authCandidates = [
-    `App ${creds.apiKey}`,
-    `Token ${creds.apiKey}`,
-    `Bearer ${creds.apiKey}`,
-    ...(basicAuth ? [`Basic ${basicAuth}`] : []),
-  ];
+  const authCandidates = buildLeafLinkAuthCandidates(creds);
   let lastErr: unknown;
   for (const url of urls) {
     if (!url) continue;
     for (const authValue of authCandidates) {
-      const authMode = authValue.startsWith("App ")
-        ? "App"
-        : authValue.startsWith("Token ")
-          ? "Token"
-          : authValue.startsWith("Bearer ")
-            ? "Bearer"
-            : "Basic";
+      const authMode = leafLinkAuthMode(authValue);
       const init: RequestInit = {
         method: "GET",
-        headers: leafLinkHeaders(creds, authValue),
+        headers: buildLeafLinkHeaders(creds, authValue),
       };
       try {
-        logInfo("[LEAFLINK] orders_request", { url: url.slice(0, 200), authMode });
+        logInfo("[LEAFLINK] orders_request", {
+          url: url.slice(0, 200),
+          authMode,
+          authSource,
+          companyId: creds.companyId || null,
+        });
         const body = await fetchJsonWithRetry(url, init, timeoutMs);
         return { url, authMode, body };
       }
@@ -985,9 +974,14 @@ async function leafLinkAuthedGet(
           || code === "LEAFLINK_NON_JSON_RESPONSE"
           || code === "LEAFLINK_TEMPORARY"
         ) {
-          logWarn("[LEAFLINK] orders_try_fallback", {
+          logInfo("[LEAFLINK] orders_fallback_attempt", {
+            companyId: creds.companyId || null,
+            authSource,
+            authMode,
+            fallbackTriggered: true,
             url: url.slice(0, 160),
-            err: err instanceof Error ? err.message : String(err),
+            reasonCode: code || "UNKNOWN",
+            reason: err instanceof Error ? err.message : String(err),
           });
           continue;
         }
@@ -1002,38 +996,30 @@ async function leafLinkAuthedGet(
 async function leafLinkAuthedRequest(
   urls: string[],
   creds: LeafLinkRuntimeCredentials,
+  authSource: LeafLinkCredentialSource,
   timeoutMs: number,
   method: "POST" | "PATCH",
   body: Record<string, unknown>,
 ): Promise<{ url: string; authMode: string; body: unknown }> {
-  const basicAuth = creds.username ? Buffer.from(`${creds.username}:${creds.apiKey}`, "utf8").toString("base64") : "";
-  const authCandidates = [
-    `App ${creds.apiKey}`,
-    `Token ${creds.apiKey}`,
-    `Bearer ${creds.apiKey}`,
-    ...(basicAuth ? [`Basic ${basicAuth}`] : []),
-  ];
+  const authCandidates = buildLeafLinkAuthCandidates(creds);
   let lastErr: unknown;
   for (const url of urls) {
     if (!url) continue;
     for (const authValue of authCandidates) {
-      const authMode = authValue.startsWith("App ")
-        ? "App"
-        : authValue.startsWith("Token ")
-          ? "Token"
-          : authValue.startsWith("Bearer ")
-            ? "Bearer"
-            : "Basic";
+      const authMode = leafLinkAuthMode(authValue);
       const init: RequestInit = {
         method,
-        headers: {
-          ...leafLinkHeaders(creds, authValue),
-          "Content-Type": "application/json",
-        },
+        headers: buildLeafLinkHeaders(creds, authValue, { contentType: "application/json" }),
         body: JSON.stringify(body),
       };
       try {
-        logInfo("[LEAFLINK] orders_write_request", { url: url.slice(0, 200), authMode, method });
+        logInfo("[LEAFLINK] orders_write_request", {
+          url: url.slice(0, 200),
+          authMode,
+          authSource,
+          companyId: creds.companyId || null,
+          method,
+        });
         const json = await fetchJsonWithRetry(url, init, timeoutMs);
         return { url, authMode, body: json };
       } catch (err) {
@@ -1046,6 +1032,15 @@ async function leafLinkAuthedRequest(
           || code === "LEAFLINK_NON_JSON_RESPONSE"
           || code === "LEAFLINK_TEMPORARY"
         ) {
+          logInfo("[LEAFLINK] orders_write_fallback_attempt", {
+            companyId: creds.companyId || null,
+            authSource,
+            authMode,
+            fallbackTriggered: true,
+            url: url.slice(0, 160),
+            reasonCode: code || "UNKNOWN",
+            reason: err instanceof Error ? err.message : String(err),
+          });
           continue;
         }
         throw err;
@@ -1261,7 +1256,7 @@ export class LeafLinkOrdersService {
       qp.set("page", String(page));
       qp.set("page_size", "200");
       const urls = buildCustomerStatusesUrlCandidates(base, creds, qp);
-      const { body } = await leafLinkAuthedGet(urls, creds, 20_000);
+      const { body } = await leafLinkAuthedGet(urls, creds, creds.source, 20_000);
       const { list, next } = parseListBody(body);
       for (const item of list) {
         const row = asRecord(item);
@@ -1286,7 +1281,7 @@ export class LeafLinkOrdersService {
       qp.set("page_size", "200");
       qp.set("status", currentStatusId);
       const urls = buildCustomersUrlCandidates(base, creds, qp);
-      const { body } = await leafLinkAuthedGet(urls, creds, 25_000);
+      const { body } = await leafLinkAuthedGet(urls, creds, creds.source, 25_000);
       const { list, next } = parseListBody(body);
       for (const item of list) {
         const row = asRecord(item);
@@ -1390,6 +1385,12 @@ export class LeafLinkOrdersService {
     },
   ): Promise<LeafLinkOrdersListDto> {
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    logInfo("[LEAFLINK] credentials_resolved", {
+      companyId,
+      authSource: creds.source,
+      fromDb: creds.source === "db",
+      fromEnv: creds.source === "env",
+    });
 
     const nowIso = new Date().toISOString();
     const baseOut: Omit<LeafLinkOrdersListDto, "orders" | "totalCount" | "hasNext" | "hasPrevious" | "lastFetchedAt" | "fromCache"> = {
@@ -1456,7 +1457,7 @@ export class LeafLinkOrdersService {
         let body: unknown;
         let authMode = "";
         try {
-          const got = await leafLinkAuthedGet(urls, creds, 25_000);
+          const got = await leafLinkAuthedGet(urls, creds, creds.source, 25_000);
           authMode = got.authMode;
           body = got.body;
         }
@@ -1545,7 +1546,7 @@ export class LeafLinkOrdersService {
 
     const urls = buildOrdersListUrlCandidates(base, creds, searchParams);
 
-    const { authMode, body } = await leafLinkAuthedGet(urls, creds, 20_000);
+    const { authMode, body } = await leafLinkAuthedGet(urls, creds, creds.source, 20_000);
     logInfo("[LEAFLINK] orders_list_ok", { authMode, page: input.page });
 
     const { list, totalCount: apiTotal, next } = parseListBody(body);
@@ -1598,6 +1599,12 @@ export class LeafLinkOrdersService {
 
   async getOrder(companyId: string, orderId: string): Promise<LeafLinkOrderSummaryDto | null> {
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    logInfo("[LEAFLINK] credentials_resolved", {
+      companyId,
+      authSource: creds.source,
+      fromDb: creds.source === "db",
+      fromEnv: creds.source === "env",
+    });
     if (!creds.integrationEnabled || !creds.apiKey || (!creds.companyId && !creds.companySlug))
       throw new AppError("LeafLink is not configured.", 400, "LEAFLINK_MISSING_CONFIG");
     await this.assertOrdersCapableOrThrow(creds);
@@ -1614,7 +1621,7 @@ export class LeafLinkOrdersService {
       );
     }
     urls.push(`${base}/v2/orders-received/${id}/?${detailQs}`);
-    const { authMode, body } = await leafLinkAuthedGet(urls, creds, 25_000);
+    const { authMode, body } = await leafLinkAuthedGet(urls, creds, creds.source, 25_000);
     logInfo("[LEAFLINK] orders_detail_ok", { authMode });
     const row = typeof body === "object" && body !== null && !Array.isArray(body) ? body : null;
     if (!row) return null;
@@ -1625,7 +1632,7 @@ export class LeafLinkOrdersService {
       return null;
 
     const summary = normalizeOrder(body);
-    const lineItems = await enrichDetailLineItems(creds, base, r, summary.lineItems);
+    const lineItems = await enrichDetailLineItems(creds, creds.source, base, r, summary.lineItems);
     const full: LeafLinkOrderSummaryDto = {
       ...summary,
       lineItems,
@@ -1651,6 +1658,12 @@ export class LeafLinkOrdersService {
     hasNext: boolean;
   }> {
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    logInfo("[LEAFLINK] credentials_resolved", {
+      companyId,
+      authSource: creds.source,
+      fromDb: creds.source === "db",
+      fromEnv: creds.source === "env",
+    });
     if (!creds.integrationEnabled || !baseOutConfiguredForOrders(creds))
       return { rows: [], hasNext: false };
 
@@ -1662,7 +1675,7 @@ export class LeafLinkOrdersService {
     searchParams.set("page_size", String(Math.min(500, Math.max(1, input.pageSize))));
     searchParams.set("ordering", ordering);
     const urls = buildOrdersListUrlCandidates(base, creds, searchParams);
-    const { body } = await leafLinkAuthedGet(urls, creds, 20_000);
+    const { body } = await leafLinkAuthedGet(urls, creds, creds.source, 20_000);
     const { list, totalCount: apiTotal, next } = parseListBody(body);
     const rows = list.map((row) => {
       const raw = typeof row === "object" && row !== null && !Array.isArray(row) ? asRecord(row) : {};
@@ -1716,6 +1729,12 @@ export class LeafLinkOrdersService {
     }
 
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    logInfo("[LEAFLINK] credentials_resolved", {
+      companyId,
+      authSource: creds.source,
+      fromDb: creds.source === "db",
+      fromEnv: creds.source === "env",
+    });
     const baseConfigured = Boolean(creds.apiKey && (creds.companyId || creds.companySlug));
     const dayList = enumerateUtcDaysInclusive(dateFrom, dateTo);
     const nDays = dayList.length;
@@ -1961,6 +1980,12 @@ export class LeafLinkOrdersService {
   async syncOrdersWarm(companyId: string): Promise<LeafLinkOrdersSyncDto> {
     clearTenantOrderCachePrefix(companyId);
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    logInfo("[LEAFLINK] credentials_resolved", {
+      companyId,
+      authSource: creds.source,
+      fromDb: creds.source === "db",
+      fromEnv: creds.source === "env",
+    });
     const nowIso = new Date().toISOString();
 
     if (!creds.integrationEnabled || !baseOutConfiguredForOrders(creds)) {
@@ -2069,6 +2094,12 @@ export class LeafLinkOrdersService {
     input: { orderNumber: string; amount: number; paymentDateIso: string; note: string; reference?: string | null },
   ): Promise<{ paymentId: string; paymentStatus: string; rawResponse: unknown }> {
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    logInfo("[LEAFLINK] credentials_resolved", {
+      companyId,
+      authSource: creds.source,
+      fromDb: creds.source === "db",
+      fromEnv: creds.source === "env",
+    });
     if (!creds.integrationEnabled || !creds.apiKey || (!creds.companyId && !creds.companySlug)) {
       throw new AppError("LeafLink is not configured.", 400, "LEAFLINK_MISSING_CONFIG");
     }
@@ -2103,7 +2134,7 @@ export class LeafLinkOrdersService {
     let lastErr: unknown;
     for (const payload of payloads) {
       try {
-        const { body } = await leafLinkAuthedRequest(urls, creds, 25_000, "POST", payload);
+        const { body } = await leafLinkAuthedRequest(urls, creds, creds.source, 25_000, "POST", payload);
         const rec = asRecord(body);
         const paymentId = cleanString(rec.id || rec.payment_id || rec.uuid || rec.reference || rec.order_payment_id) || `leaflink-${Date.now()}`;
         const paymentStatus = cleanString(rec.status || rec.payment_status || rec.state) || "posted";

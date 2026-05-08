@@ -1,6 +1,6 @@
 import { env } from "../config/env.js";
 import { AppError } from "../errors/AppError.js";
-import { logInfo, logWarn } from "../lib/logger.js";
+import { logInfo } from "../lib/logger.js";
 import { ConfigRepository } from "../repositories/configRepository.js";
 import { ConfigService } from "./configService.js";
 
@@ -23,6 +23,12 @@ export type LeafLinkRuntimeCredentials = {
   username: string;
   apiKey: string;
   baseUrl: string;
+};
+
+export type LeafLinkCredentialSource = "db" | "env";
+
+export type LeafLinkResolvedCredentials = LeafLinkRuntimeCredentials & {
+  source: LeafLinkCredentialSource;
 };
 
 export type LeafLinkConfigReadDto = {
@@ -113,23 +119,81 @@ export class LeafLinkService {
     return this.getSafeConfig(companyId);
   }
 
-  async resolveRuntimeCredentials(companyId: string): Promise<LeafLinkRuntimeCredentials> {
+  async resolveRuntimeCredentials(
+    companyId: string,
+    opts?: { source?: "auto" | LeafLinkCredentialSource },
+  ): Promise<LeafLinkResolvedCredentials> {
     const cfg = await this.getStoredConfig(companyId);
-    const integrationEnabled = Boolean(cfg.integrationEnabled ?? false) || envBool(process.env.LEAFLINK_ENABLED);
-    const companySlug = cleanString(cfg.companySlug) || cleanString(process.env.LEAFLINK_COMPANY_SLUG);
-    const cid = cleanString(cfg.companyId) || cleanString(process.env.LEAFLINK_COMPANY_ID);
-    const username = cleanString(cfg.username) || cleanString(process.env.LEAFLINK_USERNAME);
-    const apiKey = cleanString(cfg.apiKey) || cleanString(process.env.LEAFLINK_API_KEY);
-    const baseUrl = baseUrlOrDefault(cfg.baseUrl || process.env.LEAFLINK_BASE_URL || env.LEAFLINK_BASE_URL);
+    const dbCreds = {
+      integrationEnabled: Boolean(cfg.integrationEnabled ?? false),
+      companySlug: cleanString(cfg.companySlug),
+      companyId: cleanString(cfg.companyId),
+      username: cleanString(cfg.username),
+      apiKey: cleanString(cfg.apiKey),
+      baseUrl: baseUrlOrDefault(cfg.baseUrl),
+    };
+    const envCreds = {
+      integrationEnabled: envBool(process.env.LEAFLINK_ENABLED),
+      companySlug: cleanString(process.env.LEAFLINK_COMPANY_SLUG),
+      companyId: cleanString(process.env.LEAFLINK_COMPANY_ID),
+      username: cleanString(process.env.LEAFLINK_USERNAME),
+      apiKey: cleanString(process.env.LEAFLINK_API_KEY),
+      baseUrl: baseUrlOrDefault(process.env.LEAFLINK_BASE_URL || env.LEAFLINK_BASE_URL),
+    };
+    const requestedSource = opts?.source ?? "auto";
+    let source: LeafLinkCredentialSource;
+    if (requestedSource === "db" || requestedSource === "env") {
+      source = requestedSource;
+    } else {
+      const dbConfigured = Boolean(dbCreds.apiKey && (dbCreds.companyId || dbCreds.companySlug));
+      source = dbConfigured ? "db" : "env";
+    }
+    const selected = source === "db" ? dbCreds : envCreds;
     return {
-      integrationEnabled,
-      companySlug,
-      companyId: cid,
-      username,
-      apiKey,
-      baseUrl,
+      integrationEnabled: selected.integrationEnabled,
+      companySlug: selected.companySlug,
+      companyId: selected.companyId,
+      username: selected.username,
+      apiKey: selected.apiKey,
+      baseUrl: selected.baseUrl,
+      source,
     };
   }
+}
+
+export function leafLinkAuthMode(authValue: string): "App" | "Token" | "Bearer" | "Basic" {
+  if (authValue.startsWith("App ")) return "App";
+  if (authValue.startsWith("Token ")) return "Token";
+  if (authValue.startsWith("Bearer ")) return "Bearer";
+  return "Basic";
+}
+
+export function buildLeafLinkAuthCandidates(creds: LeafLinkRuntimeCredentials): string[] {
+  const basicAuth = creds.username ? Buffer.from(`${creds.username}:${creds.apiKey}`, "utf8").toString("base64") : "";
+  return [
+    `App ${creds.apiKey}`,
+    `Token ${creds.apiKey}`,
+    `Bearer ${creds.apiKey}`,
+    ...(basicAuth ? [`Basic ${basicAuth}`] : []),
+  ];
+}
+
+export function buildLeafLinkHeaders(
+  creds: LeafLinkRuntimeCredentials,
+  authValue: string,
+  opts?: { contentType?: string },
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    Authorization: authValue,
+    "X-API-KEY": creds.apiKey,
+    "x-api-key": creds.apiKey,
+    "X-Company-Slug": creds.companySlug,
+    "X-LeafLink-Company-Id": creds.companyId,
+    "X-LeafLink-Username": creds.username,
+  };
+  if (opts?.contentType) headers["Content-Type"] = opts.contentType;
+  return headers;
 }
 
 export type LeafLinkInventoryItem = {
@@ -737,11 +801,17 @@ export async function fetchJsonWithRetry(url: string, init: RequestInit, timeout
       if (isAbort) {
         throw new AppError("LeafLink request timed out.", 504, "LEAFLINK_TIMEOUT");
       }
-      logWarn("[LEAFLINK] request_failed", {
+      const isFinalAttempt = i === 1;
+      const logPayload = {
         url,
         attempt: i + 1,
+        finalAttempt: isFinalAttempt,
         error: error instanceof Error ? error.message : String(error),
-      });
+      };
+      logInfo(
+        isFinalAttempt ? "[LEAFLINK] request_attempt_failed_final" : "[LEAFLINK] request_attempt_failed_retrying",
+        logPayload,
+      );
       if (i === 1) throw error;
     } finally {
       clearTimeout(timeout);
@@ -752,6 +822,7 @@ export async function fetchJsonWithRetry(url: string, init: RequestInit, timeout
 
 async function fetchLeafLinkInventoryFromApi(
   creds: LeafLinkRuntimeCredentials,
+  authSource: LeafLinkCredentialSource,
   modifiedGte: string | undefined,
   debug: boolean,
 ): Promise<{
@@ -780,13 +851,7 @@ async function fetchLeafLinkInventoryFromApi(
       if (modifiedGte) u = appendModifiedGteFilter(u, modifiedGte);
       return u;
     });
-  const basicAuth = creds.username ? Buffer.from(`${creds.username}:${creds.apiKey}`).toString("base64") : "";
-  const authCandidates = [
-    `App ${creds.apiKey}`,
-    `Token ${creds.apiKey}`,
-    `Bearer ${creds.apiKey}`,
-    ...(basicAuth ? [`Basic ${basicAuth}`] : []),
-  ];
+  const authCandidates = buildLeafLinkAuthCandidates(creds);
 
   let payload: unknown = null;
   let usedEndpoint = "";
@@ -795,24 +860,10 @@ async function fetchLeafLinkInventoryFromApi(
   let lastErr: unknown = null;
   outer: for (const endpoint of endpointCandidates) {
     for (const authValue of authCandidates) {
-      const authMode = authValue.startsWith("App ")
-        ? "App"
-        : authValue.startsWith("Token ")
-          ? "Token"
-          : authValue.startsWith("Bearer ")
-            ? "Bearer"
-            : "Basic";
+      const authMode = leafLinkAuthMode(authValue);
       const leafLinkInit: RequestInit = {
         method: "GET",
-        headers: {
-          Accept: "application/json",
-          Authorization: authValue,
-          "X-API-KEY": creds.apiKey,
-          "x-api-key": creds.apiKey,
-          "X-Company-Slug": creds.companySlug,
-          "X-LeafLink-Company-Id": creds.companyId,
-          "X-LeafLink-Username": creds.username,
-        },
+        headers: buildLeafLinkHeaders(creds, authValue),
       };
       try {
         payload = await fetchJsonWithRetry(endpoint, leafLinkInit, 15_000);
@@ -829,6 +880,15 @@ async function fetchLeafLinkInventoryFromApi(
           code === "LEAFLINK_NON_JSON_RESPONSE" ||
           code === "LEAFLINK_HTML_ERROR"
         ) {
+          logInfo("[LEAFLINK] auth_fallback_attempt", {
+            companyId: creds.companyId || null,
+            authSource,
+            authMode,
+            endpoint: endpoint.slice(0, 220),
+            fallbackTriggered: true,
+            reasonCode: code || "UNKNOWN",
+            reason: error instanceof Error ? error.message : String(error),
+          });
           continue;
         }
         throw error;
@@ -849,6 +909,8 @@ async function fetchLeafLinkInventoryFromApi(
   const firstRowKeys =
     merged.rows.length > 0 ? Object.keys(asRecord(merged.rows[0])).slice(0, 80) : [];
   logInfo("[LEAFLINK] normalize_preview", {
+    companyId: creds.companyId || null,
+    authSource,
     endpoint: usedEndpoint,
     endpointFinalHint: merged.finalUrl.slice(0, 220),
     authMode: usedAuthMode,
@@ -932,6 +994,12 @@ export class LeafLinkInventoryService {
     opts?: { debug?: boolean; refresh?: boolean; actorUserId?: string },
   ): Promise<LeafLinkInventoryResponse> {
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    logInfo("[LEAFLINK] credentials_resolved", {
+      companyId,
+      authSource: creds.source,
+      fromDb: creds.source === "db",
+      fromEnv: creds.source === "env",
+    });
     if (!creds.integrationEnabled) {
       throw new AppError("LeafLink sync is disabled for this company.", 400, "LEAFLINK_DISABLED");
     }
@@ -959,7 +1027,7 @@ export class LeafLinkInventoryService {
       refresh && persisted?.items?.length && persisted.lastSyncedAt ? persisted.lastSyncedAt : undefined;
 
     const runPull = (modifiedGte: string | undefined) =>
-      fetchLeafLinkInventoryFromApi(creds, modifiedGte, debug);
+      fetchLeafLinkInventoryFromApi(creds, creds.source, modifiedGte, debug);
 
     let pull: Awaited<ReturnType<typeof fetchLeafLinkInventoryFromApi>>;
     let usedIncremental = Boolean(incrementalSince);
@@ -968,7 +1036,10 @@ export class LeafLinkInventoryService {
     }
     catch (firstErr) {
       if (incrementalSince) {
-        logWarn("[LEAFLINK] incremental_pull_failed_fallback_full", {
+        logInfo("[LEAFLINK] incremental_pull_retry_full", {
+          companyId,
+          authSource: creds.source,
+          fallbackTriggered: true,
           message: firstErr instanceof Error ? firstErr.message : String(firstErr),
         });
         pull = await runPull(undefined);
