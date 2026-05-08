@@ -34,7 +34,7 @@ function utcYmd(d: Date): string {
 function defaultRange(): { from: string; to: string } {
   const to = new Date();
   const from = new Date(to.getTime());
-  from.setUTCDate(from.getUTCDate() - 30);
+  from.setUTCDate(from.getUTCDate() - 90);
   return { from: utcYmd(from), to: utcYmd(to) };
 }
 

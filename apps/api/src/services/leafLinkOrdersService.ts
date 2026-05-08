@@ -211,7 +211,7 @@ export type OrdersAnalyticsDto = {
 };
 
 const MAX_ANALYTICS_RANGE_DAYS = 366;
-const MAX_ANALYTICS_PAGES = 50;
+const MAX_ANALYTICS_PAGES = 250;
 const MAX_QUALIFYING_ORDERS_IN_PAYLOAD = 3500;
 /** If list payload embeds many line rows, summing them is often wrong vs order headline `total`. */
 const MAX_LINE_ITEMS_TO_TRUST_SUM = 120;
@@ -1061,6 +1061,18 @@ function buildOrdersListUrlCandidates(
   const root = base.replace(/\/+$/, "");
   const candidates: string[] = [];
 
+  /**
+   * Prefer global v2 orders endpoint first.
+   * Some tenants reject company-scoped orders URLs with 401/403 while the global endpoint
+   * succeeds with identical credentials; putting global first avoids repeated fallback churn
+   * during deep pagination (e.g. analytics/history backfills).
+   */
+  {
+    const u = new URL(`${root}/v2/orders-received/`);
+    merged.forEach((v, k) => u.searchParams.set(k, v));
+    u.searchParams.set("fields_add", "line_items,customer,sales_reps");
+    candidates.push(u.href);
+  }
   if (creds.companyId) {
     candidates.push(
       `${root}/v2/companies/${encodeURIComponent(creds.companyId)}/orders-received/?${merged.toString()}`,
@@ -1073,13 +1085,6 @@ function buildOrdersListUrlCandidates(
     u.searchParams.set("fields_add", "line_items,customer,sales_reps");
     candidates.push(u.href);
   }
-  {
-    const u = new URL(`${root}/v2/orders-received/`);
-    merged.forEach((v, k) => u.searchParams.set(k, v));
-    u.searchParams.set("fields_add", "line_items,customer,sales_reps");
-    candidates.push(u.href);
-  }
-
   const seen = new Set<string>();
   return candidates.filter((href) => {
     if (!href || seen.has(href)) return false;
