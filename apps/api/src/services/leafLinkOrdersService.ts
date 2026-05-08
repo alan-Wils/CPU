@@ -138,6 +138,14 @@ export type LeafLinkOrdersSyncDto = {
   hitPageCap?: boolean;
 };
 
+/** Optional LeafLink list filters when paginating orders-received into `leafLinkStoredOrder`. */
+export type PullLeafLinkOrdersReceivedOpts = {
+  /** ISO UTC instant for LeafLink query `created_on__gte` (inclusive). */
+  createdOnGteIso?: string;
+  /** ISO UTC instant for LeafLink query `created_on__lte` (inclusive window end). */
+  createdOnLteIso?: string;
+};
+
 export type OrdersAnalyticsSampleTypeBreakdown = {
   typeLabel: string;
   /** Units = sum of line quantities for that product label. */
@@ -1694,6 +1702,10 @@ export class LeafLinkOrdersService {
       page: number;
       pageSize: number;
       ordering?: string;
+      /** LeafLink `created_on__gte` (ISO 8601). */
+      createdOnGteIso?: string;
+      /** LeafLink `created_on__lte` (ISO 8601). */
+      createdOnLteIso?: string;
     },
   ): Promise<{
     rows: { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }[];
@@ -1716,6 +1728,12 @@ export class LeafLinkOrdersService {
     searchParams.set("page", String(Math.max(1, input.page)));
     searchParams.set("page_size", String(Math.min(500, Math.max(1, input.pageSize))));
     searchParams.set("ordering", ordering);
+    const gte = cleanString(input.createdOnGteIso);
+    const lte = cleanString(input.createdOnLteIso);
+    if (gte)
+      searchParams.set("created_on__gte", gte);
+    if (lte)
+      searchParams.set("created_on__lte", lte);
     const urls = buildOrdersListUrlCandidates(base, creds, searchParams);
     const { body } = await leafLinkAuthedGet(urls, creds, creds.source, 20_000);
     const { list, totalCount: apiTotal, next } = parseListBody(body);
@@ -1734,8 +1752,12 @@ export class LeafLinkOrdersService {
   /**
    * Paginate LeafLink `orders-received` until the API reports no next page (or until the configurable page cap).
    * Persists each page — same backing store as the Orders page (`leafLinkStoredOrder`).
+   * Omit `filters` to sync the full catalogue; pass `createdOn*` to scope to LeafLink order `created_on`.
    */
-  async pullAllLeafLinkOrdersReceivedToDb(companyId: string): Promise<{
+  async pullLeafLinkOrdersReceivedToDb(
+    companyId: string,
+    filters?: PullLeafLinkOrdersReceivedOpts,
+  ): Promise<{
     pagesPulled: number;
     ordersPersisted: number;
     syncComplete: boolean;
@@ -1746,13 +1768,23 @@ export class LeafLinkOrdersService {
     let pagesPulled = 0;
     let ordersPersisted = 0;
 
-    logInfo("[LEAFLINK] orders_full_sync_start", { companyId, maxPages });
+    const createdOnGteIso = cleanString(filters?.createdOnGteIso);
+    const createdOnLteIso = cleanString(filters?.createdOnLteIso);
+
+    logInfo("[LEAFLINK] orders_full_sync_start", {
+      companyId,
+      maxPages,
+      createdOnGteIso: createdOnGteIso || null,
+      createdOnLteIso: createdOnLteIso || null,
+    });
 
     for (let page = 1; page <= maxPages; page++) {
       const res = await this.listOrdersSummaries(companyId, {
         page,
         pageSize: 100,
         ordering: "-created_on",
+        createdOnGteIso: createdOnGteIso || undefined,
+        createdOnLteIso: createdOnLteIso || undefined,
       });
 
       if (!res.rows.length)
@@ -1783,7 +1815,7 @@ export class LeafLinkOrdersService {
 
   /**
    * Aggregate wholesale orders in a UTC date range from **saved** DB rows (same pool as the Orders page when loaded from cache).
-   * Pass `{ refresh: true }` once to paginate LeafLink and merge into the DB before aggregating (optional).
+   * Pass `{ refresh: true }` to paginate LeafLink for **this same `dateFrom`–`dateTo` UTC window** (`created_on__gte` / `created_on__lte`) and merge into the DB before aggregating.
    * **No LeafLink CRM customer-status filter** — every stored order whose date falls in the range is counted.
    * Sample lines: LeafLink `is_sample`, product/listing sample signals, `frozen_data`, plus name/SKU/notes (see {@link isSampleLineItem}).
    */
@@ -1861,7 +1893,10 @@ export class LeafLinkOrdersService {
     let truncated = false;
 
     if (input.refresh) {
-      const pulled = await this.pullAllLeafLinkOrdersReceivedToDb(companyId);
+      const pulled = await this.pullLeafLinkOrdersReceivedToDb(companyId, {
+        createdOnGteIso: new Date(fromMs).toISOString(),
+        createdOnLteIso: new Date(toMs).toISOString(),
+      });
       pagesScanned = pulled.pagesPulled;
       truncated = pulled.hitPageCap || !pulled.syncComplete;
     }
@@ -2125,7 +2160,7 @@ export class LeafLinkOrdersService {
     }
     await this.assertOrdersCapableOrThrow(creds);
 
-    const pulled = await this.pullAllLeafLinkOrdersReceivedToDb(companyId);
+    const pulled = await this.pullLeafLinkOrdersReceivedToDb(companyId);
 
     logInfo("[LEAFLINK] orders_sync_complete", {
       companyId,
