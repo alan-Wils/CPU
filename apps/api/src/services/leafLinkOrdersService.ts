@@ -220,6 +220,7 @@ const MAX_CUSTOMER_STATUS_PAGES = 20;
 const MAX_CURRENT_CUSTOMER_PAGES = 40;
 const STORED_ORDERS_LIST_SCAN_LIMIT = 2500;
 const LEAFLINK_CUSTOMERS_CACHE_KEY = "leaflink_customers_snapshot";
+const preferredLeafLinkAuthByTenant = new Map<string, string>();
 
 /** Only orders at or above this total count toward analytics and customer inclusion. */
 export const ORDERS_ANALYTICS_MIN_ORDER_TOTAL = 50;
@@ -944,7 +945,8 @@ async function leafLinkAuthedGet(
   authSource: LeafLinkCredentialSource,
   timeoutMs: number,
 ): Promise<{ url: string; authMode: string; body: unknown }> {
-  const authCandidates = buildLeafLinkAuthCandidates(creds);
+  const authCandidates = orderedAuthCandidatesForTenant(creds);
+  const tenantKey = authTenantKey(creds);
   let lastErr: unknown;
   for (const url of urls) {
     if (!url) continue;
@@ -962,11 +964,26 @@ async function leafLinkAuthedGet(
           companyId: creds.companyId || null,
         });
         const body = await fetchJsonWithRetry(url, init, timeoutMs);
+        preferredLeafLinkAuthByTenant.set(tenantKey, authValue);
         return { url, authMode, body };
       }
       catch (err) {
         lastErr = err;
         const code = err instanceof AppError ? err.code : "";
+        const preferred = preferredLeafLinkAuthByTenant.get(tenantKey);
+        if (
+          preferred
+          && preferred === authValue
+          && (
+            code === "LEAFLINK_INVALID_CREDENTIALS"
+            || code === "LEAFLINK_REQUEST_FAILED"
+            || code === "LEAFLINK_HTML_ERROR"
+            || code === "LEAFLINK_NON_JSON_RESPONSE"
+            || code === "LEAFLINK_TEMPORARY"
+          )
+        ) {
+          preferredLeafLinkAuthByTenant.delete(tenantKey);
+        }
         if (
           code === "LEAFLINK_INVALID_CREDENTIALS"
           || code === "LEAFLINK_REQUEST_FAILED"
@@ -1001,7 +1018,8 @@ async function leafLinkAuthedRequest(
   method: "POST" | "PATCH",
   body: Record<string, unknown>,
 ): Promise<{ url: string; authMode: string; body: unknown }> {
-  const authCandidates = buildLeafLinkAuthCandidates(creds);
+  const authCandidates = orderedAuthCandidatesForTenant(creds);
+  const tenantKey = authTenantKey(creds);
   let lastErr: unknown;
   for (const url of urls) {
     if (!url) continue;
@@ -1021,10 +1039,25 @@ async function leafLinkAuthedRequest(
           method,
         });
         const json = await fetchJsonWithRetry(url, init, timeoutMs);
+        preferredLeafLinkAuthByTenant.set(tenantKey, authValue);
         return { url, authMode, body: json };
       } catch (err) {
         lastErr = err;
         const code = err instanceof AppError ? err.code : "";
+        const preferred = preferredLeafLinkAuthByTenant.get(tenantKey);
+        if (
+          preferred
+          && preferred === authValue
+          && (
+            code === "LEAFLINK_INVALID_CREDENTIALS"
+            || code === "LEAFLINK_REQUEST_FAILED"
+            || code === "LEAFLINK_HTML_ERROR"
+            || code === "LEAFLINK_NON_JSON_RESPONSE"
+            || code === "LEAFLINK_TEMPORARY"
+          )
+        ) {
+          preferredLeafLinkAuthByTenant.delete(tenantKey);
+        }
         if (
           code === "LEAFLINK_INVALID_CREDENTIALS"
           || code === "LEAFLINK_REQUEST_FAILED"
@@ -1183,6 +1216,18 @@ function entityIdString(row: Record<string, unknown>, ...fields: string[]): stri
 /** Light in-process cache for identical list reads (TTL). */
 const LIST_CACHE_TTL_MS = 45_000;
 const listCaches = new Map<string, { at: number; payload: LeafLinkOrdersListDto }>();
+
+function authTenantKey(creds: LeafLinkRuntimeCredentials): string {
+  return `${cleanString(creds.baseUrl)}|${cleanString(creds.companyId || creds.companySlug || "global")}`;
+}
+
+function orderedAuthCandidatesForTenant(creds: LeafLinkRuntimeCredentials): string[] {
+  const all = buildLeafLinkAuthCandidates(creds);
+  const preferred = preferredLeafLinkAuthByTenant.get(authTenantKey(creds));
+  if (!preferred || !all.includes(preferred))
+    return all;
+  return [preferred, ...all.filter((v) => v !== preferred)];
+}
 
 function cacheKey(parts: Record<string, string | number | boolean | undefined>): string {
   return JSON.stringify(parts);
