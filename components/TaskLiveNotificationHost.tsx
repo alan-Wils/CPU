@@ -1,16 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { usePathname } from "next/navigation";
-import { apiRequest, fetchLatestTaskLogLive, getSelectedCompanyId } from "@/lib/api";
-import { CPU_AUTH_CHANGED_EVENT, getAuthCompany, isLoggedIn } from "@/lib/auth";
+import { apiRequest, fetchLatestTaskLogLive } from "@/lib/api";
+import { CPU_AUTH_CHANGED_EVENT, isLoggedIn } from "@/lib/auth";
 import { extractLiveTaskNotificationsEnabled } from "@/lib/taskNotificationsConfig";
-
-function resolveCompanyIdForPolling(): string {
-  const fromStorage = getSelectedCompanyId().trim();
-  if (fromStorage) return fromStorage;
-  return String(getAuthCompany()?.id || "").trim();
-}
 
 function skipListeningForPath(pathname: string | null): boolean {
   const p = String(pathname || "");
@@ -24,7 +18,7 @@ function skipListeningForPath(pathname: string | null): boolean {
   );
 }
 
-const POLL_INTERVAL_MS = 5500;
+const POLL_INTERVAL_MS = 4000;
 
 /** Public label for the actor on every device (same text for the performer and everyone else). */
 function actorBroadcastLabel(actorEmail: string | null): string {
@@ -35,10 +29,20 @@ function actorBroadcastLabel(actorEmail: string | null): string {
   return pretty || "Someone";
 }
 
+function flushPendingToast(
+  pending: MutableRefObject<{ message: string; key: string } | null>,
+  toastNow: (message: string, key: string) => void,
+): void {
+  if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+  const p = pending.current;
+  if (!p) return;
+  pending.current = null;
+  toastNow(p.message, p.key);
+}
+
 /**
- * Polls `/api/logs/latest-live`. Each logged-in session for the company shows the same toast when the
- * newest task log changes — broadcast wording with the performer’s name for everyone.
- * Feature flag: `company.settings.liveTaskNotifications` (default on).
+ * Polls `/api/logs/latest-live`. Active tenant follows the JWT (not localStorage headers).
+ * Polls while the tab is hidden so other machines / refocused tabs stay in sync; toasts queue until visible.
  */
 export default function TaskLiveNotificationHost() {
   const pathname = usePathname();
@@ -49,6 +53,7 @@ export default function TaskLiveNotificationHost() {
   const primedRef = useRef(false);
   const lastIdRef = useRef<string | null>(null);
   const hideToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingToastRef = useRef<{ message: string; key: string } | null>(null);
 
   useEffect(() => {
     function bump() {
@@ -90,6 +95,7 @@ export default function TaskLiveNotificationHost() {
   useEffect(() => {
     primedRef.current = false;
     lastIdRef.current = null;
+    pendingToastRef.current = null;
 
     if (!isLoggedIn() || skipListeningForPath(pathname)) return;
 
@@ -112,15 +118,16 @@ export default function TaskLiveNotificationHost() {
       }, 6500);
     }
 
-    async function tick() {
-      if (!isLoggedIn() || cancelled || document.visibilityState !== "visible") return;
+    /**
+     * Keep polling when the tab is hidden so `lastIdRef` matches the server (other devices won’t wedge state).
+     * Only show UI when visible, or enqueue for when the tab is focused again.
+     */
+    async function syncPoll() {
+      if (!isLoggedIn() || cancelled) return;
       if (!settingsEnabledRef.current) return;
 
-      const companyId = resolveCompanyIdForPolling();
-      if (!companyId) return;
-
       try {
-        const latest = await fetchLatestTaskLogLive(companyId);
+        const latest = await fetchLatestTaskLogLive();
         if (!latest || cancelled) return;
 
         if (!primedRef.current) {
@@ -136,23 +143,41 @@ export default function TaskLiveNotificationHost() {
         const who = actorBroadcastLabel(latest.actorEmail);
         const area = String(latest.area || "Workspace").trim() || "Workspace";
         const task = String(latest.task || "a task").trim() || "a task";
-        const message = `${who} performed “${task}” · ${area}`;
-        toastNow(message, `${latest.id}:${latest.createdAt}`);
+        const message = `${who} performed "${task}" · ${area}`;
+        const key = `${latest.id}:${latest.createdAt}`;
+
+        if (typeof document !== "undefined" && document.visibilityState === "visible") {
+          toastNow(message, key);
+        } else {
+          pendingToastRef.current = { message, key };
+        }
       } catch {
         /* ignore polling failures */
       }
     }
 
-    void tick();
+    function onVisibilityOrFocus() {
+      if (cancelled) return;
+      flushPendingToast(pendingToastRef, toastNow);
+      void syncPoll();
+    }
+
+    void syncPoll();
 
     intervalId = setInterval(() => {
-      void tick();
+      void syncPoll();
     }, POLL_INTERVAL_MS);
+
+    document.addEventListener("visibilitychange", onVisibilityOrFocus);
+    window.addEventListener("focus", onVisibilityOrFocus);
 
     return () => {
       cancelled = true;
       if (intervalId) clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+      window.removeEventListener("focus", onVisibilityOrFocus);
       dismissToastTimers();
+      pendingToastRef.current = null;
     };
   }, [pathname, authBump]);
 

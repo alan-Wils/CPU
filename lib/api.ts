@@ -475,6 +475,8 @@ export async function fetchLatestTaskLogLive(
 ): Promise<LatestTaskLogLiveDto | null> {
   return apiRequest<LatestTaskLogLiveDto | null>("/api/logs/latest-live", {
     companyId,
+    /** Tenant scope comes from JWT only (`companyScope`). Avoid empty/wrong localStorage blocking other devices. */
+    omitCompanyHeader: true,
   });
 }
 
