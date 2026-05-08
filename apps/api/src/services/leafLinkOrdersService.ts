@@ -232,14 +232,52 @@ const preferredLeafLinkAuthByTenant = new Map<string, string>();
  */
 export const ORDERS_ANALYTICS_MIN_ORDER_TOTAL = 0;
 
-const currentCustomersByCompanyCache = new Map<string, { atMs: number; ids: Set<string> }>();
+const currentCustomersByCompanyCache = new Map<string, { atMs: number; ids: Set<string>; labelById: Map<string, string> }>();
 
 type LeafLinkCustomersSnapshot = {
   currentCustomerIds: string[];
+  /** Display names from LeafLink customers list (canonical id keys). */
+  customerRows?: Array<{ id: string; label: string }>;
   statusId: string;
   statusLabel: string;
   fetchedAt: string;
 };
+
+type LeafLinkCurrentCustomersDirectory = {
+  ids: Set<string>;
+  labelById: Map<string, string>;
+};
+
+/**
+ * Match order payload buyer ids to LeafLink customer list ids (numeric strings differ by leading zeros / int vs string).
+ */
+function canonicalLeafLinkBuyerId(raw: unknown): string {
+  const s = cleanString(typeof raw === "number" && Number.isFinite(raw) ? String(Math.trunc(raw)) : raw);
+  if (!s || s.includes("://")) return "";
+  if (/^-?\d+$/.test(s)) {
+    try {
+      return BigInt(s).toString();
+    } catch {
+      return s;
+    }
+  }
+  const u = s.trim().toLowerCase();
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(u))
+    return u;
+  return s.trim();
+}
+
+function leafLinkCustomerListLabel(row: Record<string, unknown>): string {
+  return cleanString(
+    row.display_name
+    || row.company_name
+    || row.name
+    || row.business_name
+    || row.dba
+    || row.legal_business_name
+    || row.customer_name,
+  );
+}
 
 function utcDayKeyFromMs(ms: number): string {
   const d = new Date(ms);
@@ -1344,10 +1382,24 @@ export class LeafLinkOrdersService {
     const row = await this.configRepo.getConfigRaw(companyId, LEAFLINK_CUSTOMERS_CACHE_KEY);
     if (!row?.valueJson) return null;
     try {
-      const v = JSON.parse(row.valueJson) as LeafLinkCustomersSnapshot;
+      const v = JSON.parse(row.valueJson) as LeafLinkCustomersSnapshot & { customerRows?: unknown };
       if (!Array.isArray(v.currentCustomerIds)) return null;
+      const canonIds = v.currentCustomerIds
+        .map((x) => canonicalLeafLinkBuyerId(x))
+        .filter(Boolean);
+      const rowsIn = Array.isArray(v.customerRows) ? v.customerRows : [];
+      const labelById = new Map<string, string>();
+      for (const r of rowsIn) {
+        const rec = r != null && typeof r === "object" && !Array.isArray(r) ? (r as Record<string, unknown>) : null;
+        if (!rec) continue;
+        const id = canonicalLeafLinkBuyerId(rec.id);
+        if (!id) continue;
+        const lb = cleanString(rec.label) || leafLinkCustomerListLabel(rec);
+        if (lb) labelById.set(id, lb);
+      }
       return {
-        currentCustomerIds: v.currentCustomerIds.map((x) => cleanString(x)).filter(Boolean),
+        currentCustomerIds: [...new Set(canonIds)],
+        customerRows: [...labelById.entries()].map(([id, label]) => ({ id, label })),
         statusId: cleanString(v.statusId),
         statusLabel: cleanString(v.statusLabel) || "Current Customer",
         fetchedAt: cleanString(v.fetchedAt),
@@ -1371,24 +1423,33 @@ export class LeafLinkOrdersService {
     });
   }
 
-  private async loadCurrentCustomerIdsFromLeafLink(
+  /** Full Current Customer roster from LeafLink (canonical ids + labels for analytics/UI padding). */
+  private async resolveCurrentCustomersDirectory(
     companyId: string,
     creds: LeafLinkRuntimeCredentials,
     authSource: LeafLinkCredentialSource,
     opts?: { refresh?: boolean; actorUserId?: string },
-  ): Promise<Set<string>> {
+  ): Promise<LeafLinkCurrentCustomersDirectory> {
     const cid = cleanString(companyId);
     const refresh = Boolean(opts?.refresh);
     const cacheHit = currentCustomersByCompanyCache.get(cid);
-    if (!refresh && cacheHit && Date.now() - cacheHit.atMs < CURRENT_CUSTOMERS_CACHE_TTL_MS)
-      return new Set(cacheHit.ids);
+    if (!refresh && cacheHit && Date.now() - cacheHit.atMs < CURRENT_CUSTOMERS_CACHE_TTL_MS) {
+      return { ids: new Set(cacheHit.ids), labelById: new Map(cacheHit.labelById) };
+    }
 
     if (!refresh) {
       const persisted = await this.loadPersistedCurrentCustomers(cid);
       if (persisted?.currentCustomerIds?.length) {
-        const ids = new Set(persisted.currentCustomerIds);
-        currentCustomersByCompanyCache.set(cid, { atMs: Date.now(), ids });
-        return new Set(ids);
+        const labelById = new Map<string, string>();
+        for (const row of persisted.customerRows ?? []) {
+          const id = canonicalLeafLinkBuyerId(row.id);
+          if (!id) continue;
+          const lb = cleanString(row.label);
+          if (lb) labelById.set(id, lb);
+        }
+        const ids = new Set(persisted.currentCustomerIds.map((x) => canonicalLeafLinkBuyerId(x)).filter(Boolean));
+        currentCustomersByCompanyCache.set(cid, { atMs: Date.now(), ids, labelById: new Map(labelById) });
+        return { ids, labelById };
       }
     }
 
@@ -1418,6 +1479,7 @@ export class LeafLinkOrdersService {
       throw new AppError("LeafLink status 'Current Customer' was not found for this company.", 502, "LEAFLINK_CURRENT_CUSTOMER_STATUS_MISSING");
     }
 
+    const labelByIdFresh = new Map<string, string>();
     const ids = new Set<string>();
     for (let page = 1; page <= MAX_CURRENT_CUSTOMER_PAGES; page++) {
       const qp = new URLSearchParams();
@@ -1429,22 +1491,29 @@ export class LeafLinkOrdersService {
       const { list, next } = parseListBody(body);
       for (const item of list) {
         const row = asRecord(item);
-        const id = entityIdString(row, "id", "customer_id");
-        if (id) ids.add(id);
+        const rawId = entityIdString(row, "id", "customer_id");
+        const canon = canonicalLeafLinkBuyerId(rawId);
+        if (!canon) continue;
+        ids.add(canon);
+        const nm = leafLinkCustomerListLabel(row);
+        if (nm && (!labelByIdFresh.has(canon) || labelByIdFresh.get(canon)!.length < nm.length))
+          labelByIdFresh.set(canon, nm);
       }
       if (!next) break;
     }
 
     const idsArr = [...ids];
+    const customerRows = [...labelByIdFresh.entries()].map(([id, label]) => ({ id, label }));
     await this.persistCurrentCustomersSnapshot(cid, opts?.actorUserId || "system", {
       currentCustomerIds: idsArr,
+      customerRows,
       statusId: currentStatusId,
       statusLabel: "Current Customer",
       fetchedAt: new Date().toISOString(),
     });
 
-    currentCustomersByCompanyCache.set(cid, { atMs: Date.now(), ids });
-    return new Set(ids);
+    currentCustomersByCompanyCache.set(cid, { atMs: Date.now(), ids, labelById: labelByIdFresh });
+    return { ids, labelById: labelByIdFresh };
   }
 
   private async listOrdersFromStored(
@@ -1907,18 +1976,21 @@ export class LeafLinkOrdersService {
     await this.assertOrdersCapableOrThrow(creds);
 
     let currentCustomerIds = new Set<string>();
+    let leafLinkCustomerLabelById = new Map<string, string>();
     let filteredByLeafLinkCurrentCustomerStatus = false;
     let leafLinkCurrentCustomerCount = 0;
     try {
-      currentCustomerIds = await this.loadCurrentCustomerIdsFromLeafLink(companyId, creds, creds.source, {
-        /**
-         * Avoid re-paginating all customers on every analytics refresh.
-         * Large customer lists can hit provider-side auth throttles/403s mid-scan;
-         * we prefer persisted snapshot reuse for stability and only refresh when cache is absent.
-         */
+      let directory = await this.resolveCurrentCustomersDirectory(companyId, creds, creds.source, {
+        /** Prefer persisted roster; avoids hammering Customers API each refresh. */
         refresh: false,
         actorUserId: "system",
       });
+      /** Legacy snapshots stored ids only — one live fetch restores display names for zero-order rows. */
+      if (directory.ids.size > 0 && directory.labelById.size === 0)
+        directory = await this.resolveCurrentCustomersDirectory(companyId, creds, creds.source, { refresh: true, actorUserId: "system" });
+
+      currentCustomerIds = directory.ids;
+      leafLinkCustomerLabelById = directory.labelById;
       leafLinkCurrentCustomerCount = currentCustomerIds.size;
       filteredByLeafLinkCurrentCustomerStatus = true;
     }
@@ -2020,16 +2092,21 @@ export class LeafLinkOrdersService {
       orderTotalSum: number;
       sampleTypeUnits: Map<string, number>;
       sampleLineItems: OrdersAnalyticsSampleLineItemDto[];
+      /** Row added so the full LeafLink roster appears even with no orders in range. */
+      rosterPad?: boolean;
     };
 
     const agg = new Map<string, CustAgg>();
+    const seenBuyerCanonFromOrders = new Set<string>();
     let qualifyingOrderCount = 0;
     const qualifyingOrdersFull: OrdersAnalyticsQualifyingOrderDto[] = [];
 
     for (const { raw, summary: o } of collected) {
-      const buyerId = cleanString(o.buyerCustomerId);
-      if (!buyerId) continue;
-      if (filteredByLeafLinkCurrentCustomerStatus && !currentCustomerIds.has(buyerId)) continue;
+      const buyerCanon =
+        canonicalLeafLinkBuyerId(leafLinkBuyerCustomerId(raw))
+        || canonicalLeafLinkBuyerId(o.buyerCustomerId);
+      if (!buyerCanon) continue;
+      if (filteredByLeafLinkCurrentCustomerStatus && !currentCustomerIds.has(buyerCanon)) continue;
       const createdIsoAgg = cleanString(o.createdAt) || leafLinkOrderCreatedIso(raw);
       const t = Date.parse(createdIsoAgg || "");
       if (!Number.isFinite(t)) continue;
@@ -2041,8 +2118,13 @@ export class LeafLinkOrdersService {
       if (di === undefined) continue;
 
       qualifyingOrderCount++;
-      const label = cleanString(o.customerName) || "Unknown customer";
-      const ck = customerSeriesKey(buyerId, label);
+      const nmFromOrder = cleanString(o.customerName);
+      const label =
+        nmFromOrder
+        || leafLinkCustomerLabelById.get(buyerCanon)
+        || `Buyer ${buyerCanon.length > 10 ? `${buyerCanon.slice(0, 8)}…` : buyerCanon}`;
+      const ck = customerSeriesKey(buyerCanon, label);
+      seenBuyerCanonFromOrders.add(buyerCanon);
 
       qualifyingOrdersFull.push({
         orderId: cleanString(o.id) || cleanString(o.orderNumber),
@@ -2094,6 +2176,31 @@ export class LeafLinkOrdersService {
       }
     }
 
+    /** Every LeafLink Current Customer appears in charts/checkbox list ($0 rows when none in-range). */
+    if (filteredByLeafLinkCurrentCustomerStatus && currentCustomerIds.size > 0) {
+      for (const canonId of currentCustomerIds) {
+        if (seenBuyerCanonFromOrders.has(canonId)) continue;
+        const labelPad =
+          leafLinkCustomerLabelById.get(canonId)
+          || `Customer ${canonId.length > 12 ? `${canonId.slice(0, 10)}…` : canonId}`;
+        const ck = customerSeriesKey(canonId, labelPad);
+        if (agg.has(ck))
+          continue;
+        agg.set(ck, {
+          label: labelPad,
+          lastPurchaseMs: 0,
+          lastOrderTotal: 0,
+          revenueByDay: Array.from({ length: nDays }, () => 0),
+          orderCountByDay: Array.from({ length: nDays }, () => 0),
+          sampleUnitsByDay: Array.from({ length: nDays }, () => 0),
+          orderTotalSum: 0,
+          sampleTypeUnits: new Map(),
+          sampleLineItems: [],
+          rosterPad: true,
+        });
+      }
+    }
+
     qualifyingOrdersFull.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     let qualifyingOrdersTruncated = false;
     let qualifyingOrders = qualifyingOrdersFull;
@@ -2106,7 +2213,7 @@ export class LeafLinkOrdersService {
       .map(([key, v]) => ({
         key,
         label: v.label,
-        lastPurchaseDate: new Date(v.lastPurchaseMs).toISOString(),
+        lastPurchaseDate: v.rosterPad ? "" : new Date(v.lastPurchaseMs).toISOString(),
         lastOrderTotal: Math.round(v.lastOrderTotal * 100) / 100,
         orderTotalInRange: Math.round(v.orderTotalSum * 100) / 100,
         sampleUnitsInRange: [...v.sampleTypeUnits.values()].reduce((a, b) => a + b, 0),
@@ -2120,7 +2227,16 @@ export class LeafLinkOrdersService {
         orderCountByDay: v.orderCountByDay.map((x) => x),
         sampleUnitsByDay: v.sampleUnitsByDay.map((x) => x),
       }))
-      .sort((a, b) => b.orderTotalInRange - a.orderTotalInRange);
+      .sort((a, b) => {
+        const ah = a.orderTotalInRange > 0 ? 1 : 0;
+        const bh = b.orderTotalInRange > 0 ? 1 : 0;
+        if (ah !== bh)
+          return bh - ah;
+        const byRev = b.orderTotalInRange - a.orderTotalInRange;
+        if (byRev !== 0)
+          return byRev;
+        return (a.label || "").localeCompare(b.label || "");
+      });
 
     logInfo("[LEAFLINK] orders_analytics_done", {
       companyId,

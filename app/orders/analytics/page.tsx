@@ -487,9 +487,9 @@ export default function OrdersAnalyticsPage() {
                   ? `Customer list is restricted to LeafLink status: Current Customer (${data.leafLinkCurrentCustomerCount} total in LeafLink). `
                   : ""}
                 {data.ordersIncluded > 0
-                  ? `${data.ordersIncluded} order(s) · ${data.customers.length} Current Customer buyer(s) with orders · UTC dates`
+                  ? `${data.ordersIncluded} order(s) · ${data.customers.filter((c) => c.orderTotalInRange > 0).length} with in-range spend · ${data.customers.length} Current Customer accounts listed (incl. $0) · UTC dates`
                   : data.storedRowsInRange > 0
-                    ? `${data.storedRowsInRange} stored order row(s) in range (none mapped to LeafLink Current Customer buyer ids — check sync or CRM snapshot).`
+                    ? `${data.storedRowsInRange} stored order row(s) in range (none counted as qualifying Current Customer orders in this window — widen dates / re-pull saved orders, or verify buyer-ID sync). Listed roster still reflects LeafLink Current Customer when filtering is on.`
                     : null}
                 {data.leafLinkRefreshRan ? ` · LeafLink pull ran this request (${data.pagesScanned} page(s)).` : ""}
               </p>
