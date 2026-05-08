@@ -193,11 +193,11 @@ function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
   const lookupId = cleanString(row.id || row.order_id || row.number || row.order_number);
   /** Human-facing order number shown in LeafLink UI where available. */
   const displayOrderNumber = cleanString(
-    row.order_short_number
-    || row.short_id
-    || row.order_seller_number
-    || row.number
+    row.number
     || row.order_number
+    || row.order_seller_number
+    || row.order_short_number
+    || row.short_id
     || row.po_number
     || lookupId,
   );
