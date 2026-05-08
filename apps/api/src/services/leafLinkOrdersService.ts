@@ -133,6 +133,20 @@ function extractLineItems(raw: Record<string, unknown>): LeafLinkOrderLineItemDt
     else {
       productId = cleanString(prodRaw);
     }
+    if (!productName) {
+      productName = cleanString(
+        r.product_name
+        || r.name
+        || r.title
+        || r.item_name
+        || r.inventory_name
+        || r.listing_name
+        || r.display_name,
+      );
+    }
+    if (!sku) {
+      sku = cleanString(r.sku || r.product_sku || r.item_sku || r.inventory_sku);
+    }
     const qty = toNumber(r.quantity);
     const unitPrice = moneyAmount(r.ordered_unit_price) ?? moneyAmount(r.sale_price) ?? moneyAmount(r.wholesale_price);
     let lineTotal: number | null = null;
@@ -175,7 +189,18 @@ function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
   const customer = row.customer != null && typeof row.customer === "object" && !Array.isArray(row.customer)
     ? asRecord(row.customer)
     : {};
-  const orderId = cleanString(row.number || row.order_number || row.order_id || row.id);
+  /** API lookup key (stable internal id when present). */
+  const lookupId = cleanString(row.id || row.order_id || row.number || row.order_number);
+  /** Human-facing order number shown in LeafLink UI where available. */
+  const displayOrderNumber = cleanString(
+    row.order_short_number
+    || row.short_id
+    || row.order_seller_number
+    || row.number
+    || row.order_number
+    || row.po_number
+    || lookupId,
+  );
 
   let salesRep = "";
   const sr = row.sales_reps;
@@ -210,11 +235,11 @@ function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
   }
 
   const shortNumber =
-    cleanString(row.order_short_number || row.short_id || row.order_seller_number) || orderId.slice(0, 8);
+    cleanString(row.order_short_number || row.short_id || row.order_seller_number) || displayOrderNumber.slice(0, 12);
 
   return {
-    id: orderId,
-    orderNumber: orderId || shortNumber,
+    id: lookupId || displayOrderNumber,
+    orderNumber: displayOrderNumber || shortNumber,
     shortNumber,
     customerName: cleanString(customer.display_name || customer.name || customer.company_name || row.buyer_company),
     status: statusRaw,
@@ -640,7 +665,7 @@ export class LeafLinkOrdersService {
 
     /** Single-object detail may omit results wrapper */
     const r = row as Record<string, unknown>;
-    if (cleanString(r.number || r.order_number))
+    if (cleanString(r.id || r.order_id || r.number || r.order_number || r.short_id || r.order_short_number))
       return normalizeOrder(body);
     return null;
   }
