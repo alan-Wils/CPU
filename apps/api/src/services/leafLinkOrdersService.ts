@@ -18,8 +18,6 @@ import {
   findRecentLeafLinkStoredOrdersForCompany,
   type LeafLinkStoredOrderUpsertInput,
 } from "./leafLinkOrdersStorePrimitives.js";
-import { ConfigRepository } from "../repositories/configRepository.js";
-import { ConfigService } from "./configService.js";
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -187,14 +185,14 @@ export type OrdersAnalyticsDto = {
   integrationEnabled: boolean;
   dateFrom: string;
   dateTo: string;
-  /** Orders in range after Current Customer linkage (invoice headline totals when present; includes cancelled/sample-sized orders — no dollar floor here). */
+  /** Orders in range from saved snapshots (invoice headline totals when present; includes cancelled/sample-sized orders — no dollar floor). */
   ordersIncluded: number;
   /** Always 0 — no minimum order filter in analytics. Present for backwards-compatible clients. */
   minOrderTotal: number;
   pagesScanned: number;
   truncated: boolean;
   days: string[];
-  /** Buyers with LeafLink CRM “Current Customer” and at least one stored order row in-range. */
+  /** Buyers present on stored orders whose order dates fall in this UTC window. */
   customers: OrdersAnalyticsCustomerDto[];
   /** One row per order for scatter chart. May be truncated — see `qualifyingOrdersTruncated`. */
   qualifyingOrders: OrdersAnalyticsQualifyingOrderDto[];
@@ -207,7 +205,7 @@ export type OrdersAnalyticsDto = {
   storedRowsInRange: number;
   /** Latest `updatedAt` among rows read for this range (`null` if none). */
   storedSnapshotMaxUpdatedAt: string | null;
-  /** Customer list is filtered to LeafLink CRM status "Current Customer". */
+  /** Legacy field — analytics no longer gates on LeafLink CRM customer status (always false / 0). */
   filteredByLeafLinkCurrentCustomerStatus: boolean;
   leafLinkCurrentCustomerCount: number;
 };
@@ -219,52 +217,17 @@ const ANALYTICS_REFRESH_TIME_BUDGET_MS = 50_000;
 const MAX_QUALIFYING_ORDERS_IN_PAYLOAD = 3500;
 /** If list payload embeds many line rows, summing them is often wrong vs order headline `total`. */
 const MAX_LINE_ITEMS_TO_TRUST_SUM = 120;
-const CURRENT_CUSTOMERS_CACHE_TTL_MS = 10 * 60 * 1000;
-const MAX_CUSTOMER_STATUS_PAGES = 20;
-const MAX_CURRENT_CUSTOMER_PAGES = 40;
 const STORED_ORDERS_LIST_SCAN_LIMIT = 2500;
-const LEAFLINK_CUSTOMERS_CACHE_KEY = "leaflink_customers_snapshot";
 const preferredLeafLinkAuthByTenant = new Map<string, string>();
 
 /**
- * Shipped in API responses for compatibility; analytics **does not** exclude small orders (only LeafLink Current Customer + date range).
+ * Shipped in API responses for compatibility; analytics does not exclude small orders (date range only on saved orders).
  * @deprecated Prefer checking `minOrderTotal === 0` in clients; kept exported to avoid breaking imports.
  */
 export const ORDERS_ANALYTICS_MIN_ORDER_TOTAL = 0;
 
-type LeafLinkCustomerRowStored = {
-  /** Canonical primary id for this LeafLink CRM row (one analytics row per customer). */
-  id: string;
-  label: string;
-  /** Other canonical ids for the same account (e.g. `crm_record_id` vs `id` vs empty external id). */
-  keys?: string[];
-};
-
-const currentCustomersByCompanyCache = new Map<
-  string,
-  { atMs: number; directory: LeafLinkCurrentCustomersDirectory }
->();
-
-type LeafLinkCustomersSnapshot = {
-  currentCustomerIds: string[];
-  /** Display names from LeafLink customers list (canonical primary `id`; optional alias `keys`). */
-  customerRows?: LeafLinkCustomerRowStored[];
-  statusId: string;
-  statusLabel: string;
-  fetchedAt: string;
-};
-
-type LeafLinkCurrentCustomersDirectory = {
-  /** One id per LeafLink customer row (preferred key for aggregation + padded roster size). */
-  primaryIds: Set<string>;
-  /** Any canonical id LeafLink might put on orders that maps to `primaryIds`. */
-  membershipKeys: Set<string>;
-  aliasToPrimary: Map<string, string>;
-  labelByPrimary: Map<string, string>;
-};
-
 /**
- * Match order payload buyer ids to LeafLink customer list ids (numeric strings differ by leading zeros / int vs string).
+ * Match order buyer ids across numeric / string shapes (leading zeros etc.).
  */
 function canonicalLeafLinkBuyerId(raw: unknown): string {
   const s = cleanString(typeof raw === "number" && Number.isFinite(raw) ? String(Math.trunc(raw)) : raw);
@@ -282,19 +245,7 @@ function canonicalLeafLinkBuyerId(raw: unknown): string {
   return s.trim();
 }
 
-function leafLinkCustomerListLabel(row: Record<string, unknown>): string {
-  return cleanString(
-    row.display_name
-    || row.company_name
-    || row.name
-    || row.business_name
-    || row.dba
-    || row.legal_business_name
-    || row.customer_name,
-  );
-}
-
-/** Raw fields that LeafLink wholesale may use interchangeably across Customers API vs Orders (CRM record id ≠ external id). */
+/** Raw fields LeafLink orders may expose for linking the same wholesale buyer across payloads. */
 const LEAF_LINK_CUSTOMER_ID_FIELD_NAMES = [
   "id",
   "pk",
@@ -333,119 +284,6 @@ function canonicalIdsFromSellerRecord(row: Record<string, unknown>): string[] {
         pushCanon(rec[fn]);
     }
   }
-  return out;
-}
-
-/**
- * Canonical primary for one CRM row — prefer LeafLink wholesale `id`/`pk`, then FKs, then CRM record id seen in BI exports (`LEAFLINK_CRM_RECORD_ID`).
- */
-function leafLinkSellerCustomerPrimaryCanon(row: Record<string, unknown>): string {
-  const order = ["id", "pk", "customer_id", "buyer_customer_id", "crm_record_id", "crm_id"] as const;
-  for (const k of order) {
-    const c = canonicalLeafLinkBuyerId(row[k]);
-    if (c) return c;
-  }
-  const rest = canonicalIdsFromSellerRecord(row);
-  return rest[0] ?? "";
-}
-
-function leafLinkSellerCustomerVariants(row: Record<string, unknown>): string[] {
-  return canonicalIdsFromSellerRecord(row);
-}
-
-function leafLinkCustomersDirectoryEmpty(): LeafLinkCurrentCustomersDirectory {
-  return {
-    primaryIds: new Set(),
-    membershipKeys: new Set(),
-    aliasToPrimary: new Map(),
-    labelByPrimary: new Map(),
-  };
-}
-
-function leafLinkCustomersDirectoryFromRows(rows: Iterable<LeafLinkCustomerRowStored>): LeafLinkCurrentCustomersDirectory {
-  const d = leafLinkCustomersDirectoryEmpty();
-  for (const r of rows) {
-    const primary = canonicalLeafLinkBuyerId(r.id);
-    if (!primary) continue;
-    const label = cleanString(r.label);
-    if (label)
-      d.labelByPrimary.set(primary, label);
-
-    const variantSet = new Set<string>();
-    variantSet.add(primary);
-    const extra = Array.isArray(r.keys) ? r.keys : [];
-    for (const k of extra) {
-      const c = canonicalLeafLinkBuyerId(k);
-      if (c) variantSet.add(c);
-    }
-    d.primaryIds.add(primary);
-    for (const v of variantSet) {
-      d.membershipKeys.add(v);
-      d.aliasToPrimary.set(v, primary);
-    }
-  }
-  return d;
-}
-
-function leafLinkCustomersDirectoryMergeRow(
-  d: LeafLinkCurrentCustomersDirectory,
-  row: Record<string, unknown>,
-): void {
-  const variants = leafLinkSellerCustomerVariants(row);
-  if (!variants.length) return;
-
-  let primary = leafLinkSellerCustomerPrimaryCanon(row);
-  if (!primary || !variants.includes(primary))
-    primary = variants[0];
-  const label = leafLinkCustomerListLabel(row);
-  const prev = d.labelByPrimary.get(primary) ?? "";
-  if (label && (!prev || label.length > prev.length))
-    d.labelByPrimary.set(primary, label);
-
-  d.primaryIds.add(primary);
-  for (const v of variants) {
-    d.membershipKeys.add(v);
-    d.aliasToPrimary.set(v, primary);
-  }
-}
-
-/** Stable JSON round-trip for nested maps/sets stored in-memory. */
-function cloneLeafLinkCustomersDirectory(dir: LeafLinkCurrentCustomersDirectory): LeafLinkCurrentCustomersDirectory {
-  return {
-    primaryIds: new Set(dir.primaryIds),
-    membershipKeys: new Set(dir.membershipKeys),
-    aliasToPrimary: new Map(dir.aliasToPrimary),
-    labelByPrimary: new Map(dir.labelByPrimary),
-  };
-}
-
-/** Inverse of merge — persists alias keys so restarted workers restore CRM id ↔ wholesale id bridging. */
-function leafLinkCustomerRowsStoredFromDirectory(dir: LeafLinkCurrentCustomersDirectory): LeafLinkCustomerRowStored[] {
-  const variantSets = new Map<string, Set<string>>();
-  for (const [alias, prim] of dir.aliasToPrimary) {
-    let s = variantSets.get(prim);
-    if (!s) {
-      s = new Set();
-      variantSets.set(prim, s);
-    }
-    s.add(alias);
-  }
-  const out: LeafLinkCustomerRowStored[] = [];
-  for (const primary of dir.primaryIds) {
-    const all = variantSets.get(primary) ?? new Set([primary]);
-    const keysSorted = [...all].filter((k) => k !== primary).sort();
-    const label = dir.labelByPrimary.get(primary) ?? "";
-    out.push({
-      id: primary,
-      label,
-      keys: keysSorted.length ? keysSorted : undefined,
-    });
-  }
-  out.sort((a, b) => {
-    const al = cleanString(a.label) || a.id;
-    const bl = cleanString(b.label) || b.id;
-    return al.localeCompare(bl);
-  });
   return out;
 }
 
@@ -557,7 +395,7 @@ function idLikeFromBuyerObject(o: Record<string, unknown>): string {
 }
 
 /**
- * Buyer linkage varies (nested customer, FK int, `{ id }`). Must align with LeafLink Customers API ids used in Current Customer filter.
+ * Buyer linkage varies (nested customer, FK int, `{ id }`, CRM-style ids on some payloads).
  */
 function leafLinkBuyerCustomerId(row: Record<string, unknown>): string {
   const customer =
@@ -1454,70 +1292,6 @@ function parseListBody(body: unknown): { list: unknown[]; totalCount: number; ne
   return { list, totalCount, next, previous };
 }
 
-function buildCustomerStatusesUrlCandidates(base: string, creds: LeafLinkRuntimeCredentials, searchParams: URLSearchParams): string[] {
-  const root = base.replace(/\/+$/, "");
-  const urls: string[] = [];
-  /**
-   * Prefer global v2 customer-status endpoints first.
-   * Some tenants reject company-scoped variants with 401/403 even when global endpoints are valid,
-   * and this function is called in paging loops where repeated failed first-attempts can stall history loads.
-   */
-  urls.push(`${root}/v2/customer-statuses/?${searchParams.toString()}`);
-  urls.push(`${root}/v2/customer_statuses/?${searchParams.toString()}`);
-  if (creds.companyId) {
-    urls.push(`${root}/v2/companies/${encodeURIComponent(creds.companyId)}/customer-statuses/?${searchParams.toString()}`);
-    urls.push(`${root}/v2/companies/${encodeURIComponent(creds.companyId)}/customer_statuses/?${searchParams.toString()}`);
-  }
-  if (creds.companySlug) {
-    const q = new URLSearchParams(searchParams.toString());
-    q.set("company_slug", creds.companySlug);
-    urls.push(`${root}/v2/customer-statuses/?${q.toString()}`);
-    urls.push(`${root}/v2/customer_statuses/?${q.toString()}`);
-  }
-  const seen = new Set<string>();
-  return urls.filter((u) => {
-    if (!u || seen.has(u)) return false;
-    seen.add(u);
-    return true;
-  });
-}
-
-function buildCustomersUrlCandidates(base: string, creds: LeafLinkRuntimeCredentials, searchParams: URLSearchParams): string[] {
-  const root = base.replace(/\/+$/, "");
-  const urls: string[] = [];
-  /**
-   * Same ordering rationale as customer-status candidates: use broad endpoint first to avoid
-   * repeated auth failures when company-scoped customer routes are unavailable for a valid API key.
-   */
-  urls.push(`${root}/v2/customers/?${searchParams.toString()}`);
-  if (creds.companyId) {
-    urls.push(`${root}/v2/companies/${encodeURIComponent(creds.companyId)}/customers/?${searchParams.toString()}`);
-  }
-  if (creds.companySlug) {
-    const q = new URLSearchParams(searchParams.toString());
-    q.set("company_slug", creds.companySlug);
-    urls.push(`${root}/v2/customers/?${q.toString()}`);
-  }
-  const seen = new Set<string>();
-  return urls.filter((u) => {
-    if (!u || seen.has(u)) return false;
-    seen.add(u);
-    return true;
-  });
-}
-
-function customerStatusLabel(row: Record<string, unknown>): string {
-  return cleanString(row.state || row.name || row.label || row.description || row.title).toLowerCase();
-}
-
-function entityIdString(row: Record<string, unknown>, ...fields: string[]): string {
-  for (const f of fields) {
-    const v = cleanString(row[f]);
-    if (v) return v;
-  }
-  return "";
-}
-
 /** Light in-process cache for identical list reads (TTL). */
 const LIST_CACHE_TTL_MS = 45_000;
 const listCaches = new Map<string, { at: number; payload: LeafLinkOrdersListDto }>();
@@ -1548,8 +1322,6 @@ function clearTenantOrderCachePrefix(companyId: string): void {
 
 export class LeafLinkOrdersService {
   leafLinkService = new LeafLinkService();
-  configService = new ConfigService();
-  configRepo = new ConfigRepository();
 
   async assertOrdersCapableOrThrow(creds: LeafLinkRuntimeCredentials): Promise<void> {
     if (!creds.apiKey || (!creds.companyId && !creds.companySlug)) {
@@ -1559,154 +1331,6 @@ export class LeafLinkOrdersService {
         "LEAFLINK_MISSING_CONFIG",
       );
     }
-  }
-
-  private async loadPersistedCurrentCustomers(companyId: string): Promise<LeafLinkCustomersSnapshot | null> {
-    const row = await this.configRepo.getConfigRaw(companyId, LEAFLINK_CUSTOMERS_CACHE_KEY);
-    if (!row?.valueJson) return null;
-    try {
-      const v = JSON.parse(row.valueJson) as LeafLinkCustomersSnapshot & { customerRows?: unknown };
-      if (!Array.isArray(v.currentCustomerIds)) return null;
-      const canonIdsLegacy = v.currentCustomerIds
-        .map((x) => canonicalLeafLinkBuyerId(x))
-        .filter(Boolean);
-      const rowsIn = Array.isArray(v.customerRows) ? v.customerRows : [];
-      const normalizedRows: LeafLinkCustomerRowStored[] = [];
-      for (const raw of rowsIn) {
-        const rec = raw != null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
-        if (!rec) continue;
-        const primary = canonicalLeafLinkBuyerId(rec.id);
-        if (!primary) continue;
-        const keysExtra =
-          Array.isArray(rec.keys)
-            ? rec.keys.flatMap((k) => {
-                const c = canonicalLeafLinkBuyerId(k);
-                return c ? [c] : [];
-              })
-            : [];
-        const uniqKeys = [...new Set(keysExtra.filter((k) => k !== primary))];
-        normalizedRows.push({
-          id: primary,
-          label: cleanString(rec.label) || "",
-          keys: uniqKeys.length ? uniqKeys : undefined,
-        });
-      }
-
-      /** Legacy JSON: ids only → synthesize sparse rows */
-      const havePrimaries = new Set(normalizedRows.map((r) => r.id));
-      for (const id of canonIdsLegacy) {
-        if (!havePrimaries.has(id)) {
-          havePrimaries.add(id);
-          normalizedRows.push({ id, label: "" });
-        }
-      }
-
-      const allPrimaries = [...new Set(normalizedRows.map((r) => r.id))];
-      return {
-        currentCustomerIds: allPrimaries,
-        customerRows: normalizedRows,
-        statusId: cleanString(v.statusId),
-        statusLabel: cleanString(v.statusLabel) || "Current Customer",
-        fetchedAt: cleanString(v.fetchedAt),
-      };
-    }
-    catch {
-      return null;
-    }
-  }
-
-  private async persistCurrentCustomersSnapshot(
-    companyId: string,
-    actorUserId: string,
-    snapshot: LeafLinkCustomersSnapshot,
-  ): Promise<void> {
-    await this.configService.upsert({
-      companyId,
-      actorUserId: actorUserId || "system",
-      key: LEAFLINK_CUSTOMERS_CACHE_KEY,
-      value: snapshot,
-    });
-  }
-
-  /** Full Current Customer roster from LeafLink (canonical ids + labels for analytics/UI padding). */
-  private async resolveCurrentCustomersDirectory(
-    companyId: string,
-    creds: LeafLinkRuntimeCredentials,
-    authSource: LeafLinkCredentialSource,
-    opts?: { refresh?: boolean; actorUserId?: string },
-  ): Promise<LeafLinkCurrentCustomersDirectory> {
-    const cid = cleanString(companyId);
-    const refresh = Boolean(opts?.refresh);
-    const cacheHit = currentCustomersByCompanyCache.get(cid);
-    if (!refresh && cacheHit && Date.now() - cacheHit.atMs < CURRENT_CUSTOMERS_CACHE_TTL_MS)
-      return cloneLeafLinkCustomersDirectory(cacheHit.directory);
-
-    if (!refresh) {
-      const persisted = await this.loadPersistedCurrentCustomers(cid);
-      const rows = persisted?.customerRows ?? [];
-      const hasStoredBuyerAliases = rows.some((r) => Array.isArray(r.keys) && r.keys.length > 0);
-      if (persisted?.currentCustomerIds?.length && hasStoredBuyerAliases) {
-        const directory = leafLinkCustomersDirectoryFromRows(rows);
-        currentCustomersByCompanyCache.set(cid, { atMs: Date.now(), directory });
-        return cloneLeafLinkCustomersDirectory(directory);
-      }
-      /** Pre-alias snapshots only knew one id per buyer — replay LeafLink Customers once to capture `crm_record_id`/`id` pairs. */
-    }
-
-    const base = creds.baseUrl.replace(/\/+$/, "");
-    let currentStatusId = "";
-
-    for (let page = 1; page <= MAX_CUSTOMER_STATUS_PAGES; page++) {
-      const qp = new URLSearchParams();
-      qp.set("page", String(page));
-      qp.set("page_size", "200");
-      const urls = buildCustomerStatusesUrlCandidates(base, creds, qp);
-      const { body } = await leafLinkAuthedGet(urls, creds, authSource, 20_000);
-      const { list, next } = parseListBody(body);
-      for (const item of list) {
-        const row = asRecord(item);
-        const label = customerStatusLabel(row);
-        if (label === "current customer") {
-          currentStatusId = entityIdString(row, "id", "status_id", "pk");
-          if (currentStatusId) break;
-        }
-      }
-      if (currentStatusId) break;
-      if (!next) break;
-    }
-
-    if (!currentStatusId) {
-      throw new AppError("LeafLink status 'Current Customer' was not found for this company.", 502, "LEAFLINK_CURRENT_CUSTOMER_STATUS_MISSING");
-    }
-
-    const directoryFresh = leafLinkCustomersDirectoryEmpty();
-    for (let page = 1; page <= MAX_CURRENT_CUSTOMER_PAGES; page++) {
-      const qp = new URLSearchParams();
-      qp.set("page", String(page));
-      qp.set("page_size", "200");
-      qp.set("status", currentStatusId);
-      const urls = buildCustomersUrlCandidates(base, creds, qp);
-      const { body } = await leafLinkAuthedGet(urls, creds, authSource, 25_000);
-      const { list, next } = parseListBody(body);
-      for (const item of list) {
-        const row = asRecord(item);
-        leafLinkCustomersDirectoryMergeRow(directoryFresh, row);
-      }
-      if (!next) break;
-    }
-
-    const idsArr = [...directoryFresh.primaryIds];
-    const customerRows = leafLinkCustomerRowsStoredFromDirectory(directoryFresh);
-    await this.persistCurrentCustomersSnapshot(cid, opts?.actorUserId || "system", {
-      currentCustomerIds: idsArr,
-      customerRows,
-      statusId: currentStatusId,
-      statusLabel: "Current Customer",
-      fetchedAt: new Date().toISOString(),
-    });
-
-    currentCustomersByCompanyCache.set(cid, { atMs: Date.now(), directory: directoryFresh });
-    return cloneLeafLinkCustomersDirectory(directoryFresh);
   }
 
   private async listOrdersFromStored(
@@ -2096,9 +1720,9 @@ export class LeafLinkOrdersService {
   }
 
   /**
-   * Aggregate wholesale orders in a UTC date range from **saved** DB rows (populated whenever Orders loads or Multi-page sync runs).
+   * Aggregate wholesale orders in a UTC date range from **saved** DB rows (same pool as the Orders page when loaded from cache).
    * Pass `{ refresh: true }` once to paginate LeafLink and merge into the DB before aggregating (optional).
-   * **Filter:** buyers must appear in LeafLink CRM with status “Current Customer” (when that snapshot loads). No min total or cancel exclusion.
+   * **No LeafLink CRM customer-status filter** — every stored order whose date falls in the range is counted.
    * Sample lines: LeafLink `is_sample`, product/listing sample signals, `frozen_data`, plus name/SKU/notes (see {@link isSampleLineItem}).
    */
   async getOrdersAnalytics(
@@ -2168,32 +1792,8 @@ export class LeafLinkOrdersService {
 
     await this.assertOrdersCapableOrThrow(creds);
 
-    let leafLinkCustomersDir: LeafLinkCurrentCustomersDirectory | null = null;
-    let filteredByLeafLinkCurrentCustomerStatus = false;
-    let leafLinkCurrentCustomerCount = 0;
-    try {
-      let directory = await this.resolveCurrentCustomersDirectory(companyId, creds, creds.source, {
-        /** Prefer persisted roster; avoids hammering Customers API each refresh. */
-        refresh: false,
-        actorUserId: "system",
-      });
-      /** Legacy snapshots (ids-only) — one live Customers fetch restores CRM ↔ wholesale alias keys + display names for padded rows. */
-      const hydratedLabels =
-        [...directory.labelByPrimary.values()].filter((s) => Boolean(cleanString(s))).length;
-      if (directory.primaryIds.size > 0 && hydratedLabels === 0)
-        directory = await this.resolveCurrentCustomersDirectory(companyId, creds, creds.source, { refresh: true, actorUserId: "system" });
-
-      leafLinkCustomersDir = directory;
-      leafLinkCurrentCustomerCount = directory.primaryIds.size;
-      filteredByLeafLinkCurrentCustomerStatus = true;
-    }
-    catch (err) {
-      logWarn("[LEAFLINK] orders_analytics_current_customer_filter_unavailable", {
-        companyId,
-        refresh: Boolean(input.refresh),
-        err: err instanceof Error ? err.message : String(err),
-      });
-    }
+    const filteredByLeafLinkCurrentCustomerStatus = false;
+    const leafLinkCurrentCustomerCount = 0;
 
     let pagesScanned = 0;
     let truncated = false;
@@ -2285,12 +1885,9 @@ export class LeafLinkOrdersService {
       orderTotalSum: number;
       sampleTypeUnits: Map<string, number>;
       sampleLineItems: OrdersAnalyticsSampleLineItemDto[];
-      /** Row added so the full LeafLink roster appears even with no orders in range. */
-      rosterPad?: boolean;
     };
 
     const agg = new Map<string, CustAgg>();
-    const seenBuyerCanonFromOrders = new Set<string>();
     let qualifyingOrderCount = 0;
     const qualifyingOrdersFull: OrdersAnalyticsQualifyingOrderDto[] = [];
 
@@ -2331,22 +1928,7 @@ export class LeafLinkOrdersService {
       const buyerKeys = leafLinkOrderBuyerKeyCandidates(raw, o.buyerCustomerId);
       if (!buyerKeys.length) continue;
 
-      let buyerCanon = "";
-
-      if (filteredByLeafLinkCurrentCustomerStatus && leafLinkCustomersDir?.membershipKeys.size) {
-        for (const c of buyerKeys) {
-          const p = leafLinkCustomersDir.aliasToPrimary.get(c);
-          if (p) {
-            buyerCanon = p;
-            break;
-          }
-        }
-        if (!buyerCanon)
-          continue;
-      }
-      else {
-        buyerCanon = buyerKeys[0];
-      }
+      const buyerCanon = buyerKeys[0];
 
       const createdIsoAgg = cleanString(o.createdAt) || leafLinkOrderCreatedIso(raw);
       const t = Date.parse(createdIsoAgg || "");
@@ -2362,10 +1944,8 @@ export class LeafLinkOrdersService {
       const nmFromOrder = cleanString(o.customerName);
       const label =
         nmFromOrder
-        || leafLinkCustomersDir?.labelByPrimary.get(buyerCanon)
         || `Buyer ${buyerCanon.length > 10 ? `${buyerCanon.slice(0, 8)}…` : buyerCanon}`;
       const ck = customerSeriesKey(buyerCanon, label);
-      seenBuyerCanonFromOrders.add(buyerCanon);
 
       qualifyingOrdersFull.push({
         orderId: cleanString(o.id) || cleanString(o.orderNumber),
@@ -2417,31 +1997,6 @@ export class LeafLinkOrdersService {
       }
     }
 
-    /** Every LeafLink Current Customer appears in charts/checkbox list ($0 rows when none in-range). */
-    if (filteredByLeafLinkCurrentCustomerStatus && leafLinkCustomersDir && leafLinkCustomersDir.primaryIds.size > 0) {
-      for (const canonId of leafLinkCustomersDir.primaryIds) {
-        if (seenBuyerCanonFromOrders.has(canonId)) continue;
-        const labelPad =
-          leafLinkCustomersDir.labelByPrimary.get(canonId)
-          || `Customer ${canonId.length > 12 ? `${canonId.slice(0, 10)}…` : canonId}`;
-        const ck = customerSeriesKey(canonId, labelPad);
-        if (agg.has(ck))
-          continue;
-        agg.set(ck, {
-          label: labelPad,
-          lastPurchaseMs: 0,
-          lastOrderTotal: 0,
-          revenueByDay: Array.from({ length: nDays }, () => 0),
-          orderCountByDay: Array.from({ length: nDays }, () => 0),
-          sampleUnitsByDay: Array.from({ length: nDays }, () => 0),
-          orderTotalSum: 0,
-          sampleTypeUnits: new Map(),
-          sampleLineItems: [],
-          rosterPad: true,
-        });
-      }
-    }
-
     qualifyingOrdersFull.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     let qualifyingOrdersTruncated = false;
     let qualifyingOrders = qualifyingOrdersFull;
@@ -2454,7 +2009,7 @@ export class LeafLinkOrdersService {
       .map(([key, v]) => ({
         key,
         label: v.label,
-        lastPurchaseDate: v.rosterPad ? "" : new Date(v.lastPurchaseMs).toISOString(),
+        lastPurchaseDate: new Date(v.lastPurchaseMs).toISOString(),
         lastOrderTotal: Math.round(v.lastOrderTotal * 100) / 100,
         orderTotalInRange: Math.round(v.orderTotalSum * 100) / 100,
         sampleUnitsInRange: [...v.sampleTypeUnits.values()].reduce((a, b) => a + b, 0),

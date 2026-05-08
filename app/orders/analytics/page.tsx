@@ -392,11 +392,11 @@ export default function OrdersAnalyticsPage() {
             <div>
               <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900, color: "#f8fafc" }}>Order analytics</h1>
               <p style={{ margin: "8px 0 0", fontSize: 15, color: "#94a3b8", maxWidth: 760, lineHeight: 1.5 }}>
-                Customers are wholesalers that LeafLink marks with CRM{' '}
-                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Current Customer</strong>
-                {' '}status and have at least one saved order whose order date falls in this UTC window. Orders are included
-                whether paid or unpaid, cancelled or not — only the headline total is rolled into revenue charts when present (no $
-                minimum). Refresh saved data with Pull from LeafLink if counts look low.
+                Same saved order pool as the <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Orders</strong> page: every
+                wholesaler that has at least one saved order whose order date falls in this UTC window appears here (no LeafLink
+                CRM status filter). Orders are included whether paid or unpaid, cancelled or not — headline totals feed revenue when
+                present (no dollar minimum). Refresh with <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Pull from LeafLink → save</strong> if
+                counts look low.
               </p>
             </div>
             <Link href="/orders" style={btnGhost}>
@@ -468,9 +468,9 @@ export default function OrdersAnalyticsPage() {
 
             {data && data.ordersIncluded === 0 && data.configured && data.integrationEnabled && !loading ? (
               <p style={{ color: "#94a3b8" }}>
-                No orders in this range for LeafLink Current Customer accounts with matching saved buyer IDs. Broaden dates or pull
-                from LeafLink — if status shows 50 “current” buyers but counts stay low, we may still be syncing order history into the
-                app database.
+                No saved orders overlap this UTC window yet. Broaden dates or use{' '}
+                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Pull from LeafLink → save</strong> to load more into the app (same
+                sync path as the Orders page).
               </p>
             ) : null}
 
@@ -483,13 +483,10 @@ export default function OrdersAnalyticsPage() {
                   : ""}
                 ).
                 {data.storedRowsInRange === 0 ? " Open the Orders page or run Multi-page sync, or use “Pull from LeafLink → save”." : ""}{" "}
-                {data.filteredByLeafLinkCurrentCustomerStatus
-                  ? `Customer list is restricted to LeafLink status: Current Customer (${data.leafLinkCurrentCustomerCount} total in LeafLink). `
-                  : ""}
                 {data.ordersIncluded > 0
-                  ? `${data.ordersIncluded} order(s) · ${data.customers.filter((c) => c.orderTotalInRange > 0).length} with in-range spend · ${data.customers.length} Current Customer accounts listed (incl. $0) · UTC dates`
+                  ? `${data.ordersIncluded} order(s) · ${data.customers.length} customer(s) with orders in range · UTC dates`
                   : data.storedRowsInRange > 0
-                    ? `${data.storedRowsInRange} stored order row(s) in range (none counted as qualifying Current Customer orders in this window — widen dates / re-pull saved orders, or verify buyer-ID sync). Listed roster still reflects LeafLink Current Customer when filtering is on.`
+                    ? `${data.storedRowsInRange} stored row(s) overlap this range but none produced analytics rows — try widening dates or Pull from LeafLink → save.`
                     : null}
                 {data.leafLinkRefreshRan ? ` · LeafLink pull ran this request (${data.pagesScanned} page(s)).` : ""}
               </p>
@@ -525,7 +522,7 @@ export default function OrdersAnalyticsPage() {
                   }}
                 >
                   <span>
-                    {customerListOpen ? "▼" : "▶"} Active customers ({data.customers.length}) — choose who to graph
+                    {customerListOpen ? "▼" : "▶"} Customers with orders ({data.customers.length}) — choose who to graph
                   </span>
                   <span style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8" }}>
                     {selectedKeys.size} selected

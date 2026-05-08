@@ -913,7 +913,9 @@ export type OrdersAnalyticsDto = {
   leafLinkRefreshRan: boolean;
   storedRowsInRange: number;
   storedSnapshotMaxUpdatedAt: string | null;
+  /** Always false — analytics uses saved orders only (no LeafLink CRM customer-status gate). */
   filteredByLeafLinkCurrentCustomerStatus: boolean;
+  /** Always 0 — retained for older clients. */
   leafLinkCurrentCustomerCount: number;
 };
 
