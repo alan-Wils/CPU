@@ -124,6 +124,11 @@ function usd(n: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 }
 
+function toSortableMs(value: string): number {
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 function ChartTooltip(props: {
   active?: boolean;
   payload?: { name?: string; value?: number; color?: string }[];
@@ -266,6 +271,17 @@ export default function OrdersAnalyticsPage() {
     if (!data?.customers) return [];
     return data.customers.filter((c) => selectedKeys.has(c.key));
   }, [data, selectedKeys]);
+
+  const sortedCustomers = useMemo(() => {
+    if (!data?.customers) return [];
+    return data.customers
+      .slice()
+      .sort((a, b) => {
+        const delta = toSortableMs(b.lastPurchaseDate) - toSortableMs(a.lastPurchaseDate);
+        if (delta !== 0) return delta;
+        return a.label.localeCompare(b.label);
+      });
+  }, [data]);
 
   const seriesMeta = useMemo(
     () => selectedCustomers.map((c) => ({ key: c.key, label: c.label })),
@@ -447,6 +463,9 @@ export default function OrdersAnalyticsPage() {
                   : ""}
                 ).
                 {data.storedRowsInRange === 0 ? " Open the Orders page or run Multi-page sync, or use “Pull from LeafLink → save”." : ""}{" "}
+                {data.filteredByLeafLinkCurrentCustomerStatus
+                  ? `Customer list is restricted to LeafLink status: Current Customer (${data.leafLinkCurrentCustomerCount} total in LeafLink). `
+                  : ""}
                 {data.ordersIncluded > 0
                   ? `${data.ordersIncluded} qualifying order(s) · ${data.customers.length} active customer(s) · UTC dates`
                   : data.storedRowsInRange > 0
@@ -516,7 +535,7 @@ export default function OrdersAnalyticsPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {data.customers.map((c: OrdersAnalyticsCustomerDto) => (
+                          {sortedCustomers.map((c: OrdersAnalyticsCustomerDto) => (
                             <tr key={c.key} style={{ borderTop: "1px solid rgba(148,163,184,0.12)" }}>
                               <td style={{ padding: "10px" }}>
                                 <input

@@ -902,6 +902,8 @@ export type OrdersAnalyticsDto = {
   leafLinkRefreshRan: boolean;
   storedRowsInRange: number;
   storedSnapshotMaxUpdatedAt: string | null;
+  filteredByLeafLinkCurrentCustomerStatus: boolean;
+  leafLinkCurrentCustomerCount: number;
 };
 
 export async function fetchOrdersAnalytics(

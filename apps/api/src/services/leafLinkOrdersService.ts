@@ -186,6 +186,9 @@ export type OrdersAnalyticsDto = {
   storedRowsInRange: number;
   /** Latest `updatedAt` among rows read for this range (`null` if none). */
   storedSnapshotMaxUpdatedAt: string | null;
+  /** Customer list is filtered to LeafLink CRM status "Current Customer". */
+  filteredByLeafLinkCurrentCustomerStatus: boolean;
+  leafLinkCurrentCustomerCount: number;
 };
 
 const MAX_ANALYTICS_RANGE_DAYS = 366;
@@ -1017,6 +1020,61 @@ function parseListBody(body: unknown): { list: unknown[]; totalCount: number; ne
   return { list, totalCount, next, previous };
 }
 
+function buildCustomerStatusesUrlCandidates(base: string, creds: LeafLinkRuntimeCredentials, searchParams: URLSearchParams): string[] {
+  const root = base.replace(/\/+$/, "");
+  const urls: string[] = [];
+  if (creds.companyId) {
+    urls.push(`${root}/v2/companies/${encodeURIComponent(creds.companyId)}/customer-statuses/?${searchParams.toString()}`);
+    urls.push(`${root}/v2/companies/${encodeURIComponent(creds.companyId)}/customer_statuses/?${searchParams.toString()}`);
+  }
+  if (creds.companySlug) {
+    const q = new URLSearchParams(searchParams.toString());
+    q.set("company_slug", creds.companySlug);
+    urls.push(`${root}/v2/customer-statuses/?${q.toString()}`);
+    urls.push(`${root}/v2/customer_statuses/?${q.toString()}`);
+  }
+  urls.push(`${root}/v2/customer-statuses/?${searchParams.toString()}`);
+  urls.push(`${root}/v2/customer_statuses/?${searchParams.toString()}`);
+  const seen = new Set<string>();
+  return urls.filter((u) => {
+    if (!u || seen.has(u)) return false;
+    seen.add(u);
+    return true;
+  });
+}
+
+function buildCustomersUrlCandidates(base: string, creds: LeafLinkRuntimeCredentials, searchParams: URLSearchParams): string[] {
+  const root = base.replace(/\/+$/, "");
+  const urls: string[] = [];
+  if (creds.companyId) {
+    urls.push(`${root}/v2/companies/${encodeURIComponent(creds.companyId)}/customers/?${searchParams.toString()}`);
+  }
+  if (creds.companySlug) {
+    const q = new URLSearchParams(searchParams.toString());
+    q.set("company_slug", creds.companySlug);
+    urls.push(`${root}/v2/customers/?${q.toString()}`);
+  }
+  urls.push(`${root}/v2/customers/?${searchParams.toString()}`);
+  const seen = new Set<string>();
+  return urls.filter((u) => {
+    if (!u || seen.has(u)) return false;
+    seen.add(u);
+    return true;
+  });
+}
+
+function customerStatusLabel(row: Record<string, unknown>): string {
+  return cleanString(row.state || row.name || row.label || row.description || row.title).toLowerCase();
+}
+
+function entityIdString(row: Record<string, unknown>, ...fields: string[]): string {
+  for (const f of fields) {
+    const v = cleanString(row[f]);
+    if (v) return v;
+  }
+  return "";
+}
+
 /** Light in-process cache for identical list reads (TTL). */
 const LIST_CACHE_TTL_MS = 45_000;
 const listCaches = new Map<string, { at: number; payload: LeafLinkOrdersListDto }>();
@@ -1044,6 +1102,59 @@ export class LeafLinkOrdersService {
         "LEAFLINK_MISSING_CONFIG",
       );
     }
+  }
+
+  private async loadCurrentCustomerIdsFromLeafLink(companyId: string, creds: LeafLinkRuntimeCredentials): Promise<Set<string>> {
+    const cid = cleanString(companyId);
+    const cacheHit = currentCustomersByCompanyCache.get(cid);
+    if (cacheHit && Date.now() - cacheHit.atMs < CURRENT_CUSTOMERS_CACHE_TTL_MS)
+      return new Set(cacheHit.ids);
+
+    const base = creds.baseUrl.replace(/\/+$/, "");
+    let currentStatusId = "";
+
+    for (let page = 1; page <= MAX_CUSTOMER_STATUS_PAGES; page++) {
+      const qp = new URLSearchParams();
+      qp.set("page", String(page));
+      qp.set("page_size", "200");
+      const urls = buildCustomerStatusesUrlCandidates(base, creds, qp);
+      const { body } = await leafLinkAuthedGet(urls, creds, 20_000);
+      const { list, next } = parseListBody(body);
+      for (const item of list) {
+        const row = asRecord(item);
+        const label = customerStatusLabel(row);
+        if (label === "current customer") {
+          currentStatusId = entityIdString(row, "id", "status_id", "pk");
+          if (currentStatusId) break;
+        }
+      }
+      if (currentStatusId) break;
+      if (!next) break;
+    }
+
+    if (!currentStatusId) {
+      throw new AppError("LeafLink status 'Current Customer' was not found for this company.", 502, "LEAFLINK_CURRENT_CUSTOMER_STATUS_MISSING");
+    }
+
+    const ids = new Set<string>();
+    for (let page = 1; page <= MAX_CURRENT_CUSTOMER_PAGES; page++) {
+      const qp = new URLSearchParams();
+      qp.set("page", String(page));
+      qp.set("page_size", "200");
+      qp.set("status", currentStatusId);
+      const urls = buildCustomersUrlCandidates(base, creds, qp);
+      const { body } = await leafLinkAuthedGet(urls, creds, 25_000);
+      const { list, next } = parseListBody(body);
+      for (const item of list) {
+        const row = asRecord(item);
+        const id = entityIdString(row, "id", "customer_id");
+        if (id) ids.add(id);
+      }
+      if (!next) break;
+    }
+
+    currentCustomersByCompanyCache.set(cid, { atMs: Date.now(), ids });
+    return new Set(ids);
   }
 
   async listOrders(
@@ -1360,11 +1471,15 @@ export class LeafLinkOrdersService {
       | "leafLinkRefreshRan"
       | "storedRowsInRange"
       | "storedSnapshotMaxUpdatedAt"
+      | "filteredByLeafLinkCurrentCustomerStatus"
+      | "leafLinkCurrentCustomerCount"
     > => ({
       readFromDatabase: true,
       leafLinkRefreshRan: Boolean(input.refresh),
       storedRowsInRange: 0,
       storedSnapshotMaxUpdatedAt: null,
+      filteredByLeafLinkCurrentCustomerStatus: true,
+      leafLinkCurrentCustomerCount: 0,
     });
 
     if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) {
@@ -1401,6 +1516,7 @@ export class LeafLinkOrdersService {
     }
 
     await this.assertOrdersCapableOrThrow(creds);
+    const currentCustomerIds = await this.loadCurrentCustomerIdsFromLeafLink(companyId, creds);
 
     let pagesScanned = 0;
     let truncated = false;
@@ -1465,6 +1581,8 @@ export class LeafLinkOrdersService {
     const qualifyingOrdersFull: OrdersAnalyticsQualifyingOrderDto[] = [];
 
     for (const { raw, summary: o } of collected) {
+      const buyerId = cleanString(o.buyerCustomerId);
+      if (!buyerId || !currentCustomerIds.has(buyerId)) continue;
       if (isCancelledOrder(o)) continue;
       const t = Date.parse(o.createdAt);
       if (!Number.isFinite(t)) continue;
@@ -1477,7 +1595,7 @@ export class LeafLinkOrdersService {
 
       qualifyingOrderCount++;
       const label = cleanString(o.customerName) || "Unknown customer";
-      const ck = customerSeriesKey(o.buyerCustomerId, label);
+      const ck = customerSeriesKey(buyerId, label);
 
       qualifyingOrdersFull.push({
         orderId: cleanString(o.id) || cleanString(o.orderNumber),
@@ -1554,6 +1672,7 @@ export class LeafLinkOrdersService {
       qualifyingOrdersTruncated,
       storedRowsInRange: storedDb.length,
       refresh: Boolean(input.refresh),
+      leafLinkCurrentCustomerCount: currentCustomerIds.size,
     });
 
     return {
@@ -1574,6 +1693,8 @@ export class LeafLinkOrdersService {
       leafLinkRefreshRan: Boolean(input.refresh),
       storedRowsInRange: storedDb.length,
       storedSnapshotMaxUpdatedAt,
+      filteredByLeafLinkCurrentCustomerStatus: true,
+      leafLinkCurrentCustomerCount: currentCustomerIds.size,
     };
   }
 
