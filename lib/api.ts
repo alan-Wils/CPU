@@ -936,3 +936,172 @@ export async function fetchOrdersAnalytics(
     companyId,
   });
 }
+
+/** NexBatch portal + Sales Platform company feature flags (`GET /api/companies/me`). */
+export type CompanyServicesDto = {
+  productionEnabled: boolean;
+  salesSellerEnabled: boolean;
+  salesBuyerEnabled: boolean;
+  leafLinkInventorySyncEnabled: boolean;
+};
+
+export async function fetchCompanyWithServices() {
+  return apiRequest<{
+    company: Record<string, unknown> | null;
+    services: CompanyServicesDto | null;
+  }>("/api/companies/me");
+}
+
+export async function patchTenantLeafLinkInventorySync(leafLinkInventorySyncEnabled: boolean) {
+  return apiRequest<{ services: CompanyServicesDto }>("/api/config/company-services", {
+    method: "PATCH",
+    body: { leafLinkInventorySyncEnabled },
+  });
+}
+
+export async function portalGetCompanyServices(companyId: string) {
+  return apiRequest<{ services: CompanyServicesDto }>(
+    `/api/portal/companies/${encodeURIComponent(companyId)}/services`,
+    { omitCompanyHeader: true },
+  );
+}
+
+export async function portalPatchCompanyServices(
+  companyId: string,
+  body: Partial<CompanyServicesDto>,
+) {
+  return apiRequest<{ services: CompanyServicesDto }>(
+    `/api/portal/companies/${encodeURIComponent(companyId)}/services`,
+    { method: "PATCH", body, omitCompanyHeader: true },
+  );
+}
+
+export type MarketplaceProductDto = {
+  id: string;
+  companyId: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  productType: string | null;
+  strainName: string | null;
+  flavorName: string | null;
+  sku: string | null;
+  unitSize: string | null;
+  price: number;
+  quantityAvailable: number;
+  imageUrl: string | null;
+  availabilityStatus: string;
+  source: string;
+  leafLinkInventoryId: string | null;
+  company?: { id: string; name: string; slug: string };
+};
+
+export async function salesSellerProducts(params?: {
+  search?: string;
+  availabilityStatus?: string;
+}) {
+  const q = new URLSearchParams();
+  if (params?.search) q.set("search", params.search);
+  if (params?.availabilityStatus) q.set("availabilityStatus", params.availabilityStatus);
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  return apiRequest<{ products: MarketplaceProductDto[] }>(`/api/sales/seller/products${suffix}`);
+}
+
+export async function salesSellerProductCreate(body: {
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  productType?: string | null;
+  strainName?: string | null;
+  flavorName?: string | null;
+  sku?: string | null;
+  unitSize?: string | null;
+  price: number;
+  quantityAvailable: number;
+  imageUrl?: string | null;
+  availabilityStatus: "AVAILABLE" | "INTERNAL" | "NOT_AVAILABLE";
+}) {
+  return apiRequest<{ product: MarketplaceProductDto }>("/api/sales/seller/products", {
+    method: "POST",
+    body,
+  });
+}
+
+export async function salesSellerProductPatch(
+  productId: string,
+  body: Record<string, unknown>,
+) {
+  return apiRequest<{ product: MarketplaceProductDto }>(
+    `/api/sales/seller/products/${encodeURIComponent(productId)}`,
+    { method: "PATCH", body },
+  );
+}
+
+export async function salesSellerProductDelete(productId: string) {
+  return apiRequest<{ ok: boolean }>(
+    `/api/sales/seller/products/${encodeURIComponent(productId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function salesLeafLinkSyncInventory() {
+  return apiRequest<{ upserted: number; created: number; updated: number }>(
+    "/api/sales/seller/leaflink/sync-inventory",
+    { method: "POST" },
+  );
+}
+
+export async function salesMarketplaceProducts(params?: {
+  search?: string;
+  companyId?: string;
+  category?: string;
+  productType?: string;
+  minPrice?: number;
+  maxPrice?: number;
+}) {
+  const q = new URLSearchParams();
+  if (params?.search) q.set("search", params.search);
+  if (params?.companyId) q.set("companyId", params.companyId);
+  if (params?.category) q.set("category", params.category);
+  if (params?.productType) q.set("productType", params.productType);
+  if (typeof params?.minPrice === "number") q.set("minPrice", String(params.minPrice));
+  if (typeof params?.maxPrice === "number") q.set("maxPrice", String(params.maxPrice));
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  return apiRequest<{ products: MarketplaceProductDto[] }>(`/api/sales/marketplace/products${suffix}`);
+}
+
+export async function salesMarketplaceSellers() {
+  return apiRequest<{ sellers: Array<{ id: string; name: string; slug: string; productCount: number }> }>(
+    "/api/sales/marketplace/sellers",
+  );
+}
+
+export async function salesCreateOrder(body: {
+  sellerCompanyId: string;
+  notes?: string | null;
+  lines: Array<{ productId: string; quantity: number }>;
+}) {
+  return apiRequest<{ order: Record<string, unknown> }>("/api/sales/orders", {
+    method: "POST",
+    body,
+  });
+}
+
+export async function salesBuyerOrders() {
+  return apiRequest<{ orders: Record<string, unknown>[] }>("/api/sales/buyer/orders");
+}
+
+export async function salesSellerOrders(status?: string) {
+  const q = status ? `?status=${encodeURIComponent(status)}` : "";
+  return apiRequest<{ orders: Record<string, unknown>[] }>(`/api/sales/seller/orders${q}`);
+}
+
+export async function salesSellerOrderSetStatus(
+  orderId: string,
+  status: "ACCEPTED" | "REJECTED" | "FULFILLED" | "CANCELLED",
+) {
+  return apiRequest<{ order: Record<string, unknown> }>(
+    `/api/sales/seller/orders/${encodeURIComponent(orderId)}/status`,
+    { method: "PATCH", body: { status } },
+  );
+}

@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import Nav from "@/components/Nav";
 import { CollapsibleConfigSection } from "@/components/admin/CollapsibleConfigSection";
 import { LeafLinkConfigCard } from "@/components/admin/LeafLinkConfigCard";
+import { MarketplaceLeafLinkSyncCard } from "@/components/admin/MarketplaceLeafLinkSyncCard";
 import {
   API_BASE_URL,
   apiRequest,
@@ -3213,6 +3214,7 @@ export default function ConfigPage() {
           </button>
         </div>
         <LeafLinkConfigCard />
+        <MarketplaceLeafLinkSyncCard />
         </div>
       </CollapsibleConfigSection>
 

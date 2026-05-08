@@ -480,3 +480,51 @@ export const peerNotifyInboxPushSchema = z.object({
 export const peerNotifyInboxReplaceSchema = z.object({
     items: z.array(peerNotifyItemSchema).max(60),
 });
+
+export const portalCompanyServicesPatchSchema = z.object({
+    productionEnabled: z.boolean().optional(),
+    salesSellerEnabled: z.boolean().optional(),
+    salesBuyerEnabled: z.boolean().optional(),
+    leafLinkInventorySyncEnabled: z.boolean().optional(),
+});
+
+const marketplaceAvailabilityEnum = z.enum(["AVAILABLE", "INTERNAL", "NOT_AVAILABLE"]);
+
+export const marketplaceSellerProductCreateSchema = z.object({
+    name: z.string().min(1).max(500),
+    description: z.string().max(8000).nullable().optional(),
+    category: z.string().max(240).nullable().optional(),
+    productType: z.string().max(240).nullable().optional(),
+    strainName: z.string().max(240).nullable().optional(),
+    flavorName: z.string().max(240).nullable().optional(),
+    sku: z.string().max(240).nullable().optional(),
+    unitSize: z.string().max(240).nullable().optional(),
+    price: z.coerce.number().min(0),
+    quantityAvailable: z.coerce.number().min(0),
+    imageUrl: z.string().max(2000).nullable().optional(),
+    availabilityStatus: marketplaceAvailabilityEnum,
+});
+
+export const marketplaceSellerProductPatchSchema = marketplaceSellerProductCreateSchema.partial();
+
+export const marketplaceOrderCreateSchema = z.object({
+    sellerCompanyId: z.string().cuid(),
+    notes: z.string().max(4000).nullable().optional(),
+    lines: z
+        .array(
+            z.object({
+                productId: z.string().cuid(),
+                quantity: z.coerce.number().positive(),
+            }),
+        )
+        .min(1)
+        .max(80),
+});
+
+export const marketplaceSellerOrderStatusSchema = z.object({
+    status: z.enum(["ACCEPTED", "REJECTED", "FULFILLED", "CANCELLED"]),
+});
+
+export const companyTenantLeafLinkSyncSchema = z.object({
+    leafLinkInventorySyncEnabled: z.boolean(),
+});

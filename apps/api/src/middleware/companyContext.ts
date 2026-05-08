@@ -36,6 +36,10 @@ function allowsMissingCompany(req: Request): boolean {
         return true;
     if (method === "POST" && /\/admin\/usage-costs\/sync$/.test(path))
         return true;
+    if (method === "GET" && /\/portal\/companies\/[^/]+\/services$/.test(path))
+        return true;
+    if (method === "PATCH" && /\/portal\/companies\/[^/]+\/services$/.test(path))
+        return true;
     return false;
 }
 

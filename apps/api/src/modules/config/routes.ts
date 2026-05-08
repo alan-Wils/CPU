@@ -3,8 +3,9 @@ import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { z } from "zod";
 import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
-import { checkUploadSchema, configUpsertSchema } from "../../validation/schemas.js";
+import { checkUploadSchema, companyTenantLeafLinkSyncSchema, configUpsertSchema } from "../../validation/schemas.js";
 import { ConfigService } from "../../services/configService.js";
+import { CompanyServiceSettingsService } from "../../services/companyServiceSettingsService.js";
 import { CompanyLogoUploadService } from "../../services/companyLogoUploadService.js";
 import { requireRole } from "../../middleware/rbac.js";
 import { AppError } from "../../errors/AppError.js";
@@ -12,6 +13,22 @@ import { requestPublicOrigin } from "../../lib/requestPublicOrigin.js";
 export const configRouter = Router();
 const configService = new ConfigService();
 const companyLogoUploadService = new CompanyLogoUploadService();
+const companyServiceSettingsService = new CompanyServiceSettingsService();
+configRouter.patch(
+    "/company-services",
+    requireRole(["OWNER", "ADMIN"]),
+    validate({ body: companyTenantLeafLinkSyncSchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const body = req.body as { leafLinkInventorySyncEnabled: boolean };
+        const services = await companyServiceSettingsService.updateLeafLinkInventorySyncForTenant(
+            companyId,
+            body.leafLinkInventorySyncEnabled,
+        );
+        res.json({ services });
+    }),
+);
+
 configRouter.get("/", asyncHandler(async (req, res) => {
     const rows = await configService.list(getScopedCompanyId(req));
     const merged = rows.reduce((acc, row) => {

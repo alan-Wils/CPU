@@ -13,10 +13,12 @@ import {
   apiRequest,
   API_BASE_URL,
   clearSelectedCompanyId,
+  fetchCompanyWithServices,
   getMe,
   getSelectedCompanyId,
   selectPortalCompany,
   setSelectedCompanyId,
+  type CompanyServicesDto,
 } from "@/lib/api";
 import TopBrandStrip from "@/components/TopBrandStrip";
 import { extractCompanyInventoryLogoUrl } from "@/lib/companyConfigLogo";
@@ -57,6 +59,7 @@ export default function Nav() {
   const [companyHeaderLogoUrl, setCompanyHeaderLogoUrl] = useState("");
   /** Bumps after `/auth/me` merges so `getAuthUser()` (e.g. rewards enrollment) re-reads. */
   const [sessionBump, setSessionBump] = useState(0);
+  const [companyServices, setCompanyServices] = useState<CompanyServicesDto | null>(null);
 
   useEffect(() => {
     setPortalCompaniesState(getPortalCompanies());
@@ -111,6 +114,30 @@ export default function Nav() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isLoggedIn() || !company?.id) {
+      setCompanyServices(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const out = await fetchCompanyWithServices();
+        if (cancelled) return;
+        setCompanyServices(
+          out.services && typeof out.services === "object"
+            ? (out.services as CompanyServicesDto)
+            : null,
+        );
+      } catch {
+        if (!cancelled) setCompanyServices(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname, authCompanyId, company?.id, sessionBump]);
 
   useEffect(() => {
     if (!isLoggedIn()) return;
@@ -336,6 +363,21 @@ export default function Nav() {
                 Rewards
               </Link>
             )}
+
+          {canNavToPage("page.sales-seller") && companyServices?.salesSellerEnabled && (
+            <Link href="/sales/seller" style={navButtonStyle(pathname?.startsWith("/sales/seller") ?? false)}>
+              Seller Platform
+            </Link>
+          )}
+
+          {canNavToPage("page.sales-marketplace") && companyServices?.salesBuyerEnabled && (
+            <Link
+              href="/sales/marketplace"
+              style={navButtonStyle(pathname?.startsWith("/sales/marketplace") ?? false)}
+            >
+              Marketplace
+            </Link>
+          )}
         </div>
       )}
 

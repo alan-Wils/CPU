@@ -27,6 +27,8 @@ import { autogrowRouter } from "./modules/autogrow/routes.js";
 import { inventoryRouter } from "./modules/inventory/routes.js";
 import { ordersRouter } from "./modules/orders/routes.js";
 import { notificationsRouter } from "./modules/notifications/routes.js";
+import { portalRouter } from "./modules/portal/routes.js";
+import { salesRouter } from "./modules/sales/routes.js";
 export const appRouter = Router();
 appRouter.use("/auth", authRouter);
 /** Cron / worker hooks (Bearer CRON_SECRET) — must not run behind JWT. */
@@ -34,6 +36,8 @@ appRouter.use("/internal/jobs", internalJobsRouter);
 appRouter.use(authMiddleware);
 appRouter.use(asyncHandler(companyContextMiddleware));
 appRouter.use("/companies", companiesRouter);
+appRouter.use("/portal", portalRouter);
+appRouter.use("/sales", salesRouter);
 appRouter.use("/nexbatch", nexbatchRouter);
 appRouter.use("/workflow", workflowRouter);
 appRouter.use("/labor", laborRouter);

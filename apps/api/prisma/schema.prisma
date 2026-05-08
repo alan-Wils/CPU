@@ -106,6 +106,25 @@ enum CashLogDepartment {
   GENERAL
 }
 
+enum MarketplaceProductAvailability {
+  AVAILABLE
+  INTERNAL
+  NOT_AVAILABLE
+}
+
+enum MarketplaceProductSource {
+  MANUAL
+  LEAFLINK
+}
+
+enum MarketplaceOrderStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  FULFILLED
+  CANCELLED
+}
+
 /// Third-party / infra usage for NexBatch admin cost visibility (app-estimated from logged events).
 enum UsageProvider {
   vercel
@@ -149,8 +168,105 @@ model Company {
 
   leafLinkStoredOrders LeafLinkStoredOrder[]
 
+  serviceSettings CompanyServiceSettings?
+
+  marketplaceProducts MarketplaceProduct[]
+  marketplaceOrdersAsBuyer  MarketplaceOrder[] @relation("MarketplaceOrderBuyer")
+  marketplaceOrdersAsSeller MarketplaceOrder[] @relation("MarketplaceOrderSeller")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// Per-company feature flags (NexBatch portal + Sales Platform).
+model CompanyServiceSettings {
+  id        String  @id @default(cuid())
+  companyId String  @unique
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  productionEnabled              Boolean @default(true)
+  salesSellerEnabled             Boolean @default(false)
+  salesBuyerEnabled              Boolean @default(false)
+  leafLinkInventorySyncEnabled   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MarketplaceProduct {
+  id                   String                         @id @default(cuid())
+  companyId            String
+  company              Company                        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name                 String
+  description          String?
+  category             String?
+  productType          String?
+  strainName           String?
+  flavorName           String?
+  sku                  String?
+  unitSize             String?
+  price                Float
+  quantityAvailable    Float
+  imageUrl             String?
+  imageKey             String?
+  availabilityStatus   MarketplaceProductAvailability
+  source               MarketplaceProductSource
+  leafLinkInventoryId  String?
+  leafLinkRawJson      Json?
+
+  orderItems MarketplaceOrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([availabilityStatus])
+  @@index([source])
+  @@index([leafLinkInventoryId])
+}
+
+model MarketplaceOrder {
+  id               String                 @id @default(cuid())
+  buyerCompanyId   String
+  buyerCompany     Company                @relation("MarketplaceOrderBuyer", fields: [buyerCompanyId], references: [id], onDelete: Cascade)
+  sellerCompanyId  String
+  sellerCompany    Company                @relation("MarketplaceOrderSeller", fields: [sellerCompanyId], references: [id], onDelete: Cascade)
+  status           MarketplaceOrderStatus @default(PENDING)
+  subtotal         Float
+  total            Float
+  notes            String?
+  createdByUserId  String?
+  createdByUser    User?                  @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  items MarketplaceOrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([buyerCompanyId])
+  @@index([sellerCompanyId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model MarketplaceOrderItem {
+  id                String              @id @default(cuid())
+  orderId           String
+  order             MarketplaceOrder    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId         String?
+  product           MarketplaceProduct? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productNameSnapshot String
+  skuSnapshot       String?
+  unitSizeSnapshot  String?
+  priceSnapshot     Float
+  quantity          Float
+  lineTotal         Float
+  imageUrlSnapshot  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
 }
 
 model UsageEvent {
@@ -228,6 +344,7 @@ model User {
   passwordResetTokens PasswordResetToken[]
   checkCaptures       CheckCapture[]       @relation("CheckCaptureCreatedBy")
   cashLogEntries      CashLogEntry[]       @relation("CashLogCreatedBy")
+  marketplaceOrdersCreated MarketplaceOrder[]
 
   @@index([companyId])
 }

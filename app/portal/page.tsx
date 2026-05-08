@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState, type CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   apiRequest,
@@ -10,8 +10,11 @@ import {
   fetchCompanyUsageCosts,
   fetchNexbatchCompanyUsageLog,
   getSelectedCompanyId,
+  portalGetCompanyServices,
+  portalPatchCompanyServices,
   setSelectedCompanyId,
   syncVendorUsageCosts,
+  type CompanyServicesDto,
   type CompanyUsageCostsDto,
   type NexbatchCompanyUsageLogItemDto,
 } from "@/lib/api";
@@ -366,6 +369,218 @@ function UsageCostsModal({
   );
 }
 
+function WorkspaceServicesModal({
+  companyName,
+  companyId,
+  onClose,
+}: {
+  companyName: string;
+  companyId: string;
+  onClose: () => void;
+}) {
+  const [services, setServices] = useState<CompanyServicesDto | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [savingKey, setSavingKey] = useState<string>("");
+  const [okNote, setOkNote] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErr("");
+    try {
+      const out = await portalGetCompanyServices(companyId);
+      setServices(out.services);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Could not load workspace services.");
+    } finally {
+      setLoading(false);
+    }
+  }, [companyId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const patchField = useCallback(async (patch: Partial<CompanyServicesDto>) => {
+    setSavingKey(Object.keys(patch).join(","));
+    setErr("");
+    setOkNote("");
+    try {
+      const out = await portalPatchCompanyServices(companyId, patch);
+      setServices(out.services);
+      setOkNote("Saved.");
+      setTimeout(() => setOkNote(""), 2200);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setSavingKey("");
+    }
+  }, [companyId]);
+
+  const backdropStyle: CSSProperties = {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.72)",
+    zIndex: 1100,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    overflowY: "auto",
+  };
+
+  const panelStyle: CSSProperties = {
+    width: "100%",
+    maxWidth: 520,
+    maxHeight: "90vh",
+    overflowY: "auto",
+    background: "rgba(15, 23, 42, 0.98)",
+    border: "1px solid rgba(148, 163, 184, 0.35)",
+    borderRadius: 16,
+    padding: "22px 22px 26px",
+    boxShadow: "0 30px 80px rgba(0,0,0,0.55)",
+    color: "#e2e8f0",
+  };
+
+  const row = (label: string, description: string, on: boolean, busy: boolean, onToggle: () => void) => (
+    <div
+      style={{
+        padding: "14px 0",
+        borderBottom: "1px solid rgba(148, 163, 184, 0.15)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 15, color: "#f8fafc" }}>{label}</div>
+          <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 4, maxWidth: 400, lineHeight: 1.45 }}>{description}</div>
+        </div>
+        <button
+          type="button"
+          disabled={busy || loading || !services}
+          onClick={() => void onToggle()}
+          style={{
+            minWidth: 72,
+            padding: "10px 16px",
+            borderRadius: 12,
+            border: on ? "1px solid rgba(34, 197, 94, 0.55)" : "1px solid rgba(148, 163, 184, 0.45)",
+            background: on ? "rgba(22, 163, 74, 0.35)" : "#020617",
+            color: on ? "#bbf7d0" : "#94a3b8",
+            fontWeight: 800,
+            fontSize: 14,
+            cursor: busy || loading || !services ? "wait" : "pointer",
+          }}
+        >
+          {busy ? "…" : on ? "On" : "Off"}
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={backdropStyle} role="presentation" onMouseDown={onClose}>
+      <div style={panelStyle} role="dialog" aria-modal="true" aria-labelledby="ws-services-title" onMouseDown={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
+          <h2 id="ws-services-title" style={{ margin: 0, fontSize: 22, fontWeight: 900, color: "#a78bfa", lineHeight: 1.25 }}>
+            Workspace services — {companyName}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              flexShrink: 0,
+              border: "1px solid rgba(148,163,184,0.45)",
+              borderRadius: 10,
+              padding: "6px 12px",
+              background: "#020617",
+              color: "#94a3b8",
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Close
+          </button>
+        </div>
+        <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: 13, lineHeight: 1.5 }}>
+          Controls which NexBatch modules this workspace can use. Changes apply after each successful save.
+        </p>
+        {loading ? (
+          <p style={{ color: "#93c5fd", fontWeight: 700 }}>Loading…</p>
+        ) : err && !services ? (
+          <div
+            style={{
+              padding: 12,
+              borderRadius: 12,
+              background: "rgba(127, 29, 29, 0.45)",
+              border: "1px solid rgba(248, 113, 113, 0.45)",
+              color: "#fecaca",
+              fontWeight: 600,
+            }}
+          >
+            {err}
+          </div>
+        ) : services ? (
+          <>
+            {err ? (
+              <div
+                style={{
+                  marginBottom: 12,
+                  padding: 10,
+                  borderRadius: 10,
+                  background: "rgba(127, 29, 29, 0.35)",
+                  border: "1px solid rgba(248, 113, 113, 0.4)",
+                  color: "#fecaca",
+                  fontSize: 13,
+                }}
+              >
+                {err}
+              </div>
+            ) : null}
+            {okNote ? (
+              <p style={{ margin: "0 0 12px", color: "#86efac", fontSize: 13, fontWeight: 700 }}>{okNote}</p>
+            ) : null}
+            {row(
+              "Production",
+              "Enables cultivation, extraction, and packaging production workflow for this workspace.",
+              services.productionEnabled,
+              savingKey === "productionEnabled",
+              () => void patchField({ productionEnabled: !services.productionEnabled }),
+            )}
+            {row(
+              "Sales Platform — Seller Side",
+              "Lets this company list products for sale in the NexBatch marketplace.",
+              services.salesSellerEnabled,
+              savingKey === "salesSellerEnabled",
+              () => void patchField({ salesSellerEnabled: !services.salesSellerEnabled }),
+            )}
+            {row(
+              "Sales Platform — Buyer Side",
+              "Lets this company browse and buy from other seller companies.",
+              services.salesBuyerEnabled,
+              savingKey === "salesBuyerEnabled",
+              () => void patchField({ salesBuyerEnabled: !services.salesBuyerEnabled }),
+            )}
+            {services.salesSellerEnabled
+              ? row(
+                  "LeafLink Inventory Sync",
+                  "Imports LeafLink inventory into seller marketplace products (requires LeafLink configured for the tenant).",
+                  services.leafLinkInventorySyncEnabled,
+                  savingKey === "leafLinkInventorySyncEnabled",
+                  () =>
+                    void patchField({
+                      leafLinkInventorySyncEnabled: !services.leafLinkInventorySyncEnabled,
+                    }),
+                )
+              : null}
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function codeToSlug(code: string): string {
   return code
     .trim()
@@ -429,6 +644,8 @@ function PortalBody() {
   >({});
   const [usageCostsCompanyId, setUsageCostsCompanyId] = useState<string | null>(null);
   const [usageCostsCompanyName, setUsageCostsCompanyName] = useState("");
+  const [servicesCompanyId, setServicesCompanyId] = useState<string | null>(null);
+  const [servicesCompanyName, setServicesCompanyName] = useState("");
   const [inviteCompanySelection, setInviteCompanySelection] = useState<string[]>([]);
   /** NexBatch Owner / NexBatch Admin — hard-delete workspace after confirmation. */
   const [companyToDelete, setCompanyToDelete] = useState<CpuCompany | null>(null);
@@ -1014,6 +1231,25 @@ function PortalBody() {
                         gap: 10,
                       }}
                     >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setServicesCompanyId(c.id);
+                          setServicesCompanyName(c.name);
+                        }}
+                        style={{
+                          border: "1px solid rgba(167, 139, 250, 0.55)",
+                          borderRadius: 10,
+                          padding: "8px 14px",
+                          background: "rgba(91, 33, 182, 0.35)",
+                          color: "#e9d5ff",
+                          fontWeight: 800,
+                          fontSize: 13,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Workspace services
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
@@ -1815,6 +2051,16 @@ function PortalBody() {
           onClose={() => {
             setUsageCostsCompanyId(null);
             setUsageCostsCompanyName("");
+          }}
+        />
+      ) : null}
+      {servicesCompanyId ? (
+        <WorkspaceServicesModal
+          companyId={servicesCompanyId}
+          companyName={servicesCompanyName || "Company"}
+          onClose={() => {
+            setServicesCompanyId(null);
+            setServicesCompanyName("");
           }}
         />
       ) : null}

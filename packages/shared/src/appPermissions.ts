@@ -14,6 +14,8 @@ export const APP_PAGE_PERMISSION_IDS = [
   "page.data-hub",
   "page.analytics",
   "page.rewards",
+  "page.sales-seller",
+  "page.sales-marketplace",
 ] as const;
 
 export type AppPagePermissionId = (typeof APP_PAGE_PERMISSION_IDS)[number];
@@ -37,6 +39,8 @@ export const APP_PERMISSION_LABELS: Record<AppPermissionId, string> = {
   "page.data-hub": "Data Hub",
   "page.analytics": "Analytics",
   "page.rewards": "Rewards",
+  "page.sales-seller": "Seller Platform",
+  "page.sales-marketplace": "Marketplace",
   "workflow.delete": "Delete workflow records (batches, runs, lots, source packages)",
 };
 
@@ -49,6 +53,8 @@ const PAGE_SET_ALL: AppPagePermissionId[] = [
   "page.data-hub",
   "page.analytics",
   "page.rewards",
+  "page.sales-seller",
+  "page.sales-marketplace",
 ];
 
 /** OWNER / ADMIN: all workflow pages + admin UI stays role-gated separately. */

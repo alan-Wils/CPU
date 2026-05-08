@@ -4,12 +4,20 @@ import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { assignOwnerSchema, companyIdParam, createCompanySchema, createUserSchema, updateCompanySchema } from "../../validation/schemas.js";
 import { CompanyService } from "../../services/companyService.js";
+import { CompanyServiceSettingsService } from "../../services/companyServiceSettingsService.js";
 import { requireCompanyOwnerOfTargetOrPlatform, requirePlatformRoles, requireRole } from "../../middleware/rbac.js";
 export const companiesRouter = Router();
 const companyService = new CompanyService();
+const companyServiceSettingsService = new CompanyServiceSettingsService();
 companiesRouter.get("/me", asyncHandler(async (req, res) => {
-    const company = await companyService.getMyCompany(getScopedCompanyId(req));
-    res.json({ company });
+    const companyId = getScopedCompanyId(req);
+    const company = await companyService.getMyCompany(companyId);
+    if (!company) {
+        res.json({ company: null, services: null });
+        return;
+    }
+    const services = await companyServiceSettingsService.getOrCreate(companyId);
+    res.json({ company, services });
 }));
 companiesRouter.post("/", requirePlatformRoles(["nexbatch_admin", "owner"]), validate({ body: createCompanySchema }), asyncHandler(async (req, res) => {
     const payload = req.body;
