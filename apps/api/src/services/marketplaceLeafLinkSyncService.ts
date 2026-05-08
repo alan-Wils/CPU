@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { MarketplaceProductAvailability, Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../errors/AppError.js";
 import { LeafLinkInventoryService } from "./leaflinkService.js";
@@ -8,8 +8,53 @@ const inventoryService = new LeafLinkInventoryService();
 const settingsService = new CompanyServiceSettingsService();
 
 /**
+ * Maps LeafLink listing-style `status` (see inventory normalizer: status / availability / listing_state, …)
+ * into NexBatch marketplace availability. Checks `unavailable` before `available` because the former contains the latter as a substring.
+ */
+export function marketplaceAvailabilityFromLeafLinkStatus(
+  leafStatus: string,
+  availableQuantity: number,
+): MarketplaceProductAvailability {
+  const s = String(leafStatus || "").trim().toLowerCase().replace(/\s+/g, " ");
+
+  if (
+    s.includes("unavailable") ||
+    s.includes("not available") ||
+    s.includes("archived") ||
+    s.includes("inactive") ||
+    s.includes("discontinued") ||
+    s.includes("deleted")
+  ) {
+    return "NOT_AVAILABLE";
+  }
+  if (s.includes("out of stock") || s.includes("out_of_stock")) {
+    return "NOT_AVAILABLE";
+  }
+  if (s.includes("internal")) {
+    return "INTERNAL";
+  }
+  if (s.includes("draft") || s.includes("pending") || s.includes("hidden")) {
+    return "INTERNAL";
+  }
+  if (
+    s.includes("available") ||
+    s === "live" ||
+    s.includes("active") ||
+    s.includes("published") ||
+    s.includes("listed")
+  ) {
+    return "AVAILABLE";
+  }
+  if (!Number.isFinite(availableQuantity) || availableQuantity <= 0) {
+    return "NOT_AVAILABLE";
+  }
+  return "AVAILABLE";
+}
+
+/**
  * Pulls LeafLink inventory via existing credentials and upserts `MarketplaceProduct` rows.
- * Preserves `availabilityStatus` on existing rows; does not overwrite price/description/image on update.
+ * Sets `availabilityStatus` from LeafLink listing state on every sync (create + update).
+ * Does not overwrite price/description/image on update (existing behavior).
  */
 export async function syncLeafLinkInventoryToMarketplaceProducts(
   companyId: string,
@@ -37,6 +82,7 @@ export async function syncLeafLinkInventoryToMarketplaceProducts(
     const descParts = [item.subcategory, item.brand].filter(Boolean).join(" · ");
     const description = descParts || null;
     const unitSize = [item.packageSize, item.unit].filter(Boolean).join(" ").trim() || null;
+    const availabilityStatus = marketplaceAvailabilityFromLeafLinkStatus(item.status, item.availableQuantity);
     if (!existing) {
       await prisma.marketplaceProduct.create({
         data: {
@@ -52,7 +98,7 @@ export async function syncLeafLinkInventoryToMarketplaceProducts(
           price: item.price ?? 0,
           quantityAvailable: item.availableQuantity,
           imageUrl: item.imageUrl || null,
-          availabilityStatus: "INTERNAL",
+          availabilityStatus,
           source: "LEAFLINK",
           leafLinkInventoryId: leafKey,
           leafLinkRawJson: item as unknown as Prisma.InputJsonValue,
@@ -69,6 +115,7 @@ export async function syncLeafLinkInventoryToMarketplaceProducts(
         productType: item.productType ?? existing.productType,
         strainName: item.strain || existing.strainName,
         quantityAvailable: item.availableQuantity,
+        availabilityStatus,
         leafLinkRawJson: item as unknown as Prisma.InputJsonValue,
         sku: item.sku ?? existing.sku,
         unitSize: unitSize ?? existing.unitSize,
