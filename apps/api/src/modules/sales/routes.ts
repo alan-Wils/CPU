@@ -6,12 +6,15 @@ import { requireCompanyService } from "../../middleware/companyServiceAccess.js"
 import { requireRoleOrAppPermission } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
 import {
+  checkUploadSchema,
   marketplaceOrderCreateSchema,
   marketplaceSellerOrderStatusSchema,
   marketplaceSellerProductCreateSchema,
   marketplaceSellerProductPatchSchema,
 } from "../../validation/schemas.js";
+import { requestPublicOrigin } from "../../lib/requestPublicOrigin.js";
 import { MarketplaceProductService } from "../../services/marketplaceProductService.js";
+import { MarketplaceProductImageUploadService } from "../../services/marketplaceProductImageUploadService.js";
 import { MarketplaceOrderService } from "../../services/marketplaceOrderService.js";
 import { syncLeafLinkInventoryToMarketplaceProducts } from "../../services/marketplaceLeafLinkSyncService.js";
 import { CompanyServiceSettingsService } from "../../services/companyServiceSettingsService.js";
@@ -20,6 +23,7 @@ export const salesRouter = Router();
 const productService = new MarketplaceProductService();
 const orderService = new MarketplaceOrderService();
 const settingsService = new CompanyServiceSettingsService();
+const productImageUploadService = new MarketplaceProductImageUploadService();
 
 const productIdParam = z.object({ productId: z.string().cuid() });
 const orderIdParam = z.object({ orderId: z.string().cuid() });
@@ -76,7 +80,29 @@ salesRouter.post(
     const companyId = getScopedCompanyId(req);
     const body = req.body as z.infer<typeof marketplaceSellerProductCreateSchema>;
     const created = await productService.createManual(companyId, body);
-    res.status(201).json({ product: created });
+    const withLogo = await productService.getSellerProductWithLogo(companyId, created.id);
+    res.status(201).json({ product: withLogo ?? created });
+  }),
+);
+
+salesRouter.post(
+  "/seller/products/:productId/image",
+  ...sellerProductHandlers(),
+  validate({ params: productIdParam, body: checkUploadSchema }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const { productId } = req.params;
+    const origin = requestPublicOrigin(req);
+    const body = req.body as z.infer<typeof checkUploadSchema>;
+    const uploaded = await productImageUploadService.uploadProductImage({
+      companyId,
+      productId,
+      mimeType: body.mimeType,
+      dataBase64: body.dataBase64,
+      origin,
+    });
+    const product = await productService.getSellerProductWithLogo(companyId, productId);
+    res.status(201).json({ ...uploaded, product });
   }),
 );
 
@@ -88,7 +114,8 @@ salesRouter.patch(
     const companyId = getScopedCompanyId(req);
     const { productId } = req.params;
     const updated = await productService.updateSellerProduct(companyId, productId, req.body);
-    res.json({ product: updated });
+    const withLogo = await productService.getSellerProductWithLogo(companyId, updated.id);
+    res.json({ product: withLogo ?? updated });
   }),
 );
 

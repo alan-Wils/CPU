@@ -990,6 +990,8 @@ export type MarketplaceProductDto = {
   price: number;
   quantityAvailable: number;
   imageUrl: string | null;
+  /** Company config `sales.inventoryPrintLogoUrl` when no product image is set. */
+  companyInventoryLogoUrl?: string | null;
   availabilityStatus: string;
   source: string;
   leafLinkInventoryId: string | null;
@@ -1034,6 +1036,16 @@ export async function salesSellerProductPatch(
   return apiRequest<{ product: MarketplaceProductDto }>(
     `/api/sales/seller/products/${encodeURIComponent(productId)}`,
     { method: "PATCH", body },
+  );
+}
+
+export async function salesSellerProductUploadImage(
+  productId: string,
+  body: { mimeType: string; dataBase64: string },
+) {
+  return apiRequest<{ imageUrl: string; bytes: number; product: MarketplaceProductDto }>(
+    `/api/sales/seller/products/${encodeURIComponent(productId)}/image`,
+    { method: "POST", body },
   );
 }
 

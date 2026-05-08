@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
+  API_BASE_URL,
   fetchCompanyWithServices,
   salesLeafLinkSyncInventory,
   salesSellerOrders,
@@ -11,9 +12,12 @@ import {
   salesSellerProductDelete,
   salesSellerProductPatch,
   salesSellerProducts,
+  salesSellerProductUploadImage,
   type CompanyServicesDto,
   type MarketplaceProductDto,
 } from "@/lib/api";
+import { fileToImageUploadPayload } from "@/lib/imageUploadPayload";
+import { resolveCompanyLogoImgSrc } from "@/lib/inventoryExport";
 import { isLoggedIn } from "@/lib/auth";
 
 const placeholderImg =
@@ -42,6 +46,10 @@ export default function SellerPlatformPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [saveBusy, setSaveBusy] = useState(false);
+  /** Local file chosen in modal; preview uses `url` until revoked. */
+  const [imagePick, setImagePick] = useState<{ file: File; url: string } | null>(null);
+  /** Product row when opening edit — used for modal image preview before a new file is chosen. */
+  const [editSnapshot, setEditSnapshot] = useState<MarketplaceProductDto | null>(null);
   const [form, setForm] = useState({
     name: "",
     description: "",
@@ -53,7 +61,6 @@ export default function SellerPlatformPage() {
     unitSize: "",
     price: "",
     quantityAvailable: "",
-    imageUrl: "",
     availabilityStatus: "INTERNAL" as "AVAILABLE" | "INTERNAL" | "NOT_AVAILABLE",
   });
 
@@ -107,8 +114,17 @@ export default function SellerPlatformPage() {
     return { available, internal, notAvail, pendingOrders: orders.length };
   }, [products, orders]);
 
+  function clearImagePick() {
+    setImagePick((prev) => {
+      if (prev?.url) URL.revokeObjectURL(prev.url);
+      return null;
+    });
+  }
+
   function openCreate() {
     setEditId(null);
+    setEditSnapshot(null);
+    clearImagePick();
     setForm({
       name: "",
       description: "",
@@ -120,7 +136,6 @@ export default function SellerPlatformPage() {
       unitSize: "",
       price: "",
       quantityAvailable: "",
-      imageUrl: "",
       availabilityStatus: "INTERNAL",
     });
     setModalOpen(true);
@@ -128,6 +143,8 @@ export default function SellerPlatformPage() {
 
   function openEdit(p: MarketplaceProductDto) {
     setEditId(p.id);
+    setEditSnapshot(p);
+    clearImagePick();
     setForm({
       name: p.name,
       description: p.description || "",
@@ -139,7 +156,6 @@ export default function SellerPlatformPage() {
       unitSize: p.unitSize || "",
       price: String(p.price),
       quantityAvailable: String(p.quantityAvailable),
-      imageUrl: p.imageUrl || "",
       availabilityStatus: p.availabilityStatus as typeof form.availabilityStatus,
     });
     setModalOpen(true);
@@ -155,37 +171,32 @@ export default function SellerPlatformPage() {
     setSaveBusy(true);
     setErr("");
     try {
+      const body = {
+        name: form.name.trim(),
+        description: form.description.trim() || null,
+        category: form.category.trim() || null,
+        productType: form.productType.trim() || null,
+        strainName: form.strainName.trim() || null,
+        flavorName: form.flavorName.trim() || null,
+        sku: form.sku.trim() || null,
+        unitSize: form.unitSize.trim() || null,
+        price,
+        quantityAvailable: qty,
+        availabilityStatus: form.availabilityStatus,
+      };
+      let productId = editId;
       if (editId) {
-        await salesSellerProductPatch(editId, {
-          name: form.name.trim(),
-          description: form.description.trim() || null,
-          category: form.category.trim() || null,
-          productType: form.productType.trim() || null,
-          strainName: form.strainName.trim() || null,
-          flavorName: form.flavorName.trim() || null,
-          sku: form.sku.trim() || null,
-          unitSize: form.unitSize.trim() || null,
-          price,
-          quantityAvailable: qty,
-          imageUrl: form.imageUrl.trim() || null,
-          availabilityStatus: form.availabilityStatus,
-        });
+        await salesSellerProductPatch(editId, body);
       } else {
-        await salesSellerProductCreate({
-          name: form.name.trim(),
-          description: form.description.trim() || null,
-          category: form.category.trim() || null,
-          productType: form.productType.trim() || null,
-          strainName: form.strainName.trim() || null,
-          flavorName: form.flavorName.trim() || null,
-          sku: form.sku.trim() || null,
-          unitSize: form.unitSize.trim() || null,
-          price,
-          quantityAvailable: qty,
-          imageUrl: form.imageUrl.trim() || null,
-          availabilityStatus: form.availabilityStatus,
-        });
+        const { product } = await salesSellerProductCreate(body);
+        productId = product.id;
       }
+      if (imagePick && productId) {
+        const { mimeType, dataBase64 } = await fileToImageUploadPayload(imagePick.file);
+        await salesSellerProductUploadImage(productId, { mimeType, dataBase64 });
+      }
+      clearImagePick();
+      setEditSnapshot(null);
       setModalOpen(false);
       await loadData();
     } catch (e: unknown) {
@@ -287,7 +298,7 @@ export default function SellerPlatformPage() {
             "Seller Side is not enabled for this workspace. A NexBatch platform admin can turn it on from the portal under Workspace services."}
         </p>
         <Link href="/" style={{ color: "#a78bfa", fontWeight: 700 }}>
-          Back to home
+          {services.productionEnabled ? "Back to production" : "Back to home"}
         </Link>
       </main>
     );
@@ -303,6 +314,28 @@ export default function SellerPlatformPage() {
         color: "#e2e8f0",
       }}
     >
+      {services?.productionEnabled ? (
+        <div style={{ marginBottom: 18 }}>
+          <Link
+            href="/"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 16px",
+              borderRadius: 12,
+              border: "1px solid rgba(148, 163, 184, 0.4)",
+              background: "rgba(15, 23, 42, 0.9)",
+              color: "#cbd5e1",
+              fontWeight: 800,
+              fontSize: 14,
+              textDecoration: "none",
+            }}
+          >
+            ← Back to production
+          </Link>
+        </div>
+      ) : null}
       <div
         style={{
           display: "flex",
@@ -480,7 +513,7 @@ export default function SellerPlatformPage() {
                 <div
                   style={{
                     height: 140,
-                    background: p.imageUrl ? `url(${p.imageUrl}) center/cover` : placeholderImg,
+                    background: productHeroBackground(p),
                   }}
                 />
                 <div style={{ padding: 14, flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -661,7 +694,12 @@ export default function SellerPlatformPage() {
             justifyContent: "center",
             padding: 16,
           }}
-          onMouseDown={() => !saveBusy && setModalOpen(false)}
+          onMouseDown={() => {
+            if (saveBusy) return;
+            clearImagePick();
+            setEditSnapshot(null);
+            setModalOpen(false);
+          }}
         >
           <div
             role="dialog"
@@ -678,6 +716,36 @@ export default function SellerPlatformPage() {
             onMouseDown={(e) => e.stopPropagation()}
           >
             <h3 style={{ marginTop: 0 }}>{editId ? "Edit product" : "Add product"}</h3>
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 13, color: "#94a3b8", fontWeight: 700, marginBottom: 6 }}>Product photo</div>
+              <div
+                style={{
+                  height: 120,
+                  borderRadius: 12,
+                  marginBottom: 8,
+                  border: "1px solid rgba(148,163,184,0.25)",
+                  background: modalCoverPreview(imagePick, editSnapshot, products),
+                }}
+              />
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  setImagePick((prev) => {
+                    if (prev?.url) URL.revokeObjectURL(prev.url);
+                    return { file, url: URL.createObjectURL(file) };
+                  });
+                }}
+                style={{ fontSize: 13, color: "#cbd5e1" }}
+              />
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, lineHeight: 1.45 }}>
+                Optional. Until you upload, buyers see your company inventory print logo from workspace config (if
+                set).
+              </div>
+            </div>
             {[
               ["name", "Name", "text"],
               ["description", "Description", "text"],
@@ -689,7 +757,6 @@ export default function SellerPlatformPage() {
               ["unitSize", "Unit size", "text"],
               ["price", "Price", "number"],
               ["quantityAvailable", "Quantity available", "number"],
-              ["imageUrl", "Image URL", "text"],
             ].map(([key, label, type]) => (
               <label key={key} style={{ display: "block", marginBottom: 10, fontSize: 13 }}>
                 <span style={{ color: "#94a3b8", fontWeight: 700 }}>{label}</span>
@@ -741,7 +808,11 @@ export default function SellerPlatformPage() {
               <button
                 type="button"
                 disabled={saveBusy}
-                onClick={() => setModalOpen(false)}
+                onClick={() => {
+                  clearImagePick();
+                  setEditSnapshot(null);
+                  setModalOpen(false);
+                }}
                 style={{ ...actionBtn("#64748b"), opacity: saveBusy ? 0.6 : 1 }}
               >
                 Cancel
@@ -772,4 +843,27 @@ function actionBtn(color: string): CSSProperties {
     fontWeight: 700,
     cursor: "pointer",
   };
+}
+
+function productHeroBackground(p: MarketplaceProductDto): string {
+  const raw = (p.imageUrl || "").trim() || (p.companyInventoryLogoUrl || "").trim();
+  if (!raw) return placeholderImg;
+  const url = resolveCompanyLogoImgSrc(raw, API_BASE_URL);
+  return `url(${url}) center/cover`;
+}
+
+function modalCoverPreview(
+  imagePick: { url: string } | null,
+  editSnapshot: MarketplaceProductDto | null,
+  products: MarketplaceProductDto[],
+): string {
+  if (imagePick?.url) return `url(${imagePick.url}) center/cover`;
+  if (editSnapshot) {
+    const raw =
+      (editSnapshot.imageUrl || "").trim() || (editSnapshot.companyInventoryLogoUrl || "").trim();
+    if (raw) return `url(${resolveCompanyLogoImgSrc(raw, API_BASE_URL)}) center/cover`;
+  }
+  const fallback = (products[0]?.companyInventoryLogoUrl || "").trim();
+  if (fallback) return `url(${resolveCompanyLogoImgSrc(fallback, API_BASE_URL)}) center/cover`;
+  return placeholderImg;
 }

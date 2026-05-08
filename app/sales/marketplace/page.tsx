@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
+  API_BASE_URL,
   fetchCompanyWithServices,
   salesBuyerOrders,
   salesCreateOrder,
@@ -11,7 +12,11 @@ import {
   type CompanyServicesDto,
   type MarketplaceProductDto,
 } from "@/lib/api";
+import { resolveCompanyLogoImgSrc } from "@/lib/inventoryExport";
 import { isLoggedIn } from "@/lib/auth";
+
+const marketplaceCardPlaceholder =
+  "linear-gradient(135deg, rgba(30,41,59,0.95), rgba(15,23,42,0.98))";
 
 type CartLine = {
   product: MarketplaceProductDto;
@@ -191,7 +196,7 @@ export default function MarketplacePage() {
           Workspace services.
         </p>
         <Link href="/" style={{ color: "#a78bfa", fontWeight: 700 }}>
-          Back to home
+          {services.productionEnabled ? "Back to production" : "Back to home"}
         </Link>
       </main>
     );
@@ -200,6 +205,28 @@ export default function MarketplacePage() {
   return (
     <main style={{ minHeight: "100vh", padding: "24px 20px 48px", maxWidth: 1200, margin: "0 auto", color: "#e2e8f0" }}>
       <header style={{ marginBottom: 28 }}>
+        {services?.productionEnabled ? (
+          <div style={{ marginBottom: 16 }}>
+            <Link
+              href="/"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "10px 16px",
+                borderRadius: 12,
+                border: "1px solid rgba(148, 163, 184, 0.4)",
+                background: "rgba(15, 23, 42, 0.9)",
+                color: "#cbd5e1",
+                fontWeight: 800,
+                fontSize: 14,
+                textDecoration: "none",
+              }}
+            >
+              ← Back to production
+            </Link>
+          </div>
+        ) : null}
         <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 16, alignItems: "center" }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900, color: "#f8fafc" }}>NexBatch Marketplace</h1>
@@ -350,9 +377,7 @@ export default function MarketplacePage() {
                 <div
                   style={{
                     height: 130,
-                    background: p.imageUrl
-                      ? `url(${p.imageUrl}) center/cover`
-                      : "linear-gradient(135deg, rgba(30,41,59,0.95), rgba(15,23,42,0.98))",
+                    background: marketplaceProductHeroBackground(p),
                   }}
                 />
                 <div style={{ padding: 14, flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -569,4 +594,11 @@ function btnSecondary(): CSSProperties {
     fontWeight: 700,
     cursor: "pointer",
   };
+}
+
+function marketplaceProductHeroBackground(p: MarketplaceProductDto): string {
+  const raw = (p.imageUrl || "").trim() || (p.companyInventoryLogoUrl || "").trim();
+  if (!raw) return marketplaceCardPlaceholder;
+  const url = resolveCompanyLogoImgSrc(raw, API_BASE_URL);
+  return `url(${url}) center/cover`;
 }

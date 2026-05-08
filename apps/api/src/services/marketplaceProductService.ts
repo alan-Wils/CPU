@@ -5,6 +5,34 @@ import { CompanyServiceSettingsService } from "./companyServiceSettingsService.j
 
 const settingsService = new CompanyServiceSettingsService();
 
+export type MarketplaceProductWithLogo = MarketplaceProduct & {
+  company?: { id: string; name: string; slug: string };
+  companyInventoryLogoUrl?: string | null;
+};
+
+async function inventoryPrintLogoUrlByCompanyIds(companyIds: string[]): Promise<Map<string, string | null>> {
+  const unique = [...new Set(companyIds.map((id) => String(id || "").trim()).filter(Boolean))];
+  const map = new Map<string, string | null>();
+  for (const id of unique) map.set(id, null);
+  if (!unique.length) return map;
+  const rows = await prisma.companyConfig.findMany({
+    where: { companyId: { in: unique }, key: "sales" },
+    select: { companyId: true, valueJson: true },
+  });
+  for (const row of rows) {
+    let url: string | null = null;
+    try {
+      const v = JSON.parse(String(row.valueJson || "{}")) as { inventoryPrintLogoUrl?: unknown };
+      const u = typeof v.inventoryPrintLogoUrl === "string" ? v.inventoryPrintLogoUrl.trim() : "";
+      url = u || null;
+    } catch {
+      url = null;
+    }
+    map.set(row.companyId, url);
+  }
+  return map;
+}
+
 function assertNonNegativePriceQty(price: number, qty: number): void {
   if (!Number.isFinite(price) || price < 0) throw new AppError("Price must be zero or greater.", 400, "INVALID_PRICE");
   if (!Number.isFinite(qty) || qty < 0) throw new AppError("Quantity must be zero or greater.", 400, "INVALID_QUANTITY");
@@ -34,7 +62,7 @@ export type MarketplaceSellerRow = {
 };
 
 export class MarketplaceProductService {
-  async listForSeller(companyId: string, q: SellerProductListQuery): Promise<MarketplaceProduct[]> {
+  async listForSeller(companyId: string, q: SellerProductListQuery): Promise<MarketplaceProductWithLogo[]> {
     await settingsService.getOrCreate(companyId);
     const where: Prisma.MarketplaceProductWhereInput = { companyId };
     const st = String(q.availabilityStatus || "").trim().toUpperCase();
@@ -49,10 +77,13 @@ export class MarketplaceProductService {
         { description: { contains: search } },
       ];
     }
-    return prisma.marketplaceProduct.findMany({
+    const rows = await prisma.marketplaceProduct.findMany({
       where,
       orderBy: { updatedAt: "desc" },
     });
+    const logoMap = await inventoryPrintLogoUrlByCompanyIds([companyId]);
+    const companyInventoryLogoUrl = logoMap.get(companyId) ?? null;
+    return rows.map((r) => ({ ...r, companyInventoryLogoUrl }));
   }
 
   async listMarketplaceCatalog(opts: MarketplaceCatalogQuery) {
@@ -94,12 +125,18 @@ export class MarketplaceProductService {
     if (typeof opts.minPrice === "number" && Number.isFinite(opts.minPrice)) priceFilter.gte = opts.minPrice;
     if (typeof opts.maxPrice === "number" && Number.isFinite(opts.maxPrice)) priceFilter.lte = opts.maxPrice;
     if (Object.keys(priceFilter).length) where.price = priceFilter;
-    return prisma.marketplaceProduct.findMany({
+    const rows = await prisma.marketplaceProduct.findMany({
       where,
       include: { company: { select: { id: true, name: true, slug: true } } },
       orderBy: { updatedAt: "desc" },
       take: 500,
     });
+    const ids = rows.map((r) => r.companyId);
+    const logoMap = await inventoryPrintLogoUrlByCompanyIds(ids);
+    return rows.map((r) => ({
+      ...r,
+      companyInventoryLogoUrl: logoMap.get(r.companyId) ?? null,
+    }));
   }
 
   async createManual(
@@ -196,6 +233,16 @@ export class MarketplaceProductService {
     return prisma.marketplaceProduct.findFirst({
       where: { id: productId, companyId },
     });
+  }
+
+  /** Single seller product with `companyInventoryLogoUrl` for API responses. */
+  async getSellerProductWithLogo(companyId: string, productId: string): Promise<MarketplaceProductWithLogo | null> {
+    const row = await prisma.marketplaceProduct.findFirst({
+      where: { id: productId, companyId },
+    });
+    if (!row) return null;
+    const logoMap = await inventoryPrintLogoUrlByCompanyIds([companyId]);
+    return { ...row, companyInventoryLogoUrl: logoMap.get(companyId) ?? null };
   }
 
   async listMarketplaceSellers(buyerCompanyId: string): Promise<MarketplaceSellerRow[]> {
