@@ -184,6 +184,8 @@ export default function OrdersAnalyticsPage() {
   /** When false, LeafLink CRM “Current Customer” filter is not applied — counts include any buyer seen in saved orders that pass totals/cancel filters. */
   const [currentCustomersOnly, setCurrentCustomersOnly] = useState(true);
   const [loading, setLoading] = useState(true);
+  /** Keeps “Apply range” clickable copy while a heavy LeafLink pagination run is in flight on the other button. */
+  const [leafLinkPullActive, setLeafLinkPullActive] = useState(false);
   const [error, setError] = useState("");
   const [data, setData] = useState<OrdersAnalyticsDto | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -198,6 +200,8 @@ export default function OrdersAnalyticsPage() {
     if (!silent) {
       setLoading(true);
       setError("");
+      if (refreshLeafLink)
+        setLeafLinkPullActive(true);
     }
     try {
       const cid = getSelectedCompanyId().trim();
@@ -214,7 +218,10 @@ export default function OrdersAnalyticsPage() {
       }
     }
     finally {
-      if (!silent) setLoading(false);
+      if (!silent) {
+        setLoading(false);
+        setLeafLinkPullActive(false);
+      }
     }
   }, [from, to, currentCustomersOnly]);
 
@@ -225,7 +232,6 @@ export default function OrdersAnalyticsPage() {
   useEffect(() => {
     let cancelled = false;
     let lightInFlight = false;
-    let fullInFlight = false;
 
     const runLightPoll = async () => {
       if (cancelled || lightInFlight || document.hidden) return;
@@ -238,28 +244,13 @@ export default function OrdersAnalyticsPage() {
       }
     };
 
-    const runFullPull = async () => {
-      if (cancelled || fullInFlight || document.hidden) return;
-      fullInFlight = true;
-      try {
-        await load({ refreshLeafLink: true, silent: true });
-      }
-      finally {
-        fullInFlight = false;
-      }
-    };
-
     const lightTimer = window.setInterval(() => {
       void runLightPoll();
     }, 15000);
-    const fullTimer = window.setInterval(() => {
-      void runFullPull();
-    }, 120000);
 
     return () => {
       cancelled = true;
       window.clearInterval(lightTimer);
-      window.clearInterval(fullTimer);
     };
   }, [load]);
 
@@ -430,16 +421,16 @@ export default function OrdersAnalyticsPage() {
                 <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={{ ...filterInputStyle, minWidth: 160 }} />
               </label>
               <button type="button" style={btnPrimary} onClick={() => void load()} disabled={loading}>
-                {loading ? "Loading…" : "Apply range"}
+                {loading && !leafLinkPullActive ? "Loading…" : "Apply range"}
               </button>
               <button
                 type="button"
                 style={btnGhost}
                 onClick={() => void load({ refreshLeafLink: true })}
                 disabled={loading}
-                title="Paginate LeafLink now, merge into saved orders, then chart from the database"
+                title="Paginates LeafLink in ~50s slices so the request can finish; repeat to backfill deep history"
               >
-                {loading ? "…" : "Pull from LeafLink → save"}
+                {leafLinkPullActive ? "Pulling LeafLink (~1 min max)…" : "Pull from LeafLink → save"}
               </button>
               <label
                 style={{
@@ -486,8 +477,11 @@ export default function OrdersAnalyticsPage() {
 
             {data?.truncated ? (
               <p style={{ fontSize: 13, color: "#fbbf24", marginBottom: 12 }}>
-                Showing data from the most recent pages scanned; date range may be incomplete — narrow the range or contact
-                support to raise limits.
+                LeafLink sync paused at the server&apos;s pagination limit or ~50 second safety budget (so requests don&apos;t
+                hang forever). Charts still reflect orders saved so far — click{' '}
+                <strong style={{ fontWeight: 700, color: "#fcd34d" }}>Pull from LeafLink → save</strong> again once or twice to
+                backfill deeper history, then use <strong style={{ fontWeight: 700, color: "#fcd34d" }}>Apply range</strong> without
+                pull for a faster refresh.
               </p>
             ) : null}
 

@@ -213,6 +213,8 @@ export type OrdersAnalyticsDto = {
 
 const MAX_ANALYTICS_RANGE_DAYS = 366;
 const MAX_ANALYTICS_PAGES = 250;
+/** One HTTP analytics request cannot paginate LeafLink unbounded — proxies time out (~60–120s) and browsers look “stuck”. */
+const ANALYTICS_REFRESH_TIME_BUDGET_MS = 50_000;
 const MAX_QUALIFYING_ORDERS_IN_PAYLOAD = 3500;
 /** If list payload embeds many line rows, summing them is often wrong vs order headline `total`. */
 const MAX_LINE_ITEMS_TO_TRUST_SUM = 120;
@@ -1932,7 +1934,17 @@ export class LeafLinkOrdersService {
     let truncated = false;
 
     if (input.refresh) {
+      const refreshDeadline = Date.now() + ANALYTICS_REFRESH_TIME_BUDGET_MS;
       for (let page = 1; page <= MAX_ANALYTICS_PAGES; page++) {
+        if (Date.now() >= refreshDeadline) {
+          truncated = true;
+          logWarn("[LEAFLINK] orders_analytics_refresh_time_budget_hit", {
+            companyId,
+            pagesScanned,
+            budgetMs: ANALYTICS_REFRESH_TIME_BUDGET_MS,
+          });
+          break;
+        }
         const res = await this.listOrdersSummaries(companyId, {
           page,
           pageSize: 100,
@@ -1965,7 +1977,9 @@ export class LeafLinkOrdersService {
 
     const seenIds = new Set(storedDbRange.map((r) => r.id));
     /** Repair path: payloads with missing persisted `createdOn` often still embed order dates — merge when in-range after parse. */
-    const storedDbNullRepair = await findRecentLeafLinkStoredOrdersWithNullCreatedOn(companyId, 4500);
+    /** Keeps analytics reads fast — wide ranges already hit indexed `createdOn`; repair is capped. */
+    const nullRepairCap = storedDbRange.length < 200 ? 2200 : 900;
+    const storedDbNullRepair = await findRecentLeafLinkStoredOrdersWithNullCreatedOn(companyId, nullRepairCap);
 
     function rowOrderMsFromPayload(pair: { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }): number | null {
       const iso = cleanString(pair.summary.createdAt) || leafLinkOrderCreatedIso(pair.raw);
