@@ -2820,50 +2820,6 @@ export default function Extraction() {
         </div>
 
         <div style={cardStyle}>
-          <h2 style={{ marginTop: 0 }}>Completed / Used Source Batches</h2>
-
-          <div style={lockedListStyle}>
-            {s.completedSourceBatches.length === 0 ? (
-              <p style={{ color: "#94a3b8" }}>
-                No completed source batches yet.
-              </p>
-            ) : (
-              s.completedSourceBatches.map((b: any) => (
-                <div key={b.id} style={{ ...rowStyle, background: "#111827" }}>
-                  <div style={{ flex: 1 }}>
-                    {isLikelyDatabaseSourcePackageId(b.id) ? (
-                      <>
-                        <b>{b.name || b.type || "Source package"}</b>
-                        <span style={{ color: "#94a3b8", fontSize: 13 }}>
-                          {" "}
-                          · {b.id}
-                        </span>
-                        {" | Status: Complete | Completed: "}
-                      </>
-                    ) : (
-                      <>
-                        <b>{b.id}</b> | {b.name || b.type} | Status: Complete |
-                        Completed:{" "}
-                      </>
-                    )}
-                    {b.completedAt}
-                  </div>
-
-                  {userCanDelete ? (
-                    <button
-                      style={deleteButtonStyle}
-                      onClick={() => deleteCompletedSourceBatch(b.id)}
-                    >
-                      Delete
-                    </button>
-                  ) : null}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div style={cardStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 280px" }}>
               <h2 style={{ margin: 0 }}>Extraction Batches</h2>
@@ -3003,6 +2959,50 @@ export default function Extraction() {
                     <button
                       style={deleteButtonStyle}
                       onClick={() => deleteBatch(b.id)}
+                    >
+                      Delete
+                    </button>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div style={cardStyle}>
+          <h2 style={{ marginTop: 0 }}>Completed / Used Source Batches</h2>
+
+          <div style={lockedListStyle}>
+            {s.completedSourceBatches.length === 0 ? (
+              <p style={{ color: "#94a3b8" }}>
+                No completed source batches yet.
+              </p>
+            ) : (
+              s.completedSourceBatches.map((b: any) => (
+                <div key={b.id} style={{ ...rowStyle, background: "#111827" }}>
+                  <div style={{ flex: 1 }}>
+                    {isLikelyDatabaseSourcePackageId(b.id) ? (
+                      <>
+                        <b>{b.name || b.type || "Source package"}</b>
+                        <span style={{ color: "#94a3b8", fontSize: 13 }}>
+                          {" "}
+                          · {b.id}
+                        </span>
+                        {" | Status: Complete | Completed: "}
+                      </>
+                    ) : (
+                      <>
+                        <b>{b.id}</b> | {b.name || b.type} | Status: Complete |
+                        Completed:{" "}
+                      </>
+                    )}
+                    {b.completedAt}
+                  </div>
+
+                  {userCanDelete ? (
+                    <button
+                      style={deleteButtonStyle}
+                      onClick={() => deleteCompletedSourceBatch(b.id)}
                     >
                       Delete
                     </button>
