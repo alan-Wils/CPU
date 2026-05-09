@@ -1071,7 +1071,7 @@ export function BuyerMarketplaceClient() {
               <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "#22d3ee", fontWeight: 800 }}>
                 {detailRow.displayCategoryBadge}
               </div>
-              <BuyerSellerLogoAboveTitle logoUrl={detailRow.raw.companyInventoryLogoUrl} maxHeight={40} marginBottom={10} />
+              <BuyerSellerLogoAboveTitle logoUrl={detailRow.raw.companyInventoryLogoUrl} maxHeight={72} marginBottom={10} />
               <h3 style={{ margin: "0 0 6px", fontSize: "clamp(1.25rem, 4vw, 1.5rem)", fontWeight: 900, lineHeight: 1.2 }}>
                 {detailRow.productName}
               </h3>
@@ -1329,10 +1329,11 @@ function CompanyChipBrand({ c }: { c: CompanyChip }) {
   const raw = (c.logoUrl || "").trim();
   if (raw) {
     const src = resolveCompanyLogoImgSrc(raw, API_BASE_URL);
+    const chipLogoH = 52;
     return (
       <div
         style={{
-          height: 44,
+          minHeight: chipLogoH,
           marginBottom: 8,
           display: "flex",
           alignItems: "center",
@@ -1345,7 +1346,7 @@ function CompanyChipBrand({ c }: { c: CompanyChip }) {
           loading="lazy"
           decoding="async"
           style={{
-            maxHeight: 44,
+            maxHeight: chipLogoH,
             maxWidth: "100%",
             width: "auto",
             objectFit: "contain",
@@ -1366,15 +1367,20 @@ function CompanyChipBrand({ c }: { c: CompanyChip }) {
 function BuyerSellerLogoAboveTitle({
   logoUrl,
   maxHeight,
+  maxWidthPx,
   marginBottom = 8,
 }: {
   logoUrl: string | null | undefined;
   maxHeight: number;
+  /** When set, caps width; otherwise uses full card / modal content width (better for tall marks). */
+  maxWidthPx?: number;
   marginBottom?: number;
 }) {
   const raw = (logoUrl || "").trim();
   if (!raw) return null;
   const src = resolveCompanyLogoImgSrc(raw, API_BASE_URL);
+  const widthCap =
+    typeof maxWidthPx === "number" && maxWidthPx > 0 ? `min(100%, ${maxWidthPx}px)` : "100%";
   return (
     <div
       style={{
@@ -1383,6 +1389,7 @@ function BuyerSellerLogoAboveTitle({
         alignItems: "center",
         justifyContent: "flex-start",
         minHeight: maxHeight,
+        width: "100%",
       }}
     >
       <img
@@ -1392,8 +1399,9 @@ function BuyerSellerLogoAboveTitle({
         decoding="async"
         style={{
           maxHeight,
-          maxWidth: "min(100%, 200px)",
+          maxWidth: widthCap,
           width: "auto",
+          height: "auto",
           objectFit: "contain",
           display: "block",
         }}
@@ -1548,7 +1556,7 @@ function ProductCard({
         </button>
       </div>
       <div style={{ padding: "12px 12px 14px", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-        <BuyerSellerLogoAboveTitle logoUrl={row.raw.companyInventoryLogoUrl} maxHeight={36} marginBottom={2} />
+        <BuyerSellerLogoAboveTitle logoUrl={row.raw.companyInventoryLogoUrl} maxHeight={56} marginBottom={2} />
         <div style={{ fontWeight: 900, fontSize: 15, lineHeight: 1.25 }}>{row.productName}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#94a3b8" }}>
           {row.sellerCompanyName}
