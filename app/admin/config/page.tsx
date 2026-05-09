@@ -27,8 +27,10 @@ import {
   resolveMetrcApiBaseUrl,
 } from "@/lib/metrcCompanyConfig";
 import {
+  clampCompanyHeaderLogoMaxHeightPx,
+  clampCompanyHeaderLogoMaxWidthPx,
+  clampInventoryLogoMaxHeightPx,
   clampInventoryLogoMaxWidthPx,
-  resolveAssetUrlForPrint,
   resolveCompanyLogoImgSrc,
 } from "@/lib/inventoryExport";
 import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
@@ -191,8 +193,14 @@ type AppConfig = {
     leafLinkCategoryLabels: Array<{ id: string; displayName: string }>;
     /** Shown on the printable inventory menu (upload stores file; URL saved with Save Config). */
     inventoryPrintLogoUrl: string;
-    /** Max width in pixels for the logo on the print layout (48–400). */
+    /** Max width in pixels for the logo on the print layout (48–720). */
     inventoryPrintLogoMaxWidthPx: number;
+    /** Max height on print (48–560); 0 = no height cap (width only). */
+    inventoryPrintLogoMaxHeightPx: number;
+    /** Navigation bar tenant logo max height (24–160); 0 = default (56 / 64 by page). */
+    companyHeaderLogoMaxHeightPx: number;
+    /** Navigation bar tenant logo max width (64–720); 0 = auto from height. */
+    companyHeaderLogoMaxWidthPx: number;
   };
   /** Merchandising notes (internal). */
   products: {
@@ -266,6 +274,9 @@ const emptyConfig: AppConfig = {
     leafLinkCategoryLabels: [],
     inventoryPrintLogoUrl: "",
     inventoryPrintLogoMaxWidthPx: 160,
+    inventoryPrintLogoMaxHeightPx: 0,
+    companyHeaderLogoMaxHeightPx: 0,
+    companyHeaderLogoMaxWidthPx: 0,
   },
   products: {
     notes: "",
@@ -688,6 +699,15 @@ export default function ConfigPage() {
           inventoryPrintLogoMaxWidthPx: clampInventoryLogoMaxWidthPx(
             (data.sales as { inventoryPrintLogoMaxWidthPx?: unknown } | undefined)?.inventoryPrintLogoMaxWidthPx,
           ),
+          inventoryPrintLogoMaxHeightPx: clampInventoryLogoMaxHeightPx(
+            (data.sales as { inventoryPrintLogoMaxHeightPx?: unknown } | undefined)?.inventoryPrintLogoMaxHeightPx,
+          ),
+          companyHeaderLogoMaxHeightPx: clampCompanyHeaderLogoMaxHeightPx(
+            (data.sales as { companyHeaderLogoMaxHeightPx?: unknown } | undefined)?.companyHeaderLogoMaxHeightPx,
+          ),
+          companyHeaderLogoMaxWidthPx: clampCompanyHeaderLogoMaxWidthPx(
+            (data.sales as { companyHeaderLogoMaxWidthPx?: unknown } | undefined)?.companyHeaderLogoMaxWidthPx,
+          ),
           leafLinkCategoryLabels: mergeLeafLinkCategoryLabelsFromPayload({
             sales: data.sales,
             products: data.products as { categoryLabels?: unknown; notes?: string },
@@ -763,6 +783,11 @@ export default function ConfigPage() {
         sales: {
           ...config.sales,
           inventoryPrintLogoMaxWidthPx: clampInventoryLogoMaxWidthPx(config.sales.inventoryPrintLogoMaxWidthPx),
+          inventoryPrintLogoMaxHeightPx: clampInventoryLogoMaxHeightPx(config.sales.inventoryPrintLogoMaxHeightPx),
+          companyHeaderLogoMaxHeightPx: clampCompanyHeaderLogoMaxHeightPx(
+            config.sales.companyHeaderLogoMaxHeightPx,
+          ),
+          companyHeaderLogoMaxWidthPx: clampCompanyHeaderLogoMaxWidthPx(config.sales.companyHeaderLogoMaxWidthPx),
         },
       };
       const res = await fetch(`${API_BASE_URL}${path}`, {
@@ -830,6 +855,15 @@ export default function ConfigPage() {
           ...(data.sales || {}),
           inventoryPrintLogoMaxWidthPx: clampInventoryLogoMaxWidthPx(
             (data.sales as { inventoryPrintLogoMaxWidthPx?: unknown } | undefined)?.inventoryPrintLogoMaxWidthPx,
+          ),
+          inventoryPrintLogoMaxHeightPx: clampInventoryLogoMaxHeightPx(
+            (data.sales as { inventoryPrintLogoMaxHeightPx?: unknown } | undefined)?.inventoryPrintLogoMaxHeightPx,
+          ),
+          companyHeaderLogoMaxHeightPx: clampCompanyHeaderLogoMaxHeightPx(
+            (data.sales as { companyHeaderLogoMaxHeightPx?: unknown } | undefined)?.companyHeaderLogoMaxHeightPx,
+          ),
+          companyHeaderLogoMaxWidthPx: clampCompanyHeaderLogoMaxWidthPx(
+            (data.sales as { companyHeaderLogoMaxWidthPx?: unknown } | undefined)?.companyHeaderLogoMaxWidthPx,
           ),
           leafLinkCategoryLabels: mergeLeafLinkCategoryLabelsFromPayload({
             sales: data.sales,
@@ -3341,15 +3375,69 @@ export default function ConfigPage() {
             Optional logo for the <b style={{ color: "#cbd5e1" }}>Printable menu</b> on the Inventory page. Upload
             adds the file on the API server; click <b style={{ color: "#cbd5e1" }}>Save Config</b> below to store the
             URL in company settings. In production, persistent object storage (S3/R2) must be configured on the API.
+            Use <b style={{ color: "#cbd5e1" }}>max height</b> for tall marks; leave it at 0 for wide logos (width only).
           </p>
+          <h4 style={{ color: "#cbd5e1", fontSize: 13, fontWeight: 800, margin: "0 0 8px" }}>
+            App header (next to NexBatch)
+          </h4>
+          <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 10, lineHeight: 1.5 }}>
+            Leave at <b style={{ color: "#cbd5e1" }}>0</b> to keep the default size (works well for wide horizontal
+            logos). Set height and/or width when a mark is too small—tall logos often need a higher max height and a
+            wider max width.
+          </p>
+          <div style={{ ...styles.grid, marginBottom: 12 }}>
+            <label style={styles.label}>
+              Header logo max height (px, 0 = default 56/64)
+              <input
+                style={styles.input}
+                type="number"
+                min={0}
+                max={160}
+                step={4}
+                value={config.sales.companyHeaderLogoMaxHeightPx}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    sales: {
+                      ...prev.sales,
+                      companyHeaderLogoMaxHeightPx: clampCompanyHeaderLogoMaxHeightPx(Number(e.target.value)),
+                    },
+                  }))
+                }
+              />
+            </label>
+            <label style={styles.label}>
+              Header logo max width (px, 0 = auto from height)
+              <input
+                style={styles.input}
+                type="number"
+                min={0}
+                max={720}
+                step={8}
+                value={config.sales.companyHeaderLogoMaxWidthPx}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    sales: {
+                      ...prev.sales,
+                      companyHeaderLogoMaxWidthPx: clampCompanyHeaderLogoMaxWidthPx(Number(e.target.value)),
+                    },
+                  }))
+                }
+              />
+            </label>
+          </div>
+          <h4 style={{ color: "#cbd5e1", fontSize: 13, fontWeight: 800, margin: "0 0 8px" }}>
+            Printable inventory menu
+          </h4>
           <div style={{ ...styles.grid, marginBottom: 8 }}>
-            <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
-              Logo max width on print (px, 48–400)
+            <label style={styles.label}>
+              Logo max width on print (px, 48–720)
               <input
                 style={styles.input}
                 type="number"
                 min={48}
-                max={400}
+                max={720}
                 step={8}
                 value={config.sales.inventoryPrintLogoMaxWidthPx}
                 onChange={(e) =>
@@ -3358,6 +3446,26 @@ export default function ConfigPage() {
                     sales: {
                       ...prev.sales,
                       inventoryPrintLogoMaxWidthPx: clampInventoryLogoMaxWidthPx(Number(e.target.value)),
+                    },
+                  }))
+                }
+              />
+            </label>
+            <label style={styles.label}>
+              Logo max height on print (px, 0 = no cap)
+              <input
+                style={styles.input}
+                type="number"
+                min={0}
+                max={560}
+                step={8}
+                value={config.sales.inventoryPrintLogoMaxHeightPx}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    sales: {
+                      ...prev.sales,
+                      inventoryPrintLogoMaxHeightPx: clampInventoryLogoMaxHeightPx(Number(e.target.value)),
                     },
                   }))
                 }
@@ -3407,8 +3515,14 @@ export default function ConfigPage() {
                   )}
                   alt="Company logo preview"
                   style={{
-                    maxWidth: Math.min(320, config.sales.inventoryPrintLogoMaxWidthPx * 2),
+                    maxWidth: Math.min(640, config.sales.inventoryPrintLogoMaxWidthPx),
+                    maxHeight:
+                      config.sales.inventoryPrintLogoMaxHeightPx > 0
+                        ? config.sales.inventoryPrintLogoMaxHeightPx
+                        : 240,
+                    width: "auto",
                     height: "auto",
+                    objectFit: "contain",
                     borderRadius: 8,
                     border: "1px solid rgba(148,163,184,0.35)",
                   }}

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   apiStaticOriginFromApiBase,
+  clampCompanyHeaderLogoMaxHeightPx,
+  clampCompanyHeaderLogoMaxWidthPx,
+  clampInventoryLogoMaxHeightPx,
   clampInventoryLogoMaxWidthPx,
   describeInventoryFilters,
   EXPORT_COLUMN_PRESET,
@@ -76,10 +79,49 @@ describe("parseStoredExportColumns", () => {
 });
 
 describe("clampInventoryLogoMaxWidthPx", () => {
-  it("clamps to 48–400", () => {
+  it("clamps to 48–720", () => {
     expect(clampInventoryLogoMaxWidthPx(10)).toBe(48);
-    expect(clampInventoryLogoMaxWidthPx(9999)).toBe(400);
+    expect(clampInventoryLogoMaxWidthPx(9999)).toBe(720);
     expect(clampInventoryLogoMaxWidthPx(200)).toBe(200);
+  });
+});
+
+describe("clampInventoryLogoMaxHeightPx", () => {
+  it("returns 0 when unset or invalid", () => {
+    expect(clampInventoryLogoMaxHeightPx(0)).toBe(0);
+    expect(clampInventoryLogoMaxHeightPx(-1)).toBe(0);
+    expect(clampInventoryLogoMaxHeightPx(NaN)).toBe(0);
+  });
+
+  it("clamps positive values to 48–560", () => {
+    expect(clampInventoryLogoMaxHeightPx(10)).toBe(48);
+    expect(clampInventoryLogoMaxHeightPx(9999)).toBe(560);
+    expect(clampInventoryLogoMaxHeightPx(200)).toBe(200);
+  });
+});
+
+describe("clampCompanyHeaderLogoMaxHeightPx", () => {
+  it("returns 0 when unset", () => {
+    expect(clampCompanyHeaderLogoMaxHeightPx(0)).toBe(0);
+    expect(clampCompanyHeaderLogoMaxHeightPx("")).toBe(0);
+  });
+
+  it("clamps to 24–160", () => {
+    expect(clampCompanyHeaderLogoMaxHeightPx(10)).toBe(24);
+    expect(clampCompanyHeaderLogoMaxHeightPx(999)).toBe(160);
+    expect(clampCompanyHeaderLogoMaxHeightPx(96)).toBe(96);
+  });
+});
+
+describe("clampCompanyHeaderLogoMaxWidthPx", () => {
+  it("returns 0 when unset", () => {
+    expect(clampCompanyHeaderLogoMaxWidthPx(0)).toBe(0);
+  });
+
+  it("clamps to 64–720", () => {
+    expect(clampCompanyHeaderLogoMaxWidthPx(10)).toBe(64);
+    expect(clampCompanyHeaderLogoMaxWidthPx(9999)).toBe(720);
+    expect(clampCompanyHeaderLogoMaxWidthPx(400)).toBe(400);
   });
 });
 

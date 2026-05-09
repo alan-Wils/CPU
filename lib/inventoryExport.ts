@@ -80,12 +80,35 @@ export function normalizeInventoryExportColumns(selected: unknown): InventoryExp
 export function clampInventoryLogoMaxWidthPx(n: unknown): number {
   const x = Number(n);
   if (!Number.isFinite(x)) return 160;
-  return Math.min(400, Math.max(48, Math.round(x)));
+  return Math.min(720, Math.max(48, Math.round(x)));
+}
+
+/** 0 = no max-height cap (width-only sizing). */
+export function clampInventoryLogoMaxHeightPx(n: unknown): number {
+  const x = Number(n);
+  if (!Number.isFinite(x) || x <= 0) return 0;
+  return Math.min(560, Math.max(48, Math.round(x)));
+}
+
+/** 0 = use app default navigation bar height (not overridden). */
+export function clampCompanyHeaderLogoMaxHeightPx(n: unknown): number {
+  const x = Number(n);
+  if (!Number.isFinite(x) || x <= 0) return 0;
+  return Math.min(160, Math.max(24, Math.round(x)));
+}
+
+/** 0 = derive max width from height (legacy behavior). */
+export function clampCompanyHeaderLogoMaxWidthPx(n: unknown): number {
+  const x = Number(n);
+  if (!Number.isFinite(x) || x <= 0) return 0;
+  return Math.min(720, Math.max(64, Math.round(x)));
 }
 
 export type InventoryPrintBranding = {
   logoUrl: string;
   logoMaxWidthPx: number;
+  /** When positive, caps logo height on the print layout (tall / stacked marks). Omit or 0 = width only. */
+  logoMaxHeightPx?: number;
   /**
    * When set, used as `<img src>` so the print window does not depend on cross-origin or mixed-content
    * loading of the raw logo URL inside `about:blank`.
@@ -369,11 +392,14 @@ export function openInventoryPrintWindow(
   const imgSrc = dataUrl && /^data:image\//i.test(dataUrl) ? dataUrl : logoResolved;
   const showLogo = Boolean(imgSrc && isPrintableImageUrl(imgSrc));
   const logoW = branding ? clampInventoryLogoMaxWidthPx(branding.logoMaxWidthPx) : 160;
+  const logoH = branding ? clampInventoryLogoMaxHeightPx(branding.logoMaxHeightPx ?? 0) : 0;
   const imgSrcForAttr = imgSrc.startsWith("data:")
     ? imgSrc.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
     : escapeHtml(imgSrc);
+  const heightCap =
+    logoH > 0 ? `max-height:${logoH}px;` : "";
   const logoBlock = showLogo
-    ? `<div class="print-logo-wrap"><img class="print-logo" src="${imgSrcForAttr}" alt="" width="${logoW}" style="width:${logoW}px;max-width:${logoW}px;height:auto;object-fit:contain;" /></div>`
+    ? `<div class="print-logo-wrap" style="max-width:min(50vw, ${logoW}px);"><img class="print-logo" src="${imgSrcForAttr}" alt="" style="width:auto;max-width:100%;${heightCap}height:auto;object-fit:contain;" /></div>`
     : "";
 
   const rowsHtml = items.map((row) => buildTableRowHtml(row, categoryLabels, cols)).join("");
@@ -414,7 +440,6 @@ export function openInventoryPrintWindow(
     }
     .print-logo-wrap {
       display: inline-block;
-      max-width: min(45vw, 320px);
     }
     .meta {
       color: #475569;

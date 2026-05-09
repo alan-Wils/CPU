@@ -9,6 +9,10 @@ export type TopBrandStripProps = {
   companyLogoConfiguredUrl?: string;
   apiBaseUrl: string;
   companyLogoMaxHeightPx?: number;
+  /**
+   * Optional cap on logo width (px). When omitted or 0, width is derived from height (legacy): min(360, max(96, height×6)).
+   */
+  companyLogoMaxWidthPx?: number;
   nexbatchHeight?: number;
   linkNexbatchToHome?: boolean;
   /**
@@ -24,6 +28,7 @@ export default function TopBrandStrip({
   companyLogoConfiguredUrl,
   apiBaseUrl,
   companyLogoMaxHeightPx = 54,
+  companyLogoMaxWidthPx = 0,
   /** NexBatch wordmark height (px); company logo size is controlled only by `companyLogoMaxHeightPx`. */
   nexbatchHeight = 186,
   linkNexbatchToHome = true,
@@ -31,6 +36,11 @@ export default function TopBrandStrip({
 }: TopBrandStripProps) {
   const raw = (companyLogoConfiguredUrl || "").trim();
   const resolved = raw ? resolveCompanyLogoImgSrc(raw, apiBaseUrl) : "";
+  const derivedLogoMaxWidth = Math.min(360, Math.max(96, Math.round(companyLogoMaxHeightPx * 6)));
+  const effectiveLogoMaxWidth =
+    typeof companyLogoMaxWidthPx === "number" && companyLogoMaxWidthPx > 0
+      ? companyLogoMaxWidthPx
+      : derivedLogoMaxWidth;
 
   const rowStyle: CSSProperties = {
     display: "flex",
@@ -56,7 +66,7 @@ export default function TopBrandStrip({
           alt="Company logo"
           style={{
             maxHeight: companyLogoMaxHeightPx,
-            maxWidth: Math.min(360, Math.max(96, Math.round(companyLogoMaxHeightPx * 6))),
+            maxWidth: effectiveLogoMaxWidth,
             width: "auto",
             height: "auto",
             objectFit: "contain",

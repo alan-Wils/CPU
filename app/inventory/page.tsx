@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { getAuthToken } from "@/lib/auth";
 import {
+  clampInventoryLogoMaxHeightPx,
   clampInventoryLogoMaxWidthPx,
   DEFAULT_INVENTORY_EXPORT_COLUMNS,
   downloadInventoryExcel,
@@ -67,6 +68,7 @@ export default function InventoryPage() {
   const [exportColumnPrefsMessage, setExportColumnPrefsMessage] = useState("");
   const [printBrandingLogoUrl, setPrintBrandingLogoUrl] = useState("");
   const [printBrandingLogoMaxWidthPx, setPrintBrandingLogoMaxWidthPx] = useState(160);
+  const [printBrandingLogoMaxHeightPx, setPrintBrandingLogoMaxHeightPx] = useState(0);
 
   useEffect(() => {
     try {
@@ -131,6 +133,7 @@ export default function InventoryPage() {
           leafLinkCategoryLabels?: CategoryLabelOverride[];
           inventoryPrintLogoUrl?: string;
           inventoryPrintLogoMaxWidthPx?: unknown;
+          inventoryPrintLogoMaxHeightPx?: unknown;
         };
         products?: { categoryLabels?: CategoryLabelOverride[] };
       };
@@ -546,6 +549,9 @@ export default function InventoryPage() {
                               ? {
                                   logoUrl: rawLogo,
                                   logoMaxWidthPx: printBrandingLogoMaxWidthPx,
+                                  ...(printBrandingLogoMaxHeightPx > 0
+                                    ? { logoMaxHeightPx: printBrandingLogoMaxHeightPx }
+                                    : {}),
                                   ...(logoDataUrl ? { logoDataUrl } : {}),
                                 }
                               : undefined,

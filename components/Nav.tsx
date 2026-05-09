@@ -21,7 +21,11 @@ import {
   type CompanyServicesDto,
 } from "@/lib/api";
 import TopBrandStrip from "@/components/TopBrandStrip";
-import { extractCompanyInventoryLogoUrl } from "@/lib/companyConfigLogo";
+import {
+  extractCompanyHeaderLogoMaxHeightPx,
+  extractCompanyHeaderLogoMaxWidthPx,
+  extractCompanyInventoryLogoUrl,
+} from "@/lib/companyConfigLogo";
 import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
 import {
   clearAuthSession,
@@ -57,6 +61,8 @@ export default function Nav() {
   const [portalCompanies, setPortalCompaniesState] = useState<CpuCompany[]>([]);
   const [rewardsProgramEnabled, setRewardsProgramEnabled] = useState(false);
   const [companyHeaderLogoUrl, setCompanyHeaderLogoUrl] = useState("");
+  const [companyHeaderLogoMaxHeightPx, setCompanyHeaderLogoMaxHeightPx] = useState(0);
+  const [companyHeaderLogoMaxWidthPx, setCompanyHeaderLogoMaxWidthPx] = useState(0);
   /** Bumps after `/auth/me` merges so `getAuthUser()` (e.g. rewards enrollment) re-reads. */
   const [sessionBump, setSessionBump] = useState(0);
   const [companyServices, setCompanyServices] = useState<CompanyServicesDto | null>(null);
@@ -69,6 +75,8 @@ export default function Nav() {
   useEffect(() => {
     if (!isLoggedIn()) {
       setCompanyHeaderLogoUrl("");
+      setCompanyHeaderLogoMaxHeightPx(0);
+      setCompanyHeaderLogoMaxWidthPx(0);
       return;
     }
     let cancelled = false;
@@ -80,10 +88,14 @@ export default function Nav() {
         if (cancelled) return;
         setRewardsProgramEnabled(extractRewardsFromCompanyConfig(data).enabled);
         setCompanyHeaderLogoUrl(extractCompanyInventoryLogoUrl(data));
+        setCompanyHeaderLogoMaxHeightPx(extractCompanyHeaderLogoMaxHeightPx(data));
+        setCompanyHeaderLogoMaxWidthPx(extractCompanyHeaderLogoMaxWidthPx(data));
       } catch {
         if (!cancelled) {
           setRewardsProgramEnabled(false);
           setCompanyHeaderLogoUrl("");
+          setCompanyHeaderLogoMaxHeightPx(0);
+          setCompanyHeaderLogoMaxWidthPx(0);
         }
       }
     })();
@@ -159,6 +171,9 @@ export default function Nav() {
   }
 
   const isHomePage = pathname === "/";
+  const defaultHeaderLogoHeightPx = isHomePage ? 64 : 56;
+  const effectiveHeaderLogoHeightPx =
+    companyHeaderLogoMaxHeightPx > 0 ? companyHeaderLogoMaxHeightPx : defaultHeaderLogoHeightPx;
 
   const staffRewardsQuickLink = useMemo(() => {
     return (
@@ -230,7 +245,8 @@ export default function Nav() {
       <TopBrandStrip
         apiBaseUrl={API_BASE_URL}
         companyLogoConfiguredUrl={companyHeaderLogoUrl}
-        companyLogoMaxHeightPx={isHomePage ? 64 : 56}
+        companyLogoMaxHeightPx={effectiveHeaderLogoHeightPx}
+        companyLogoMaxWidthPx={companyHeaderLogoMaxWidthPx}
         nexbatchHeight={isHomePage ? 264 : 198}
       />
       {staffRewardsQuickLink && (
