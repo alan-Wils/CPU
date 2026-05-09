@@ -1,6 +1,8 @@
 import type { MarketplaceProductAvailability, Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../errors/AppError.js";
+import { mergeLeafLinkCategoryLabelsFromConfigBlocks } from "../lib/leafLinkCategoryConfig.js";
+import { resolveInventoryCategoryLabel } from "../lib/productCategoryLabels.js";
 import { LeafLinkInventoryService } from "./leaflinkService.js";
 import { CompanyServiceSettingsService } from "./companyServiceSettingsService.js";
 
@@ -98,6 +100,23 @@ export async function syncLeafLinkInventoryToMarketplaceProducts(
     actorUserId: actorUserId || "system",
   });
 
+  const configRows = await prisma.companyConfig.findMany({
+    where: { companyId, key: { in: ["sales", "products"] } },
+    select: { key: true, valueJson: true },
+  });
+  let salesBlock: unknown;
+  let productsBlock: unknown;
+  for (const row of configRows) {
+    try {
+      const parsed = JSON.parse(String(row.valueJson || "{}"));
+      if (row.key === "sales") salesBlock = parsed;
+      if (row.key === "products") productsBlock = parsed;
+    } catch {
+      /* ignore */
+    }
+  }
+  const categoryOverrides = mergeLeafLinkCategoryLabelsFromConfigBlocks(salesBlock, productsBlock);
+
   let created = 0;
   let updated = 0;
   for (const item of pull.items) {
@@ -113,13 +132,17 @@ export async function syncLeafLinkInventoryToMarketplaceProducts(
       listingActive: item.listingActive,
       wholesaleAvailable: item.wholesaleAvailable,
     });
+    const rawCategory = String(item.category || "").trim();
+    const categoryForMarketplace = rawCategory
+      ? resolveInventoryCategoryLabel(rawCategory, categoryOverrides) || null
+      : null;
     if (!existing) {
       await prisma.marketplaceProduct.create({
         data: {
           companyId,
           name: item.productName || "LeafLink product",
           description,
-          category: item.category || null,
+          category: categoryForMarketplace,
           productType: item.productType || null,
           strainName: item.strain || null,
           flavorName: null,
@@ -142,7 +165,7 @@ export async function syncLeafLinkInventoryToMarketplaceProducts(
       where: { id: existing.id },
       data: {
         name: item.productName || existing.name,
-        category: item.category ?? existing.category,
+        category: rawCategory ? categoryForMarketplace : existing.category,
         productType: item.productType ?? existing.productType,
         strainName: item.strain || existing.strainName,
         quantityAvailable: item.availableQuantity,

@@ -1,6 +1,9 @@
 import type { MarketplaceProduct, MarketplaceProductAvailability, Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../errors/AppError.js";
+import { mergeLeafLinkCategoryLabelsFromConfigBlocks } from "../lib/leafLinkCategoryConfig.js";
+import type { CategoryLabelOverride } from "../lib/productCategoryLabels.js";
+import { resolveInventoryCategoryLabel } from "../lib/productCategoryLabels.js";
 import { CompanyServiceSettingsService } from "./companyServiceSettingsService.js";
 
 const settingsService = new CompanyServiceSettingsService();
@@ -29,6 +32,37 @@ async function inventoryPrintLogoUrlByCompanyIds(companyIds: string[]): Promise<
       url = null;
     }
     map.set(row.companyId, url);
+  }
+  return map;
+}
+
+async function leafLinkCategoryOverridesByCompanyIds(
+  companyIds: string[],
+): Promise<Map<string, CategoryLabelOverride[]>> {
+  const unique = [...new Set(companyIds.map((id) => String(id || "").trim()).filter(Boolean))];
+  const map = new Map<string, CategoryLabelOverride[]>();
+  for (const id of unique) map.set(id, []);
+  if (!unique.length) return map;
+  const rows = await prisma.companyConfig.findMany({
+    where: { companyId: { in: unique }, key: { in: ["sales", "products"] } },
+    select: { companyId: true, key: true, valueJson: true },
+  });
+  const blocksByCompany = new Map<string, { sales?: unknown; products?: unknown }>();
+  for (const id of unique) blocksByCompany.set(id, {});
+  for (const row of rows) {
+    const entry = blocksByCompany.get(row.companyId);
+    if (!entry) continue;
+    try {
+      const parsed = JSON.parse(String(row.valueJson || "{}"));
+      if (row.key === "sales") entry.sales = parsed;
+      if (row.key === "products") entry.products = parsed;
+    } catch {
+      /* ignore */
+    }
+  }
+  for (const id of unique) {
+    const b = blocksByCompany.get(id) || {};
+    map.set(id, mergeLeafLinkCategoryLabelsFromConfigBlocks(b.sales, b.products));
   }
   return map;
 }
@@ -84,8 +118,14 @@ export class MarketplaceProductService {
       orderBy: { updatedAt: "desc" },
     });
     const logoMap = await inventoryPrintLogoUrlByCompanyIds([companyId]);
+    const catMap = await leafLinkCategoryOverridesByCompanyIds([companyId]);
     const companyInventoryLogoUrl = logoMap.get(companyId) ?? null;
-    return rows.map((r) => ({ ...r, companyInventoryLogoUrl }));
+    const overrides = catMap.get(companyId) ?? [];
+    return rows.map((r) => {
+      const raw = String(r.category ?? "").trim();
+      const category = raw ? resolveInventoryCategoryLabel(raw, overrides) || null : null;
+      return { ...r, category, companyInventoryLogoUrl };
+    });
   }
 
   async listMarketplaceCatalog(opts: MarketplaceCatalogQuery) {
@@ -136,10 +176,16 @@ export class MarketplaceProductService {
     });
     const ids = rows.map((r) => r.companyId);
     const logoMap = await inventoryPrintLogoUrlByCompanyIds(ids);
-    return rows.map((r) => ({
-      ...r,
-      companyInventoryLogoUrl: logoMap.get(r.companyId) ?? null,
-    }));
+    const catMap = await leafLinkCategoryOverridesByCompanyIds(ids);
+    return rows.map((r) => {
+      const raw = String(r.category ?? "").trim();
+      const category = raw ? resolveInventoryCategoryLabel(raw, catMap.get(r.companyId) ?? []) || null : null;
+      return {
+        ...r,
+        category,
+        companyInventoryLogoUrl: logoMap.get(r.companyId) ?? null,
+      };
+    });
   }
 
   async createManual(
@@ -257,7 +303,11 @@ export class MarketplaceProductService {
     });
     if (!row) return null;
     const logoMap = await inventoryPrintLogoUrlByCompanyIds([companyId]);
-    return { ...row, companyInventoryLogoUrl: logoMap.get(companyId) ?? null };
+    const catMap = await leafLinkCategoryOverridesByCompanyIds([companyId]);
+    const overrides = catMap.get(companyId) ?? [];
+    const raw = String(row.category ?? "").trim();
+    const category = raw ? resolveInventoryCategoryLabel(raw, overrides) || null : null;
+    return { ...row, category, companyInventoryLogoUrl: logoMap.get(companyId) ?? null };
   }
 
   async listMarketplaceSellers(buyerCompanyId: string): Promise<MarketplaceSellerRow[]> {

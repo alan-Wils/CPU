@@ -1041,9 +1041,10 @@ export function BuyerMarketplaceClient() {
                 <MarketplaceProductImageFrame
                   apiBaseUrl={API_BASE_URL}
                   imageUrl={detailRow.raw.imageUrl}
-                  companyInventoryLogoUrl={null}
+                  companyInventoryLogoUrl={detailRow.raw.companyInventoryLogoUrl ?? null}
                   imageDisplayMode={detailRow.raw.imageDisplayMode}
                   objectFitOverride="cover"
+                  relaxCoverForLogoFallback={!(detailRow.raw.imageUrl || "").trim()}
                   fillParent
                   height={320}
                   placeholderBackground={PLACEHOLDER_BG}
@@ -1487,8 +1488,9 @@ function ProductCard({
         <MarketplaceProductImageFrame
           apiBaseUrl={API_BASE_URL}
           imageUrl={row.raw.imageUrl}
-          companyInventoryLogoUrl={null}
+          companyInventoryLogoUrl={row.raw.companyInventoryLogoUrl ?? null}
           imageDisplayMode={row.raw.imageDisplayMode ?? "COVER"}
+          relaxCoverForLogoFallback={!(row.raw.imageUrl || "").trim()}
           height={140}
           placeholderBackground={PLACEHOLDER_BG}
         />
