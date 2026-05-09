@@ -84,10 +84,19 @@ export const acceptInviteSchema = z.object({
 export const invitePreviewQuerySchema = z.object({
     token: z.string().min(16).max(256),
 });
+/** Initial CompanyServiceSettings when NexBatch portal creates a tenant (optional for backward compatibility). */
+export const createCompanyWorkspaceServicesSchema = z.object({
+    productionEnabled: z.boolean(),
+    salesSellerEnabled: z.boolean(),
+    salesBuyerEnabled: z.boolean(),
+    leafLinkInventorySyncEnabled: z.boolean(),
+});
+
 export const createCompanySchema = z.object({
     name: z.string().min(2).max(100),
     slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/),
-    ownerEmail: z.string().email()
+    ownerEmail: z.string().email(),
+    workspaceServices: createCompanyWorkspaceServicesSchema.optional(),
 });
 /**
  * UI tier for NexBatch portal invites; maps to `NexBatchPlatformRole` on the server.
@@ -489,6 +498,7 @@ export const portalCompanyServicesPatchSchema = z.object({
 });
 
 const marketplaceAvailabilityEnum = z.enum(["AVAILABLE", "INTERNAL", "NOT_AVAILABLE"]);
+const marketplaceImageDisplayModeEnum = z.enum(["AUTO", "CONTAIN", "COVER"]);
 
 export const marketplaceSellerProductCreateSchema = z.object({
     name: z.string().min(1).max(500),
@@ -502,6 +512,7 @@ export const marketplaceSellerProductCreateSchema = z.object({
     price: z.coerce.number().min(0),
     quantityAvailable: z.coerce.number().min(0),
     imageUrl: z.string().max(2000).nullable().optional(),
+    imageDisplayMode: marketplaceImageDisplayModeEnum.nullable().optional(),
     availabilityStatus: marketplaceAvailabilityEnum,
 });
 

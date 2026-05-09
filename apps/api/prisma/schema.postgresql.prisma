@@ -208,6 +208,8 @@ model MarketplaceProduct {
   quantityAvailable    Float
   imageUrl             String?
   imageKey             String?
+  /// AUTO | CONTAIN | COVER — card image scaling (client default AUTO).
+  imageDisplayMode     String?
   availabilityStatus   MarketplaceProductAvailability
   source               MarketplaceProductSource
   leafLinkInventoryId  String?

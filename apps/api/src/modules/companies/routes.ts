@@ -20,12 +20,26 @@ companiesRouter.get("/me", asyncHandler(async (req, res) => {
     res.json({ company, services });
 }));
 companiesRouter.post("/", requirePlatformRoles(["nexbatch_admin", "owner"]), validate({ body: createCompanySchema }), asyncHandler(async (req, res) => {
-    const payload = req.body;
+    const payload = req.body as {
+        name: string;
+        slug: string;
+        ownerEmail: string;
+        workspaceServices?: {
+            productionEnabled: boolean;
+            salesSellerEnabled: boolean;
+            salesBuyerEnabled: boolean;
+            leafLinkInventorySyncEnabled: boolean;
+        };
+    };
+    const { workspaceServices, ...companyPayload } = payload;
     const created = await companyService.createCompany({
-        ...payload,
+        ...companyPayload,
         actorUserId: req.auth.userId,
         actorCompanyId: String(req.auth.companyId || "").trim() || undefined
     });
+    if (workspaceServices) {
+        await companyServiceSettingsService.updateForPortal(created.id, workspaceServices);
+    }
     res.status(201).json(created);
 }));
 companiesRouter.get("/accessible", asyncHandler(async (req, res) => {

@@ -17,8 +17,8 @@ import {
   type MarketplaceProductDto,
 } from "@/lib/api";
 import { fileToImageUploadPayload } from "@/lib/imageUploadPayload";
-import { resolveCompanyLogoImgSrc } from "@/lib/inventoryExport";
 import { isLoggedIn } from "@/lib/auth";
+import MarketplaceProductImageFrame from "@/components/MarketplaceProductImageFrame";
 
 const placeholderImg =
   "linear-gradient(135deg, rgba(30,41,59,0.95), rgba(15,23,42,0.98))";
@@ -62,6 +62,7 @@ export default function SellerPlatformPage() {
     price: "",
     quantityAvailable: "",
     availabilityStatus: "INTERNAL" as "AVAILABLE" | "INTERNAL" | "NOT_AVAILABLE",
+    imageDisplayMode: "AUTO" as "AUTO" | "CONTAIN" | "COVER",
   });
 
   const loadData = useCallback(async () => {
@@ -137,6 +138,7 @@ export default function SellerPlatformPage() {
       price: "",
       quantityAvailable: "",
       availabilityStatus: "INTERNAL",
+      imageDisplayMode: "AUTO",
     });
     setModalOpen(true);
   }
@@ -157,6 +159,7 @@ export default function SellerPlatformPage() {
       price: String(p.price),
       quantityAvailable: String(p.quantityAvailable),
       availabilityStatus: p.availabilityStatus as typeof form.availabilityStatus,
+      imageDisplayMode: (p.imageDisplayMode as typeof form.imageDisplayMode) || "AUTO",
     });
     setModalOpen(true);
   }
@@ -183,6 +186,7 @@ export default function SellerPlatformPage() {
         price,
         quantityAvailable: qty,
         availabilityStatus: form.availabilityStatus,
+        imageDisplayMode: form.imageDisplayMode,
       };
       let productId = editId;
       if (editId) {
@@ -510,7 +514,14 @@ export default function SellerPlatformPage() {
                   flexDirection: "column",
                 }}
               >
-                <div style={productHeroStyle(p)} />
+                <MarketplaceProductImageFrame
+                  apiBaseUrl={API_BASE_URL}
+                  imageUrl={p.imageUrl}
+                  companyInventoryLogoUrl={p.companyInventoryLogoUrl}
+                  imageDisplayMode={p.imageDisplayMode}
+                  height={100}
+                  placeholderBackground={placeholderImg}
+                />
                 <div style={{ padding: 14, flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
                   <div style={{ fontWeight: 800, fontSize: 16 }}>{p.name}</div>
                   <div style={{ fontSize: 12, color: "#94a3b8" }}>
@@ -713,7 +724,26 @@ export default function SellerPlatformPage() {
             <h3 style={{ marginTop: 0 }}>{editId ? "Edit product" : "Add product"}</h3>
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 13, color: "#94a3b8", fontWeight: 700, marginBottom: 6 }}>Product photo</div>
-              <div style={modalPhotoPreviewStyle(imagePick, editSnapshot, products)} />
+              <div
+                style={{
+                  marginBottom: 8,
+                  border: "1px solid rgba(148,163,184,0.25)",
+                  borderRadius: 12,
+                  overflow: "hidden",
+                }}
+              >
+                <MarketplaceProductImageFrame
+                  apiBaseUrl={API_BASE_URL}
+                  imageUrl={editSnapshot?.imageUrl ?? null}
+                  companyInventoryLogoUrl={
+                    editSnapshot?.companyInventoryLogoUrl ?? products[0]?.companyInventoryLogoUrl ?? null
+                  }
+                  imageDisplayMode={form.imageDisplayMode}
+                  directSrc={imagePick?.url ?? null}
+                  height={96}
+                  placeholderBackground={placeholderImg}
+                />
+              </div>
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
@@ -732,6 +762,36 @@ export default function SellerPlatformPage() {
                 Optional. Until you upload, buyers see your company inventory print logo from workspace config (if
                 set).
               </div>
+              <label style={{ display: "block", marginTop: 12, fontSize: 13 }}>
+                <span style={{ color: "#94a3b8", fontWeight: 700 }}>Photo fit on cards</span>
+                <select
+                  value={form.imageDisplayMode}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      imageDisplayMode: e.target.value as typeof f.imageDisplayMode,
+                    }))
+                  }
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid rgba(148,163,184,0.35)",
+                    background: "#020617",
+                    color: "#fff",
+                  }}
+                >
+                  <option value="AUTO">Auto — shrink to fit (no zoom-in past native size)</option>
+                  <option value="CONTAIN">Show full image — letterbox if needed</option>
+                  <option value="COVER">Fill frame — may crop</option>
+                </select>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, lineHeight: 1.45 }}>
+                  Applies to seller product grid and buyer marketplace. Contain works well for tall product shots; Auto
+                  keeps wide logos from filling the whole strip.
+                </div>
+              </label>
             </div>
             {[
               ["name", "Name", "text"],
@@ -832,52 +892,3 @@ function actionBtn(color: string): CSSProperties {
   };
 }
 
-/** Card hero: `contain` shows full logo/photo in the frame instead of zoom-cropping with `cover`. */
-function productHeroStyle(p: MarketplaceProductDto): CSSProperties {
-  const raw = (p.imageUrl || "").trim() || (p.companyInventoryLogoUrl || "").trim();
-  if (!raw) {
-    return {
-      flexShrink: 0,
-      height: 100,
-      background: placeholderImg,
-    };
-  }
-  const url = resolveCompanyLogoImgSrc(raw, API_BASE_URL);
-  return {
-    flexShrink: 0,
-    height: 100,
-    backgroundColor: "#020617",
-    backgroundImage: `url(${url})`,
-    backgroundSize: "contain",
-    backgroundPosition: "center",
-    backgroundRepeat: "no-repeat",
-  };
-}
-
-function modalPhotoPreviewStyle(
-  imagePick: { url: string } | null,
-  editSnapshot: MarketplaceProductDto | null,
-  products: MarketplaceProductDto[],
-): CSSProperties {
-  const frame: CSSProperties = {
-    height: 96,
-    borderRadius: 12,
-    marginBottom: 8,
-    border: "1px solid rgba(148,163,184,0.25)",
-    backgroundColor: "#020617",
-    backgroundSize: "contain",
-    backgroundPosition: "center",
-    backgroundRepeat: "no-repeat",
-  };
-  if (imagePick?.url) return { ...frame, backgroundImage: `url(${imagePick.url})` };
-  if (editSnapshot) {
-    const raw =
-      (editSnapshot.imageUrl || "").trim() || (editSnapshot.companyInventoryLogoUrl || "").trim();
-    if (raw)
-      return { ...frame, backgroundImage: `url(${resolveCompanyLogoImgSrc(raw, API_BASE_URL)})` };
-  }
-  const fallback = (products[0]?.companyInventoryLogoUrl || "").trim();
-  if (fallback)
-    return { ...frame, backgroundImage: `url(${resolveCompanyLogoImgSrc(fallback, API_BASE_URL)})` };
-  return { ...frame, background: placeholderImg };
-}

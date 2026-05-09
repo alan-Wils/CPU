@@ -12,8 +12,8 @@ import {
   type CompanyServicesDto,
   type MarketplaceProductDto,
 } from "@/lib/api";
-import { resolveCompanyLogoImgSrc } from "@/lib/inventoryExport";
 import { isLoggedIn } from "@/lib/auth";
+import MarketplaceProductImageFrame from "@/components/MarketplaceProductImageFrame";
 
 const marketplaceCardPlaceholder =
   "linear-gradient(135deg, rgba(30,41,59,0.95), rgba(15,23,42,0.98))";
@@ -374,7 +374,14 @@ export default function MarketplacePage() {
                   flexDirection: "column",
                 }}
               >
-                <div style={marketplaceProductHeroStyle(p)} />
+                <MarketplaceProductImageFrame
+                  apiBaseUrl={API_BASE_URL}
+                  imageUrl={p.imageUrl}
+                  companyInventoryLogoUrl={p.companyInventoryLogoUrl}
+                  imageDisplayMode={p.imageDisplayMode}
+                  height={100}
+                  placeholderBackground={marketplaceCardPlaceholder}
+                />
                 <div style={{ padding: 14, flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
                   <div style={{ fontSize: 12, color: "#a78bfa", fontWeight: 700 }}>
                     {p.company?.name || "Seller"}
@@ -591,23 +598,3 @@ function btnSecondary(): CSSProperties {
   };
 }
 
-function marketplaceProductHeroStyle(p: MarketplaceProductDto): CSSProperties {
-  const raw = (p.imageUrl || "").trim() || (p.companyInventoryLogoUrl || "").trim();
-  if (!raw) {
-    return {
-      flexShrink: 0,
-      height: 100,
-      background: marketplaceCardPlaceholder,
-    };
-  }
-  const url = resolveCompanyLogoImgSrc(raw, API_BASE_URL);
-  return {
-    flexShrink: 0,
-    height: 100,
-    backgroundColor: "#020617",
-    backgroundImage: `url(${url})`,
-    backgroundSize: "contain",
-    backgroundPosition: "center",
-    backgroundRepeat: "no-repeat",
-  };
-}

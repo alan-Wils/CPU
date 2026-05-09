@@ -990,12 +990,15 @@ export type MarketplaceProductDto = {
   price: number;
   quantityAvailable: number;
   imageUrl: string | null;
+  /** AUTO | CONTAIN | COVER — how the card scales the product photo or fallback logo. */
+  imageDisplayMode?: string | null;
   /** Company config `sales.inventoryPrintLogoUrl` when no product image is set. */
   companyInventoryLogoUrl?: string | null;
   availabilityStatus: string;
   source: string;
   leafLinkInventoryId: string | null;
   company?: { id: string; name: string; slug: string };
+  updatedAt?: string;
 };
 
 export async function salesSellerProducts(params?: {
@@ -1021,6 +1024,7 @@ export async function salesSellerProductCreate(body: {
   price: number;
   quantityAvailable: number;
   imageUrl?: string | null;
+  imageDisplayMode?: "AUTO" | "CONTAIN" | "COVER" | null;
   availabilityStatus: "AVAILABLE" | "INTERNAL" | "NOT_AVAILABLE";
 }) {
   return apiRequest<{ product: MarketplaceProductDto }>("/api/sales/seller/products", {

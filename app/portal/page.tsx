@@ -620,6 +620,11 @@ function PortalBody() {
   const [newCompanyName, setNewCompanyName] = useState("");
   const [newCompanyCode, setNewCompanyCode] = useState("");
   const [newOwnerEmail, setNewOwnerEmail] = useState("");
+  /** Initial CompanyServiceSettings for the new tenant (same flags as Workspace services modal). */
+  const [newWsProduction, setNewWsProduction] = useState(false);
+  const [newWsSeller, setNewWsSeller] = useState(false);
+  const [newWsBuyer, setNewWsBuyer] = useState(false);
+  const [newWsLeafLinkSync, setNewWsLeafLinkSync] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [createErr, setCreateErr] = useState("");
   const [createSuccess, setCreateSuccess] = useState<{
@@ -854,6 +859,12 @@ function PortalBody() {
           name,
           slug,
           ownerEmail,
+          workspaceServices: {
+            productionEnabled: newWsProduction,
+            salesSellerEnabled: newWsSeller,
+            salesBuyerEnabled: newWsBuyer,
+            leafLinkInventorySyncEnabled: newWsSeller && newWsLeafLinkSync,
+          },
         },
       });
 
@@ -868,6 +879,10 @@ function PortalBody() {
       setNewCompanyName("");
       setNewCompanyCode("");
       setNewOwnerEmail("");
+      setNewWsProduction(false);
+      setNewWsSeller(false);
+      setNewWsBuyer(false);
+      setNewWsLeafLinkSync(false);
     } catch (err: unknown) {
       setCreateErr(
         err instanceof Error ? err.message : "Could not create company.",
@@ -2021,6 +2036,107 @@ function PortalBody() {
                   name="nb-new-owner-email"
                 />
               </label>
+
+              <div
+                style={{
+                  padding: "14px 16px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(148, 163, 184, 0.25)",
+                  background: "rgba(15, 23, 42, 0.65)",
+                }}
+              >
+                <div style={{ fontWeight: 800, fontSize: 14, color: "#e2e8f0", marginBottom: 6 }}>
+                  Workspace modules (initial)
+                </div>
+                <p style={{ margin: "0 0 12px", color: "#64748b", fontSize: 13, lineHeight: 1.5 }}>
+                  Same toggles as Workspace services on an existing company. You can change these anytime after the
+                  tenant is created.
+                </p>
+                {(
+                  [
+                    [
+                      "production",
+                      "Production",
+                      "Cultivation, extraction, and packaging workflows.",
+                      newWsProduction,
+                      (v: boolean) => setNewWsProduction(v),
+                    ],
+                    [
+                      "seller",
+                      "Sales Platform — Seller Side",
+                      "List products on the NexBatch marketplace.",
+                      newWsSeller,
+                      (v: boolean) => {
+                        setNewWsSeller(v);
+                        if (!v) setNewWsLeafLinkSync(false);
+                      },
+                    ],
+                    [
+                      "buyer",
+                      "Sales Platform — Buyer Side",
+                      "Browse and purchase from other sellers.",
+                      newWsBuyer,
+                      (v: boolean) => setNewWsBuyer(v),
+                    ],
+                  ] as const
+                ).map(([key, title, desc, checked, setChecked]) => (
+                  <label
+                    key={key}
+                    style={{
+                      display: "flex",
+                      gap: 12,
+                      alignItems: "flex-start",
+                      cursor: "pointer",
+                      marginBottom: 10,
+                      fontSize: 13,
+                      color: "#cbd5e1",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => setChecked(e.target.checked)}
+                      disabled={createBusy}
+                      style={{ marginTop: 3, width: 18, height: 18, flexShrink: 0 }}
+                    />
+                    <span>
+                      <span style={{ fontWeight: 800, color: "#f8fafc" }}>{title}</span>
+                      <span style={{ display: "block", color: "#94a3b8", marginTop: 2, lineHeight: 1.45 }}>
+                        {desc}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+                <label
+                  style={{
+                    display: "flex",
+                    gap: 12,
+                    alignItems: "flex-start",
+                    cursor: newWsSeller ? "pointer" : "not-allowed",
+                    marginBottom: 0,
+                    fontSize: 13,
+                    color: newWsSeller ? "#cbd5e1" : "#64748b",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={newWsSeller && newWsLeafLinkSync}
+                    onChange={(e) => setNewWsLeafLinkSync(e.target.checked)}
+                    disabled={createBusy || !newWsSeller}
+                    style={{ marginTop: 3, width: 18, height: 18, flexShrink: 0 }}
+                  />
+                  <span>
+                    <span style={{ fontWeight: 800, color: newWsSeller ? "#f8fafc" : "#64748b" }}>
+                      LeafLink Inventory Sync
+                    </span>
+                    <span style={{ display: "block", color: "#94a3b8", marginTop: 2, lineHeight: 1.45 }}>
+                      Imports LeafLink inventory into seller marketplace products (requires Seller Side and LeafLink
+                      configured for the tenant).
+                    </span>
+                  </span>
+                </label>
+              </div>
+
               <button
                 type="submit"
                 disabled={createBusy}

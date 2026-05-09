@@ -153,6 +153,7 @@ export class MarketplaceProductService {
       price: number;
       quantityAvailable: number;
       imageUrl?: string | null;
+      imageDisplayMode?: string | null;
       availabilityStatus: "AVAILABLE" | "INTERNAL" | "NOT_AVAILABLE";
     },
   ): Promise<MarketplaceProduct> {
@@ -171,6 +172,7 @@ export class MarketplaceProductService {
         price: input.price,
         quantityAvailable: input.quantityAvailable,
         imageUrl: input.imageUrl ?? null,
+        imageDisplayMode: input.imageDisplayMode ?? null,
         availabilityStatus: input.availabilityStatus,
         source: "MANUAL",
       },
@@ -192,6 +194,7 @@ export class MarketplaceProductService {
       price: number;
       quantityAvailable: number;
       imageUrl: string | null;
+      imageDisplayMode: string | null;
       availabilityStatus: "AVAILABLE" | "INTERNAL" | "NOT_AVAILABLE";
     }>,
   ): Promise<MarketplaceProduct> {
@@ -214,6 +217,7 @@ export class MarketplaceProductService {
     if (input.price !== undefined) data.price = input.price;
     if (input.quantityAvailable !== undefined) data.quantityAvailable = input.quantityAvailable;
     if (input.imageUrl !== undefined) data.imageUrl = input.imageUrl;
+    if (input.imageDisplayMode !== undefined) data.imageDisplayMode = input.imageDisplayMode;
     if (input.availabilityStatus !== undefined) data.availabilityStatus = input.availabilityStatus;
     return prisma.marketplaceProduct.update({
       where: { id: p.id },

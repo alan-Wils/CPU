@@ -119,3 +119,23 @@ nextjs-portal {
     will-change: auto;
   }
 }
+
+/* Buyer marketplace — responsive product grid */
+.marketplace-product-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (min-width: 640px) {
+  .marketplace-product-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .marketplace-product-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
