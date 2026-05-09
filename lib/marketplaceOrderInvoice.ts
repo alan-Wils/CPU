@@ -191,21 +191,49 @@ export function buildMarketplaceOrderInvoiceHtml(data: MarketplaceOrderInvoiceDt
 </html>`;
 }
 
+/**
+ * Print invoice HTML. Avoids `window.open(..., "noopener")` — in Chromium/Edge that returns `null`
+ * while still opening a blank tab, so `document.write` never runs.
+ */
 export function printMarketplaceOrderInvoice(data: MarketplaceOrderInvoiceDto): void {
   const html = buildMarketplaceOrderInvoiceHtml(data);
-  const w = window.open("", "_blank", "noopener,noreferrer,width=900,height=1200");
-  if (!w) return;
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
-  w.focus();
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("title", "NexBatch invoice print");
+  iframe.setAttribute("aria-hidden", "true");
+  Object.assign(iframe.style, {
+    position: "fixed",
+    right: "0",
+    bottom: "0",
+    width: "0",
+    height: "0",
+    border: "0",
+    visibility: "hidden",
+  });
+  document.body.appendChild(iframe);
+  const doc = iframe.contentDocument;
+  const win = iframe.contentWindow;
+  if (!doc || !win) {
+    iframe.remove();
+    return;
+  }
+  doc.open();
+  doc.write(html);
+  doc.close();
+  const removeIframe = () => {
+    window.setTimeout(() => {
+      iframe.remove();
+    }, 500);
+  };
   window.setTimeout(() => {
     try {
-      w.print();
+      win.focus();
+      win.print();
     } catch {
       /* ignore */
+    } finally {
+      removeIframe();
     }
-  }, 250);
+  }, 150);
 }
 
 export function downloadMarketplaceOrderInvoiceHtml(data: MarketplaceOrderInvoiceDto): void {
