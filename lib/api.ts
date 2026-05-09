@@ -1092,9 +1092,15 @@ export async function salesMarketplaceProducts(params?: {
 }
 
 export async function salesMarketplaceSellers() {
-  return apiRequest<{ sellers: Array<{ id: string; name: string; slug: string; productCount: number }> }>(
-    "/api/sales/marketplace/sellers",
-  );
+  return apiRequest<{
+    sellers: Array<{
+      id: string;
+      name: string;
+      slug: string;
+      productCount: number;
+      companyInventoryLogoUrl?: string | null;
+    }>;
+  }>(`/api/sales/marketplace/sellers`);
 }
 
 export async function salesCreateOrder(body: {

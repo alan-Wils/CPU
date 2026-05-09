@@ -59,6 +59,8 @@ export type MarketplaceSellerRow = {
   name: string;
   slug: string;
   productCount: number;
+  /** Same source as product rows: `sales.inventoryPrintLogoUrl` in company config. */
+  companyInventoryLogoUrl?: string | null;
 };
 
 export class MarketplaceProductService {
@@ -263,9 +265,20 @@ export class MarketplaceProductService {
     const map = new Map<string, MarketplaceSellerRow>();
     for (const p of products) {
       const c = p.company;
-      const row = map.get(c.id) || { id: c.id, name: c.name, slug: c.slug, productCount: 0 };
-      row.productCount += 1;
-      map.set(c.id, row);
+      const logo = p.companyInventoryLogoUrl ?? null;
+      const existing = map.get(c.id);
+      if (!existing) {
+        map.set(c.id, {
+          id: c.id,
+          name: c.name,
+          slug: c.slug,
+          productCount: 1,
+          companyInventoryLogoUrl: logo,
+        });
+      } else {
+        existing.productCount += 1;
+        if (!existing.companyInventoryLogoUrl && logo) existing.companyInventoryLogoUrl = logo;
+      }
     }
     return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
   }

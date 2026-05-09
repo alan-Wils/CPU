@@ -945,7 +945,7 @@ export function BuyerMarketplaceClient() {
                 <MarketplaceProductImageFrame
                   apiBaseUrl={API_BASE_URL}
                   imageUrl={detailRow.raw.imageUrl}
-                  companyInventoryLogoUrl={detailRow.raw.companyInventoryLogoUrl}
+                  companyInventoryLogoUrl={null}
                   imageDisplayMode={detailRow.raw.imageDisplayMode}
                   objectFitOverride="cover"
                   fillParent
@@ -998,7 +998,8 @@ export function BuyerMarketplaceClient() {
               <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "#22d3ee", fontWeight: 800 }}>
                 {detailRow.displayCategoryBadge}
               </div>
-              <h3 style={{ margin: "8px 0 6px", fontSize: "clamp(1.25rem, 4vw, 1.5rem)", fontWeight: 900, lineHeight: 1.2 }}>
+              <BuyerSellerLogoAboveTitle logoUrl={detailRow.raw.companyInventoryLogoUrl} maxHeight={40} marginBottom={10} />
+              <h3 style={{ margin: "0 0 6px", fontSize: "clamp(1.25rem, 4vw, 1.5rem)", fontWeight: 900, lineHeight: 1.2 }}>
                 {detailRow.productName}
               </h3>
               <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#94a3b8", fontSize: 14 }}>
@@ -1288,6 +1289,46 @@ function CompanyChipBrand({ c }: { c: CompanyChip }) {
   );
 }
 
+/** Seller workspace inventory print logo — shown above product titles on buyer cards (image area shows photo or placeholder only). */
+function BuyerSellerLogoAboveTitle({
+  logoUrl,
+  maxHeight,
+  marginBottom = 8,
+}: {
+  logoUrl: string | null | undefined;
+  maxHeight: number;
+  marginBottom?: number;
+}) {
+  const raw = (logoUrl || "").trim();
+  if (!raw) return null;
+  const src = resolveCompanyLogoImgSrc(raw, API_BASE_URL);
+  return (
+    <div
+      style={{
+        marginBottom,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        minHeight: maxHeight,
+      }}
+    >
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        style={{
+          maxHeight,
+          maxWidth: "min(100%, 200px)",
+          width: "auto",
+          objectFit: "contain",
+          display: "block",
+        }}
+      />
+    </div>
+  );
+}
+
 function ModalStat({ label, value, span2 }: { label: string; value: string; span2?: boolean }) {
   return (
     <div style={span2 ? { gridColumn: "1 / -1" } : undefined}>
@@ -1350,7 +1391,7 @@ function ProductCard({
         <MarketplaceProductImageFrame
           apiBaseUrl={API_BASE_URL}
           imageUrl={row.raw.imageUrl}
-          companyInventoryLogoUrl={row.raw.companyInventoryLogoUrl}
+          companyInventoryLogoUrl={null}
           imageDisplayMode={row.raw.imageDisplayMode ?? "COVER"}
           height={140}
           placeholderBackground={PLACEHOLDER_BG}
@@ -1433,6 +1474,7 @@ function ProductCard({
         </button>
       </div>
       <div style={{ padding: "12px 12px 14px", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+        <BuyerSellerLogoAboveTitle logoUrl={row.raw.companyInventoryLogoUrl} maxHeight={36} marginBottom={2} />
         <div style={{ fontWeight: 900, fontSize: 15, lineHeight: 1.25 }}>{row.productName}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#94a3b8" }}>
           {row.sellerCompanyName}
