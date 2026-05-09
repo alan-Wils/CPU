@@ -602,7 +602,7 @@ export function BuyerMarketplaceClient() {
                   style={{
                     flex: "0 0 auto",
                     scrollSnapAlign: "start",
-                    minWidth: 132,
+                    minWidth: 184,
                     padding: "12px 14px",
                     borderRadius: 16,
                     border: active
@@ -1071,7 +1071,7 @@ export function BuyerMarketplaceClient() {
               <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "#22d3ee", fontWeight: 800 }}>
                 {detailRow.displayCategoryBadge}
               </div>
-              <BuyerSellerLogoAboveTitle logoUrl={detailRow.raw.companyInventoryLogoUrl} maxHeight={72} marginBottom={10} />
+              <BuyerSellerLogoAboveTitle logoUrl={detailRow.raw.companyInventoryLogoUrl} maxHeight={88} marginBottom={10} />
               <h3 style={{ margin: "0 0 6px", fontSize: "clamp(1.25rem, 4vw, 1.5rem)", fontWeight: 900, lineHeight: 1.2 }}>
                 {detailRow.productName}
               </h3>
@@ -1329,15 +1329,17 @@ function CompanyChipBrand({ c }: { c: CompanyChip }) {
   const raw = (c.logoUrl || "").trim();
   if (raw) {
     const src = resolveCompanyLogoImgSrc(raw, API_BASE_URL);
-    const chipLogoH = 52;
+    /** Taller + full chip width so marks with padding or portrait aspect read closer to wide wordmarks. */
+    const chipLogoH = 80;
     return (
       <div
         style={{
           minHeight: chipLogoH,
           marginBottom: 8,
+          width: "100%",
           display: "flex",
           alignItems: "center",
-          justifyContent: "flex-start",
+          justifyContent: "center",
         }}
       >
         <img
@@ -1349,6 +1351,7 @@ function CompanyChipBrand({ c }: { c: CompanyChip }) {
             maxHeight: chipLogoH,
             maxWidth: "100%",
             width: "auto",
+            height: "auto",
             objectFit: "contain",
             display: "block",
           }}
@@ -1387,7 +1390,7 @@ function BuyerSellerLogoAboveTitle({
         marginBottom,
         display: "flex",
         alignItems: "center",
-        justifyContent: "flex-start",
+        justifyContent: "center",
         minHeight: maxHeight,
         width: "100%",
       }}
@@ -1556,7 +1559,7 @@ function ProductCard({
         </button>
       </div>
       <div style={{ padding: "12px 12px 14px", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-        <BuyerSellerLogoAboveTitle logoUrl={row.raw.companyInventoryLogoUrl} maxHeight={56} marginBottom={2} />
+        <BuyerSellerLogoAboveTitle logoUrl={row.raw.companyInventoryLogoUrl} maxHeight={72} marginBottom={2} />
         <div style={{ fontWeight: 900, fontSize: 15, lineHeight: 1.25 }}>{row.productName}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#94a3b8" }}>
           {row.sellerCompanyName}
