@@ -400,8 +400,8 @@ export default function SellerDashboardView() {
                     outerRadius={78}
                     paddingAngle={2}
                   >
-                    {(pieData.length ? pieData : [{ color: "#334155" }]).map((entry, index) => (
-                      <Cell key={`c-${index}`} fill={(entry as { color?: string }).color || "#64748b"} />
+                    {(pieData.length ? pieData : [{ name: "None", value: 1, color: "#334155" }]).map((entry, index) => (
+                      <Cell key={`c-${index}`} fill={entry.color} />
                     ))}
                   </Pie>
                   <Tooltip />
