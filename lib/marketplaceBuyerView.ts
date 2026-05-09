@@ -32,7 +32,10 @@ export type CompanyFilter =
 export type BuyerMarketplaceRow = {
   raw: MarketplaceProductDto;
   isDemo: boolean;
+  /** Search text — includes seller company name/slug so users can search by brand. */
   haystack: string;
+  /** Category/min-order/quick-filter inference text — EXCLUDES company name to avoid brand collisions. */
+  inferenceText: string;
   sellerCompanyId: string;
   sellerCompanyName: string;
   productName: string;
@@ -88,6 +91,7 @@ function parseThcBadge(h: string): string | null {
   return null;
 }
 
+/** Text used for the search box — includes company name/slug so users can type "BudFox". */
 function buildHaystack(p: MarketplaceProductDto): string {
   const extra = p as { potencyLabel?: string | null; strainDominance?: string | null };
   return [
@@ -107,6 +111,48 @@ function buildHaystack(p: MarketplaceProductDto): string {
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
+}
+
+/**
+ * Text used for category/min-order/quick-filter inference. EXCLUDES the company name/slug — otherwise brands like
+ * "BudFox" match `/bud/` and stamp every product as "Flower". Seller-entered fields are still included.
+ */
+function buildInferenceText(p: MarketplaceProductDto): string {
+  const extra = p as { potencyLabel?: string | null; strainDominance?: string | null };
+  return [
+    p.name,
+    p.description,
+    p.category,
+    p.productType,
+    p.strainName,
+    p.flavorName,
+    p.sku,
+    p.unitSize,
+    extra.potencyLabel,
+    extra.strainDominance,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+/** Map seller-entered free text (`category` or `productType`) to a buyer-badge label. Falls back to the raw value. */
+function normalizeSellerCategoryToBadge(s: string | null | undefined): string {
+  const raw = String(s || "").trim();
+  if (!raw) return "";
+  const u = raw.toLowerCase();
+  if (/live\s*rosin/.test(u)) return "Live Rosin";
+  if (/live\s*resin/.test(u)) return "Live Resin";
+  if (/\brosin\b/.test(u)) return "Rosin";
+  if (/pre[-\s]?roll|joint/.test(u)) return "Pre-Rolls";
+  if (/edible|gummi|chocolate|drink/.test(u)) return "Edibles";
+  if (/vape|cart|cartridge|disposable/.test(u)) return "Vapes";
+  if (/tincture/.test(u)) return "Tinctures";
+  if (/topical|balm|lotion/.test(u)) return "Topicals";
+  if (/popcorn|smalls/.test(u)) return "Popcorn";
+  if (/^flower$|^bud$|^buds$|\bflower\b/.test(u)) return "Flower";
+  if (/sugar|diamond|badder|\bwax\b|shatter|\bdab\b|concentrate/.test(u)) return "Concentrates";
+  return raw;
 }
 
 /** Map free-text dominance to palette; empty if no standard tokens. */
@@ -133,49 +179,58 @@ function derivePriceUnit(unitSize: string | null | undefined): string {
   return unitSize!.trim() || "unit";
 }
 
-function deriveMinOrder(p: MarketplaceProductDto): { qty: number; unit: string } {
+function deriveMinOrder(p: MarketplaceProductDto, inferenceText: string): { qty: number; unit: string } {
   const u = derivePriceUnit(p.unitSize);
   if (u === "lb") return { qty: 1, unit: "lb" };
   if (u === "g") return { qty: Math.min(5, Math.max(1, Math.ceil(p.quantityAvailable > 0 ? 5 : 1))), unit: "g" };
   if (/\b100\b/.test(String(p.name)) && /pre-?roll|preroll/i.test(String(p.name))) return { qty: 100, unit: "Units" };
-  if (/gumm|edible/i.test(buildHaystack(p))) return { qty: 10, unit: "Units" };
-  if (/vape|cart|disposable/i.test(buildHaystack(p))) return { qty: 50, unit: "Units" };
+  if (/gumm|edible/i.test(inferenceText)) return { qty: 10, unit: "Units" };
+  if (/vape|cart|disposable/i.test(inferenceText)) return { qty: 50, unit: "Units" };
   return { qty: 1, unit: u === "unit" ? "Units" : u };
 }
 
-function displayCategoryFromProduct(p: MarketplaceProductDto, haystack: string): string {
+/** Long category line (modal/uppercase eyebrow). Trusts seller `productType`/`category`; falls back to inference. */
+function displayCategoryFromProduct(p: MarketplaceProductDto, inferenceText: string): string {
   const pt = String(p.productType || "").trim();
   const cat = String(p.category || "").trim();
   if (pt) return pt;
   if (cat) return cat;
-  if (/live rosin/i.test(haystack)) return "Live Rosin";
-  if (/live resin/i.test(haystack)) return "Live Resin";
-  if (/rosin/i.test(haystack)) return "Rosin";
-  if (/gumm|edible|chocolate/i.test(haystack)) return "Edible";
-  if (/vape|cart|disposable/i.test(haystack)) return "Vape";
-  if (/flower|bud|smalls|popcorn/i.test(haystack)) return "Flower";
-  if (/pre-?roll|joint/i.test(haystack)) return "Pre-Rolls";
-  if (/diamond|concentrate|badder|wax|shatter|sugar/i.test(haystack)) return "Concentrate";
+  if (/live rosin/i.test(inferenceText)) return "Live Rosin";
+  if (/live resin/i.test(inferenceText)) return "Live Resin";
+  if (/\brosin\b/i.test(inferenceText)) return "Rosin";
+  if (/gumm|edible|chocolate/i.test(inferenceText)) return "Edible";
+  if (/vape|cart|disposable/i.test(inferenceText)) return "Vape";
+  if (/\bflower\b|\bbud\b|smalls|popcorn/i.test(inferenceText)) return "Flower";
+  if (/pre-?roll|joint/i.test(inferenceText)) return "Pre-Rolls";
+  if (/diamond|concentrate|badder|\bwax\b|shatter|sugar/i.test(inferenceText)) return "Concentrate";
   return "Cannabis";
 }
 
-function badgeCategoryForCard(haystack: string, display: string): string {
-  if (/live rosin/i.test(haystack)) return "Live Rosin";
-  if (/live resin/i.test(haystack)) return "Live Resin";
-  if (/\brosin\b/i.test(haystack)) return "Rosin";
-  if (/pre-?roll|joint/i.test(haystack)) return "Pre-Rolls";
-  if (/gumm|edible|chocolate/i.test(haystack)) return "Edibles";
-  if (/vape|cart|cartridge|disposable/i.test(haystack)) return "Vapes";
-  if (/tincture/i.test(haystack)) return "Tinctures";
-  if (/topical|balm|lotion/i.test(haystack)) return "Topicals";
-  if (/popcorn|smalls/i.test(haystack)) return "Popcorn";
-  if (/flower|bud/i.test(haystack)) return "Flower";
-  if (/diamond|badder|wax|shatter|sugar|dab/i.test(haystack)) return "Concentrates";
-  return display;
+/**
+ * Top-left badge on buyer cards. Trusts the seller's explicit `productType`/`category` (normalized to a buyer label),
+ * and only falls back to text inference when neither field is set. Inference text excludes the company name/slug so
+ * brands like "BudFox" don't mis-tag every product.
+ */
+function badgeCategoryForCard(p: MarketplaceProductDto, inferenceText: string): string {
+  const fromSeller = normalizeSellerCategoryToBadge(p.productType) || normalizeSellerCategoryToBadge(p.category);
+  if (fromSeller) return fromSeller;
+  if (/live rosin/i.test(inferenceText)) return "Live Rosin";
+  if (/live resin/i.test(inferenceText)) return "Live Resin";
+  if (/\brosin\b/i.test(inferenceText)) return "Rosin";
+  if (/pre-?roll|joint/i.test(inferenceText)) return "Pre-Rolls";
+  if (/gumm|edible|chocolate/i.test(inferenceText)) return "Edibles";
+  if (/vape|cart|cartridge|disposable/i.test(inferenceText)) return "Vapes";
+  if (/tincture/i.test(inferenceText)) return "Tinctures";
+  if (/topical|balm|lotion/i.test(inferenceText)) return "Topicals";
+  if (/popcorn|smalls/i.test(inferenceText)) return "Popcorn";
+  if (/sugar|diamond|badder|\bwax\b|shatter|\bdab\b/i.test(inferenceText)) return "Concentrates";
+  if (/\bflower\b|\bbud\b|\bbuds\b/i.test(inferenceText)) return "Flower";
+  return "Cannabis";
 }
 
 export function normalizeBuyerProduct(p: MarketplaceProductDto): BuyerMarketplaceRow {
   const haystack = buildHaystack(p);
+  const inferenceText = buildInferenceText(p);
   const inferred = inferStrainType(`${p.strainName || ""} ${p.name} ${p.description || ""}`);
   const extra = p as { potencyLabel?: string | null; strainDominance?: string | null };
   const sellerDom = String(extra.strainDominance || "").trim();
@@ -187,12 +242,12 @@ export function normalizeBuyerProduct(p: MarketplaceProductDto): BuyerMarketplac
     if (sellerDom && !enumFromSeller) dominanceStyle = "neutral";
     else dominanceStyle = enumFromSeller || inferred || "neutral";
   }
-  const potencyDisplay = sellerPotency || parseThcBadge(haystack) || null;
+  const potencyDisplay = sellerPotency || parseThcBadge(inferenceText) || null;
   const { rating, reviewCount } = stableRating(p.id);
   const sellerCompanyName = p.company?.name || "Seller";
-  const displayCategoryBadge = badgeCategoryForCard(haystack, displayCategoryFromProduct(p, haystack));
+  const displayCategoryBadge = badgeCategoryForCard(p, inferenceText);
   const priceUnit = derivePriceUnit(p.unitSize);
-  const { qty: minOrderQty, unit: minOrderUnit } = deriveMinOrder(p);
+  const { qty: minOrderQty, unit: minOrderUnit } = deriveMinOrder(p, inferenceText);
   const tags: string[] = [];
   if (p.strainName) tags.push(p.strainName);
   if (p.flavorName) tags.push(p.flavorName);
@@ -217,10 +272,11 @@ export function normalizeBuyerProduct(p: MarketplaceProductDto): BuyerMarketplac
     raw: p,
     isDemo: p.id.startsWith(DEMO_PREFIX),
     haystack,
+    inferenceText,
     sellerCompanyId: p.companyId,
     sellerCompanyName,
     productName: p.name,
-    categoryLabel: displayCategoryFromProduct(p, haystack),
+    categoryLabel: displayCategoryFromProduct(p, inferenceText),
     displayCategoryBadge,
     priceUnit,
     minOrderQty,
@@ -256,7 +312,7 @@ function hayHasAny(h: string, words: string[]): boolean {
 
 export function matchesCategory(row: BuyerMarketplaceRow, cat: MarketplaceCategoryId): boolean {
   if (cat === "all") return true;
-  const h = row.haystack;
+  const h = row.inferenceText;
   switch (cat) {
     case "flower":
       return hayHasAny(h, ["flower", " bud", "top shelf", "buds"]) && !hayHasAny(h, ["pre-roll", "preroll", "joint"]);
@@ -301,7 +357,7 @@ export function matchesCategory(row: BuyerMarketplaceRow, cat: MarketplaceCatego
 
 export function matchesQuickFilter(row: BuyerMarketplaceRow, q: QuickFilterId | null): boolean {
   if (!q) return true;
-  const h = row.haystack;
+  const h = row.inferenceText;
   switch (q) {
     case "flavors":
       return (
