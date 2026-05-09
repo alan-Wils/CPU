@@ -61,8 +61,6 @@ export default function SellerPlatformPage() {
     unitSize: "",
     price: "",
     quantityAvailable: "",
-    potencyLabel: "",
-    strainDominance: "",
     availabilityStatus: "INTERNAL" as "AVAILABLE" | "INTERNAL" | "NOT_AVAILABLE",
     imageDisplayMode: "AUTO" as "AUTO" | "CONTAIN" | "COVER",
   });
@@ -139,8 +137,6 @@ export default function SellerPlatformPage() {
       unitSize: "",
       price: "",
       quantityAvailable: "",
-      potencyLabel: "",
-      strainDominance: "",
       availabilityStatus: "INTERNAL",
       imageDisplayMode: "AUTO",
     });
@@ -162,8 +158,6 @@ export default function SellerPlatformPage() {
       unitSize: p.unitSize || "",
       price: String(p.price),
       quantityAvailable: String(p.quantityAvailable),
-      potencyLabel: p.potencyLabel || "",
-      strainDominance: p.strainDominance || "",
       availabilityStatus: p.availabilityStatus as typeof form.availabilityStatus,
       imageDisplayMode: (p.imageDisplayMode as typeof form.imageDisplayMode) || "AUTO",
     });
@@ -193,8 +187,6 @@ export default function SellerPlatformPage() {
         quantityAvailable: qty,
         availabilityStatus: form.availabilityStatus,
         imageDisplayMode: form.imageDisplayMode,
-        potencyLabel: form.potencyLabel.trim() || null,
-        strainDominance: form.strainDominance.trim() || null,
       };
       let productId = editId;
       if (editId) {
@@ -326,8 +318,34 @@ export default function SellerPlatformPage() {
         color: "#e2e8f0",
       }}
     >
-      {services?.productionEnabled ? (
-        <div style={{ marginBottom: 18 }}>
+      <div
+        style={{
+          marginBottom: 18,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 10,
+          alignItems: "center",
+        }}
+      >
+        <Link
+          href="/seller/dashboard"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 16px",
+            borderRadius: 12,
+            border: "1px solid rgba(167, 139, 250, 0.5)",
+            background: "linear-gradient(135deg, rgba(91,33,182,0.35), rgba(15,23,42,0.92))",
+            color: "#e9d5ff",
+            fontWeight: 800,
+            fontSize: 14,
+            textDecoration: "none",
+          }}
+        >
+          ← Seller dashboard
+        </Link>
+        {services?.productionEnabled ? (
           <Link
             href="/"
             style={{
@@ -346,8 +364,8 @@ export default function SellerPlatformPage() {
           >
             ← Back to production
           </Link>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
       <div
         style={{
           display: "flex",
@@ -791,14 +809,13 @@ export default function SellerPlatformPage() {
                     color: "#fff",
                   }}
                 >
-                  <option value="AUTO">Auto — photos fill the card; logos shrink to fit without cropping</option>
+                  <option value="AUTO">Auto — shrink to fit (no zoom-in past native size)</option>
                   <option value="CONTAIN">Show full image — letterbox if needed</option>
                   <option value="COVER">Fill frame — may crop</option>
                 </select>
                 <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, lineHeight: 1.45 }}>
-                  Applies to seller grid and buyer marketplace. Auto uses a full-bleed look for uploaded photos and a
-                  contained look when only your inventory logo is shown. On the buyer catalog, logo-only listings use that
-                  same contained logo scaling even if you chose Cover (Cover still applies to real product photos there).
+                  Applies to seller product grid and buyer marketplace. Contain works well for tall product shots; Auto
+                  keeps wide logos from filling the whole strip.
                 </div>
               </label>
             </div>
@@ -809,8 +826,6 @@ export default function SellerPlatformPage() {
               ["productType", "Product type", "text"],
               ["strainName", "Strain", "text"],
               ["flavorName", "Flavor", "text"],
-              ["potencyLabel", "Potency (buyers)", "text"],
-              ["strainDominance", "Dominance (buyers)", "text"],
               ["sku", "SKU", "text"],
               ["unitSize", "Unit size", "text"],
               ["price", "Price", "number"],
