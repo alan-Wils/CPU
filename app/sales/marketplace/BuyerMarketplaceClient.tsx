@@ -23,6 +23,7 @@ import {
 } from "@/lib/api";
 import BrandLogo from "@/components/BrandLogo";
 import MarketplaceOrderInvoiceModal from "@/components/MarketplaceOrderInvoiceModal";
+import MarketplaceProductGalleryCarousel from "@/components/MarketplaceProductGalleryCarousel";
 import MarketplaceProductImageFrame from "@/components/MarketplaceProductImageFrame";
 import {
   buildCompanyChips,
@@ -1027,39 +1028,14 @@ export function BuyerMarketplaceClient() {
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div style={{ position: "relative", width: "100%" }}>
-              <div
-                style={{
-                  position: "relative",
-                  width: "100%",
-                  aspectRatio: "16 / 10",
-                  maxHeight: "min(46vh, 340px)",
-                  borderRadius: "22px 22px 0 0",
-                  overflow: "hidden",
-                  background: "#020617",
-                }}
-              >
-                <MarketplaceProductImageFrame
-                  apiBaseUrl={API_BASE_URL}
-                  imageUrl={detailRow.raw.imageUrl}
-                  companyInventoryLogoUrl={detailRow.raw.companyInventoryLogoUrl ?? null}
-                  imageDisplayMode={detailRow.raw.imageDisplayMode}
-                  objectFitOverride="cover"
-                  relaxCoverForLogoFallback={!(detailRow.raw.imageUrl || "").trim()}
-                  fillParent
-                  height={320}
-                  placeholderBackground={PLACEHOLDER_BG}
-                  borderRadius={0}
-                />
-                <div
-                  aria-hidden
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    background: "linear-gradient(180deg, rgba(2,6,23,0.15) 0%, rgba(2,6,23,0.55) 100%)",
-                    pointerEvents: "none",
-                  }}
-                />
-              </div>
+              <MarketplaceProductGalleryCarousel
+                apiBaseUrl={API_BASE_URL}
+                primaryImageUrl={detailRow.raw.imageUrl}
+                extraImages={detailRow.raw.extraImages ?? null}
+                companyInventoryLogoUrl={detailRow.raw.companyInventoryLogoUrl ?? null}
+                imageDisplayMode={detailRow.raw.imageDisplayMode}
+                placeholderBackground={PLACEHOLDER_BG}
+              />
               <button
                 type="button"
                 aria-label="Close product details"
