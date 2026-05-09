@@ -282,6 +282,24 @@ nextjs-portal {
   opacity: 1;
 }
 
+/* Fullscreen API: keep shell background consistent (avoids flash of default white). */
+html:fullscreen,
+html:-webkit-full-screen {
+  background-color: #020617;
+}
+
+html:fullscreen body,
+html:-webkit-full-screen body {
+  background-color: #020617;
+}
+
+/* Buyer marketplace shell — dvh avoids mobile browser chrome; harmless on desktop */
+.buyer-marketplace-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  box-sizing: border-box;
+}
+
 /* Buyer marketplace — responsive product grid */
 .marketplace-product-grid {
   display: grid;

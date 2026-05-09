@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import CompanyTimezoneSync from "@/components/CompanyTimezoneSync";
@@ -27,6 +27,13 @@ export const metadata: Metadata = {
   title: "NexBatch",
   description: "NexBatch — cultivation, extraction, packaging, and batch tracking.",
   manifest: "/manifest.json",
+  themeColor: "#020617",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
   themeColor: "#020617",
 };
 

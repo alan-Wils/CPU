@@ -47,6 +47,7 @@ import {
 } from "@/lib/marketplaceBuyerView";
 import { resolveCompanyLogoImgSrc } from "@/lib/inventoryExport";
 import { isLoggedIn, isPortalSession } from "@/lib/auth";
+import DocumentFullscreenButton from "@/components/DocumentFullscreenButton";
 import MarketplaceBuyerBottomNav from "@/components/MarketplaceBuyerBottomNav";
 
 const PLACEHOLDER_BG =
@@ -398,8 +399,8 @@ export function BuyerMarketplaceClient() {
 
   return (
     <div
+      className="buyer-marketplace-shell"
       style={{
-        minHeight: "100vh",
         background: "linear-gradient(180deg, #020617 0%, #0f172a 45%, #020617 100%)",
         color: "#f8fafc",
         paddingBottom: 96,
@@ -428,6 +429,7 @@ export function BuyerMarketplaceClient() {
           <span style={{ fontWeight: 800, fontSize: 18, letterSpacing: "-0.02em" }}>NexBatch</span>
         </Link>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <DocumentFullscreenButton style={iconBtn()} />
           <Link
             href="/messages"
             style={{

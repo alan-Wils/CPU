@@ -92,7 +92,7 @@ const navShell: CSSProperties = {
   position: "fixed",
   left: 12,
   right: 12,
-  bottom: 12,
+  bottom: "max(12px, env(safe-area-inset-bottom, 0px))",
   zIndex: 40,
   display: "grid",
   gridTemplateColumns: "repeat(5, 1fr)",

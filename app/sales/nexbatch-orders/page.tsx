@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
+import DocumentFullscreenButton from "@/components/DocumentFullscreenButton";
 import MarketplaceOrderInvoiceModal from "@/components/MarketplaceOrderInvoiceModal";
 import MarketplaceBuyerBottomNav from "@/components/MarketplaceBuyerBottomNav";
 import { fetchCompanyWithServices, salesBuyerOrders, type CompanyServicesDto } from "@/lib/api";
@@ -129,20 +130,36 @@ export default function NexBatchBuyerOrdersPage() {
             </p>
           </div>
         </div>
-        <Link
-          href="/sales/marketplace"
-          style={{
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid rgba(34, 211, 238, 0.45)",
-            color: "#7dd3fc",
-            fontWeight: 800,
-            fontSize: 13,
-            textDecoration: "none",
-          }}
-        >
-          ← Marketplace
-        </Link>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <DocumentFullscreenButton
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: 12,
+              border: "1px solid rgba(148, 163, 184, 0.25)",
+              background: "rgba(15, 23, 42, 0.6)",
+              color: "#e2e8f0",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+            }}
+          />
+          <Link
+            href="/sales/marketplace"
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: "1px solid rgba(34, 211, 238, 0.45)",
+              color: "#7dd3fc",
+              fontWeight: 800,
+              fontSize: 13,
+              textDecoration: "none",
+            }}
+          >
+            ← Marketplace
+          </Link>
+        </div>
       </header>
 
       <p style={{ fontSize: 13, color: "#64748b", marginBottom: 18, lineHeight: 1.5 }}>
