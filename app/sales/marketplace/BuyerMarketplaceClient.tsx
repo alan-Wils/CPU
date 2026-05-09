@@ -37,11 +37,13 @@ import {
   normalizeBuyerProduct,
   sortBuyerRows,
   type BuyerMarketplaceRow,
+  type CompanyChip,
   type CompanyFilter,
   type MarketplaceCategoryId,
   type MarketplaceSortId,
   type QuickFilterId,
 } from "@/lib/marketplaceBuyerView";
+import { resolveCompanyLogoImgSrc } from "@/lib/inventoryExport";
 import { isLoggedIn, isPortalSession } from "@/lib/auth";
 
 const PLACEHOLDER_BG =
@@ -81,12 +83,20 @@ const QUICK_CHIPS: { id: QuickFilterId; label: string; icon: string }[] = [
   { id: "smallBatch", label: "Small Batch", icon: "◇" },
 ];
 
-type SellerRow = { id: string; name: string; slug: string; productCount: number };
+type SellerRow = {
+  id: string;
+  name: string;
+  slug: string;
+  productCount: number;
+  companyInventoryLogoUrl?: string | null;
+};
 
 type CartLine = { product: MarketplaceProductDto; quantity: number };
 
 export function BuyerMarketplaceClient() {
   const [services, setServices] = useState<CompanyServicesDto | null>(null);
+  /** Current workspace company id — used to hide "add to cart" on own listings (checkout disallows self-buy). */
+  const [buyerCompanyId, setBuyerCompanyId] = useState<string | null>(null);
   const [servicesErr, setServicesErr] = useState("");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -138,6 +148,8 @@ export function BuyerMarketplaceClient() {
       const svcOut = await fetchCompanyWithServices();
       const s = (svcOut.services as CompanyServicesDto) || null;
       setServices(s);
+      const comp = svcOut.company as { id?: string } | null;
+      setBuyerCompanyId(comp?.id ? String(comp.id) : null);
       if (!s?.salesBuyerEnabled) {
         setSellers([]);
         setRawProducts([]);
@@ -158,6 +170,7 @@ export function BuyerMarketplaceClient() {
       setErr(msg);
       setServicesErr(msg);
       setServices(null);
+      setBuyerCompanyId(null);
     } finally {
       setLoading(false);
     }
@@ -218,10 +231,22 @@ export function BuyerMarketplaceClient() {
     persistFavorites(next);
   }
 
+  function isOwnCompanyListing(p: MarketplaceProductDto): boolean {
+    if (!buyerCompanyId) return false;
+    const sid = String(p.companyId || p.company?.id || "").trim();
+    return Boolean(sid && sid === buyerCompanyId);
+  }
+
   function addToCart(p: MarketplaceProductDto) {
     setCartMsg("");
     if (isDemoProductId(p.id)) {
       setCartMsg("This is a sample listing. Connect seller workspaces to place real orders.");
+      return;
+    }
+    if (isOwnCompanyListing(p)) {
+      setCartMsg(
+        "You cannot purchase your own company's listings. Use Seller Platform to manage inventory and orders.",
+      );
       return;
     }
     const sid = p.companyId || p.company?.id || "";
@@ -252,6 +277,10 @@ export function BuyerMarketplaceClient() {
     if (!cart.length) return;
     if (cart.some((l) => isDemoProductId(l.product.id))) {
       setErr("Remove sample products from your cart before submitting an order.");
+      return;
+    }
+    if (cart.some((l) => isOwnCompanyListing(l.product))) {
+      setErr("Remove your own company's products from the cart — wholesale checkout requires a different seller.");
       return;
     }
     const sellerCompanyId = cartSellerId;
@@ -519,7 +548,7 @@ export function BuyerMarketplaceClient() {
                     boxShadow: active ? "0 0 20px rgba(34, 211, 238, 0.18)" : "none",
                   }}
                 >
-                  <div style={{ fontSize: 20, marginBottom: 6 }}>{c.icon}</div>
+                  <CompanyChipBrand c={c} />
                   <div style={{ fontWeight: 800, fontSize: 13, lineHeight: 1.25 }}>{c.label}</div>
                   {typeof c.productCount === "number" ? (
                     <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>{c.productCount} products</div>
@@ -721,6 +750,7 @@ export function BuyerMarketplaceClient() {
                 <ProductCard
                   key={row.raw.id}
                   row={row}
+                  ownCompany={isOwnCompanyListing(row.raw)}
                   favorite={favorites.has(row.raw.id)}
                   onToggleFavorite={toggleFavorite}
                   onOpen={() => setDetailRow(row)}
@@ -1067,16 +1097,35 @@ export function BuyerMarketplaceClient() {
               >
                 <BeakerIcon /> Lab tested · COA available
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  addToCart(detailRow.raw);
-                  setCartOpen(true);
-                }}
-                style={{ ...primaryBtn(), width: "100%", padding: "15px 18px" }}
-              >
-                Add to Cart
-              </button>
+              {isOwnCompanyListing(detailRow.raw) ? (
+                <p
+                  style={{
+                    margin: 0,
+                    padding: "14px 16px",
+                    borderRadius: 12,
+                    background: "rgba(30, 41, 59, 0.75)",
+                    border: "1px solid rgba(148, 163, 184, 0.35)",
+                    color: "#94a3b8",
+                    fontSize: 14,
+                    lineHeight: 1.5,
+                    fontWeight: 600,
+                  }}
+                >
+                  This listing is from your workspace. You can preview it here; use Seller Platform to edit or sell.
+                  Wholesale checkout cannot include your own company as the seller.
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    addToCart(detailRow.raw);
+                    setCartOpen(true);
+                  }}
+                  style={{ ...primaryBtn(), width: "100%", padding: "15px 18px" }}
+                >
+                  Add to Cart
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setDetailRow(null)}
@@ -1217,6 +1266,43 @@ export function BuyerMarketplaceClient() {
   );
 }
 
+function CompanyChipBrand({ c }: { c: CompanyChip }) {
+  const raw = (c.logoUrl || "").trim();
+  if (raw) {
+    const src = resolveCompanyLogoImgSrc(raw, API_BASE_URL);
+    return (
+      <div
+        style={{
+          height: 44,
+          marginBottom: 8,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-start",
+        }}
+      >
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          style={{
+            maxHeight: 44,
+            maxWidth: "100%",
+            width: "auto",
+            objectFit: "contain",
+            display: "block",
+          }}
+        />
+      </div>
+    );
+  }
+  return (
+    <div style={{ fontSize: 22, marginBottom: 6, lineHeight: 1, color: "#e2e8f0" }} aria-hidden>
+      {c.icon}
+    </div>
+  );
+}
+
 function ModalStat({ label, value, span2 }: { label: string; value: string; span2?: boolean }) {
   return (
     <div style={span2 ? { gridColumn: "1 / -1" } : undefined}>
@@ -1239,12 +1325,14 @@ function ModalStat({ label, value, span2 }: { label: string; value: string; span
 
 function ProductCard({
   row,
+  ownCompany,
   favorite,
   onToggleFavorite,
   onOpen,
   onAdd,
 }: {
   row: BuyerMarketplaceRow;
+  ownCompany: boolean;
   favorite: boolean;
   onToggleFavorite: (id: string, e: ReactMouseEvent) => void;
   onOpen: () => void;
@@ -1325,9 +1413,15 @@ function ProductCard({
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            onAdd();
+            if (!ownCompany) onAdd();
           }}
-          aria-label="Add to cart"
+          disabled={ownCompany}
+          title={
+            ownCompany
+              ? "Cannot add your own company's listings to cart"
+              : "Add to cart"
+          }
+          aria-label={ownCompany ? "Cannot add own company listing" : "Add to cart"}
           style={{
             position: "absolute",
             bottom: 8,
@@ -1335,16 +1429,19 @@ function ProductCard({
             width: 44,
             height: 44,
             borderRadius: 999,
-            border: "none",
-            background: "linear-gradient(135deg, #22d3ee, #06b6d4)",
-            color: "#020617",
+            border: ownCompany ? "1px solid rgba(71, 85, 105, 0.6)" : "none",
+            background: ownCompany
+              ? "rgba(30, 41, 59, 0.85)"
+              : "linear-gradient(135deg, #22d3ee, #06b6d4)",
+            color: ownCompany ? "#64748b" : "#020617",
             fontSize: 22,
             fontWeight: 900,
-            cursor: "pointer",
-            boxShadow: "0 4px 16px rgba(34, 211, 238, 0.35)",
+            cursor: ownCompany ? "not-allowed" : "pointer",
+            boxShadow: ownCompany ? "none" : "0 4px 16px rgba(34, 211, 238, 0.35)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            opacity: ownCompany ? 0.75 : 1,
           }}
         >
           +

@@ -59,6 +59,8 @@ export type MarketplaceSellerRow = {
   name: string;
   slug: string;
   productCount: number;
+  /** `sales.inventoryPrintLogoUrl` from company config (same as product card fallback). */
+  companyInventoryLogoUrl?: string | null;
 };
 
 export class MarketplaceProductService {
@@ -93,7 +95,8 @@ export class MarketplaceProductService {
       select: { companyId: true },
     });
     const allowedSellerIds = new Set(sellerIdsWithFlag.map((r) => r.companyId));
-    allowedSellerIds.delete(buyerCompanyId);
+    // Include the buyer's own company when they run Seller Side too, so they can preview how listings look
+    // (orders from self are still rejected in MarketplaceOrderService).
     const sellerIdList = [...allowedSellerIds];
     if (sellerIdList.length === 0) return [];
     const where: Prisma.MarketplaceProductWhereInput = {
@@ -258,7 +261,12 @@ export class MarketplaceProductService {
       row.productCount += 1;
       map.set(c.id, row);
     }
-    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const rows = [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const logoMap = await inventoryPrintLogoUrlByCompanyIds(rows.map((r) => r.id));
+    return rows.map((r) => ({
+      ...r,
+      companyInventoryLogoUrl: logoMap.get(r.id) ?? null,
+    }));
   }
 
   async getAvailableForOrder(productId: string, sellerCompanyId: string): Promise<MarketplaceProduct | null> {

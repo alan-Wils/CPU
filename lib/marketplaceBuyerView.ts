@@ -338,8 +338,10 @@ export type CompanyChip = {
   key: string;
   filter: CompanyFilter;
   label: string;
-  /** Emoji or short glyph for icon area */
+  /** Emoji or short glyph when no `logoUrl` */
   icon: string;
+  /** Resolved from API: `sales.inventoryPrintLogoUrl` for that seller workspace. */
+  logoUrl?: string | null;
   productCount?: number;
 };
 
@@ -348,9 +350,9 @@ function normalizeKey(s: string): string {
 }
 
 function findSellerForShowcaseName(
-  sellers: Array<{ id: string; name: string; productCount: number }>,
+  sellers: Array<{ id: string; name: string; productCount: number; companyInventoryLogoUrl?: string | null }>,
   label: string,
-): { id: string; name: string; productCount: number } | null {
+): { id: string; name: string; productCount: number; companyInventoryLogoUrl?: string | null } | null {
   const nk = normalizeKey(label);
   return (
     sellers.find((s) => normalizeKey(s.name) === nk) ||
@@ -360,7 +362,7 @@ function findSellerForShowcaseName(
 }
 
 export function buildCompanyChips(
-  sellers: Array<{ id: string; name: string; productCount: number }>,
+  sellers: Array<{ id: string; name: string; productCount: number; companyInventoryLogoUrl?: string | null }>,
 ): CompanyChip[] {
   const chips: CompanyChip[] = [
     { key: "all", filter: { kind: "all" }, label: "All Companies", icon: "▣", productCount: undefined },
@@ -375,6 +377,7 @@ export function buildCompanyChips(
         filter: { kind: "seller", id: hit.id, name: hit.name },
         label: hit.name,
         icon: label.slice(0, 1),
+        logoUrl: hit.companyInventoryLogoUrl ?? null,
         productCount: hit.productCount,
       });
     } else {
@@ -393,6 +396,7 @@ export function buildCompanyChips(
       filter: { kind: "seller", id: s.id, name: s.name },
       label: s.name,
       icon: s.name.slice(0, 1),
+      logoUrl: s.companyInventoryLogoUrl ?? null,
       productCount: s.productCount,
     });
   }
