@@ -960,6 +960,35 @@ export function BuyerMarketplaceClient() {
                     pointerEvents: "none",
                   }}
                 />
+                {(() => {
+                  const logoRaw = (detailRow.raw.companyInventoryLogoUrl || "").trim();
+                  const hasPhoto = !!(detailRow.raw.imageUrl || "").trim();
+                  if (!hasPhoto || !logoRaw) return null;
+                  return (
+                    <div
+                      style={{
+                        position: "absolute",
+                        bottom: 12,
+                        left: 12,
+                        zIndex: 2,
+                        maxWidth: "52%",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      <img
+                        src={resolveCompanyLogoImgSrc(logoRaw, API_BASE_URL)}
+                        alt=""
+                        style={{
+                          maxHeight: 40,
+                          maxWidth: "100%",
+                          width: "auto",
+                          objectFit: "contain",
+                          filter: "drop-shadow(0 2px 14px rgba(0,0,0,0.9))",
+                        }}
+                      />
+                    </div>
+                  );
+                })()}
               </div>
               <button
                 type="button"
@@ -1005,7 +1034,7 @@ export function BuyerMarketplaceClient() {
               </div>
               {(() => {
                 const bits = [
-                  detailRow.strainType,
+                  detailRow.raw.strainName || undefined,
                   detailRow.raw.flavorName || undefined,
                   detailRow.raw.sku || undefined,
                 ].filter(Boolean) as string[];
@@ -1058,6 +1087,8 @@ export function BuyerMarketplaceClient() {
                   border: "1px solid rgba(51, 65, 85, 0.55)",
                 }}
               >
+                <ModalStat label="Potency" value={detailRow.potencyDisplay || "—"} />
+                <ModalStat label="Dominance" value={detailRow.dominanceBadgeText || "—"} />
                 <ModalStat label="Price" value={`$${detailRow.raw.price.toFixed(2)} / ${detailRow.priceUnit}`} />
                 <ModalStat label="Available" value={String(detailRow.raw.quantityAvailable)} />
                 <ModalStat label="Min. order" value={`${detailRow.minOrderQty} ${detailRow.minOrderUnit}`} span2 />
@@ -1320,7 +1351,9 @@ function ProductCard({
   onOpen: () => void;
   onAdd: () => void;
 }) {
-  const strainStyle = strainBadgeStyle(row.strainType);
+  const strainStyle = strainBadgeStyle(row.dominanceStyle);
+  const productPhoto = !!(row.raw.imageUrl || "").trim();
+  const logoRaw = (row.raw.companyInventoryLogoUrl || "").trim();
   return (
     <div
       role="button"
@@ -1352,6 +1385,32 @@ function ProductCard({
           height={140}
           placeholderBackground={PLACEHOLDER_BG}
         />
+        {productPhoto && logoRaw ? (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 10,
+              left: 10,
+              zIndex: 2,
+              maxWidth: "55%",
+              pointerEvents: "none",
+            }}
+          >
+            <img
+              src={resolveCompanyLogoImgSrc(logoRaw, API_BASE_URL)}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              style={{
+                maxHeight: 34,
+                maxWidth: "100%",
+                width: "auto",
+                objectFit: "contain",
+                filter: "drop-shadow(0 2px 12px rgba(0,0,0,0.88))",
+              }}
+            />
+          </div>
+        ) : null}
         <span
           style={{
             position: "absolute",
@@ -1441,7 +1500,7 @@ function ProductCard({
           <span>({row.reviewCount})</span>
           {row.state ? <span style={{ marginLeft: 4, color: "#64748b" }}>{row.state}</span> : null}
         </div>
-        {row.strainType ? (
+        {row.dominanceBadgeText ? (
           <span
             style={{
               alignSelf: "flex-start",
@@ -1452,10 +1511,10 @@ function ProductCard({
               ...strainStyle,
             }}
           >
-            {row.strainType}
+            {row.dominanceBadgeText}
           </span>
         ) : null}
-        {row.thcBadge ? (
+        {row.potencyDisplay ? (
           <span
             style={{
               alignSelf: "flex-start",
@@ -1468,7 +1527,7 @@ function ProductCard({
               border: "1px solid rgba(251, 191, 36, 0.35)",
             }}
           >
-            {row.thcBadge}
+            {row.potencyDisplay}
           </span>
         ) : null}
         <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
@@ -1483,10 +1542,11 @@ function ProductCard({
   );
 }
 
-function strainBadgeStyle(t: string): CSSProperties {
-  if (t === "Indica") return { background: "rgba(167, 139, 250, 0.2)", color: "#ddd6fe", border: "1px solid rgba(167,139,250,0.35)" };
-  if (t === "Sativa") return { background: "rgba(52, 211, 153, 0.18)", color: "#a7f3d0", border: "1px solid rgba(52,211,153,0.35)" };
-  return { background: "rgba(34, 211, 238, 0.15)", color: "#a5f3fc", border: "1px solid rgba(34,211,238,0.35)" };
+function strainBadgeStyle(kind: BuyerMarketplaceRow["dominanceStyle"]): CSSProperties {
+  if (kind === "Indica") return { background: "rgba(167, 139, 250, 0.2)", color: "#ddd6fe", border: "1px solid rgba(167,139,250,0.35)" };
+  if (kind === "Sativa") return { background: "rgba(52, 211, 153, 0.18)", color: "#a7f3d0", border: "1px solid rgba(52,211,153,0.35)" };
+  if (kind === "Hybrid") return { background: "rgba(34, 211, 238, 0.15)", color: "#a5f3fc", border: "1px solid rgba(34,211,238,0.35)" };
+  return { background: "rgba(51, 65, 85, 0.55)", color: "#cbd5e1", border: "1px solid rgba(148,163,184,0.35)" };
 }
 
 function TrustCell({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {

@@ -61,6 +61,8 @@ export default function SellerPlatformPage() {
     unitSize: "",
     price: "",
     quantityAvailable: "",
+    potencyLabel: "",
+    strainDominance: "",
     availabilityStatus: "INTERNAL" as "AVAILABLE" | "INTERNAL" | "NOT_AVAILABLE",
     imageDisplayMode: "AUTO" as "AUTO" | "CONTAIN" | "COVER",
   });
@@ -137,6 +139,8 @@ export default function SellerPlatformPage() {
       unitSize: "",
       price: "",
       quantityAvailable: "",
+      potencyLabel: "",
+      strainDominance: "",
       availabilityStatus: "INTERNAL",
       imageDisplayMode: "AUTO",
     });
@@ -158,6 +162,8 @@ export default function SellerPlatformPage() {
       unitSize: p.unitSize || "",
       price: String(p.price),
       quantityAvailable: String(p.quantityAvailable),
+      potencyLabel: p.potencyLabel || "",
+      strainDominance: p.strainDominance || "",
       availabilityStatus: p.availabilityStatus as typeof form.availabilityStatus,
       imageDisplayMode: (p.imageDisplayMode as typeof form.imageDisplayMode) || "AUTO",
     });
@@ -187,6 +193,8 @@ export default function SellerPlatformPage() {
         quantityAvailable: qty,
         availabilityStatus: form.availabilityStatus,
         imageDisplayMode: form.imageDisplayMode,
+        potencyLabel: form.potencyLabel.trim() || null,
+        strainDominance: form.strainDominance.trim() || null,
       };
       let productId = editId;
       if (editId) {
@@ -800,6 +808,8 @@ export default function SellerPlatformPage() {
               ["productType", "Product type", "text"],
               ["strainName", "Strain", "text"],
               ["flavorName", "Flavor", "text"],
+              ["potencyLabel", "Potency (buyers)", "text"],
+              ["strainDominance", "Dominance (buyers)", "text"],
               ["sku", "SKU", "text"],
               ["unitSize", "Unit size", "text"],
               ["price", "Price", "number"],

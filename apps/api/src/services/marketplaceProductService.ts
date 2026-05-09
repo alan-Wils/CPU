@@ -157,6 +157,8 @@ export class MarketplaceProductService {
       quantityAvailable: number;
       imageUrl?: string | null;
       imageDisplayMode?: string | null;
+      potencyLabel?: string | null;
+      strainDominance?: string | null;
       availabilityStatus: "AVAILABLE" | "INTERNAL" | "NOT_AVAILABLE";
     },
   ): Promise<MarketplaceProduct> {
@@ -176,6 +178,8 @@ export class MarketplaceProductService {
         quantityAvailable: input.quantityAvailable,
         imageUrl: input.imageUrl ?? null,
         imageDisplayMode: input.imageDisplayMode ?? null,
+        potencyLabel: input.potencyLabel ?? null,
+        strainDominance: input.strainDominance ?? null,
         availabilityStatus: input.availabilityStatus,
         source: "MANUAL",
       },
@@ -198,6 +202,8 @@ export class MarketplaceProductService {
       quantityAvailable: number;
       imageUrl: string | null;
       imageDisplayMode: string | null;
+      potencyLabel: string | null;
+      strainDominance: string | null;
       availabilityStatus: "AVAILABLE" | "INTERNAL" | "NOT_AVAILABLE";
     }>,
   ): Promise<MarketplaceProduct> {
@@ -221,6 +227,8 @@ export class MarketplaceProductService {
     if (input.quantityAvailable !== undefined) data.quantityAvailable = input.quantityAvailable;
     if (input.imageUrl !== undefined) data.imageUrl = input.imageUrl;
     if (input.imageDisplayMode !== undefined) data.imageDisplayMode = input.imageDisplayMode;
+    if (input.potencyLabel !== undefined) data.potencyLabel = input.potencyLabel;
+    if (input.strainDominance !== undefined) data.strainDominance = input.strainDominance;
     if (input.availabilityStatus !== undefined) data.availabilityStatus = input.availabilityStatus;
     return prisma.marketplaceProduct.update({
       where: { id: p.id },

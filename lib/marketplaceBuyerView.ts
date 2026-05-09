@@ -42,14 +42,18 @@ export type BuyerMarketplaceRow = {
   minOrderQty: number;
   minOrderUnit: string;
   tags: string[];
-  strainType: "Hybrid" | "Indica" | "Sativa" | "";
+  /** Color bucket for dominance badge */
+  dominanceStyle: "Hybrid" | "Indica" | "Sativa" | "neutral";
+  /** Dominance line on card (seller field or inferred Hybrid/Indica/Sativa) */
+  dominanceBadgeText: string | null;
+  /** Potency line (seller field or parsed from description/name) */
+  potencyDisplay: string | null;
   state: string;
   rating: number;
   reviewCount: number;
   coaAvailable: boolean;
   labTested: boolean;
   updatedAtMs: number;
-  thcBadge: string | null;
 };
 
 const DEMO_PREFIX = "demo-";
@@ -85,6 +89,7 @@ function parseThcBadge(h: string): string | null {
 }
 
 function buildHaystack(p: MarketplaceProductDto): string {
+  const extra = p as { potencyLabel?: string | null; strainDominance?: string | null };
   return [
     p.name,
     p.description,
@@ -94,12 +99,25 @@ function buildHaystack(p: MarketplaceProductDto): string {
     p.flavorName,
     p.sku,
     p.unitSize,
+    extra.potencyLabel,
+    extra.strainDominance,
     p.company?.name,
     p.company?.slug,
   ]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
+}
+
+/** Map free-text dominance to palette; empty if no standard tokens. */
+export function dominanceToEnum(s: string): "Hybrid" | "Indica" | "Sativa" | "" {
+  const t = String(s || "").toLowerCase();
+  if (!t.trim()) return "";
+  if (/\bhybrid\b/.test(t)) return "Hybrid";
+  if (/\bindica\b/.test(t) && !/\bsativa\b/.test(t)) return "Indica";
+  if (/\bsativa\b/.test(t) && !/\bindica\b/.test(t)) return "Sativa";
+  if (/\bindica\b/.test(t) && /\bsativa\b/.test(t)) return "Hybrid";
+  return "";
 }
 
 function derivePriceUnit(unitSize: string | null | undefined): string {
@@ -154,7 +172,18 @@ function badgeCategoryForCard(haystack: string, display: string): string {
 
 export function normalizeBuyerProduct(p: MarketplaceProductDto): BuyerMarketplaceRow {
   const haystack = buildHaystack(p);
-  const strainType = inferStrainType(`${p.strainName || ""} ${p.name} ${p.description || ""}`);
+  const inferred = inferStrainType(`${p.strainName || ""} ${p.name} ${p.description || ""}`);
+  const extra = p as { potencyLabel?: string | null; strainDominance?: string | null };
+  const sellerDom = String(extra.strainDominance || "").trim();
+  const sellerPotency = String(extra.potencyLabel || "").trim();
+  const enumFromSeller = dominanceToEnum(sellerDom);
+  const dominanceBadgeText = sellerDom || inferred || null;
+  let dominanceStyle: "Hybrid" | "Indica" | "Sativa" | "neutral" = "neutral";
+  if (dominanceBadgeText) {
+    if (sellerDom && !enumFromSeller) dominanceStyle = "neutral";
+    else dominanceStyle = enumFromSeller || inferred || "neutral";
+  }
+  const potencyDisplay = sellerPotency || parseThcBadge(haystack) || null;
   const { rating, reviewCount } = stableRating(p.id);
   const sellerCompanyName = p.company?.name || "Seller";
   const displayCategoryBadge = badgeCategoryForCard(haystack, displayCategoryFromProduct(p, haystack));
@@ -165,7 +194,8 @@ export function normalizeBuyerProduct(p: MarketplaceProductDto): BuyerMarketplac
   if (p.flavorName) tags.push(p.flavorName);
   if (p.productType) tags.push(p.productType);
   if (p.category) tags.push(p.category);
-  const thcBadge = parseThcBadge(haystack);
+  if (sellerPotency) tags.push(sellerPotency);
+  if (sellerDom) tags.push(sellerDom);
   const rawUpdated = (p as { updatedAt?: string }).updatedAt;
   const updatedAtMs = rawUpdated ? Date.parse(rawUpdated) : 0;
 
@@ -192,14 +222,15 @@ export function normalizeBuyerProduct(p: MarketplaceProductDto): BuyerMarketplac
     minOrderQty,
     minOrderUnit,
     tags: [...new Set(tags.map((t) => t.trim()).filter(Boolean))],
-    strainType,
+    dominanceStyle,
+    dominanceBadgeText,
+    potencyDisplay,
     state,
     rating,
     reviewCount,
     coaAvailable: true,
     labTested: true,
     updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : 0,
-    thcBadge,
   };
 }
 
@@ -391,6 +422,8 @@ export function marketplaceDemoProducts(): MarketplaceProductDto[] {
     leafLinkInventoryId: null,
     company: partial.company,
     imageDisplayMode: "COVER",
+    potencyLabel: partial.potencyLabel ?? null,
+    strainDominance: partial.strainDominance ?? null,
   });
 
   return [
@@ -404,6 +437,8 @@ export function marketplaceDemoProducts(): MarketplaceProductDto[] {
       productType: "Flower",
       strainName: "Gelato 41",
       description: "Hybrid indoor flower — California wholesale.",
+      strainDominance: "Hybrid",
+      potencyLabel: "29% THC",
       company: { id: "demo-co-budfox", name: "BudFox", slug: "budfox" },
     }),
     mk("gelato-pr", {
@@ -451,6 +486,7 @@ export function marketplaceDemoProducts(): MarketplaceProductDto[] {
       category: "Edible",
       productType: "Gummies",
       description: "100mg THC watermelon gummies.",
+      potencyLabel: "100mg THC",
       company: { id: "demo-co-greenbite", name: "GreenBite", slug: "greenbite" },
     }),
     mk("papaya-rosin", {

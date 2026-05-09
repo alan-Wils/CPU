@@ -513,6 +513,8 @@ export const marketplaceSellerProductCreateSchema = z.object({
     quantityAvailable: z.coerce.number().min(0),
     imageUrl: z.string().max(2000).nullable().optional(),
     imageDisplayMode: marketplaceImageDisplayModeEnum.nullable().optional(),
+    potencyLabel: z.string().max(120).nullable().optional(),
+    strainDominance: z.string().max(120).nullable().optional(),
     availabilityStatus: marketplaceAvailabilityEnum,
 });
 

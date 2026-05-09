@@ -994,6 +994,10 @@ export type MarketplaceProductDto = {
   imageDisplayMode?: string | null;
   /** Company config `sales.inventoryPrintLogoUrl` when no product image is set. */
   companyInventoryLogoUrl?: string | null;
+  /** Seller-entered potency for marketplace cards (e.g. % THC, mg). */
+  potencyLabel?: string | null;
+  /** Seller-entered dominance (Hybrid / Indica / Sativa or custom). */
+  strainDominance?: string | null;
   availabilityStatus: string;
   source: string;
   leafLinkInventoryId: string | null;
@@ -1025,6 +1029,8 @@ export async function salesSellerProductCreate(body: {
   quantityAvailable: number;
   imageUrl?: string | null;
   imageDisplayMode?: "AUTO" | "CONTAIN" | "COVER" | null;
+  potencyLabel?: string | null;
+  strainDominance?: string | null;
   availabilityStatus: "AVAILABLE" | "INTERNAL" | "NOT_AVAILABLE";
 }) {
   return apiRequest<{ product: MarketplaceProductDto }>("/api/sales/seller/products", {

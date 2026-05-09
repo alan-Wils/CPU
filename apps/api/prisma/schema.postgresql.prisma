@@ -214,6 +214,10 @@ model MarketplaceProduct {
   source               MarketplaceProductSource
   leafLinkInventoryId  String?
   leafLinkRawJson      Json?
+  /// Seller-entered potency line for marketplace cards (e.g. "24% THC", "100mg THC").
+  potencyLabel         String?
+  /// Seller-entered dominance / lineage (e.g. Hybrid, Indica, Sativa).
+  strainDominance      String?
 
   orderItems MarketplaceOrderItem[]
 

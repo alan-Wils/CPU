@@ -215,6 +215,8 @@ model MarketplaceProduct {
   source               MarketplaceProductSource
   leafLinkInventoryId  String?
   leafLinkRawJson      Json?
+  potencyLabel         String?
+  strainDominance      String?
 
   orderItems MarketplaceOrderItem[]
 
