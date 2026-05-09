@@ -465,18 +465,24 @@ export default function SellerHubLayoutClient({ children }: { children: ReactNod
                 </Link>
                 <Link
                   href="/messages"
-                  title="Messages"
+                  title={msgUnread > 0 ? `Messages (${msgUnread} unread)` : "Messages"}
+                  aria-label={msgUnread > 0 ? `Messages, ${msgUnread} unread` : "Messages"}
+                  className={msgUnread > 0 ? "messages-icon--pulse" : undefined}
                   style={{
                     width: 42,
                     height: 42,
                     borderRadius: 12,
-                    border: "1px solid rgba(148,163,184,0.35)",
+                    border: msgUnread > 0
+                      ? "1px solid rgba(34, 197, 94, 0.55)"
+                      : "1px solid rgba(148,163,184,0.35)",
                     display: "grid",
                     placeItems: "center",
                     textDecoration: "none",
                     position: "relative",
-                    color: "#e2e8f0",
-                    background: "rgba(15,23,42,0.75)",
+                    color: msgUnread > 0 ? "#bbf7d0" : "#e2e8f0",
+                    background: msgUnread > 0
+                      ? "linear-gradient(145deg, rgba(6, 78, 59, 0.55), rgba(15, 23, 42, 0.95))"
+                      : "rgba(15,23,42,0.75)",
                   }}
                 >
                   ✉
@@ -490,8 +496,9 @@ export default function SellerHubLayoutClient({ children }: { children: ReactNod
                         fontWeight: 900,
                         padding: "2px 6px",
                         borderRadius: 999,
-                        background: "rgba(139,92,246,0.85)",
-                        color: "#fff",
+                        background: "#22c55e",
+                        color: "#022c22",
+                        boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
                       }}
                     >
                       {msgUnread > 99 ? "99+" : msgUnread}

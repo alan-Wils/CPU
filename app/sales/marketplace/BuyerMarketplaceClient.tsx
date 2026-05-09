@@ -430,9 +430,20 @@ export function BuyerMarketplaceClient() {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <Link
             href="/messages"
-            style={{ ...iconBtn(), textDecoration: "none" }}
+            style={{
+              ...iconBtn(),
+              textDecoration: "none",
+              ...(msgUnread > 0
+                ? {
+                    border: "1px solid rgba(34, 197, 94, 0.55)",
+                    background: "linear-gradient(145deg, rgba(6, 78, 59, 0.55), rgba(15, 23, 42, 0.95))",
+                    color: "#bbf7d0",
+                  }
+                : null),
+            }}
+            className={msgUnread > 0 ? "messages-icon--pulse" : undefined}
             aria-label={msgUnread > 0 ? `Open messages (${msgUnread} unread)` : "Open messages"}
-            title="Messages"
+            title={msgUnread > 0 ? `Messages (${msgUnread} unread)` : "Messages"}
           >
             <MailIcon />
             {msgUnread > 0 ? (
@@ -444,8 +455,8 @@ export function BuyerMarketplaceClient() {
                   minWidth: 20,
                   height: 20,
                   borderRadius: 999,
-                  background: "rgba(139,92,246,0.95)",
-                  color: "#fff",
+                  background: "#22c55e",
+                  color: "#022c22",
                   fontSize: 11,
                   fontWeight: 900,
                   display: "flex",
