@@ -50,6 +50,7 @@ export default function MarketplaceProductImageFrame({
   };
 
   const local = directSrc?.trim() || "";
+  const hasProductImage = !!local || !!(imageUrl || "").trim();
   const raw = local || marketplaceCardImageRawUrl({ imageUrl, companyInventoryLogoUrl });
   if (!raw) {
     return (
@@ -62,7 +63,8 @@ export default function MarketplaceProductImageFrame({
   }
 
   const src = local ? local : resolveCompanyLogoImgSrc(raw, apiBaseUrl);
-  const fit = objectFitOverride ?? objectFitForMarketplaceImage(imageDisplayMode);
+  const fit =
+    objectFitOverride ?? objectFitForMarketplaceImage(imageDisplayMode, { hasProductImage });
 
   return (
     <div className={className} style={frameStyle}>

@@ -997,6 +997,8 @@ export type MarketplaceProductDto = {
   availabilityStatus: string;
   source: string;
   leafLinkInventoryId: string | null;
+  potencyLabel?: string | null;
+  strainDominance?: string | null;
   company?: { id: string; name: string; slug: string };
 };
 

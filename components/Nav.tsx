@@ -365,7 +365,12 @@ export default function Nav() {
             )}
 
           {canNavToPage("page.sales-seller") && companyServices?.salesSellerEnabled && (
-            <Link href="/sales/seller" style={navButtonStyle(pathname?.startsWith("/sales/seller") ?? false)}>
+            <Link
+              href="/seller/dashboard"
+              style={navButtonStyle(
+                Boolean(pathname?.startsWith("/seller") || pathname?.startsWith("/sales/seller")),
+              )}
+            >
               Seller Platform
             </Link>
           )}

@@ -64,7 +64,7 @@ const dashboardCards: DashboardCard[] = [
     title: "Seller marketplace",
     description:
       "List wholesale products on NexBatch, set availability, sync LeafLink inventory when enabled, and fulfill buyer orders.",
-    href: "/sales/seller",
+    href: "/seller/dashboard",
     accent: "#c084fc",
     permission: "page.sales-seller",
     requireService: "salesSellerEnabled",

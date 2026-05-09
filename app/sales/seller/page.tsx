@@ -791,13 +791,13 @@ export default function SellerPlatformPage() {
                     color: "#fff",
                   }}
                 >
-                  <option value="AUTO">Auto — shrink to fit (no zoom-in past native size)</option>
+                  <option value="AUTO">Auto — photos fill the card; logos shrink to fit without cropping</option>
                   <option value="CONTAIN">Show full image — letterbox if needed</option>
                   <option value="COVER">Fill frame — may crop</option>
                 </select>
                 <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, lineHeight: 1.45 }}>
-                  Applies to seller product grid and buyer marketplace. Contain works well for tall product shots; Auto
-                  keeps wide logos from filling the whole strip.
+                  Applies to seller grid and buyer marketplace. Auto uses a full-bleed look for uploaded photos and a
+                  contained look when only your inventory logo is shown.
                 </div>
               </label>
             </div>
