@@ -1,17 +1,5 @@
 import type { MarketplaceProductDto } from "@/lib/api";
 
-/** Showcase order + labels for company selector (match UX mockup). */
-export const MARKETPLACE_SHOWCASE_COMPANY_NAMES = [
-  "BudFox",
-  "LeafLife Farms",
-  "Green Peak",
-  "TrueNorth",
-  "Solvent Labs",
-  "Peak Extracts",
-  "GreenBite",
-  "Solventless Labs",
-] as const;
-
 export type MarketplaceCategoryId =
   | "all"
   | "flower"
@@ -345,57 +333,20 @@ export type CompanyChip = {
   productCount?: number;
 };
 
-function normalizeKey(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-function findSellerForShowcaseName(
-  sellers: Array<{ id: string; name: string; productCount: number; companyInventoryLogoUrl?: string | null }>,
-  label: string,
-): { id: string; name: string; productCount: number; companyInventoryLogoUrl?: string | null } | null {
-  const nk = normalizeKey(label);
-  return (
-    sellers.find((s) => normalizeKey(s.name) === nk) ||
-    sellers.find((s) => s.name.toLowerCase().includes(label.toLowerCase())) ||
-    null
-  );
-}
-
+/** Company selector chips: only real sellers from the API (+ “All Companies”). */
 export function buildCompanyChips(
   sellers: Array<{ id: string; name: string; productCount: number; companyInventoryLogoUrl?: string | null }>,
 ): CompanyChip[] {
   const chips: CompanyChip[] = [
     { key: "all", filter: { kind: "all" }, label: "All Companies", icon: "▣", productCount: undefined },
   ];
-  const used = new Set<string>();
-  for (const label of MARKETPLACE_SHOWCASE_COMPANY_NAMES) {
-    const hit = findSellerForShowcaseName(sellers, label);
-    if (hit) {
-      used.add(hit.id);
-      chips.push({
-        key: `s-${hit.id}`,
-        filter: { kind: "seller", id: hit.id, name: hit.name },
-        label: hit.name,
-        icon: label.slice(0, 1),
-        logoUrl: hit.companyInventoryLogoUrl ?? null,
-        productCount: hit.productCount,
-      });
-    } else {
-      chips.push({
-        key: `n-${normalizeKey(label)}`,
-        filter: { kind: "name", name: label },
-        label,
-        icon: label.slice(0, 1),
-      });
-    }
-  }
-  const rest = sellers.filter((s) => !used.has(s.id)).sort((a, b) => a.name.localeCompare(b.name));
-  for (const s of rest) {
+  const sorted = [...sellers].sort((a, b) => a.name.localeCompare(b.name));
+  for (const s of sorted) {
     chips.push({
       key: `s-${s.id}`,
       filter: { kind: "seller", id: s.id, name: s.name },
       label: s.name,
-      icon: s.name.slice(0, 1),
+      icon: s.name.slice(0, 1).toUpperCase(),
       logoUrl: s.companyInventoryLogoUrl ?? null,
       productCount: s.productCount,
     });

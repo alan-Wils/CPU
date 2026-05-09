@@ -45,6 +45,7 @@ import {
 } from "@/lib/marketplaceBuyerView";
 import { resolveCompanyLogoImgSrc } from "@/lib/inventoryExport";
 import { isLoggedIn, isPortalSession } from "@/lib/auth";
+import MarketplaceBuyerBottomNav from "@/components/MarketplaceBuyerBottomNav";
 
 const PLACEHOLDER_BG =
   "linear-gradient(135deg, rgba(30,41,59,0.95), rgba(15,23,42,0.98))";
@@ -552,8 +553,6 @@ export function BuyerMarketplaceClient() {
                   <div style={{ fontWeight: 800, fontSize: 13, lineHeight: 1.25 }}>{c.label}</div>
                   {typeof c.productCount === "number" ? (
                     <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>{c.productCount} products</div>
-                  ) : c.filter.kind === "name" ? (
-                    <div style={{ fontSize: 10, color: "#475569", marginTop: 4 }}>Filter by name</div>
                   ) : null}
                 </button>
               );
@@ -812,7 +811,15 @@ export function BuyerMarketplaceClient() {
 
         {/* Orders */}
         <section id="orders" style={{ marginBottom: 100 }}>
-          <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>Your orders</h2>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Your orders</h2>
+            <Link
+              href="/sales/nexbatch-orders"
+              style={{ fontSize: 13, fontWeight: 700, color: "#22d3ee", textDecoration: "none" }}
+            >
+              Open orders page →
+            </Link>
+          </div>
           {orders.length === 0 ? (
             <p style={{ color: "#64748b" }}>No orders yet.</p>
           ) : (
@@ -843,32 +850,7 @@ export function BuyerMarketplaceClient() {
         </section>
       </main>
 
-      {/* Bottom nav */}
-      <nav
-        style={{
-          position: "fixed",
-          left: 12,
-          right: 12,
-          bottom: 12,
-          zIndex: 40,
-          display: "grid",
-          gridTemplateColumns: "repeat(5, 1fr)",
-          gap: 4,
-          padding: "10px 8px",
-          borderRadius: 20,
-          background: "rgba(2, 6, 23, 0.88)",
-          backdropFilter: "blur(14px)",
-          WebkitBackdropFilter: "blur(14px)",
-          border: "1px solid rgba(148, 163, 184, 0.18)",
-          boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
-        }}
-      >
-        <BottomNavItem href="/" label="Dashboard" icon={<GridIcon />} active={false} />
-        <BottomNavItem href="/sales/marketplace" label="Marketplace" icon={<ShopIcon />} active />
-        <BottomNavItem href="/orders" label="Orders" icon={<ReceiptIcon />} active={false} />
-        <BottomNavItem href="/" label="Messages" icon={<ChatIcon />} active={false} />
-        <BottomNavItem href={profileHref} label="Profile" icon={<UserNavIcon />} active={false} />
-      </nav>
+      <MarketplaceBuyerBottomNav active="marketplace" profileHref={profileHref} />
 
       {/* Filters drawer */}
       {filterOpen ? (
@@ -1517,66 +1499,6 @@ function TrustCell({ icon, title, subtitle }: { icon: React.ReactNode; title: st
   );
 }
 
-function BottomNavItem({
-  href,
-  label,
-  icon,
-  active,
-  badge,
-}: {
-  href: string;
-  label: string;
-  icon: React.ReactNode;
-  active: boolean;
-  badge?: number;
-}) {
-  return (
-    <Link
-      href={href}
-      style={{
-        textDecoration: "none",
-        textAlign: "center",
-        fontSize: 10,
-        fontWeight: 800,
-        color: active ? "#c4b5fd" : "#64748b",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 4,
-        padding: "4px 2px",
-        borderRadius: 12,
-        background: active ? "rgba(124, 58, 237, 0.12)" : "transparent",
-      }}
-    >
-      <span style={{ position: "relative", color: active ? "#a78bfa" : "#64748b" }}>
-        {icon}
-        {typeof badge === "number" && badge > 0 ? (
-          <span
-            style={{
-              position: "absolute",
-              top: -6,
-              right: -8,
-              minWidth: 16,
-              height: 16,
-              borderRadius: 999,
-              background: "#7c3aed",
-              color: "#fff",
-              fontSize: 9,
-              fontWeight: 900,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            {badge > 9 ? "9+" : badge}
-          </span>
-        ) : null}
-      </span>
-      {label}
-    </Link>
-  );
-}
-
 function iconBtn(): CSSProperties {
   return {
     position: "relative",
@@ -1748,45 +1670,3 @@ function VerifiedIcon() {
   );
 }
 
-function GridIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 0h7v7h-7v-7z" opacity="0.9" />
-    </svg>
-  );
-}
-
-function ShopIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z" />
-      <path d="M3 9 5 4h14l2 5" />
-    </svg>
-  );
-}
-
-function ReceiptIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M7 3h10v18l-2-1-2 1-2-1-2 1-2-1-2 1V3z" />
-      <path d="M9 8h6M9 12h6" />
-    </svg>
-  );
-}
-
-function ChatIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M21 12a8 8 0 0 1-8 8H8l-5 3v-3H5a8 8 0 1 1 16 0z" />
-    </svg>
-  );
-}
-
-function UserNavIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="8" r="4" />
-      <path d="M4 20c2-4 6-6 8-6s6 2 8 6" />
-    </svg>
-  );
-}
