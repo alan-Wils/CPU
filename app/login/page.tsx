@@ -436,6 +436,11 @@ export default function LoginPage() {
         </div>
       </form>
       </div>
+      <div className="login-footer-slogan-wrap">
+        <p className="login-footer-slogan">
+          Built for Cannabis Operations From Start to Finish
+        </p>
+      </div>
     </main>
   );
 }

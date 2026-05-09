@@ -230,22 +230,48 @@ nextjs-portal {
 }
 
 /*
- * Subtle marketing slogan pinned to the bottom-center of every authenticated platform page
- * (`<PlatformFooterSlogan />` mounted from `app/layout.tsx`). Tailwind isn't loaded in the
- * root `app/` workspace, so the responsive type scale + hover transition live here.
+ * Subtle marketing slogan anchored at the very bottom of the login page only.
+ * Space Grotesk (loaded via `--font-space-grotesk` in app/layout.tsx),
+ * 11px mobile / 12px desktop, soft hover brightening, safe-area aware.
  */
-.platform-footer-slogan {
-  font-size: 11px;
+.login-footer-slogan-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding-top: 24px;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+  pointer-events: none;
 }
 
 @media (min-width: 768px) {
-  .platform-footer-slogan {
+  .login-footer-slogan-wrap {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+  }
+}
+
+.login-footer-slogan {
+  margin: 0;
+  font-family: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 1px;
+  line-height: 1.4;
+  text-align: center;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.28);
+  transition: color 300ms ease;
+  pointer-events: auto;
+  user-select: none;
+}
+
+@media (min-width: 768px) {
+  .login-footer-slogan {
     font-size: 12px;
   }
 }
 
-.platform-footer-slogan:hover,
-.platform-footer-slogan:focus-visible {
+.login-footer-slogan:hover,
+.login-footer-slogan:focus-visible {
   color: rgba(255, 255, 255, 0.45);
 }
 
