@@ -1,3 +1,4 @@
+import DocumentFullscreenButton from "@/components/DocumentFullscreenButton";
 import HomeCurrentAccess from "@/components/HomeCurrentAccess";
 import HomeNotificationBell from "@/components/HomeNotificationBell";
 import HomeDashboardCards from "@/components/HomeDashboardCards";
@@ -83,7 +84,31 @@ export default function Home() {
                 gap: 14,
               }}
             >
-              <HomeNotificationBell />
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <DocumentFullscreenButton
+                  style={{
+                    width: 46,
+                    height: 46,
+                    borderRadius: 14,
+                    border: "1px solid rgba(148, 163, 184, 0.35)",
+                    background: "rgba(15, 23, 42, 0.75)",
+                    color: "#94a3b8",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
+                    flexShrink: 0,
+                  }}
+                />
+                <HomeNotificationBell />
+              </div>
               <HomeCurrentAccess />
             </div>
           </div>

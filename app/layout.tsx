@@ -4,7 +4,6 @@ import "./globals.css";
 import CompanyTimezoneSync from "@/components/CompanyTimezoneSync";
 import { PeerNotificationsProvider } from "@/components/PeerNotificationsContext";
 import TaskLiveNotificationHost from "@/components/TaskLiveNotificationHost";
-import GlobalDocumentFullscreenButton from "@/components/GlobalDocumentFullscreenButton";
 import PlatformFooterSlogan from "@/components/PlatformFooterSlogan";
 
 const geistSans = Geist({
@@ -56,7 +55,6 @@ export default function RootLayout({
           <CompanyTimezoneSync />
           <TaskLiveNotificationHost />
           {children}
-          <GlobalDocumentFullscreenButton />
           <PlatformFooterSlogan />
         </PeerNotificationsProvider>
       </body>
