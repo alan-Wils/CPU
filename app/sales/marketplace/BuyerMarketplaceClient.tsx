@@ -903,71 +903,168 @@ export function BuyerMarketplaceClient() {
           <div
             style={{
               width: "100%",
-              maxWidth: 480,
-              maxHeight: "90vh",
+              maxWidth: 520,
+              maxHeight: "92vh",
               overflowY: "auto",
-              borderRadius: 20,
-              background: "rgba(15, 23, 42, 0.94)",
-              backdropFilter: "blur(16px)",
-              border: "1px solid rgba(34, 211, 238, 0.22)",
+              borderRadius: 22,
+              background: "linear-gradient(165deg, rgba(15,23,42,0.98), rgba(2,6,23,0.96))",
+              backdropFilter: "blur(20px)",
+              WebkitBackdropFilter: "blur(20px)",
+              border: "1px solid rgba(34, 211, 238, 0.28)",
+              boxShadow: "0 0 0 1px rgba(124, 58, 237, 0.12), 0 24px 64px rgba(0,0,0,0.55)",
               padding: 0,
             }}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <div style={{ padding: 0 }}>
-              <MarketplaceProductImageFrame
-                apiBaseUrl={API_BASE_URL}
-                imageUrl={detailRow.raw.imageUrl}
-                companyInventoryLogoUrl={detailRow.raw.companyInventoryLogoUrl}
-                imageDisplayMode={detailRow.raw.imageDisplayMode}
-                height={200}
-                placeholderBackground={PLACEHOLDER_BG}
-                borderRadius={20}
-              />
+            <div style={{ position: "relative", width: "100%" }}>
+              <div
+                style={{
+                  position: "relative",
+                  width: "100%",
+                  aspectRatio: "16 / 10",
+                  maxHeight: "min(46vh, 340px)",
+                  borderRadius: "22px 22px 0 0",
+                  overflow: "hidden",
+                  background: "#020617",
+                }}
+              >
+                <MarketplaceProductImageFrame
+                  apiBaseUrl={API_BASE_URL}
+                  imageUrl={detailRow.raw.imageUrl}
+                  companyInventoryLogoUrl={detailRow.raw.companyInventoryLogoUrl}
+                  imageDisplayMode={detailRow.raw.imageDisplayMode}
+                  objectFitOverride="cover"
+                  fillParent
+                  height={320}
+                  placeholderBackground={PLACEHOLDER_BG}
+                  borderRadius={0}
+                />
+                <div
+                  aria-hidden
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    background: "linear-gradient(180deg, rgba(2,6,23,0.15) 0%, rgba(2,6,23,0.55) 100%)",
+                    pointerEvents: "none",
+                  }}
+                />
+              </div>
+              <button
+                type="button"
+                aria-label="Close product details"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDetailRow(null);
+                }}
+                style={{
+                  position: "absolute",
+                  top: 12,
+                  right: 12,
+                  zIndex: 3,
+                  width: 40,
+                  height: 40,
+                  borderRadius: 999,
+                  border: "1px solid rgba(148, 163, 184, 0.35)",
+                  background: "rgba(2, 6, 23, 0.65)",
+                  backdropFilter: "blur(8px)",
+                  color: "#f1f5f9",
+                  fontSize: 22,
+                  lineHeight: 1,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+                }}
+              >
+                ×
+              </button>
             </div>
-            <div style={{ padding: "16px 18px 22px" }}>
-              <div style={{ fontSize: 12, color: "#22d3ee", fontWeight: 800 }}>{detailRow.displayCategoryBadge}</div>
-              <h3 style={{ margin: "6px 0 4px", fontSize: 22, fontWeight: 900 }}>{detailRow.productName}</h3>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#94a3b8", fontSize: 14 }}>
-                {detailRow.sellerCompanyName}
+            <div style={{ padding: "18px 20px 22px" }}>
+              <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "#22d3ee", fontWeight: 800 }}>
+                {detailRow.displayCategoryBadge}
+              </div>
+              <h3 style={{ margin: "8px 0 6px", fontSize: "clamp(1.25rem, 4vw, 1.5rem)", fontWeight: 900, lineHeight: 1.2 }}>
+                {detailRow.productName}
+              </h3>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#94a3b8", fontSize: 14 }}>
+                <span style={{ fontWeight: 700, color: "#cbd5e1" }}>{detailRow.sellerCompanyName}</span>
                 <VerifiedIcon />
               </div>
-              <p style={{ color: "#cbd5e1", fontSize: 14, lineHeight: 1.55, margin: "12px 0" }}>
+              {(() => {
+                const bits = [
+                  detailRow.strainType,
+                  detailRow.raw.flavorName || undefined,
+                  detailRow.raw.sku || undefined,
+                ].filter(Boolean) as string[];
+                if (!bits.length) return null;
+                return (
+                  <div style={{ marginTop: 8, fontSize: 13, color: "#64748b", lineHeight: 1.4 }}>{bits.join(" · ")}</div>
+                );
+              })()}
+              <p
+                style={{
+                  color: "#cbd5e1",
+                  fontSize: 14,
+                  lineHeight: 1.6,
+                  margin: "14px 0 12px",
+                  display: "-webkit-box",
+                  WebkitLineClamp: 5,
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden",
+                }}
+              >
                 {detailRow.raw.description || "Premium wholesale product."}
               </p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
                 {detailRow.tags.slice(0, 8).map((t) => (
                   <span
                     key={t}
                     style={{
-                      padding: "4px 10px",
+                      padding: "5px 11px",
                       borderRadius: 999,
-                      background: "rgba(51, 65, 85, 0.5)",
-                      fontSize: 12,
+                      background: "rgba(30, 41, 59, 0.85)",
+                      fontSize: 11,
+                      fontWeight: 700,
                       color: "#e2e8f0",
+                      border: "1px solid rgba(51, 65, 85, 0.7)",
                     }}
                   >
                     {t}
                   </span>
                 ))}
               </div>
-              <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 6 }}>
-                Price:{" "}
-                <strong style={{ color: "#fff" }}>
-                  ${detailRow.raw.price.toFixed(2)} / {detailRow.priceUnit}
-                </strong>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "10px 14px",
+                  marginBottom: 14,
+                  padding: "14px 14px",
+                  borderRadius: 14,
+                  background: "rgba(2, 6, 23, 0.55)",
+                  border: "1px solid rgba(51, 65, 85, 0.55)",
+                }}
+              >
+                <ModalStat label="Price" value={`$${detailRow.raw.price.toFixed(2)} / ${detailRow.priceUnit}`} />
+                <ModalStat label="Available" value={String(detailRow.raw.quantityAvailable)} />
+                <ModalStat label="Min. order" value={`${detailRow.minOrderQty} ${detailRow.minOrderUnit}`} span2 />
               </div>
-              <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 6 }}>
-                Available:{" "}
-                <strong style={{ color: "#fff" }}>{detailRow.raw.quantityAvailable}</strong>
-              </div>
-              <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 6 }}>
-                Min. order:{" "}
-                <strong style={{ color: "#fff" }}>
-                  {detailRow.minOrderQty} {detailRow.minOrderUnit}
-                </strong>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 13, color: "#5eead4" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginBottom: 18,
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  background: "rgba(8, 51, 68, 0.45)",
+                  border: "1px solid rgba(45, 212, 191, 0.25)",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "#5eead4",
+                }}
+              >
                 <BeakerIcon /> Lab tested · COA available
               </div>
               <button
@@ -976,11 +1073,28 @@ export function BuyerMarketplaceClient() {
                   addToCart(detailRow.raw);
                   setCartOpen(true);
                 }}
-                style={{ ...primaryBtn(), width: "100%" }}
+                style={{ ...primaryBtn(), width: "100%", padding: "15px 18px" }}
               >
                 Add to Cart
               </button>
-              <button type="button" onClick={() => setDetailRow(null)} style={{ ...ghostBtn(), width: "100%", marginTop: 10 }}>
+              <button
+                type="button"
+                onClick={() => setDetailRow(null)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 12,
+                  padding: 0,
+                  border: "none",
+                  background: "none",
+                  color: "#64748b",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                  textUnderlineOffset: 3,
+                }}
+              >
                 Close
               </button>
             </div>
@@ -1099,6 +1213,26 @@ export function BuyerMarketplaceClient() {
         </div>
       ) : null}
 
+    </div>
+  );
+}
+
+function ModalStat({ label, value, span2 }: { label: string; value: string; span2?: boolean }) {
+  return (
+    <div style={span2 ? { gridColumn: "1 / -1" } : undefined}>
+      <div
+        style={{
+          fontSize: 10,
+          textTransform: "uppercase",
+          letterSpacing: "0.07em",
+          color: "#64748b",
+          fontWeight: 800,
+          marginBottom: 4,
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ fontSize: 15, fontWeight: 800, color: "#f8fafc", lineHeight: 1.3 }}>{value}</div>
     </div>
   );
 }

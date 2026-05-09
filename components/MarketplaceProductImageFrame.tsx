@@ -9,6 +9,10 @@ type Props = {
   imageUrl: string | null;
   companyInventoryLogoUrl?: string | null;
   imageDisplayMode?: string | null;
+  /** When set, overrides seller `imageDisplayMode` (e.g. detail modal hero uses `cover`). */
+  objectFitOverride?: "contain" | "cover" | "scale-down";
+  /** Fill a positioned parent (use with parent `position: relative` + fixed aspect / height). */
+  fillParent?: boolean;
   /** Local preview (`blob:`) — skips `resolveCompanyLogoImgSrc`. */
   directSrc?: string | null;
   height?: number;
@@ -25,6 +29,8 @@ export default function MarketplaceProductImageFrame({
   imageUrl,
   companyInventoryLogoUrl,
   imageDisplayMode,
+  objectFitOverride,
+  fillParent,
   directSrc,
   height = 100,
   placeholderBackground,
@@ -32,8 +38,9 @@ export default function MarketplaceProductImageFrame({
   className,
 }: Props) {
   const frameStyle: CSSProperties = {
-    flexShrink: 0,
-    height,
+    ...(fillParent
+      ? { position: "absolute", inset: 0, width: "100%", height: "100%" }
+      : { flexShrink: 0, height }),
     backgroundColor: "#020617",
     borderRadius: borderRadius || undefined,
     overflow: "hidden",
@@ -55,7 +62,7 @@ export default function MarketplaceProductImageFrame({
   }
 
   const src = local ? local : resolveCompanyLogoImgSrc(raw, apiBaseUrl);
-  const fit = objectFitForMarketplaceImage(imageDisplayMode);
+  const fit = objectFitOverride ?? objectFitForMarketplaceImage(imageDisplayMode);
 
   return (
     <div className={className} style={frameStyle}>
