@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
-import DocumentFullscreenButton from "@/components/DocumentFullscreenButton";
 import MarketplaceBuyerBottomNav from "@/components/MarketplaceBuyerBottomNav";
 import MessagingPanel from "@/components/messaging/MessagingPanel";
 import { fetchCompanyWithServices, type CompanyServicesDto } from "@/lib/api";
@@ -97,22 +96,6 @@ export default function MessagesPage() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          {isBuyerSurface ? (
-            <DocumentFullscreenButton
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 12,
-                border: "1px solid rgba(148, 163, 184, 0.25)",
-                background: "rgba(15, 23, 42, 0.6)",
-                color: "#e2e8f0",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-              }}
-            />
-          ) : null}
           {isBuyerSurface ? (
             <Link
               href="/sales/marketplace"

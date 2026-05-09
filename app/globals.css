@@ -4,6 +4,23 @@ body {
   font-family: Arial, sans-serif;
 }
 
+/*
+ * Hide scrollbars app-wide while keeping overflow/scroll behavior (wheel, trackpad, touch, keys).
+ * Firefox: scrollbar-width; IE/legacy Edge: -ms-overflow-style; Chromium/WebKit: ::-webkit-scrollbar.
+ */
+*,
+*::before,
+*::after {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* Login page: NexBatch-style purple + teal glow (`BrandLogo loginGlow` → class on <a>) */
 @keyframes login-brand-logo-pulse {
   0%,
@@ -280,6 +297,12 @@ nextjs-portal {
 .platform-footer-slogan:focus-visible {
   color: rgba(255, 255, 255, 0.45);
   opacity: 1;
+}
+
+@media print {
+  .global-fullscreen-btn-wrap {
+    display: none !important;
+  }
 }
 
 /* Fullscreen API: keep shell background consistent (avoids flash of default white). */
