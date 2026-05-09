@@ -18,6 +18,8 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "NexBatch",
   description: "NexBatch — cultivation, extraction, packaging, and batch tracking.",
+  manifest: "/manifest.json",
+  themeColor: "#020617",
 };
 
 export default function RootLayout({
