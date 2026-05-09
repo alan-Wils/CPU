@@ -6,19 +6,23 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
 import PageAccessGate from "@/components/PageAccessGate";
 import BrandLogo from "@/components/BrandLogo";
+import HomeNotificationBell from "@/components/HomeNotificationBell";
+import { usePeerNotifications } from "@/components/PeerNotificationsContext";
 import {
   fetchCompanyWithServices,
   messagingGetUnreadTotal,
   salesSellerOrders,
   type CompanyServicesDto,
 } from "@/lib/api";
-import { getAuthUser, isLoggedIn } from "@/lib/auth";
+import { CPU_AUTH_CHANGED_EVENT, getAuthUser, isLoggedIn } from "@/lib/auth";
+import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
 const shellBg =
   "linear-gradient(145deg, rgba(15,23,42,0.98), rgba(2,6,23,1))";
 
@@ -88,8 +92,24 @@ function muted(minPx = 768): CSSProperties {
   };
 }
 
+/** Pending order shape returned by `/api/sales/seller/orders?status=PENDING` (subset we use). */
+type PendingSellerOrderRow = {
+  id: string;
+  total?: number | null;
+  createdAt?: string | null;
+  buyerCompany?: { name?: string } | null;
+};
+
+const SELLER_ORDER_POLL_MS = 6000;
+
+function formatUsdShort(n: number | null | undefined): string {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "—";
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
+}
+
 export default function SellerHubLayoutClient({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { emitOrder } = usePeerNotifications();
   const [services, setServices] = useState<CompanyServicesDto | null>(null);
   const [servicesErr, setServicesErr] = useState("");
   const [loading, setLoading] = useState(true);
@@ -99,6 +119,49 @@ export default function SellerHubLayoutClient({ children }: { children: ReactNod
   const [companyName, setCompanyName] = useState("");
   const [companyInitials, setCompanyInitials] = useState("NB");
   const [headerSearch, setHeaderSearch] = useState("");
+
+  /**
+   * Tracks NexBatch seller order ids we've already surfaced to the notifications inbox so we never
+   * re-emit the same order on subsequent polls. Primed (without emitting) on the first successful poll
+   * so an existing backlog of pending orders does not flood the bell on page load.
+   */
+  const seenOrderIdsRef = useRef<Set<string>>(new Set());
+  const orderPrimedRef = useRef(false);
+  const sellerEnabledRef = useRef(false);
+
+  /**
+   * Reconcile a fresh pending-orders payload into the notifications inbox. Primes silently on the first
+   * call (no emit) so existing backlog stays quiet; thereafter every newly-seen NexBatch order id pushes
+   * one inbox item via `emitOrder` (which is itself idempotent on `orderId`).
+   */
+  const syncOrdersToInbox = useCallback(
+    (orders: PendingSellerOrderRow[]) => {
+      if (!isLoggedIn()) return;
+      const seen = seenOrderIdsRef.current;
+      const incomingIds: string[] = [];
+      for (const o of orders) {
+        const id = String(o?.id || "").trim();
+        if (id) incomingIds.push(id);
+      }
+      if (!orderPrimedRef.current) {
+        for (const id of incomingIds) seen.add(id);
+        orderPrimedRef.current = true;
+        return;
+      }
+      for (const o of orders) {
+        const id = String(o?.id || "").trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const buyer = String(o?.buyerCompany?.name || "").trim() || "Buyer";
+        const amt = formatUsdShort(typeof o?.total === "number" ? o.total : null);
+        emitOrder({
+          orderId: `nb-${id}`,
+          message: `New NexBatch order: ${buyer} · ${amt}`,
+        });
+      }
+    },
+    [emitOrder],
+  );
 
   const loadShell = useCallback(async () => {
     setServicesErr("");
@@ -118,15 +181,17 @@ export default function SellerHubLayoutClient({ children }: { children: ReactNod
           .join("")
           .toUpperCase() || "NB",
       );
+      sellerEnabledRef.current = Boolean(s?.salesSellerEnabled);
       if (s?.salesSellerEnabled && isLoggedIn()) {
         try {
           const [ordRes, msgRes] = await Promise.all([
             salesSellerOrders("PENDING"),
             messagingGetUnreadTotal(),
           ]);
-          const orders = (ordRes.orders || []) as unknown[];
+          const orders = (ordRes.orders || []) as PendingSellerOrderRow[];
           setPendingOrders(orders.length);
           setMsgUnread(typeof msgRes.unread === "number" ? msgRes.unread : 0);
+          syncOrdersToInbox(orders);
         } catch {
           setPendingOrders(0);
           setMsgUnread(0);
@@ -143,6 +208,60 @@ export default function SellerHubLayoutClient({ children }: { children: ReactNod
   useEffect(() => {
     void loadShell();
   }, [loadShell]);
+
+  /** Tenant or auth switch invalidates any "seen orders" memory; the next poll re-primes silently. */
+  useEffect(() => {
+    function reset() {
+      seenOrderIdsRef.current = new Set();
+      orderPrimedRef.current = false;
+    }
+    window.addEventListener(CPU_AUTH_CHANGED_EVENT, reset);
+    window.addEventListener(CPU_TENANT_CHANGED_EVENT, reset);
+    return () => {
+      window.removeEventListener(CPU_AUTH_CHANGED_EVENT, reset);
+      window.removeEventListener(CPU_TENANT_CHANGED_EVENT, reset);
+    };
+  }, []);
+
+  /**
+   * Periodically refresh pending NexBatch orders so the bell + sidebar badge react to new buyer
+   * orders without a page reload. Polling pauses when the document is hidden, resumes on focus.
+   */
+  useEffect(() => {
+    if (!isLoggedIn()) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    async function poll() {
+      if (cancelled) return;
+      if (!isLoggedIn()) return;
+      if (!sellerEnabledRef.current) return;
+      try {
+        const ordRes = await salesSellerOrders("PENDING");
+        if (cancelled) return;
+        const orders = (ordRes.orders || []) as PendingSellerOrderRow[];
+        setPendingOrders(orders.length);
+        syncOrdersToInbox(orders);
+      } catch {
+        /* ignore transient errors */
+      }
+    }
+
+    function onVisibility() {
+      if (document.visibilityState === "visible") void poll();
+    }
+
+    timer = setInterval(() => void poll(), SELLER_ORDER_POLL_MS);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onVisibility);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onVisibility);
+    };
+  }, [syncOrdersToInbox]);
 
   const sections = useMemo(() => navSections(pendingOrders), [pendingOrders]);
 
@@ -434,35 +553,7 @@ export default function SellerHubLayoutClient({ children }: { children: ReactNod
               </div>
 
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <Link
-                  href="/"
-                  title="Notifications"
-                  style={{
-                    width: 42,
-                    height: 42,
-                    borderRadius: 12,
-                    border: "1px solid rgba(148,163,184,0.35)",
-                    display: "grid",
-                    placeItems: "center",
-                    textDecoration: "none",
-                    position: "relative",
-                    color: "#e2e8f0",
-                    background: "rgba(15,23,42,0.75)",
-                  }}
-                >
-                  🔔
-                  <span
-                    style={{
-                      position: "absolute",
-                      top: 8,
-                      right: 8,
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      background: "#ef4444",
-                    }}
-                  />
-                </Link>
+                <HomeNotificationBell />
                 <Link
                   href="/messages"
                   title={msgUnread > 0 ? `Messages (${msgUnread} unread)` : "Messages"}
