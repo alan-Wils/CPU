@@ -35,6 +35,12 @@ import {
   resolveConfigurableTaskRewards,
   type CustomTasksRewardDefs,
 } from "@/lib/customTasksConfig";
+import {
+  EXTRACTION_UI_STAGE_META,
+  EXTRACTION_UI_STAGE_ORDER,
+  groupExtractionBatchesByUiStage,
+  type ExtractionUiStageKey,
+} from "@/lib/extractionBatchUiStage";
 import { computeAverageNormalizedMinutes, scoreChallengeByLoggedMinutes } from "@/lib/taskChallengeMath";
 import { isElevatedManagerRole } from "@cpu/shared";
 import {
@@ -448,8 +454,7 @@ export default function Extraction() {
             const stillExists = extractionList.find((batch: any) => batch.id === current.id);
             if (stillExists) return mergeExtractionPollState(stillExists, current);
           }
-
-          return extractionList[0] || null;
+          return null;
         });
         setRefresh((n) => n + 1);
       } catch (error) {
@@ -461,7 +466,7 @@ export default function Extraction() {
 
           if (!active) return;
 
-          setSelectedExt((current: any) => current || s.extractionBatches[0] || null);
+          setSelectedExt((current: any) => current ?? null);
           setRefresh((n) => n + 1);
         } catch (backupError) {
           console.error("Could not load backend store backup on Extraction page:", backupError);
@@ -492,9 +497,8 @@ export default function Extraction() {
   if (!s.logs) s.logs = [];
 
   const [refresh, setRefresh] = useState(0);
-  const [selectedExt, setSelectedExt] = useState<any>(
-    s.extractionBatches[0] || null
-  );
+  const [selectedExtractionStage, setSelectedExtractionStage] = useState<ExtractionUiStageKey | null>(null);
+  const [selectedExt, setSelectedExt] = useState<any>(null);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
@@ -602,6 +606,19 @@ export default function Extraction() {
     cancelText: "",
     onConfirm: null,
   });
+
+  useEffect(() => {
+    const grouped = groupExtractionBatchesByUiStage(s.extractionBatches);
+    if (selectedExtractionStage === null) {
+      setSelectedExt(null);
+      return;
+    }
+    const list = grouped[selectedExtractionStage];
+    setSelectedExt((prev: any) => {
+      if (prev && list.some((b: any) => b.id === prev.id)) return prev;
+      return list[0] ?? null;
+    });
+  }, [selectedExtractionStage, s.extractionBatches, refresh]);
 
   function showNotice(title: string, message: string, details = "") {
     setNotificationModal({
@@ -2524,7 +2541,12 @@ export default function Extraction() {
     }
 
     if (selectedExt?.id === batchId) {
-      setSelectedExt(s.extractionBatches[0] || null);
+      if (selectedExtractionStage === null) {
+        setSelectedExt(null);
+      } else {
+        const grouped = groupExtractionBatchesByUiStage(s.extractionBatches);
+        setSelectedExt(grouped[selectedExtractionStage][0] ?? null);
+      }
     }
 
     if (viewBatch?.id === batchId) {
@@ -2576,6 +2598,20 @@ export default function Extraction() {
     padding: 18,
     marginTop: 18,
     boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
+  };
+
+  const sectionTitleStyle: any = {
+    margin: "0 0 12px",
+    textAlign: "center",
+    fontWeight: 900,
+    fontSize: 18,
+  };
+
+  const stageCardsWrapStyle: any = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 12,
+    marginTop: 10,
   };
 
   const lockedListStyle: any = {
@@ -2667,6 +2703,11 @@ export default function Extraction() {
 
   const allowedCreateProducts = getAllowedCreateProducts();
   const allowedRunProducts = getAllowedRunProducts();
+
+  const extractionBatchesByStage = groupExtractionBatchesByUiStage(s.extractionBatches);
+  const visibleExtractionBatches = selectedExtractionStage
+    ? extractionBatchesByStage[selectedExtractionStage]
+    : [];
 
   return (
     <PageAccessGate allowedRoles={["EXTRACTION", "VIEW_ONLY"]}>
@@ -2823,8 +2864,8 @@ export default function Extraction() {
         </div>
 
         <div style={cardStyle}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-            <div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 280px" }}>
               <h2 style={{ margin: 0 }}>Extraction Batches</h2>
               <p style={{ color: "#94a3b8", margin: "6px 0 0" }}>
                 {`Required path: Pack Socks Start → Pack Socks Stop → Run Extraction → Start Purge → End Purge → Testing Passed → Finish Batch. Optional tasks can be logged while purge is active.`}
@@ -2842,59 +2883,138 @@ export default function Extraction() {
             ) : null}
           </div>
 
-          <div style={lockedListStyle}>
-            {s.extractionBatches.length === 0 ? (
-              <p style={{ color: "#94a3b8" }}>No extraction batches yet.</p>
-            ) : (
-              s.extractionBatches.map((b: any) => (
-                <div
-                  key={b.id}
-                  style={{
-                    ...rowStyle,
-                    background:
-                      selectedExt?.id === b.id ? "#22c55e" : "#1e293b",
-                    color: selectedExt?.id === b.id ? "black" : "white",
-                  }}
-                >
-                  <div
-                    onClick={() => setSelectedExt(b)}
-                    style={{ flex: 1, cursor: "pointer" }}
-                  >
-                    <b>{b.marketBatchCode || b.id}</b>
-                    {b.marketBatchCode ? (
-                      <span style={{ fontWeight: 600 }}> ({b.id})</span>
-                    ) : null}{" "}
-                    | {b.name} | Biomass Used:{" "}
-                    {b.totalBiomassUsed || b.amount || "—"} lbs | Final:{" "}
-                    {num(b.totalFinalGrams) || "—"} g | Yield:{" "}
-                    {getYieldPercentage(b) || "—"} | Status: {b.status}
-                    <div style={{ fontSize: 13, marginTop: 4 }}>
-                      Next Required Task: {getNextAllowedTask(b)}
-                    </div>
-                  </div>
-
-                  <button style={buttonStyle} onClick={() => setViewBatch(b)}>
-                    View
-                  </button>
-
-                  {userCanWrite ? (
-                    <button style={buttonStyle} onClick={() => openTaskModal(b)}>
-                      Task
-                    </button>
-                  ) : null}
-
-                  {userCanDelete ? (
+          {s.extractionBatches.length === 0 ? (
+            <p style={{ color: "#94a3b8", marginTop: 16 }}>No extraction batches yet.</p>
+          ) : (
+            <>
+              <h3 style={sectionTitleStyle}>Batches by stage</h3>
+              <div style={stageCardsWrapStyle}>
+                {EXTRACTION_UI_STAGE_ORDER.map((stageKey) => {
+                  const meta = EXTRACTION_UI_STAGE_META[stageKey];
+                  const count = extractionBatchesByStage[stageKey].length;
+                  const selected = selectedExtractionStage === stageKey;
+                  return (
                     <button
-                      style={deleteButtonStyle}
-                      onClick={() => deleteBatch(b.id)}
+                      key={stageKey}
+                      type="button"
+                      style={{
+                        ...buttonStyle,
+                        width: "100%",
+                        minHeight: 86,
+                        textAlign: "left",
+                        display: "flex",
+                        flexDirection: "column",
+                        justifyContent: "center",
+                        gap: 4,
+                        background: "#0f172a",
+                        border: selected
+                          ? "1px solid rgba(34, 211, 238, 0.65)"
+                          : "1px solid #334155",
+                        boxShadow: selected ? "0 0 0 1px rgba(34, 211, 238, 0.2)" : undefined,
+                      }}
+                      onClick={() => setSelectedExtractionStage(stageKey)}
                     >
-                      Delete
+                      <span style={{ fontWeight: 900, fontSize: 16, color: "#f8fafc" }}>{meta.label}</span>
+                      <span style={{ color: "#cbd5e1", fontWeight: 700 }}>{count} Batches</span>
+                      <span style={{ color: "#93c5fd", fontWeight: 600, fontSize: 13, lineHeight: 1.35 }}>
+                        {meta.helper}
+                      </span>
+                      <span style={{ color: "#22d3ee", fontWeight: 800, fontSize: 12, marginTop: 4 }}>
+                        View this stage →
+                      </span>
                     </button>
-                  ) : null}
-                </div>
-              ))
-            )}
-          </div>
+                  );
+                })}
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  marginTop: 18,
+                  borderTop: "1px solid #1e293b",
+                  paddingTop: 14,
+                }}
+              >
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#e2e8f0" }}>
+                  {selectedExtractionStage
+                    ? `${EXTRACTION_UI_STAGE_META[selectedExtractionStage].label} (${visibleExtractionBatches.length})`
+                    : "Batch list"}
+                </h3>
+                {selectedExtractionStage ? (
+                  <button
+                    type="button"
+                    style={{ ...buttonStyle, fontSize: 13 }}
+                    onClick={() => setSelectedExtractionStage(null)}
+                  >
+                    Clear stage filter
+                  </button>
+                ) : null}
+              </div>
+
+              <div style={{ ...lockedListStyle, maxHeight: selectedExtractionStage ? 420 : 120 }}>
+                {selectedExtractionStage === null ? (
+                  <p style={{ color: "#94a3b8", margin: 0 }}>
+                    Select a stage above to view batches. Your team’s workflow is grouped the same way as cultivation
+                    stages.
+                  </p>
+                ) : visibleExtractionBatches.length === 0 ? (
+                  <p style={{ color: "#94a3b8", margin: 0 }}>No batches in this stage yet.</p>
+                ) : (
+                  visibleExtractionBatches.map((b: any) => (
+                    <div
+                      key={b.id}
+                      style={{
+                        ...rowStyle,
+                        background:
+                          selectedExt?.id === b.id ? "#22c55e" : "#1e293b",
+                        color: selectedExt?.id === b.id ? "black" : "white",
+                      }}
+                    >
+                      <div
+                        onClick={() => setSelectedExt(b)}
+                        style={{ flex: 1, cursor: "pointer" }}
+                      >
+                        <b>{b.marketBatchCode || b.id}</b>
+                        {b.marketBatchCode ? (
+                          <span style={{ fontWeight: 600 }}> ({b.id})</span>
+                        ) : null}{" "}
+                        | {b.name} | Biomass Used:{" "}
+                        {b.totalBiomassUsed || b.amount || "—"} lbs | Final:{" "}
+                        {num(b.totalFinalGrams) || "—"} g | Yield:{" "}
+                        {getYieldPercentage(b) || "—"} | Status: {b.status}
+                        <div style={{ fontSize: 13, marginTop: 4 }}>
+                          Next Required Task: {getNextAllowedTask(b)}
+                        </div>
+                      </div>
+
+                      <button style={buttonStyle} onClick={() => setViewBatch(b)}>
+                        View
+                      </button>
+
+                      {userCanWrite ? (
+                        <button style={buttonStyle} onClick={() => openTaskModal(b)}>
+                          Task
+                        </button>
+                      ) : null}
+
+                      {userCanDelete ? (
+                        <button
+                          style={deleteButtonStyle}
+                          onClick={() => deleteBatch(b.id)}
+                        >
+                          Delete
+                        </button>
+                      ) : null}
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {showCreateModal && (
