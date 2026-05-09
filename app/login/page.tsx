@@ -185,12 +185,7 @@ export default function LoginPage() {
           apiBaseUrl={API_BASE_URL}
           linkNexbatchToHome={false}
           nexbatchHeight={234}
-          trimBottomSpacing
         />
-        <div className="login-slogan-wrap">
-          <p className="login-slogan-line1">When the Next Batch Matters,</p>
-          <p className="login-slogan-line2">Choose NexBatch.</p>
-        </div>
       </div>
       <div
         style={{
@@ -436,10 +431,9 @@ export default function LoginPage() {
         </div>
       </form>
       </div>
-      <div className="login-footer-slogan-wrap">
-        <p className="login-footer-slogan">
-          Built for Cannabis Operations From Start to Finish
-        </p>
+      <div className="login-slogan-wrap login-slogan-wrap--bottom">
+        <p className="login-slogan-line1">When the Next Batch Matters,</p>
+        <p className="login-slogan-line2">Choose NexBatch.</p>
       </div>
     </main>
   );
