@@ -83,29 +83,15 @@ span.login-brand-logo-glow-link img {
   }
 }
 
-/* Bottom variant: when the marketing slogan sits under the sign-in card it needs more headroom. */
-.login-slogan-wrap.login-slogan-wrap--bottom {
+/* Bottom-of-login-page placement: when the marketing slogan sits under the sign-in card. */
+.login-slogan-wrap--bottom {
   margin-top: 28px;
   margin-bottom: 4px;
 }
 
 @media (min-width: 768px) {
-  .login-slogan-wrap.login-slogan-wrap--bottom {
-    margin-top: 36px;
-  }
-}
-
-/* Bottom-of-login-page placement: under the sign-in form, safe-area aware. */
-.login-slogan-wrap--bottom {
-  margin-top: 24px;
-  margin-bottom: 0;
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
-}
-
-@media (min-width: 768px) {
   .login-slogan-wrap--bottom {
-    margin-top: 32px;
-    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+    margin-top: 36px;
   }
 }
 
@@ -253,26 +239,6 @@ nextjs-portal {
       drop-shadow(0 0 22px rgba(220, 38, 38, 0.45));
     will-change: auto;
   }
-}
-
-/*
- * Subtle marketing slogan pinned to the bottom-center of every authenticated platform page
- * (`<PlatformFooterSlogan />` mounted from `app/layout.tsx`). Tailwind isn't loaded in the
- * root `app/` workspace, so the responsive type scale + hover transition live here.
- */
-.platform-footer-slogan {
-  font-size: 11px;
-}
-
-@media (min-width: 768px) {
-  .platform-footer-slogan {
-    font-size: 12px;
-  }
-}
-
-.platform-footer-slogan:hover,
-.platform-footer-slogan:focus-visible {
-  color: rgba(255, 255, 255, 0.45);
 }
 
 /* Buyer marketplace — responsive product grid */

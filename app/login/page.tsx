@@ -435,6 +435,11 @@ export default function LoginPage() {
         <p className="login-slogan-line1">When the Next Batch Matters,</p>
         <p className="login-slogan-line2">Choose NexBatch.</p>
       </div>
+      <div className="login-footer-slogan-wrap">
+        <p className="login-footer-slogan">
+          Built for Cannabis Operations From Start to Finish
+        </p>
+      </div>
     </main>
   );
 }

@@ -4,7 +4,6 @@ import "./globals.css";
 import CompanyTimezoneSync from "@/components/CompanyTimezoneSync";
 import { PeerNotificationsProvider } from "@/components/PeerNotificationsContext";
 import TaskLiveNotificationHost from "@/components/TaskLiveNotificationHost";
-import PlatformFooterSlogan from "@/components/PlatformFooterSlogan";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -48,7 +47,6 @@ export default function RootLayout({
           <CompanyTimezoneSync />
           <TaskLiveNotificationHost />
           {children}
-          <PlatformFooterSlogan />
         </PeerNotificationsProvider>
       </body>
     </html>
