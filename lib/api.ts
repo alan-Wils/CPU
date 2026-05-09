@@ -1001,6 +1001,14 @@ export type MarketplaceProductDto = {
   potencyLabel?: string | null;
   strainDominance?: string | null;
   company?: { id: string; name: string; slug: string };
+  /** Optional gallery photos beyond the primary `imageUrl`, ordered by `position` ascending. */
+  extraImages?: MarketplaceProductExtraImageDto[];
+};
+
+export type MarketplaceProductExtraImageDto = {
+  id: string;
+  imageUrl: string;
+  position: number;
 };
 
 export async function salesSellerProducts(params?: {
@@ -1056,6 +1064,33 @@ export async function salesSellerProductUploadImage(
   return apiRequest<{ imageUrl: string; bytes: number; product: MarketplaceProductDto }>(
     `/api/sales/seller/products/${encodeURIComponent(productId)}/image`,
     { method: "POST", body },
+  );
+}
+
+/** Append an extra gallery photo (max 8 per product). Returns the updated extras list + product. */
+export async function salesSellerProductUploadExtraImage(
+  productId: string,
+  body: { mimeType: string; dataBase64: string },
+) {
+  return apiRequest<{
+    image: MarketplaceProductExtraImageDto;
+    bytes: number;
+    extraImages: MarketplaceProductExtraImageDto[];
+    product: MarketplaceProductDto;
+  }>(
+    `/api/sales/seller/products/${encodeURIComponent(productId)}/images`,
+    { method: "POST", body },
+  );
+}
+
+/** Delete a single gallery photo by id. Returns the updated extras list + product. */
+export async function salesSellerProductDeleteExtraImage(
+  productId: string,
+  imageId: string,
+) {
+  return apiRequest<{ extraImages: MarketplaceProductExtraImageDto[]; product: MarketplaceProductDto }>(
+    `/api/sales/seller/products/${encodeURIComponent(productId)}/images/${encodeURIComponent(imageId)}`,
+    { method: "DELETE" },
   );
 }
 

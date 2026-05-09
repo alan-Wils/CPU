@@ -8,9 +8,16 @@ import { CompanyServiceSettingsService } from "./companyServiceSettingsService.j
 
 const settingsService = new CompanyServiceSettingsService();
 
+export type MarketplaceProductExtraImage = {
+  id: string;
+  imageUrl: string;
+  position: number;
+};
+
 export type MarketplaceProductWithLogo = MarketplaceProduct & {
   company?: { id: string; name: string; slug: string };
   companyInventoryLogoUrl?: string | null;
+  extraImages?: MarketplaceProductExtraImage[];
 };
 
 async function inventoryPrintLogoUrlByCompanyIds(companyIds: string[]): Promise<Map<string, string | null>> {
@@ -116,6 +123,12 @@ export class MarketplaceProductService {
     const rows = await prisma.marketplaceProduct.findMany({
       where,
       orderBy: { updatedAt: "desc" },
+      include: {
+        extraImages: {
+          orderBy: { position: "asc" },
+          select: { id: true, imageUrl: true, position: true },
+        },
+      },
     });
     const logoMap = await inventoryPrintLogoUrlByCompanyIds([companyId]);
     const catMap = await leafLinkCategoryOverridesByCompanyIds([companyId]);
@@ -170,7 +183,13 @@ export class MarketplaceProductService {
     if (Object.keys(priceFilter).length) where.price = priceFilter;
     const rows = await prisma.marketplaceProduct.findMany({
       where,
-      include: { company: { select: { id: true, name: true, slug: true } } },
+      include: {
+        company: { select: { id: true, name: true, slug: true } },
+        extraImages: {
+          orderBy: { position: "asc" },
+          select: { id: true, imageUrl: true, position: true },
+        },
+      },
       orderBy: { updatedAt: "desc" },
       take: 500,
     });
@@ -296,10 +315,16 @@ export class MarketplaceProductService {
     });
   }
 
-  /** Single seller product with `companyInventoryLogoUrl` for API responses. */
+  /** Single seller product with `companyInventoryLogoUrl` and gallery `extraImages` for API responses. */
   async getSellerProductWithLogo(companyId: string, productId: string): Promise<MarketplaceProductWithLogo | null> {
     const row = await prisma.marketplaceProduct.findFirst({
       where: { id: productId, companyId },
+      include: {
+        extraImages: {
+          orderBy: { position: "asc" },
+          select: { id: true, imageUrl: true, position: true },
+        },
+      },
     });
     if (!row) return null;
     const logoMap = await inventoryPrintLogoUrlByCompanyIds([companyId]);

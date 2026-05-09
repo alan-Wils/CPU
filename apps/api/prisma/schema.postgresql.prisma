@@ -224,6 +224,8 @@ model MarketplaceProduct {
   strainDominance      String?
 
   orderItems MarketplaceOrderItem[]
+  /// Optional gallery photos. The primary display photo stays on `imageUrl`/`imageKey` for backwards compatibility.
+  extraImages MarketplaceProductImage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -232,6 +234,23 @@ model MarketplaceProduct {
   @@index([availabilityStatus])
   @@index([source])
   @@index([leafLinkInventoryId])
+}
+
+/// Additional photos for a `MarketplaceProduct`. The primary photo continues to live on `imageUrl`.
+/// Buyers see all of these in a swipeable carousel on the product detail modal.
+model MarketplaceProductImage {
+  id        String             @id @default(cuid())
+  productId String
+  product   MarketplaceProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  imageUrl  String
+  imageKey  String?
+  /// 0-based index for stable ordering within the gallery (excluding the primary `imageUrl`).
+  position  Int                @default(0)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  @@unique([productId, position])
+  @@index([productId])
 }
 
 model MarketplaceOrder {

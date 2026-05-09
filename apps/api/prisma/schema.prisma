@@ -218,7 +218,8 @@ model MarketplaceProduct {
   potencyLabel         String?
   strainDominance      String?
 
-  orderItems MarketplaceOrderItem[]
+  orderItems  MarketplaceOrderItem[]
+  extraImages MarketplaceProductImage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -227,6 +228,20 @@ model MarketplaceProduct {
   @@index([availabilityStatus])
   @@index([source])
   @@index([leafLinkInventoryId])
+}
+
+model MarketplaceProductImage {
+  id        String             @id @default(cuid())
+  productId String
+  product   MarketplaceProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  imageUrl  String
+  imageKey  String?
+  position  Int                @default(0)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  @@index([productId])
+  @@unique([productId, position])
 }
 
 model MarketplaceOrder {

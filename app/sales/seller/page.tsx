@@ -10,12 +10,16 @@ import {
   salesSellerOrderSetStatus,
   salesSellerProductCreate,
   salesSellerProductDelete,
+  salesSellerProductDeleteExtraImage,
   salesSellerProductPatch,
   salesSellerProducts,
+  salesSellerProductUploadExtraImage,
   salesSellerProductUploadImage,
   type CompanyServicesDto,
   type MarketplaceProductDto,
+  type MarketplaceProductExtraImageDto,
 } from "@/lib/api";
+import { resolveCompanyLogoImgSrc } from "@/lib/inventoryExport";
 import { fileToImageUploadPayload } from "@/lib/imageUploadPayload";
 import { isLoggedIn } from "@/lib/auth";
 import MarketplaceProductImageFrame from "@/components/MarketplaceProductImageFrame";
@@ -62,6 +66,11 @@ export default function SellerPlatformPage() {
   const [imagePick, setImagePick] = useState<{ file: File; url: string } | null>(null);
   /** Product row when opening edit — used for modal image preview before a new file is chosen. */
   const [editSnapshot, setEditSnapshot] = useState<MarketplaceProductDto | null>(null);
+  /** Live extras state in the modal (mirrors server after each upload/delete). Empty for new products until saved once. */
+  const [extraImages, setExtraImages] = useState<MarketplaceProductExtraImageDto[]>([]);
+  const [extraBusy, setExtraBusy] = useState(false);
+  /** Hard cap mirrors `MARKETPLACE_PRODUCT_EXTRA_IMAGE_MAX` server-side. Surfaced for UX gating. */
+  const EXTRA_IMAGE_MAX = 8;
   const [form, setForm] = useState({
     name: "",
     description: "",
@@ -136,10 +145,48 @@ export default function SellerPlatformPage() {
     });
   }
 
+  /** Upload an additional photo immediately (requires the product to exist; new products show a hint to save first). */
+  async function uploadExtraPhoto(file: File) {
+    if (!editId) {
+      setErr("Save the product first, then add additional photos.");
+      return;
+    }
+    if (extraImages.length >= EXTRA_IMAGE_MAX) {
+      setErr(`At most ${EXTRA_IMAGE_MAX} additional photos.`);
+      return;
+    }
+    setExtraBusy(true);
+    setErr("");
+    try {
+      const { mimeType, dataBase64 } = await fileToImageUploadPayload(file);
+      const out = await salesSellerProductUploadExtraImage(editId, { mimeType, dataBase64 });
+      setExtraImages(out.extraImages);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Upload failed.");
+    } finally {
+      setExtraBusy(false);
+    }
+  }
+
+  async function deleteExtraPhoto(imageId: string) {
+    if (!editId) return;
+    if (!confirm("Remove this photo?")) return;
+    setExtraBusy(true);
+    try {
+      const out = await salesSellerProductDeleteExtraImage(editId, imageId);
+      setExtraImages(out.extraImages);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Could not delete photo.");
+    } finally {
+      setExtraBusy(false);
+    }
+  }
+
   function openCreate() {
     setEditId(null);
     setEditSnapshot(null);
     clearImagePick();
+    setExtraImages([]);
     setForm({
       name: "",
       description: "",
@@ -163,6 +210,7 @@ export default function SellerPlatformPage() {
     setEditId(p.id);
     setEditSnapshot(p);
     clearImagePick();
+    setExtraImages(Array.isArray(p.extraImages) ? p.extraImages : []);
     setForm({
       name: p.name,
       description: p.description || "",
@@ -861,16 +909,133 @@ export default function SellerPlatformPage() {
                     color: "#fff",
                   }}
                 >
-                  <option value="AUTO">Auto — shrink to fit (no zoom-in past native size)</option>
-                  <option value="CONTAIN">Show full image — letterbox if needed</option>
-                  <option value="COVER">Fill frame — may crop</option>
-                </select>
-                <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, lineHeight: 1.45 }}>
-                  Applies to seller product grid and buyer marketplace. Contain works well for tall product shots; Auto
-                  keeps wide logos from filling the whole strip.
-                </div>
-              </label>
+                <option value="AUTO">Auto — shrink to fit (no zoom-in past native size)</option>
+                <option value="CONTAIN">Show full image — letterbox if needed</option>
+                <option value="COVER">Fill frame — may crop</option>
+              </select>
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, lineHeight: 1.45 }}>
+                Applies to seller product grid and buyer marketplace. Contain works well for tall product shots; Auto
+                keeps wide logos from filling the whole strip.
+              </div>
+            </label>
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <div
+              style={{
+                fontSize: 13,
+                color: "#94a3b8",
+                fontWeight: 700,
+                marginBottom: 6,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+              }}
+            >
+              <span>Additional photos ({extraImages.length}/{EXTRA_IMAGE_MAX})</span>
+              {extraBusy ? <span style={{ color: "#fcd34d", fontSize: 11 }}>Working…</span> : null}
             </div>
+            {!editId ? (
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "#94a3b8",
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px dashed rgba(148,163,184,0.35)",
+                  background: "rgba(2,6,23,0.45)",
+                  lineHeight: 1.45,
+                }}
+              >
+                Save the product first, then come back here to add gallery photos buyers can scroll through.
+              </div>
+            ) : (
+              <>
+                {extraImages.length > 0 ? (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))",
+                      gap: 8,
+                      marginBottom: 8,
+                    }}
+                  >
+                    {extraImages.map((img) => {
+                      const src = resolveCompanyLogoImgSrc(img.imageUrl, API_BASE_URL);
+                      return (
+                        <div
+                          key={img.id}
+                          style={{
+                            position: "relative",
+                            aspectRatio: "1 / 1",
+                            borderRadius: 10,
+                            overflow: "hidden",
+                            border: "1px solid rgba(148,163,184,0.3)",
+                            background: "#020617",
+                          }}
+                        >
+                          <img
+                            src={src}
+                            alt=""
+                            loading="lazy"
+                            decoding="async"
+                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                          />
+                          <button
+                            type="button"
+                            disabled={extraBusy}
+                            onClick={() => void deleteExtraPhoto(img.id)}
+                            aria-label="Remove photo"
+                            title="Remove photo"
+                            style={{
+                              position: "absolute",
+                              top: 4,
+                              right: 4,
+                              width: 22,
+                              height: 22,
+                              borderRadius: 999,
+                              border: "1px solid rgba(248,113,113,0.65)",
+                              background: "rgba(2,6,23,0.85)",
+                              color: "#fecaca",
+                              fontWeight: 900,
+                              cursor: extraBusy ? "not-allowed" : "pointer",
+                              fontSize: 13,
+                              lineHeight: 1,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  disabled={extraBusy || extraImages.length >= EXTRA_IMAGE_MAX}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (!file) return;
+                    void uploadExtraPhoto(file);
+                  }}
+                  style={{
+                    fontSize: 13,
+                    color: "#cbd5e1",
+                    opacity: extraImages.length >= EXTRA_IMAGE_MAX ? 0.6 : 1,
+                  }}
+                />
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, lineHeight: 1.45 }}>
+                  Buyers swipe through these on the product detail card. The main photo above is always shown first.
+                </div>
+              </>
+            )}
+          </div>
             {[
               ["name", "Name", "text"],
               ["description", "Description", "text"],

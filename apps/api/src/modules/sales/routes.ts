@@ -27,6 +27,7 @@ const settingsService = new CompanyServiceSettingsService();
 const productImageUploadService = new MarketplaceProductImageUploadService();
 
 const productIdParam = z.object({ productId: z.string().cuid() });
+const productExtraImageParam = z.object({ productId: z.string().cuid(), imageId: z.string().cuid() });
 const orderIdParam = z.object({ orderId: z.string().cuid() });
 
 const marketplaceCatalogQuerySchema = z.object({
@@ -135,6 +136,49 @@ salesRouter.post(
     });
     const product = await productService.getSellerProductWithLogo(companyId, productId);
     res.status(201).json({ ...uploaded, product });
+  }),
+);
+
+/**
+ * Add an additional gallery photo to a product. Primary `imageUrl` is unaffected. Buyers see all of these in
+ * the swipeable carousel on the product detail modal. Capped to MARKETPLACE_PRODUCT_EXTRA_IMAGE_MAX per product.
+ */
+salesRouter.post(
+  "/seller/products/:productId/images",
+  ...sellerProductHandlers(),
+  validate({ params: productIdParam, body: checkUploadSchema }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const { productId } = req.params;
+    const origin = requestPublicOrigin(req);
+    const body = req.body as z.infer<typeof checkUploadSchema>;
+    const result = await productImageUploadService.uploadExtraImage({
+      companyId,
+      productId,
+      mimeType: body.mimeType,
+      dataBase64: body.dataBase64,
+      origin,
+    });
+    const product = await productService.getSellerProductWithLogo(companyId, productId);
+    res.status(201).json({ ...result, product });
+  }),
+);
+
+/** Remove a single extra gallery photo (cascading storage cleanup). */
+salesRouter.delete(
+  "/seller/products/:productId/images/:imageId",
+  ...sellerProductHandlers(),
+  validate({ params: productExtraImageParam }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const { productId, imageId } = req.params as z.infer<typeof productExtraImageParam>;
+    const result = await productImageUploadService.deleteExtraImage({
+      companyId,
+      productId,
+      imageId,
+    });
+    const product = await productService.getSellerProductWithLogo(companyId, productId);
+    res.json({ ...result, product });
   }),
 );
 
