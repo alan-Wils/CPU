@@ -1026,6 +1026,10 @@ export async function salesSellerProductCreate(body: {
   quantityAvailable: number;
   imageUrl?: string | null;
   imageDisplayMode?: "AUTO" | "CONTAIN" | "COVER" | null;
+  /** e.g. Indica, Sativa, Hybrid — shown on buyer marketplace cards. */
+  strainDominance?: string | null;
+  /** e.g. 29% THC, 100mg — shown on buyer marketplace cards. */
+  potencyLabel?: string | null;
   availabilityStatus: "AVAILABLE" | "INTERNAL" | "NOT_AVAILABLE";
 }) {
   return apiRequest<{ product: MarketplaceProductDto }>("/api/sales/seller/products", {

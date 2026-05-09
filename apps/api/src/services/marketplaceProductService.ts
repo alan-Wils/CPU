@@ -59,8 +59,6 @@ export type MarketplaceSellerRow = {
   name: string;
   slug: string;
   productCount: number;
-  /** `sales.inventoryPrintLogoUrl` from company config (same as product card fallback). */
-  companyInventoryLogoUrl?: string | null;
 };
 
 export class MarketplaceProductService {
@@ -269,12 +267,7 @@ export class MarketplaceProductService {
       row.productCount += 1;
       map.set(c.id, row);
     }
-    const rows = [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-    const logoMap = await inventoryPrintLogoUrlByCompanyIds(rows.map((r) => r.id));
-    return rows.map((r) => ({
-      ...r,
-      companyInventoryLogoUrl: logoMap.get(r.id) ?? null,
-    }));
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async getAvailableForOrder(productId: string, sellerCompanyId: string): Promise<MarketplaceProduct | null> {

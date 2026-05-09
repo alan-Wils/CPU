@@ -23,6 +23,18 @@ import MarketplaceProductImageFrame from "@/components/MarketplaceProductImageFr
 const placeholderImg =
   "linear-gradient(135deg, rgba(30,41,59,0.95), rgba(15,23,42,0.98))";
 
+/** Map stored free text to Indica | Sativa | Hybrid for the type dropdown when possible. */
+function normalizeDominanceSelect(raw: string | null | undefined): "" | "Indica" | "Sativa" | "Hybrid" {
+  const t = String(raw || "")
+    .trim()
+    .toLowerCase();
+  if (!t) return "";
+  if (t === "indica" || /\bindica\b/.test(t)) return "Indica";
+  if (t === "sativa" || /\bsativa\b/.test(t)) return "Sativa";
+  if (t === "hybrid" || /\bhybrid\b/.test(t)) return "Hybrid";
+  return "";
+}
+
 type OrderRow = {
   id: string;
   status: string;
@@ -40,7 +52,7 @@ export default function SellerPlatformPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [search, setSearch] = useState("");
-  const [availFilter, setAvailFilter] = useState<string>("AVAILABLE");
+  const [availFilter, setAvailFilter] = useState<string>("");
   const [syncBusy, setSyncBusy] = useState(false);
   const [orderBusyId, setOrderBusyId] = useState<string>("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -57,6 +69,8 @@ export default function SellerPlatformPage() {
     productType: "",
     strainName: "",
     flavorName: "",
+    strainDominance: "" as "" | "Indica" | "Sativa" | "Hybrid",
+    potencyLabel: "",
     sku: "",
     unitSize: "",
     price: "",
@@ -133,6 +147,8 @@ export default function SellerPlatformPage() {
       productType: "",
       strainName: "",
       flavorName: "",
+      strainDominance: "",
+      potencyLabel: "",
       sku: "",
       unitSize: "",
       price: "",
@@ -154,6 +170,8 @@ export default function SellerPlatformPage() {
       productType: p.productType || "",
       strainName: p.strainName || "",
       flavorName: p.flavorName || "",
+      strainDominance: normalizeDominanceSelect(p.strainDominance),
+      potencyLabel: p.potencyLabel || "",
       sku: p.sku || "",
       unitSize: p.unitSize || "",
       price: String(p.price),
@@ -181,6 +199,8 @@ export default function SellerPlatformPage() {
         productType: form.productType.trim() || null,
         strainName: form.strainName.trim() || null,
         flavorName: form.flavorName.trim() || null,
+        strainDominance: form.strainDominance ? form.strainDominance : null,
+        potencyLabel: form.potencyLabel.trim() || null,
         sku: form.sku.trim() || null,
         unitSize: form.unitSize.trim() || null,
         price,
@@ -555,6 +575,38 @@ export default function SellerPlatformPage() {
                       (p.sku ? ` · SKU ${p.sku}` : "") +
                       (p.unitSize ? ` · ${p.unitSize}` : "")}
                   </div>
+                  {p.strainDominance || p.potencyLabel ? (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                      {p.strainDominance ? (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 800,
+                            padding: "3px 8px",
+                            borderRadius: 8,
+                            ...sellerDominancePillStyle(p.strainDominance),
+                          }}
+                        >
+                          {p.strainDominance}
+                        </span>
+                      ) : null}
+                      {p.potencyLabel ? (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 800,
+                            padding: "3px 8px",
+                            borderRadius: 8,
+                            background: "rgba(251, 191, 36, 0.12)",
+                            color: "#fcd34d",
+                            border: "1px solid rgba(251, 191, 36, 0.35)",
+                          }}
+                        >
+                          {p.potencyLabel}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div style={{ fontWeight: 800, color: "#a5b4fc" }}>
                     ${p.price.toFixed(2)} · Qty {p.quantityAvailable}
                   </div>
@@ -851,6 +903,57 @@ export default function SellerPlatformPage() {
                 />
               </label>
             ))}
+            <label style={{ display: "block", marginBottom: 10, fontSize: 13 }}>
+              <span style={{ color: "#94a3b8", fontWeight: 700 }}>Cannabis type</span>
+              <select
+                value={form.strainDominance}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    strainDominance: e.target.value as typeof f.strainDominance,
+                  }))
+                }
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(148,163,184,0.35)",
+                  background: "#020617",
+                  color: "#fff",
+                  boxSizing: "border-box",
+                }}
+              >
+                <option value="">Not set</option>
+                <option value="Indica">Indica</option>
+                <option value="Sativa">Sativa</option>
+                <option value="Hybrid">Hybrid</option>
+              </select>
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, lineHeight: 1.45 }}>
+                Shown as a badge on your product cards and on the buyer marketplace.
+              </div>
+            </label>
+            <label style={{ display: "block", marginBottom: 14, fontSize: 13 }}>
+              <span style={{ color: "#94a3b8", fontWeight: 700 }}>Potency</span>
+              <input
+                type="text"
+                value={form.potencyLabel}
+                onChange={(e) => setForm((f) => ({ ...f, potencyLabel: e.target.value }))}
+                placeholder="e.g. 29% THC, 100mg THC"
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(148,163,184,0.35)",
+                  background: "#020617",
+                  color: "#fff",
+                  boxSizing: "border-box",
+                }}
+              />
+            </label>
             <label style={{ display: "block", marginBottom: 14, fontSize: 13 }}>
               <span style={{ color: "#94a3b8", fontWeight: 700 }}>Availability</span>
               <select
@@ -915,6 +1018,27 @@ function actionBtn(color: string): CSSProperties {
     color: "#fff",
     fontWeight: 700,
     cursor: "pointer",
+  };
+}
+
+function sellerDominancePillStyle(t: string): CSSProperties {
+  const x = t.toLowerCase();
+  if (x.includes("indica") && !x.includes("sativa"))
+    return {
+      background: "rgba(167, 139, 250, 0.2)",
+      color: "#ddd6fe",
+      border: "1px solid rgba(167,139,250,0.35)",
+    };
+  if (x.includes("sativa") && !x.includes("indica"))
+    return {
+      background: "rgba(52, 211, 153, 0.18)",
+      color: "#a7f3d0",
+      border: "1px solid rgba(52,211,153,0.35)",
+    };
+  return {
+    background: "rgba(34, 211, 238, 0.15)",
+    color: "#a5f3fc",
+    border: "1px solid rgba(34,211,238,0.35)",
   };
 }
 

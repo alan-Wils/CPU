@@ -117,6 +117,10 @@ export function dominanceToEnum(s: string): "Hybrid" | "Indica" | "Sativa" | "" 
   if (/\bindica\b/.test(t) && !/\bsativa\b/.test(t)) return "Indica";
   if (/\bsativa\b/.test(t) && !/\bindica\b/.test(t)) return "Sativa";
   if (/\bindica\b/.test(t) && /\bsativa\b/.test(t)) return "Hybrid";
+  /** Single-token values from seller dropdown (exact match). */
+  if (t === "indica") return "Indica";
+  if (t === "sativa") return "Sativa";
+  if (t === "hybrid") return "Hybrid";
   return "";
 }
 

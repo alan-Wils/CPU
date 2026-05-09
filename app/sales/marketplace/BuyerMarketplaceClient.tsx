@@ -553,6 +553,8 @@ export function BuyerMarketplaceClient() {
                   <div style={{ fontWeight: 800, fontSize: 13, lineHeight: 1.25 }}>{c.label}</div>
                   {typeof c.productCount === "number" ? (
                     <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>{c.productCount} products</div>
+                  ) : c.filter.kind === "name" ? (
+                    <div style={{ fontSize: 10, color: "#475569", marginTop: 4 }}>Filter by name</div>
                   ) : null}
                 </button>
               );
@@ -945,7 +947,7 @@ export function BuyerMarketplaceClient() {
                   imageUrl={detailRow.raw.imageUrl}
                   companyInventoryLogoUrl={detailRow.raw.companyInventoryLogoUrl}
                   imageDisplayMode={detailRow.raw.imageDisplayMode}
-                  relaxCoverForLogoFallback
+                  objectFitOverride="cover"
                   fillParent
                   height={320}
                   placeholderBackground={PLACEHOLDER_BG}
@@ -960,35 +962,6 @@ export function BuyerMarketplaceClient() {
                     pointerEvents: "none",
                   }}
                 />
-                {(() => {
-                  const logoRaw = (detailRow.raw.companyInventoryLogoUrl || "").trim();
-                  const hasPhoto = !!(detailRow.raw.imageUrl || "").trim();
-                  if (!hasPhoto || !logoRaw) return null;
-                  return (
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: 12,
-                        left: 12,
-                        zIndex: 2,
-                        maxWidth: "52%",
-                        pointerEvents: "none",
-                      }}
-                    >
-                      <img
-                        src={resolveCompanyLogoImgSrc(logoRaw, API_BASE_URL)}
-                        alt=""
-                        style={{
-                          maxHeight: 40,
-                          maxWidth: "100%",
-                          width: "auto",
-                          objectFit: "contain",
-                          filter: "drop-shadow(0 2px 14px rgba(0,0,0,0.9))",
-                        }}
-                      />
-                    </div>
-                  );
-                })()}
               </div>
               <button
                 type="button"
@@ -1034,7 +1007,8 @@ export function BuyerMarketplaceClient() {
               </div>
               {(() => {
                 const bits = [
-                  detailRow.raw.strainName || undefined,
+                  detailRow.dominanceBadgeText || undefined,
+                  detailRow.potencyDisplay || undefined,
                   detailRow.raw.flavorName || undefined,
                   detailRow.raw.sku || undefined,
                 ].filter(Boolean) as string[];
@@ -1087,8 +1061,6 @@ export function BuyerMarketplaceClient() {
                   border: "1px solid rgba(51, 65, 85, 0.55)",
                 }}
               >
-                <ModalStat label="Potency" value={detailRow.potencyDisplay || "—"} />
-                <ModalStat label="Dominance" value={detailRow.dominanceBadgeText || "—"} />
                 <ModalStat label="Price" value={`$${detailRow.raw.price.toFixed(2)} / ${detailRow.priceUnit}`} />
                 <ModalStat label="Available" value={String(detailRow.raw.quantityAvailable)} />
                 <ModalStat label="Min. order" value={`${detailRow.minOrderQty} ${detailRow.minOrderUnit}`} span2 />
@@ -1351,9 +1323,7 @@ function ProductCard({
   onOpen: () => void;
   onAdd: () => void;
 }) {
-  const strainStyle = strainBadgeStyle(row.dominanceStyle);
-  const productPhoto = !!(row.raw.imageUrl || "").trim();
-  const logoRaw = (row.raw.companyInventoryLogoUrl || "").trim();
+  const strainStyle = strainBadgeStyleForDominance(row.dominanceStyle);
   return (
     <div
       role="button"
@@ -1381,37 +1351,10 @@ function ProductCard({
           apiBaseUrl={API_BASE_URL}
           imageUrl={row.raw.imageUrl}
           companyInventoryLogoUrl={row.raw.companyInventoryLogoUrl}
-          imageDisplayMode={row.raw.imageDisplayMode}
-          relaxCoverForLogoFallback
+          imageDisplayMode={row.raw.imageDisplayMode ?? "COVER"}
           height={140}
           placeholderBackground={PLACEHOLDER_BG}
         />
-        {productPhoto && logoRaw ? (
-          <div
-            style={{
-              position: "absolute",
-              bottom: 10,
-              left: 10,
-              zIndex: 2,
-              maxWidth: "55%",
-              pointerEvents: "none",
-            }}
-          >
-            <img
-              src={resolveCompanyLogoImgSrc(logoRaw, API_BASE_URL)}
-              alt=""
-              loading="lazy"
-              decoding="async"
-              style={{
-                maxHeight: 34,
-                maxWidth: "100%",
-                width: "auto",
-                objectFit: "contain",
-                filter: "drop-shadow(0 2px 12px rgba(0,0,0,0.88))",
-              }}
-            />
-          </div>
-        ) : null}
         <span
           style={{
             position: "absolute",
@@ -1543,11 +1486,30 @@ function ProductCard({
   );
 }
 
-function strainBadgeStyle(kind: BuyerMarketplaceRow["dominanceStyle"]): CSSProperties {
-  if (kind === "Indica") return { background: "rgba(167, 139, 250, 0.2)", color: "#ddd6fe", border: "1px solid rgba(167,139,250,0.35)" };
-  if (kind === "Sativa") return { background: "rgba(52, 211, 153, 0.18)", color: "#a7f3d0", border: "1px solid rgba(52,211,153,0.35)" };
-  if (kind === "Hybrid") return { background: "rgba(34, 211, 238, 0.15)", color: "#a5f3fc", border: "1px solid rgba(34,211,238,0.35)" };
-  return { background: "rgba(51, 65, 85, 0.55)", color: "#cbd5e1", border: "1px solid rgba(148,163,184,0.35)" };
+function strainBadgeStyleForDominance(t: "Hybrid" | "Indica" | "Sativa" | "neutral"): CSSProperties {
+  if (t === "Indica")
+    return {
+      background: "rgba(167, 139, 250, 0.2)",
+      color: "#ddd6fe",
+      border: "1px solid rgba(167,139,250,0.35)",
+    };
+  if (t === "Sativa")
+    return {
+      background: "rgba(52, 211, 153, 0.18)",
+      color: "#a7f3d0",
+      border: "1px solid rgba(52,211,153,0.35)",
+    };
+  if (t === "Hybrid")
+    return {
+      background: "rgba(34, 211, 238, 0.15)",
+      color: "#a5f3fc",
+      border: "1px solid rgba(34,211,238,0.35)",
+    };
+  return {
+    background: "rgba(148, 163, 184, 0.12)",
+    color: "#cbd5e1",
+    border: "1px solid rgba(148,163,184,0.3)",
+  };
 }
 
 function TrustCell({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
