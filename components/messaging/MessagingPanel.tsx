@@ -10,8 +10,10 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { isOwnerOrAdminRole } from "@cpu/shared";
 import {
   API_BASE_URL,
+  messagingDeleteMessage,
   messagingListConversations,
   messagingListMessages,
   messagingMarkRead,
@@ -22,6 +24,7 @@ import {
   type MessagingConversationDto,
   type MessagingMessageDto,
 } from "@/lib/api";
+import { getAuthUser } from "@/lib/auth";
 import { resolveCompanyLogoImgSrc } from "@/lib/inventoryExport";
 
 const POLL_INTERVAL_MS = 6000;
@@ -64,6 +67,16 @@ export default function MessagingPanel({
     () => conversations.find((c) => c.id === activeId) || null,
     [conversations, activeId],
   );
+
+  /**
+   * Owners and admins of the current workspace can delete their own outgoing messages from a thread.
+   * Lower roles never see the delete control. Read once on render via the cached auth user; auth/tenant
+   * change events trigger a re-mount through the surrounding layout, so we don't need to subscribe here.
+   */
+  const canDeleteOwnMessages = useMemo(() => {
+    const u = getAuthUser();
+    return Boolean(u && isOwnerOrAdminRole(String(u.role || "")));
+  }, []);
 
   const loadConversations = useCallback(async () => {
     try {
@@ -174,6 +187,24 @@ export default function MessagingPanel({
     [loadConversations, loadMessages],
   );
 
+  const handleDeleteMessage = useCallback(
+    async (messageId: string) => {
+      if (!activeId) return;
+      // Optimistic: drop locally first, roll back if the API rejects (e.g. role lost between renders).
+      const prevMessages = messages;
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      try {
+        await messagingDeleteMessage(activeId, messageId);
+        // Refresh the sidebar so "last message" snippets reflect the new tail of the thread.
+        void loadConversations();
+      } catch (e: unknown) {
+        setMessages(prevMessages);
+        setErr(e instanceof Error ? e.message : "Could not delete message.");
+      }
+    },
+    [activeId, messages, loadConversations],
+  );
+
   const handleSend = useCallback(
     async (e: FormEvent<HTMLFormElement>) => {
       e.preventDefault();
@@ -242,6 +273,8 @@ export default function MessagingPanel({
           err={err}
           messagesEndRef={messagesEndRef}
           scrollRef={scrollRef}
+          canDeleteOwnMessages={canDeleteOwnMessages}
+          onDeleteMessage={handleDeleteMessage}
         />
       ) : null}
       {contactsOpen ? (
@@ -447,6 +480,8 @@ function ThreadPane({
   onBackToList,
   err,
   scrollRef,
+  canDeleteOwnMessages,
+  onDeleteMessage,
 }: {
   conversation: MessagingConversationDto | null;
   messages: MessagingMessageDto[];
@@ -462,6 +497,8 @@ function ThreadPane({
   err: string;
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
   scrollRef: React.RefObject<HTMLDivElement | null>;
+  canDeleteOwnMessages: boolean;
+  onDeleteMessage: (messageId: string) => Promise<void> | void;
 }) {
   const main = conversation?.participants[0] || null;
   return (
@@ -542,7 +579,13 @@ function ThreadPane({
               </div>
             ) : null}
             {messages.map((m, i) => (
-              <MessageBubble key={m.id} message={m} prev={messages[i - 1] || null} />
+              <MessageBubble
+                key={m.id}
+                message={m}
+                prev={messages[i - 1] || null}
+                canDelete={canDeleteOwnMessages && m.mine}
+                onDelete={onDeleteMessage}
+              />
             ))}
           </>
         )}
@@ -614,26 +657,95 @@ function ThreadPane({
 function MessageBubble({
   message,
   prev,
+  canDelete,
+  onDelete,
 }: {
   message: MessagingMessageDto;
   prev: MessagingMessageDto | null;
+  canDelete: boolean;
+  onDelete: (messageId: string) => Promise<void> | void;
 }) {
   const sameSender = !!prev && prev.senderCompanyId === message.senderCompanyId;
   const showHeader = !sameSender;
   const time = formatClockTime(message.createdAt);
+  const [hovered, setHovered] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const handleDeleteClick = async () => {
+    if (busy) return;
+    if (!confirming) {
+      setConfirming(true);
+      // Soft auto-cancel after 4s so a stray click doesn't leave the bubble in a confirm state.
+      setTimeout(() => setConfirming(false), 4000);
+      return;
+    }
+    setBusy(true);
+    try {
+      await onDelete(message.id);
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
+  };
+
   return (
     <div
       style={{
         display: "flex",
         justifyContent: message.mine ? "flex-end" : "flex-start",
         marginTop: showHeader ? 8 : 2,
+        position: "relative",
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => {
+        setHovered(false);
+        setConfirming(false);
       }}
     >
+      {canDelete ? (
+        <button
+          type="button"
+          onClick={handleDeleteClick}
+          disabled={busy}
+          aria-label={confirming ? "Confirm delete message" : "Delete message"}
+          title={confirming ? "Tap again to confirm" : "Delete message"}
+          style={{
+            alignSelf: "center",
+            marginRight: 6,
+            order: 0,
+            opacity: hovered || confirming ? 1 : 0,
+            transition: "opacity 150ms ease",
+            pointerEvents: hovered || confirming ? "auto" : "none",
+            width: 26,
+            height: 26,
+            borderRadius: 999,
+            border: confirming
+              ? "1px solid rgba(248,113,113,0.85)"
+              : "1px solid rgba(248,113,113,0.4)",
+            background: confirming
+              ? "rgba(127,29,29,0.7)"
+              : "rgba(15,23,42,0.85)",
+            color: confirming ? "#fee2e2" : "#fca5a5",
+            cursor: busy ? "wait" : "pointer",
+            fontSize: 12,
+            fontWeight: 900,
+            lineHeight: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
+          }}
+        >
+          {busy ? "…" : confirming ? "✓" : "🗑"}
+        </button>
+      ) : null}
       <div
         style={{
           maxWidth: "75%",
           padding: "10px 12px",
           borderRadius: 14,
+          order: 1,
           background: message.mine
             ? "linear-gradient(135deg, rgba(124,58,237,0.85), rgba(99,102,241,0.78))"
             : "rgba(30,41,59,0.85)",

@@ -567,3 +567,8 @@ export const messagingContactsSearchSchema = z.object({
 export const conversationIdParamSchema = z.object({
     conversationId: z.string().cuid(),
 });
+
+export const conversationMessageParamSchema = z.object({
+    conversationId: z.string().cuid(),
+    messageId: z.string().cuid(),
+});

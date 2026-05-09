@@ -1411,6 +1411,14 @@ export async function messagingMarkRead(conversationId: string) {
   );
 }
 
+/** Soft-delete a message the viewer's company sent (owner/admin only). */
+export async function messagingDeleteMessage(conversationId: string, messageId: string) {
+  return apiRequest<{ ok: true }>(
+    `/api/messaging/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
+    { method: "DELETE" },
+  );
+}
+
 export async function messagingSearchContacts(q: string, limit = 25) {
   const params = new URLSearchParams();
   if (q.trim()) params.set("q", q.trim());

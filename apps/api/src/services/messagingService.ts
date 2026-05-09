@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../errors/AppError.js";
+import { isOwnerOrAdminRole } from "../lib/appPermissions.js";
 
 export type MessagingCompanySummary = {
     id: string;
@@ -190,9 +191,9 @@ export class MessagingService {
             },
         });
 
-        // Pull the latest message per conversation in one query; build a map.
+        // Pull the latest non-deleted message per conversation in one query; build a map.
         const latestRows = await prisma.conversationMessage.findMany({
-            where: { conversationId: { in: convoIds } },
+            where: { conversationId: { in: convoIds }, deletedAt: null },
             orderBy: [{ createdAt: "desc" }],
         });
         const latestByConvo = new Map<string, (typeof latestRows)[number]>();
@@ -223,6 +224,7 @@ export class MessagingService {
                 const where: Prisma.ConversationMessageWhereInput = {
                     conversationId: cid,
                     senderCompanyId: { not: opts.viewerCompanyId },
+                    deletedAt: null,
                 };
                 if (lastReadAt) where.createdAt = { gt: lastReadAt };
                 const n = await prisma.conversationMessage.count({ where });
@@ -285,7 +287,10 @@ export class MessagingService {
     }): Promise<{ messages: MessagingMessageDto[]; hasMore: boolean }> {
         await this.assertParticipant(opts.conversationId, opts.viewerCompanyId);
         const limit = Math.max(1, Math.min(opts.limit ?? 60, 200));
-        const where: Prisma.ConversationMessageWhereInput = { conversationId: opts.conversationId };
+        const where: Prisma.ConversationMessageWhereInput = {
+            conversationId: opts.conversationId,
+            deletedAt: null,
+        };
         if (opts.before) {
             const cursor = new Date(opts.before);
             if (!Number.isNaN(cursor.getTime())) where.createdAt = { lt: cursor };
@@ -398,10 +403,70 @@ export class MessagingService {
             const where: Prisma.ConversationMessageWhereInput = {
                 conversationId: p.conversationId,
                 senderCompanyId: { not: viewerCompanyId },
+                deletedAt: null,
             };
             if (p.lastReadAt) where.createdAt = { gt: p.lastReadAt };
             total += await prisma.conversationMessage.count({ where });
         }
         return total;
+    }
+
+    /**
+     * Soft-delete a message that the viewing company sent. Owners and admins of the sender company can
+     * remove their own outgoing messages; the row stays for audit (`deletedAt`, `deletedByUserId`) but is
+     * filtered out of every read path so neither side sees it again. Cross-company deletion is rejected
+     * (you can only delete from your side of the thread).
+     */
+    async deleteOwnMessage(opts: {
+        viewerCompanyId: string;
+        viewerUserId: string;
+        viewerRole: string;
+        conversationId: string;
+        messageId: string;
+    }): Promise<{ ok: true }> {
+        if (!isOwnerOrAdminRole(String(opts.viewerRole || ""))) {
+            throw new AppError(
+                "Only company owners or admins can delete messages.",
+                403,
+                "MESSAGING_DELETE_FORBIDDEN",
+            );
+        }
+        await this.assertParticipant(opts.conversationId, opts.viewerCompanyId);
+
+        const message = await prisma.conversationMessage.findFirst({
+            where: { id: opts.messageId, conversationId: opts.conversationId },
+            select: { id: true, senderCompanyId: true, deletedAt: true },
+        });
+        if (!message) throw new AppError("Message not found", 404, "MESSAGE_NOT_FOUND");
+        if (message.senderCompanyId !== opts.viewerCompanyId) {
+            throw new AppError(
+                "You can only delete messages from your own company.",
+                403,
+                "MESSAGING_DELETE_FOREIGN",
+            );
+        }
+        if (message.deletedAt) {
+            // Idempotent — repeated delete from concurrent tabs should not error.
+            return { ok: true };
+        }
+
+        await prisma.conversationMessage.update({
+            where: { id: message.id },
+            data: { deletedAt: new Date(), deletedByUserId: opts.viewerUserId },
+        });
+
+        // If this was the conversation's most recent message, roll `lastMessageAt` back to the next
+        // surviving message so the conversation list ordering reflects reality.
+        const next = await prisma.conversationMessage.findFirst({
+            where: { conversationId: opts.conversationId, deletedAt: null },
+            orderBy: { createdAt: "desc" },
+            select: { createdAt: true },
+        });
+        await prisma.conversation.update({
+            where: { id: opts.conversationId },
+            data: { lastMessageAt: next?.createdAt ?? new Date(0) },
+        });
+
+        return { ok: true };
     }
 }

@@ -5,6 +5,7 @@ import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { validate } from "../../middleware/validate.js";
 import {
     conversationIdParamSchema,
+    conversationMessageParamSchema,
     messagingContactsSearchSchema,
     messagingMessagesQuerySchema,
     messagingSendMessageSchema,
@@ -79,6 +80,27 @@ messagingRouter.post(
             body: body.body,
         });
         res.status(201).json({ message });
+    }),
+);
+
+/**
+ * Soft-delete a message that the viewer's company sent. Restricted to OWNER/ADMIN role on the
+ * sender side; both sender and recipient stop seeing the message after this returns 200.
+ */
+messagingRouter.delete(
+    "/conversations/:conversationId/messages/:messageId",
+    validate({ params: conversationMessageParamSchema }),
+    asyncHandler(async (req, res) => {
+        const viewerCompanyId = getScopedCompanyId(req);
+        const { conversationId, messageId } = req.params as z.infer<typeof conversationMessageParamSchema>;
+        const out = await messagingService.deleteOwnMessage({
+            viewerCompanyId,
+            viewerUserId: req.auth!.userId,
+            viewerRole: String(req.auth?.role || ""),
+            conversationId,
+            messageId,
+        });
+        res.json(out);
     }),
 );
 
