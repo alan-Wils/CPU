@@ -1,6 +1,7 @@
 import HomeCurrentAccess from "@/components/HomeCurrentAccess";
 import HomeNotificationBell from "@/components/HomeNotificationBell";
 import HomeDashboardCards from "@/components/HomeDashboardCards";
+import InstallAppButton from "@/components/InstallAppButton";
 import Nav from "@/components/Nav";
 
 export default function Home() {
@@ -94,6 +95,7 @@ export default function Home() {
 
         <HomeDashboardCards />
       </div>
+      <InstallAppButton />
     </main>
   );
 }
