@@ -945,7 +945,7 @@ export function BuyerMarketplaceClient() {
                   imageUrl={detailRow.raw.imageUrl}
                   companyInventoryLogoUrl={detailRow.raw.companyInventoryLogoUrl}
                   imageDisplayMode={detailRow.raw.imageDisplayMode}
-                  objectFitOverride="cover"
+                  relaxCoverForLogoFallback
                   fillParent
                   height={320}
                   placeholderBackground={PLACEHOLDER_BG}
@@ -1382,6 +1382,7 @@ function ProductCard({
           imageUrl={row.raw.imageUrl}
           companyInventoryLogoUrl={row.raw.companyInventoryLogoUrl}
           imageDisplayMode={row.raw.imageDisplayMode}
+          relaxCoverForLogoFallback
           height={140}
           placeholderBackground={PLACEHOLDER_BG}
         />

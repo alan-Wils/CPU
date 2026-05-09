@@ -9,8 +9,13 @@ type Props = {
   imageUrl: string | null;
   companyInventoryLogoUrl?: string | null;
   imageDisplayMode?: string | null;
-  /** When set, overrides seller `imageDisplayMode` (e.g. detail modal hero uses `cover`). */
+  /** When set, overrides computed fit (rare; prefer `imageDisplayMode` + `relaxCoverForLogoFallback` on buyer). */
   objectFitOverride?: "contain" | "cover" | "scale-down";
+  /**
+   * Pass on buyer marketplace so inventory-logo-only rows are not cropped when sellers saved COVER (matches seller AUTO
+   * for logos). No effect when a product `imageUrl` exists.
+   */
+  relaxCoverForLogoFallback?: boolean;
   /** Fill a positioned parent (use with parent `position: relative` + fixed aspect / height). */
   fillParent?: boolean;
   /** Local preview (`blob:`) — skips `resolveCompanyLogoImgSrc`. */
@@ -30,6 +35,7 @@ export default function MarketplaceProductImageFrame({
   companyInventoryLogoUrl,
   imageDisplayMode,
   objectFitOverride,
+  relaxCoverForLogoFallback,
   fillParent,
   directSrc,
   height = 100,
@@ -64,7 +70,11 @@ export default function MarketplaceProductImageFrame({
 
   const src = local ? local : resolveCompanyLogoImgSrc(raw, apiBaseUrl);
   const fit =
-    objectFitOverride ?? objectFitForMarketplaceImage(imageDisplayMode, { hasProductImage });
+    objectFitOverride ??
+    objectFitForMarketplaceImage(imageDisplayMode, {
+      hasProductImage,
+      relaxCoverForLogoFallback,
+    });
 
   return (
     <div className={className} style={frameStyle}>

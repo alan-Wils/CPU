@@ -797,7 +797,8 @@ export default function SellerPlatformPage() {
                 </select>
                 <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, lineHeight: 1.45 }}>
                   Applies to seller grid and buyer marketplace. Auto uses a full-bleed look for uploaded photos and a
-                  contained look when only your inventory logo is shown.
+                  contained look when only your inventory logo is shown. On the buyer catalog, logo-only listings use that
+                  same contained logo scaling even if you chose Cover (Cover still applies to real product photos there).
                 </div>
               </label>
             </div>

@@ -315,8 +315,8 @@ export async function buildSellerDashboard(options: {
     total: (nbSeriesCur[day] || 0) + (llSeriesCur[day] || 0),
   }));
 
-  const ordersCurCount = nbOrdersCur.filter((o) => isNbOrderCountingRevenue(o.status)).length;
-  const ordersPrevCount = nbOrdersPrev.filter((o) => isNbOrderCountingRevenue(o.status)).length;
+  const ordersCurCount = nbOrdersCur.length;
+  const ordersPrevCount = nbOrdersPrev.length;
 
   /** First-time buyers (with this seller) whose first order falls in range. */
   async function countNewCustomers(rangeFrom: Date, rangeTo: Date): Promise<number> {
