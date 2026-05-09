@@ -33,6 +33,10 @@ import {
   clampInventoryLogoMaxWidthPx,
   resolveCompanyLogoImgSrc,
 } from "@/lib/inventoryExport";
+import {
+  clampMarketplaceBuyerCardLogoMaxHeightPx,
+  clampMarketplaceBuyerChipLogoMaxHeightPx,
+} from "@/lib/marketplaceBuyerLogoSizing";
 import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
 import {
   defaultAutogrowCompanyConfig,
@@ -201,6 +205,10 @@ type AppConfig = {
     companyHeaderLogoMaxHeightPx: number;
     /** Navigation bar tenant logo max width (64–720); 0 = auto from height. */
     companyHeaderLogoMaxWidthPx: number;
+    /** Buyer marketplace product card seller logo height (40–120); 0 = compact default (wide wordmarks). */
+    marketplaceBuyerCardLogoMaxHeightPx: number;
+    /** Buyer marketplace “Select company” chip logo height (36–120); 0 = compact default. */
+    marketplaceBuyerChipLogoMaxHeightPx: number;
   };
   /** Merchandising notes (internal). */
   products: {
@@ -277,6 +285,8 @@ const emptyConfig: AppConfig = {
     inventoryPrintLogoMaxHeightPx: 0,
     companyHeaderLogoMaxHeightPx: 0,
     companyHeaderLogoMaxWidthPx: 0,
+    marketplaceBuyerCardLogoMaxHeightPx: 0,
+    marketplaceBuyerChipLogoMaxHeightPx: 0,
   },
   products: {
     notes: "",
@@ -708,6 +718,14 @@ export default function ConfigPage() {
           companyHeaderLogoMaxWidthPx: clampCompanyHeaderLogoMaxWidthPx(
             (data.sales as { companyHeaderLogoMaxWidthPx?: unknown } | undefined)?.companyHeaderLogoMaxWidthPx,
           ),
+          marketplaceBuyerCardLogoMaxHeightPx: clampMarketplaceBuyerCardLogoMaxHeightPx(
+            (data.sales as { marketplaceBuyerCardLogoMaxHeightPx?: unknown } | undefined)
+              ?.marketplaceBuyerCardLogoMaxHeightPx,
+          ),
+          marketplaceBuyerChipLogoMaxHeightPx: clampMarketplaceBuyerChipLogoMaxHeightPx(
+            (data.sales as { marketplaceBuyerChipLogoMaxHeightPx?: unknown } | undefined)
+              ?.marketplaceBuyerChipLogoMaxHeightPx,
+          ),
           leafLinkCategoryLabels: mergeLeafLinkCategoryLabelsFromPayload({
             sales: data.sales,
             products: data.products as { categoryLabels?: unknown; notes?: string },
@@ -788,6 +806,12 @@ export default function ConfigPage() {
             config.sales.companyHeaderLogoMaxHeightPx,
           ),
           companyHeaderLogoMaxWidthPx: clampCompanyHeaderLogoMaxWidthPx(config.sales.companyHeaderLogoMaxWidthPx),
+          marketplaceBuyerCardLogoMaxHeightPx: clampMarketplaceBuyerCardLogoMaxHeightPx(
+            config.sales.marketplaceBuyerCardLogoMaxHeightPx,
+          ),
+          marketplaceBuyerChipLogoMaxHeightPx: clampMarketplaceBuyerChipLogoMaxHeightPx(
+            config.sales.marketplaceBuyerChipLogoMaxHeightPx,
+          ),
         },
       };
       const res = await fetch(`${API_BASE_URL}${path}`, {
@@ -864,6 +888,14 @@ export default function ConfigPage() {
           ),
           companyHeaderLogoMaxWidthPx: clampCompanyHeaderLogoMaxWidthPx(
             (data.sales as { companyHeaderLogoMaxWidthPx?: unknown } | undefined)?.companyHeaderLogoMaxWidthPx,
+          ),
+          marketplaceBuyerCardLogoMaxHeightPx: clampMarketplaceBuyerCardLogoMaxHeightPx(
+            (data.sales as { marketplaceBuyerCardLogoMaxHeightPx?: unknown } | undefined)
+              ?.marketplaceBuyerCardLogoMaxHeightPx,
+          ),
+          marketplaceBuyerChipLogoMaxHeightPx: clampMarketplaceBuyerChipLogoMaxHeightPx(
+            (data.sales as { marketplaceBuyerChipLogoMaxHeightPx?: unknown } | undefined)
+              ?.marketplaceBuyerChipLogoMaxHeightPx,
           ),
           leafLinkCategoryLabels: mergeLeafLinkCategoryLabelsFromPayload({
             sales: data.sales,
@@ -3421,6 +3453,59 @@ export default function ConfigPage() {
                     sales: {
                       ...prev.sales,
                       companyHeaderLogoMaxWidthPx: clampCompanyHeaderLogoMaxWidthPx(Number(e.target.value)),
+                    },
+                  }))
+                }
+              />
+            </label>
+          </div>
+          <h4 style={{ color: "#cbd5e1", fontSize: 13, fontWeight: 800, margin: "12px 0 8px" }}>
+            Buyer marketplace (your logo on buyer catalog)
+          </h4>
+          <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 10, lineHeight: 1.5 }}>
+            Leave both at <b style={{ color: "#cbd5e1" }}>0</b> for the compact default (fits wide BudFox-style wordmarks).
+            Set heights only for marks that need more room—other sellers are unchanged.
+          </p>
+          <div style={{ ...styles.grid, marginBottom: 12 }}>
+            <label style={styles.label}>
+              Product card logo max height (px, 0 = default 36)
+              <input
+                style={styles.input}
+                type="number"
+                min={0}
+                max={120}
+                step={4}
+                value={config.sales.marketplaceBuyerCardLogoMaxHeightPx}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    sales: {
+                      ...prev.sales,
+                      marketplaceBuyerCardLogoMaxHeightPx: clampMarketplaceBuyerCardLogoMaxHeightPx(
+                        Number(e.target.value),
+                      ),
+                    },
+                  }))
+                }
+              />
+            </label>
+            <label style={styles.label}>
+              Company chip logo max height (px, 0 = default 44)
+              <input
+                style={styles.input}
+                type="number"
+                min={0}
+                max={120}
+                step={4}
+                value={config.sales.marketplaceBuyerChipLogoMaxHeightPx}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    sales: {
+                      ...prev.sales,
+                      marketplaceBuyerChipLogoMaxHeightPx: clampMarketplaceBuyerChipLogoMaxHeightPx(
+                        Number(e.target.value),
+                      ),
                     },
                   }))
                 }

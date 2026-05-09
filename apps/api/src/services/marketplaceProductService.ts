@@ -17,13 +17,40 @@ export type MarketplaceProductExtraImage = {
 export type MarketplaceProductWithLogo = MarketplaceProduct & {
   company?: { id: string; name: string; slug: string };
   companyInventoryLogoUrl?: string | null;
+  /** Seller opt-in: larger card logo on buyer marketplace (0 = compact default). */
+  marketplaceBuyerCardLogoMaxHeightPx?: number;
+  marketplaceBuyerChipLogoMaxHeightPx?: number;
   extraImages?: MarketplaceProductExtraImage[];
 };
 
-async function inventoryPrintLogoUrlByCompanyIds(companyIds: string[]): Promise<Map<string, string | null>> {
+function clampBuyerCardLogoMaxHeightPx(n: unknown): number {
+  const x = Number(n);
+  if (!Number.isFinite(x) || x <= 0) return 0;
+  return Math.min(120, Math.max(40, Math.round(x)));
+}
+
+function clampBuyerChipLogoMaxHeightPx(n: unknown): number {
+  const x = Number(n);
+  if (!Number.isFinite(x) || x <= 0) return 0;
+  return Math.min(120, Math.max(36, Math.round(x)));
+}
+
+export type MarketplaceSellerSalesBranding = {
+  logoUrl: string | null;
+  /** 0 = buyer UI uses default (compact) card logo height. */
+  buyerCardLogoMaxHeightPx: number;
+  /** 0 = buyer UI uses default chip height. */
+  buyerChipLogoMaxHeightPx: number;
+};
+
+async function marketplaceSellerSalesBrandingByCompanyIds(
+  companyIds: string[],
+): Promise<Map<string, MarketplaceSellerSalesBranding>> {
   const unique = [...new Set(companyIds.map((id) => String(id || "").trim()).filter(Boolean))];
-  const map = new Map<string, string | null>();
-  for (const id of unique) map.set(id, null);
+  const map = new Map<string, MarketplaceSellerSalesBranding>();
+  for (const id of unique) {
+    map.set(id, { logoUrl: null, buyerCardLogoMaxHeightPx: 0, buyerChipLogoMaxHeightPx: 0 });
+  }
   if (!unique.length) return map;
   const rows = await prisma.companyConfig.findMany({
     where: { companyId: { in: unique }, key: "sales" },
@@ -31,14 +58,22 @@ async function inventoryPrintLogoUrlByCompanyIds(companyIds: string[]): Promise<
   });
   for (const row of rows) {
     let url: string | null = null;
+    let buyerCardLogoMaxHeightPx = 0;
+    let buyerChipLogoMaxHeightPx = 0;
     try {
-      const v = JSON.parse(String(row.valueJson || "{}")) as { inventoryPrintLogoUrl?: unknown };
+      const v = JSON.parse(String(row.valueJson || "{}")) as {
+        inventoryPrintLogoUrl?: unknown;
+        marketplaceBuyerCardLogoMaxHeightPx?: unknown;
+        marketplaceBuyerChipLogoMaxHeightPx?: unknown;
+      };
       const u = typeof v.inventoryPrintLogoUrl === "string" ? v.inventoryPrintLogoUrl.trim() : "";
       url = u || null;
+      buyerCardLogoMaxHeightPx = clampBuyerCardLogoMaxHeightPx(v.marketplaceBuyerCardLogoMaxHeightPx);
+      buyerChipLogoMaxHeightPx = clampBuyerChipLogoMaxHeightPx(v.marketplaceBuyerChipLogoMaxHeightPx);
     } catch {
       url = null;
     }
-    map.set(row.companyId, url);
+    map.set(row.companyId, { logoUrl, buyerCardLogoMaxHeightPx, buyerChipLogoMaxHeightPx });
   }
   return map;
 }
@@ -102,6 +137,8 @@ export type MarketplaceSellerRow = {
   productCount: number;
   /** Same source as product rows: `sales.inventoryPrintLogoUrl` in company config. */
   companyInventoryLogoUrl?: string | null;
+  /** `sales.marketplaceBuyerChipLogoMaxHeightPx`; 0 = buyer UI default. */
+  marketplaceBuyerChipLogoMaxHeightPx?: number;
 };
 
 export class MarketplaceProductService {
@@ -130,14 +167,21 @@ export class MarketplaceProductService {
         },
       },
     });
-    const logoMap = await inventoryPrintLogoUrlByCompanyIds([companyId]);
+    const brandMap = await marketplaceSellerSalesBrandingByCompanyIds([companyId]);
+    const branding = brandMap.get(companyId);
     const catMap = await leafLinkCategoryOverridesByCompanyIds([companyId]);
-    const companyInventoryLogoUrl = logoMap.get(companyId) ?? null;
+    const companyInventoryLogoUrl = branding?.logoUrl ?? null;
     const overrides = catMap.get(companyId) ?? [];
     return rows.map((r) => {
       const raw = String(r.category ?? "").trim();
       const category = raw ? resolveInventoryCategoryLabel(raw, overrides) || null : null;
-      return { ...r, category, companyInventoryLogoUrl };
+      return {
+        ...r,
+        category,
+        companyInventoryLogoUrl,
+        marketplaceBuyerCardLogoMaxHeightPx: branding?.buyerCardLogoMaxHeightPx,
+        marketplaceBuyerChipLogoMaxHeightPx: branding?.buyerChipLogoMaxHeightPx,
+      };
     });
   }
 
@@ -194,15 +238,18 @@ export class MarketplaceProductService {
       take: 500,
     });
     const ids = rows.map((r) => r.companyId);
-    const logoMap = await inventoryPrintLogoUrlByCompanyIds(ids);
+    const brandMap = await marketplaceSellerSalesBrandingByCompanyIds(ids);
     const catMap = await leafLinkCategoryOverridesByCompanyIds(ids);
     return rows.map((r) => {
       const raw = String(r.category ?? "").trim();
       const category = raw ? resolveInventoryCategoryLabel(raw, catMap.get(r.companyId) ?? []) || null : null;
+      const b = brandMap.get(r.companyId);
       return {
         ...r,
         category,
-        companyInventoryLogoUrl: logoMap.get(r.companyId) ?? null,
+        companyInventoryLogoUrl: b?.logoUrl ?? null,
+        marketplaceBuyerCardLogoMaxHeightPx: b?.buyerCardLogoMaxHeightPx,
+        marketplaceBuyerChipLogoMaxHeightPx: b?.buyerChipLogoMaxHeightPx,
       };
     });
   }
@@ -327,12 +374,19 @@ export class MarketplaceProductService {
       },
     });
     if (!row) return null;
-    const logoMap = await inventoryPrintLogoUrlByCompanyIds([companyId]);
+    const brandMap = await marketplaceSellerSalesBrandingByCompanyIds([companyId]);
+    const branding = brandMap.get(companyId);
     const catMap = await leafLinkCategoryOverridesByCompanyIds([companyId]);
     const overrides = catMap.get(companyId) ?? [];
     const raw = String(row.category ?? "").trim();
     const category = raw ? resolveInventoryCategoryLabel(raw, overrides) || null : null;
-    return { ...row, category, companyInventoryLogoUrl: logoMap.get(companyId) ?? null };
+    return {
+      ...row,
+      category,
+      companyInventoryLogoUrl: branding?.logoUrl ?? null,
+      marketplaceBuyerCardLogoMaxHeightPx: branding?.buyerCardLogoMaxHeightPx,
+      marketplaceBuyerChipLogoMaxHeightPx: branding?.buyerChipLogoMaxHeightPx,
+    };
   }
 
   async listMarketplaceSellers(buyerCompanyId: string): Promise<MarketplaceSellerRow[]> {
@@ -341,6 +395,7 @@ export class MarketplaceProductService {
     for (const p of products) {
       const c = p.company;
       const logo = p.companyInventoryLogoUrl ?? null;
+      const chipH = p.marketplaceBuyerChipLogoMaxHeightPx ?? 0;
       const existing = map.get(c.id);
       if (!existing) {
         map.set(c.id, {
@@ -349,10 +404,14 @@ export class MarketplaceProductService {
           slug: c.slug,
           productCount: 1,
           companyInventoryLogoUrl: logo,
+          marketplaceBuyerChipLogoMaxHeightPx: chipH > 0 ? chipH : undefined,
         });
       } else {
         existing.productCount += 1;
         if (!existing.companyInventoryLogoUrl && logo) existing.companyInventoryLogoUrl = logo;
+        if (!existing.marketplaceBuyerChipLogoMaxHeightPx && chipH > 0) {
+          existing.marketplaceBuyerChipLogoMaxHeightPx = chipH;
+        }
       }
     }
     return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));

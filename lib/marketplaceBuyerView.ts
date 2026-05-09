@@ -422,11 +422,19 @@ export type CompanyChip = {
   /** Resolved from API: `sales.inventoryPrintLogoUrl` for that seller workspace. */
   logoUrl?: string | null;
   productCount?: number;
+  /** `sales.marketplaceBuyerChipLogoMaxHeightPx` when seller opts in (0 = default in UI). */
+  marketplaceBuyerChipLogoMaxHeightPx?: number | null;
 };
 
 /** Company selector chips: only real sellers from the API (+ “All Companies”). */
 export function buildCompanyChips(
-  sellers: Array<{ id: string; name: string; productCount: number; companyInventoryLogoUrl?: string | null }>,
+  sellers: Array<{
+    id: string;
+    name: string;
+    productCount: number;
+    companyInventoryLogoUrl?: string | null;
+    marketplaceBuyerChipLogoMaxHeightPx?: number | null;
+  }>,
 ): CompanyChip[] {
   const chips: CompanyChip[] = [
     { key: "all", filter: { kind: "all" }, label: "All Companies", icon: "▣", productCount: undefined },
@@ -440,6 +448,7 @@ export function buildCompanyChips(
       icon: s.name.slice(0, 1).toUpperCase(),
       logoUrl: s.companyInventoryLogoUrl ?? null,
       productCount: s.productCount,
+      marketplaceBuyerChipLogoMaxHeightPx: s.marketplaceBuyerChipLogoMaxHeightPx ?? null,
     });
   }
   return chips;

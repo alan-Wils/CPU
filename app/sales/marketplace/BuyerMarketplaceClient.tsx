@@ -47,6 +47,14 @@ import {
   type QuickFilterId,
 } from "@/lib/marketplaceBuyerView";
 import { resolveCompanyLogoImgSrc } from "@/lib/inventoryExport";
+import {
+  DEFAULT_BUYER_CARD_LOGO_MAX_W,
+  resolveBuyerCardLogoMaxHeight,
+  resolveBuyerChipLogoMaxHeight,
+  resolveBuyerModalLogoMaxHeight,
+  sellerUsesBuyerCardLogoBoost,
+  sellerUsesBuyerChipLogoBoost,
+} from "@/lib/marketplaceBuyerLogoSizing";
 import { isLoggedIn, isPortalSession } from "@/lib/auth";
 import MarketplaceBuyerBottomNav from "@/components/MarketplaceBuyerBottomNav";
 
@@ -93,6 +101,7 @@ type SellerRow = {
   slug: string;
   productCount: number;
   companyInventoryLogoUrl?: string | null;
+  marketplaceBuyerChipLogoMaxHeightPx?: number | null;
 };
 
 type CartLine = { product: MarketplaceProductDto; quantity: number };
@@ -594,6 +603,7 @@ export function BuyerMarketplaceClient() {
                 (c.filter.kind === "name" &&
                   companyFilter.kind === "name" &&
                   companyFilter.name === c.filter.name);
+              const chipBoost = sellerUsesBuyerChipLogoBoost(c.marketplaceBuyerChipLogoMaxHeightPx);
               return (
                 <button
                   key={c.key}
@@ -602,7 +612,7 @@ export function BuyerMarketplaceClient() {
                   style={{
                     flex: "0 0 auto",
                     scrollSnapAlign: "start",
-                    minWidth: 184,
+                    minWidth: chipBoost ? 176 : 132,
                     padding: "12px 14px",
                     borderRadius: 16,
                     border: active
@@ -1071,7 +1081,21 @@ export function BuyerMarketplaceClient() {
               <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "#22d3ee", fontWeight: 800 }}>
                 {detailRow.displayCategoryBadge}
               </div>
-              <BuyerSellerLogoAboveTitle logoUrl={detailRow.raw.companyInventoryLogoUrl} maxHeight={88} marginBottom={10} />
+              <BuyerSellerLogoAboveTitle
+                logoUrl={detailRow.raw.companyInventoryLogoUrl}
+                maxHeight={resolveBuyerModalLogoMaxHeight(detailRow.raw.marketplaceBuyerCardLogoMaxHeightPx)}
+                maxWidthPx={
+                  sellerUsesBuyerCardLogoBoost(detailRow.raw.marketplaceBuyerCardLogoMaxHeightPx)
+                    ? undefined
+                    : DEFAULT_BUYER_CARD_LOGO_MAX_W
+                }
+                align={
+                  sellerUsesBuyerCardLogoBoost(detailRow.raw.marketplaceBuyerCardLogoMaxHeightPx)
+                    ? "center"
+                    : "flex-start"
+                }
+                marginBottom={10}
+              />
               <h3 style={{ margin: "0 0 6px", fontSize: "clamp(1.25rem, 4vw, 1.5rem)", fontWeight: 900, lineHeight: 1.2 }}>
                 {detailRow.productName}
               </h3>
@@ -1329,8 +1353,8 @@ function CompanyChipBrand({ c }: { c: CompanyChip }) {
   const raw = (c.logoUrl || "").trim();
   if (raw) {
     const src = resolveCompanyLogoImgSrc(raw, API_BASE_URL);
-    /** Taller + full chip width so marks with padding or portrait aspect read closer to wide wordmarks. */
-    const chipLogoH = 80;
+    const chipLogoH = resolveBuyerChipLogoMaxHeight(c.marketplaceBuyerChipLogoMaxHeightPx);
+    const chipBoost = sellerUsesBuyerChipLogoBoost(c.marketplaceBuyerChipLogoMaxHeightPx);
     return (
       <div
         style={{
@@ -1339,7 +1363,7 @@ function CompanyChipBrand({ c }: { c: CompanyChip }) {
           width: "100%",
           display: "flex",
           alignItems: "center",
-          justifyContent: "center",
+          justifyContent: chipBoost ? "center" : "flex-start",
         }}
       >
         <img
@@ -1371,12 +1395,14 @@ function BuyerSellerLogoAboveTitle({
   logoUrl,
   maxHeight,
   maxWidthPx,
+  align = "flex-start",
   marginBottom = 8,
 }: {
   logoUrl: string | null | undefined;
   maxHeight: number;
-  /** When set, caps width; otherwise uses full card / modal content width (better for tall marks). */
+  /** When set, caps width; omit for full row width (seller opt-in “boost” layout). */
   maxWidthPx?: number;
+  align?: "flex-start" | "center";
   marginBottom?: number;
 }) {
   const raw = (logoUrl || "").trim();
@@ -1390,7 +1416,7 @@ function BuyerSellerLogoAboveTitle({
         marginBottom,
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
+        justifyContent: align,
         minHeight: maxHeight,
         width: "100%",
       }}
@@ -1449,6 +1475,8 @@ function ProductCard({
   onAdd: () => void;
 }) {
   const strainStyle = strainBadgeStyleForDominance(row.dominanceStyle);
+  const cardBoost = sellerUsesBuyerCardLogoBoost(row.raw.marketplaceBuyerCardLogoMaxHeightPx);
+  const cardLogoH = resolveBuyerCardLogoMaxHeight(row.raw.marketplaceBuyerCardLogoMaxHeightPx);
   return (
     <div
       role="button"
@@ -1559,7 +1587,13 @@ function ProductCard({
         </button>
       </div>
       <div style={{ padding: "12px 12px 14px", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-        <BuyerSellerLogoAboveTitle logoUrl={row.raw.companyInventoryLogoUrl} maxHeight={72} marginBottom={2} />
+        <BuyerSellerLogoAboveTitle
+          logoUrl={row.raw.companyInventoryLogoUrl}
+          maxHeight={cardLogoH}
+          maxWidthPx={cardBoost ? undefined : DEFAULT_BUYER_CARD_LOGO_MAX_W}
+          align={cardBoost ? "center" : "flex-start"}
+          marginBottom={2}
+        />
         <div style={{ fontWeight: 900, fontSize: 15, lineHeight: 1.25 }}>{row.productName}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#94a3b8" }}>
           {row.sellerCompanyName}

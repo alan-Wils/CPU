@@ -995,6 +995,9 @@ export type MarketplaceProductDto = {
   imageDisplayMode?: string | null;
   /** Company config `sales.inventoryPrintLogoUrl` when no product image is set. */
   companyInventoryLogoUrl?: string | null;
+  /** Seller opt-in (`sales.marketplaceBuyerCardLogoMaxHeightPx`): larger logo above title on buyer cards; omit/0 = compact default. */
+  marketplaceBuyerCardLogoMaxHeightPx?: number | null;
+  marketplaceBuyerChipLogoMaxHeightPx?: number | null;
   availabilityStatus: string;
   source: string;
   leafLinkInventoryId: string | null;
@@ -1135,6 +1138,7 @@ export async function salesMarketplaceSellers() {
       slug: string;
       productCount: number;
       companyInventoryLogoUrl?: string | null;
+      marketplaceBuyerChipLogoMaxHeightPx?: number | null;
     }>;
   }>(`/api/sales/marketplace/sellers`);
 }
