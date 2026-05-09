@@ -83,6 +83,32 @@ span.login-brand-logo-glow-link img {
   }
 }
 
+/* Bottom variant: when the marketing slogan sits under the sign-in card it needs more headroom. */
+.login-slogan-wrap.login-slogan-wrap--bottom {
+  margin-top: 28px;
+  margin-bottom: 4px;
+}
+
+@media (min-width: 768px) {
+  .login-slogan-wrap.login-slogan-wrap--bottom {
+    margin-top: 36px;
+  }
+}
+
+/* Bottom-of-login-page placement: under the sign-in form, safe-area aware. */
+.login-slogan-wrap--bottom {
+  margin-top: 24px;
+  margin-bottom: 0;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+}
+
+@media (min-width: 768px) {
+  .login-slogan-wrap--bottom {
+    margin-top: 32px;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+  }
+}
+
 .login-slogan-line1 {
   margin: 0;
   font-size: 15px;
@@ -230,48 +256,22 @@ nextjs-portal {
 }
 
 /*
- * Subtle marketing slogan anchored at the very bottom of the login page only.
- * Space Grotesk (loaded via `--font-space-grotesk` in app/layout.tsx),
- * 11px mobile / 12px desktop, soft hover brightening, safe-area aware.
+ * Subtle marketing slogan pinned to the bottom-center of every authenticated platform page
+ * (`<PlatformFooterSlogan />` mounted from `app/layout.tsx`). Tailwind isn't loaded in the
+ * root `app/` workspace, so the responsive type scale + hover transition live here.
  */
-.login-footer-slogan-wrap {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  padding-top: 24px;
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
-  pointer-events: none;
-}
-
-@media (min-width: 768px) {
-  .login-footer-slogan-wrap {
-    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
-  }
-}
-
-.login-footer-slogan {
-  margin: 0;
-  font-family: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
+.platform-footer-slogan {
   font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 1px;
-  line-height: 1.4;
-  text-align: center;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.28);
-  transition: color 300ms ease;
-  pointer-events: auto;
-  user-select: none;
 }
 
 @media (min-width: 768px) {
-  .login-footer-slogan {
+  .platform-footer-slogan {
     font-size: 12px;
   }
 }
 
-.login-footer-slogan:hover,
-.login-footer-slogan:focus-visible {
+.platform-footer-slogan:hover,
+.platform-footer-slogan:focus-visible {
   color: rgba(255, 255, 255, 0.45);
 }
 
