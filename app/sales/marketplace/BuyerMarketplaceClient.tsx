@@ -1381,7 +1381,7 @@ function ProductCard({
           apiBaseUrl={API_BASE_URL}
           imageUrl={row.raw.imageUrl}
           companyInventoryLogoUrl={row.raw.companyInventoryLogoUrl}
-          imageDisplayMode={row.raw.imageDisplayMode ?? "COVER"}
+          imageDisplayMode={row.raw.imageDisplayMode}
           height={140}
           placeholderBackground={PLACEHOLDER_BG}
         />

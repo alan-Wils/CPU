@@ -994,15 +994,10 @@ export type MarketplaceProductDto = {
   imageDisplayMode?: string | null;
   /** Company config `sales.inventoryPrintLogoUrl` when no product image is set. */
   companyInventoryLogoUrl?: string | null;
-  /** Seller-entered potency for marketplace cards (e.g. % THC, mg). */
-  potencyLabel?: string | null;
-  /** Seller-entered dominance (Hybrid / Indica / Sativa or custom). */
-  strainDominance?: string | null;
   availabilityStatus: string;
   source: string;
   leafLinkInventoryId: string | null;
   company?: { id: string; name: string; slug: string };
-  updatedAt?: string;
 };
 
 export async function salesSellerProducts(params?: {
@@ -1029,8 +1024,6 @@ export async function salesSellerProductCreate(body: {
   quantityAvailable: number;
   imageUrl?: string | null;
   imageDisplayMode?: "AUTO" | "CONTAIN" | "COVER" | null;
-  potencyLabel?: string | null;
-  strainDominance?: string | null;
   availabilityStatus: "AVAILABLE" | "INTERNAL" | "NOT_AVAILABLE";
 }) {
   return apiRequest<{ product: MarketplaceProductDto }>("/api/sales/seller/products", {
@@ -1093,15 +1086,9 @@ export async function salesMarketplaceProducts(params?: {
 }
 
 export async function salesMarketplaceSellers() {
-  return apiRequest<{
-    sellers: Array<{
-      id: string;
-      name: string;
-      slug: string;
-      productCount: number;
-      companyInventoryLogoUrl?: string | null;
-    }>;
-  }>("/api/sales/marketplace/sellers");
+  return apiRequest<{ sellers: Array<{ id: string; name: string; slug: string; productCount: number }> }>(
+    "/api/sales/marketplace/sellers",
+  );
 }
 
 export async function salesCreateOrder(body: {
@@ -1132,6 +1119,104 @@ export async function salesSellerOrderSetStatus(
     `/api/sales/seller/orders/${encodeURIComponent(orderId)}/status`,
     { method: "PATCH", body: { status } },
   );
+}
+
+/** `GET /api/sales/seller/dashboard` — Seller Platform KPIs, charts, and lists (scoped company). */
+export type SellerDashboardDto = {
+  company: {
+    id: string;
+    name: string;
+    slug: string;
+    initials: string;
+    locationLine: string | null;
+    verifiedSeller: boolean;
+  };
+  dateRange: { from: string; to: string; label: string; compareLabel: string };
+  leafLinkConnected: boolean;
+  kpis: {
+    totalSales: { value: number; valueFormatted: string; pctChange: number | null; vsLabel: string };
+    totalOrders: { value: number; pctChange: number | null; vsLabel: string };
+    newCustomers: { value: number; pctChange: number | null; vsLabel: string };
+    activeProducts: { value: number; pctChange: number | null; vsLabel: string };
+    lowStockItems: { value: number; pctChange: number | null; vsLabel: string };
+  };
+  salesPanels: {
+    nexbatch: {
+      total: number;
+      totalFormatted: string;
+      pctChange: number | null;
+      series: Array<{ day: string; total: number }>;
+    };
+    leafLink: {
+      total: number;
+      totalFormatted: string;
+      pctChange: number | null;
+      series: Array<{ day: string; total: number }>;
+    };
+    combined: {
+      total: number;
+      totalFormatted: string;
+      pctChange: number | null;
+      series: Array<{ day: string; total: number }>;
+    };
+  };
+  salesOverview: {
+    mode: "nexbatch";
+    total: number;
+    totalFormatted: string;
+    pctChange: number | null;
+    series: Array<{ day: string; total: number }>;
+  };
+  orderStatus: {
+    total: number;
+    segments: Array<{ key: string; label: string; count: number; color: string }>;
+  };
+  revenueByCategory: Array<{ category: string; revenue: number; revenueFormatted: string; pct: number }>;
+  recentOrders: Array<{
+    id: string;
+    orderNumber: string;
+    customerName: string;
+    amount: number;
+    amountFormatted: string;
+    statusKey: string;
+    statusLabel: string;
+    source: "nexbatch";
+  }>;
+  inventoryAlerts: Array<{
+    productId: string;
+    name: string;
+    categoryLine: string;
+    quantityAvailable: number;
+    unitSize: string | null;
+    warning: string;
+    imageUrl: string | null;
+  }>;
+  topSellingProducts: Array<{
+    rank: number;
+    name: string;
+    categoryLine: string;
+    revenue: number;
+    revenueFormatted: string;
+    qtyLabel: string;
+  }>;
+  customerOverview: {
+    totalCustomers: number;
+    repeatCustomers: number;
+    repeatPct: number | null;
+    newThisPeriod: number;
+    topCustomers: Array<{ name: string; totalSpend: number; totalSpendFormatted: string }>;
+  };
+  crmActivity: Array<{ id: string; kind: string; title: string; subtitle: string; atLabel: string }>;
+  reportsOverview: Array<{ id: string; title: string; description: string }>;
+  badges: { pendingOrders: number };
+};
+
+export async function salesSellerDashboard(params?: { from?: string; to?: string }) {
+  const q = new URLSearchParams();
+  if (params?.from) q.set("from", params.from);
+  if (params?.to) q.set("to", params.to);
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  return apiRequest<SellerDashboardDto>(`/api/sales/seller/dashboard${suffix}`);
 }
 
 /** Home notification bell (`GET /api/notifications/inbox`). */

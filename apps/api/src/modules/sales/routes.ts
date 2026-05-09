@@ -18,6 +18,7 @@ import { MarketplaceProductImageUploadService } from "../../services/marketplace
 import { MarketplaceOrderService } from "../../services/marketplaceOrderService.js";
 import { syncLeafLinkInventoryToMarketplaceProducts } from "../../services/marketplaceLeafLinkSyncService.js";
 import { CompanyServiceSettingsService } from "../../services/companyServiceSettingsService.js";
+import { buildSellerDashboard } from "../../services/sellerDashboardService.js";
 
 export const salesRouter = Router();
 const productService = new MarketplaceProductService();
@@ -46,6 +47,17 @@ const sellerOrdersQuerySchema = z.object({
   status: z.string().max(32).optional(),
 });
 
+const sellerDashboardQuerySchema = z.object({
+  from: z.string().max(80).optional(),
+  to: z.string().max(80).optional(),
+});
+
+function parseOptionalIsoDate(s: string | undefined): Date | undefined {
+  if (!s || !String(s).trim()) return undefined;
+  const d = new Date(String(s));
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
 function sellerProductHandlers() {
   return [
     requireCompanyService("salesSellerEnabled"),
@@ -59,6 +71,26 @@ function buyerMarketplaceHandlers() {
     requireRoleOrAppPermission(["OWNER", "ADMIN", "OPERATIONS_MANAGER"], "page.sales-marketplace"),
   ];
 }
+
+salesRouter.get(
+  "/seller/dashboard",
+  ...sellerProductHandlers(),
+  validate({ query: sellerDashboardQuerySchema }),
+  asyncHandler(async (req, res) => {
+    const sellerCompanyId = getScopedCompanyId(req);
+    const settings = await settingsService.getRaw(sellerCompanyId);
+    const q = req.query as { from?: string; to?: string };
+    const from = parseOptionalIsoDate(q.from);
+    const to = parseOptionalIsoDate(q.to);
+    const dash = await buildSellerDashboard({
+      sellerCompanyId,
+      from,
+      to,
+      leafLinkInventorySyncEnabled: settings.leafLinkInventorySyncEnabled,
+    });
+    res.json(dash);
+  }),
+);
 
 salesRouter.get(
   "/seller/products",

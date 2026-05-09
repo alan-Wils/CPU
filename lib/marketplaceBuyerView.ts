@@ -421,7 +421,7 @@ export function marketplaceDemoProducts(): MarketplaceProductDto[] {
     source: "MANUAL",
     leafLinkInventoryId: null,
     company: partial.company,
-    imageDisplayMode: "COVER",
+    imageDisplayMode: "AUTO",
     potencyLabel: partial.potencyLabel ?? null,
     strainDominance: partial.strainDominance ?? null,
   });

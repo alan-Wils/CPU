@@ -139,3 +139,49 @@ nextjs-portal {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
+
+/* Seller Platform — responsive shell */
+.seller-shell-aside {
+  display: none;
+  width: 280px;
+}
+
+.seller-shell-aside--open {
+  display: flex !important;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 50;
+  height: 100vh;
+  box-shadow: 12px 0 40px rgba(0, 0, 0, 0.45);
+  width: min(92vw, 300px);
+}
+
+@media (min-width: 1024px) {
+  .seller-shell-aside {
+    display: flex !important;
+    position: sticky !important;
+    top: 0;
+    align-self: flex-start;
+    height: 100vh;
+    width: 280px !important;
+    box-shadow: none !important;
+  }
+
+  .seller-shell-aside--open {
+    position: sticky !important;
+    height: 100vh !important;
+    width: 280px !important;
+    box-shadow: none !important;
+  }
+}
+
+.seller-shell-hamburger {
+  display: inline-flex;
+}
+
+@media (min-width: 1024px) {
+  .seller-shell-hamburger {
+    display: none !important;
+  }
+}
