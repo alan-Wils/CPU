@@ -2,48 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
-
-type DocWithFs = Document & {
-  webkitFullscreenElement?: Element | null;
-  webkitExitFullscreen?: () => Promise<void>;
-};
-
-type ElWithFs = HTMLElement & {
-  webkitRequestFullscreen?: () => Promise<void>;
-  mozRequestFullScreen?: () => Promise<void>;
-};
-
-function isFullscreenDoc(): boolean {
-  if (typeof document === "undefined") return false;
-  const d = document as DocWithFs;
-  return Boolean(document.fullscreenElement || d.webkitFullscreenElement);
-}
-
-async function enterFullscreen(): Promise<void> {
-  const el = document.documentElement as ElWithFs;
-  if (typeof el.requestFullscreen === "function") {
-    await el.requestFullscreen();
-    return;
-  }
-  if (typeof el.webkitRequestFullscreen === "function") {
-    await el.webkitRequestFullscreen();
-    return;
-  }
-  if (typeof el.mozRequestFullScreen === "function") {
-    await el.mozRequestFullScreen();
-  }
-}
-
-async function exitFullscreen(): Promise<void> {
-  const d = document as DocWithFs;
-  if (document.fullscreenElement && typeof document.exitFullscreen === "function") {
-    await document.exitFullscreen();
-    return;
-  }
-  if (d.webkitFullscreenElement && typeof d.webkitExitFullscreen === "function") {
-    await d.webkitExitFullscreen();
-  }
-}
+import {
+  exitDocumentFullscreen,
+  isDocumentFullscreen,
+  requestDocumentFullscreen,
+  setWantsFullscreen,
+} from "@/lib/documentFullscreen";
 
 type Props = {
   style?: CSSProperties;
@@ -53,14 +17,17 @@ type Props = {
 
 /**
  * Toggles browser fullscreen (hides the Windows taskbar / macOS menu bar while active).
- * Must be triggered by a user gesture; browsers may ignore programmatic fullscreen otherwise.
+ * Persists intent in sessionStorage so navigation can try to re-enter fullscreen (see GlobalDocumentFullscreenButton).
  */
 export default function DocumentFullscreenButton({ style, enabled = true }: Props) {
   const [active, setActive] = useState(false);
   const [supported, setSupported] = useState(false);
 
   useEffect(() => {
-    const el = document.documentElement as ElWithFs;
+    const el = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void>;
+      mozRequestFullScreen?: () => Promise<void>;
+    };
     const ok =
       typeof el.requestFullscreen === "function" ||
       typeof el.webkitRequestFullscreen === "function" ||
@@ -69,7 +36,7 @@ export default function DocumentFullscreenButton({ style, enabled = true }: Prop
   }, []);
 
   useEffect(() => {
-    const sync = () => setActive(isFullscreenDoc());
+    const sync = () => setActive(isDocumentFullscreen());
     document.addEventListener("fullscreenchange", sync);
     document.addEventListener("webkitfullscreenchange", sync);
     sync();
@@ -81,8 +48,13 @@ export default function DocumentFullscreenButton({ style, enabled = true }: Prop
 
   const toggle = useCallback(async () => {
     try {
-      if (isFullscreenDoc()) await exitFullscreen();
-      else await enterFullscreen();
+      if (isDocumentFullscreen()) {
+        setWantsFullscreen(false);
+        await exitDocumentFullscreen();
+      } else {
+        await requestDocumentFullscreen();
+        if (isDocumentFullscreen()) setWantsFullscreen(true);
+      }
     } catch {
       /* Unsupported, denied, or not a user gesture */
     }

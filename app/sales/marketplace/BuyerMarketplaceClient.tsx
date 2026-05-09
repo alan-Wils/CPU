@@ -22,7 +22,6 @@ import {
   type MarketplaceProductDto,
 } from "@/lib/api";
 import BrandLogo from "@/components/BrandLogo";
-import DocumentFullscreenButton from "@/components/DocumentFullscreenButton";
 import MarketplaceOrderInvoiceModal from "@/components/MarketplaceOrderInvoiceModal";
 import MarketplaceProductImageFrame from "@/components/MarketplaceProductImageFrame";
 import {
@@ -470,7 +469,6 @@ export function BuyerMarketplaceClient() {
               </span>
             ) : null}
           </Link>
-          <DocumentFullscreenButton style={iconBtn()} />
           <button
             type="button"
             onClick={() => setCartOpen(true)}
