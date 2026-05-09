@@ -45,6 +45,82 @@ span.login-brand-logo-glow-link img {
   }
 }
 
+/* Login page slogan — Space Grotesk via `--font-space-grotesk` (see app/layout.tsx). */
+@keyframes login-slogan-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.login-slogan-wrap {
+  font-family: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
+  margin-top: 12px;
+  margin-bottom: 24px;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 320px;
+  text-align: center;
+  letter-spacing: 0.5px;
+  line-height: 1.4;
+  animation: login-slogan-fade-in 0.65s ease-out both;
+}
+
+@media (min-width: 768px) {
+  .login-slogan-wrap {
+    max-width: 500px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-slogan-wrap {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+.login-slogan-line1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow:
+    0 0 24px rgba(167, 139, 250, 0.15),
+    0 0 40px rgba(45, 212, 191, 0.1);
+}
+
+@media (min-width: 768px) {
+  .login-slogan-line1 {
+    font-size: 18px;
+  }
+}
+
+.login-slogan-line2 {
+  display: block;
+  margin: 0;
+  margin-top: 0.2em;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.5px;
+  /* Tailwind: from-purple-500 via-blue-500 to-emerald-400 */
+  background: linear-gradient(to right, #a855f7, #3b82f6, #34d399);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 16px rgba(168, 85, 247, 0.35)) drop-shadow(0 0 24px rgba(45, 212, 191, 0.3));
+}
+
+@media (min-width: 768px) {
+  .login-slogan-line2 {
+    font-size: 18px;
+  }
+}
+
 nextjs-portal {
   display: none !important;
 }
@@ -151,6 +227,26 @@ nextjs-portal {
       drop-shadow(0 0 22px rgba(220, 38, 38, 0.45));
     will-change: auto;
   }
+}
+
+/*
+ * Subtle marketing slogan pinned to the bottom-center of every authenticated platform page
+ * (`<PlatformFooterSlogan />` mounted from `app/layout.tsx`). Tailwind isn't loaded in the
+ * root `app/` workspace, so the responsive type scale + hover transition live here.
+ */
+.platform-footer-slogan {
+  font-size: 11px;
+}
+
+@media (min-width: 768px) {
+  .platform-footer-slogan {
+    font-size: 12px;
+  }
+}
+
+.platform-footer-slogan:hover,
+.platform-footer-slogan:focus-visible {
+  color: rgba(255, 255, 255, 0.45);
 }
 
 /* Buyer marketplace — responsive product grid */

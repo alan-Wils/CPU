@@ -11,6 +11,10 @@ export type TopBrandStripProps = {
   companyLogoMaxHeightPx?: number;
   nexbatchHeight?: number;
   linkNexbatchToHome?: boolean;
+  /**
+   * When true, removes the default bottom margin so a sibling (e.g. login slogan) can control spacing precisely.
+   */
+  trimBottomSpacing?: boolean;
 };
 
 /**
@@ -23,6 +27,7 @@ export default function TopBrandStrip({
   /** NexBatch wordmark height (px); company logo size is controlled only by `companyLogoMaxHeightPx`. */
   nexbatchHeight = 186,
   linkNexbatchToHome = true,
+  trimBottomSpacing = false,
 }: TopBrandStripProps) {
   const raw = (companyLogoConfiguredUrl || "").trim();
   const resolved = raw ? resolveCompanyLogoImgSrc(raw, apiBaseUrl) : "";
@@ -36,7 +41,7 @@ export default function TopBrandStrip({
     width: "100%",
     boxSizing: "border-box",
     padding: "22px 22px",
-    marginBottom: 14,
+    marginBottom: trimBottomSpacing ? 0 : 14,
     background:
       "linear-gradient(90deg, rgba(2, 6, 23, 0.95) 0%, rgba(15, 23, 42, 0.95) 50%, rgba(30, 41, 59, 0.9) 100%)",
     borderRadius: 16,

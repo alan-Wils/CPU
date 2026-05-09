@@ -181,7 +181,16 @@ export default function LoginPage() {
           boxSizing: "border-box",
         }}
       >
-        <TopBrandStrip apiBaseUrl={API_BASE_URL} linkNexbatchToHome={false} nexbatchHeight={234} />
+        <TopBrandStrip
+          apiBaseUrl={API_BASE_URL}
+          linkNexbatchToHome={false}
+          nexbatchHeight={234}
+          trimBottomSpacing
+        />
+        <div className="login-slogan-wrap">
+          <p className="login-slogan-line1">When the Next Batch Matters,</p>
+          <p className="login-slogan-line2">Choose NexBatch.</p>
+        </div>
       </div>
       <div
         style={{
