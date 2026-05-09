@@ -2900,22 +2900,6 @@ export default function AdminPage() {
                       EOD digest email…
                     </button>
                   </div>
-                  <p
-                    style={{
-                      color: "#64748b",
-                      fontSize: 13,
-                      marginTop: 12,
-                      marginBottom: 0,
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    Schedule a digest email with <strong>cash log</strong> and <strong>check log</strong> tables (rows
-                    included by saved / created time in the window). Example: weekdays 5:00 PM with “last 24 hours”, or
-                    Fridays only with “last 7 days”. Requires{" "}
-                    <code style={{ color: "#94a3b8" }}>CRON_SECRET</code> on the API and a cron job POSTing to{" "}
-                    <code style={{ color: "#94a3b8" }}>/api/internal/jobs/cash-log-eod</code> every ~15–30 minutes with{" "}
-                    <code style={{ color: "#94a3b8" }}>Authorization: Bearer …</code>.
-                  </p>
                 </section>
               ) : null}
         {checkLogOpen ? (

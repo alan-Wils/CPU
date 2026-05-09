@@ -23,12 +23,27 @@ function detectPlatform(): Platform {
 }
 
 /**
- * True when the page is rendered inside an installed PWA shell (Chromium / desktop) or pinned to the iOS Home Screen.
- * `display-mode: standalone` covers Chromium PWAs across desktop and Android; `navigator.standalone` covers iOS.
+ * True when the page runs inside an installed PWA (not a normal browser tab).
+ * - `standalone` / `fullscreen` / `minimal-ui` / `window-controls-overlay` match manifest `display` + `display_override`
+ *   (NexBatch uses `fullscreen` first — `(display-mode: standalone)` alone misses that shell).
+ * - `navigator.standalone` covers iOS Home Screen.
  */
-function detectStandalone(): boolean {
+const INSTALLED_DISPLAY_MODE_QUERIES = [
+  "(display-mode: standalone)",
+  "(display-mode: fullscreen)",
+  "(display-mode: minimal-ui)",
+  "(display-mode: window-controls-overlay)",
+] as const;
+
+function detectInstalledPwaShell(): boolean {
   if (typeof window === "undefined") return false;
-  if (window.matchMedia?.("(display-mode: standalone)").matches) return true;
+  for (const q of INSTALLED_DISPLAY_MODE_QUERIES) {
+    try {
+      if (window.matchMedia?.(q).matches) return true;
+    } catch {
+      /* unsupported query */
+    }
+  }
   const navStandalone = (window.navigator as { standalone?: boolean }).standalone;
   return navStandalone === true;
 }
@@ -36,7 +51,7 @@ function detectStandalone(): boolean {
 /**
  * Small "Install App" affordance for the NexBatch homepage. Uses the native `beforeinstallprompt` flow on Chromium /
  * Edge; falls back to a platform-aware instructions modal on iOS Safari, Firefox, etc. Hides itself once the app is
- * installed and re-hides on the `appinstalled` event.
+ * installed (including `fullscreen` / `window-controls-overlay` display modes) and on `appinstalled`.
  */
 export default function InstallAppButton() {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
@@ -47,7 +62,7 @@ export default function InstallAppButton() {
 
   useEffect(() => {
     setPlatform(detectPlatform());
-    setInstalled(detectStandalone());
+    setInstalled(detectInstalledPwaShell());
 
     const onBeforeInstallPrompt = (ev: Event) => {
       // Block Chrome's native mini-info bar so we own the surface; cache the event for our own button click.
@@ -63,15 +78,25 @@ export default function InstallAppButton() {
     window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt as EventListener);
     window.addEventListener("appinstalled", onAppInstalled);
 
-    /** Catch the install -> standalone transition that some Android browsers do without firing `appinstalled`. */
-    const standaloneMql = window.matchMedia?.("(display-mode: standalone)");
-    const onModeChange = () => setInstalled(detectStandalone());
-    standaloneMql?.addEventListener?.("change", onModeChange);
+    /** Display mode can flip without `appinstalled` (e.g. fullscreen manifest, cold start). */
+    const onDisplayModeChange = () => setInstalled(detectInstalledPwaShell());
+    const mqls: MediaQueryList[] = [];
+    for (const q of INSTALLED_DISPLAY_MODE_QUERIES) {
+      try {
+        const m = window.matchMedia?.(q);
+        if (m) {
+          mqls.push(m);
+          m.addEventListener?.("change", onDisplayModeChange);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
 
     return () => {
       window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt as EventListener);
       window.removeEventListener("appinstalled", onAppInstalled);
-      standaloneMql?.removeEventListener?.("change", onModeChange);
+      for (const m of mqls) m.removeEventListener?.("change", onDisplayModeChange);
     };
   }, []);
 
