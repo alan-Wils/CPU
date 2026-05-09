@@ -125,7 +125,7 @@ export default function MarketplaceBuyerBottomNav({ active, profileHref }: Props
         icon={<ReceiptIcon />}
         active={active === "nexbatch_orders"}
       />
-      <BottomNavItem href="/" label="Messages" icon={<ChatIcon />} active={active === "messages"} />
+      <BottomNavItem href="/messages" label="Messages" icon={<ChatIcon />} active={active === "messages"} />
       <BottomNavItem href={profileHref} label="Profile" icon={<UserNavIcon />} active={active === "profile"} />
     </nav>
   );

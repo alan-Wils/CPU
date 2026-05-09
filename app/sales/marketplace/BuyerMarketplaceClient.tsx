@@ -13,6 +13,7 @@ import {
 import {
   API_BASE_URL,
   fetchCompanyWithServices,
+  messagingGetUnreadTotal,
   salesBuyerOrders,
   salesCreateOrder,
   salesMarketplaceProducts,
@@ -21,6 +22,7 @@ import {
   type MarketplaceProductDto,
 } from "@/lib/api";
 import BrandLogo from "@/components/BrandLogo";
+import MarketplaceOrderInvoiceModal from "@/components/MarketplaceOrderInvoiceModal";
 import MarketplaceProductImageFrame from "@/components/MarketplaceProductImageFrame";
 import {
   buildCompanyChips,
@@ -117,8 +119,10 @@ export function BuyerMarketplaceClient() {
   const [detailRow, setDetailRow] = useState<BuyerMarketplaceRow | null>(null);
   const [notes, setNotes] = useState("");
   const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [invoiceOrderId, setInvoiceOrderId] = useState<string | null>(null);
   const [cartMsg, setCartMsg] = useState("");
   const [favorites, setFavorites] = useState<Set<string>>(() => new Set());
+  const [msgUnread, setMsgUnread] = useState(0);
   const companyScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -181,6 +185,26 @@ export function BuyerMarketplaceClient() {
     if (!isLoggedIn()) return;
     void loadCatalog();
   }, [loadCatalog]);
+
+  /** Header mail-icon badge — refreshed on mount and every 30s. Polling matches the rest of the messaging surfaces. */
+  useEffect(() => {
+    if (!isLoggedIn()) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const out = await messagingGetUnreadTotal();
+        if (!cancelled) setMsgUnread(typeof out.unread === "number" ? out.unread : 0);
+      } catch {
+        if (!cancelled) setMsgUnread(0);
+      }
+    };
+    void refresh();
+    const id = setInterval(refresh, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   const companyChips = useMemo(() => buildCompanyChips(sellers), [sellers]);
 
@@ -404,6 +428,36 @@ export function BuyerMarketplaceClient() {
           <span style={{ fontWeight: 800, fontSize: 18, letterSpacing: "-0.02em" }}>NexBatch</span>
         </Link>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Link
+            href="/messages"
+            style={{ ...iconBtn(), textDecoration: "none" }}
+            aria-label={msgUnread > 0 ? `Open messages (${msgUnread} unread)` : "Open messages"}
+            title="Messages"
+          >
+            <MailIcon />
+            {msgUnread > 0 ? (
+              <span
+                style={{
+                  position: "absolute",
+                  top: -4,
+                  right: -4,
+                  minWidth: 20,
+                  height: 20,
+                  borderRadius: 999,
+                  background: "rgba(139,92,246,0.95)",
+                  color: "#fff",
+                  fontSize: 11,
+                  fontWeight: 900,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  border: "2px solid #020617",
+                }}
+              >
+                {msgUnread > 99 ? "99+" : msgUnread}
+              </span>
+            ) : null}
+          </Link>
           <button
             type="button"
             onClick={() => setCartOpen(true)}
@@ -834,17 +888,41 @@ export function BuyerMarketplaceClient() {
                     borderRadius: 14,
                     border: "1px solid rgba(148,163,184,0.2)",
                     background: "rgba(15, 23, 42, 0.85)",
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 12,
+                    alignItems: "center",
+                    justifyContent: "space-between",
                   }}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                    <span style={{ fontWeight: 800 }}>
-                      {(o.sellerCompany as { name?: string } | undefined)?.name || "Seller"}
-                    </span>
-                    <span style={{ color: "#a5b4fc", fontWeight: 800 }}>${Number(o.total).toFixed(2)}</span>
+                  <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                      <span style={{ fontWeight: 800 }}>
+                        {(o.sellerCompany as { name?: string } | undefined)?.name || "Seller"}
+                      </span>
+                      <span style={{ color: "#a5b4fc", fontWeight: 800 }}>${Number(o.total).toFixed(2)}</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+                      {String(o.status)} · {new Date(String(o.createdAt)).toLocaleString()}
+                    </div>
                   </div>
-                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
-                    {String(o.status)} · {new Date(String(o.createdAt)).toLocaleString()}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setInvoiceOrderId(String(o.id))}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 12,
+                      border: "1px solid rgba(34,211,238,0.45)",
+                      background: "rgba(8,47,73,0.55)",
+                      color: "#e0f2fe",
+                      fontWeight: 800,
+                      fontSize: 13,
+                      cursor: "pointer",
+                      flex: "0 0 auto",
+                    }}
+                  >
+                    Invoice
+                  </button>
                 </div>
               ))}
             </div>
@@ -853,6 +931,13 @@ export function BuyerMarketplaceClient() {
       </main>
 
       <MarketplaceBuyerBottomNav active="marketplace" profileHref={profileHref} />
+
+      <MarketplaceOrderInvoiceModal
+        open={invoiceOrderId !== null}
+        onClose={() => setInvoiceOrderId(null)}
+        orderId={invoiceOrderId}
+        role="buyer"
+      />
 
       {/* Filters drawer */}
       {filterOpen ? (
@@ -1662,6 +1747,15 @@ function inp(): CSSProperties {
     color: "#fff",
     boxSizing: "border-box",
   };
+}
+
+function MailIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m3 7 9 6 9-6" />
+    </svg>
+  );
 }
 
 function CartIcon() {

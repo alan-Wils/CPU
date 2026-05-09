@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import MarketplaceOrderInvoiceModal from "@/components/MarketplaceOrderInvoiceModal";
 import { salesSellerOrders, salesSellerOrderSetStatus } from "@/lib/api";
 
 type OrderRow = {
@@ -19,6 +20,7 @@ export default function SellerOrdersPage() {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState("");
+  const [invoiceOrderId, setInvoiceOrderId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setErr("");
@@ -129,6 +131,7 @@ export default function SellerOrdersPage() {
                 <th style={{ padding: "14px 16px" }}>Total</th>
                 <th style={{ padding: "14px 16px" }}>Source</th>
                 <th style={{ padding: "14px 16px" }}>Status</th>
+                <th style={{ padding: "14px 16px" }}>Invoice</th>
                 <th style={{ padding: "14px 16px" }}>Actions</th>
               </tr>
             </thead>
@@ -157,6 +160,24 @@ export default function SellerOrdersPage() {
                     </span>
                   </td>
                   <td style={{ padding: "14px 16px", fontWeight: 800, color: "#cbd5e1" }}>{o.status}</td>
+                  <td style={{ padding: "14px 16px" }}>
+                    <button
+                      type="button"
+                      onClick={() => setInvoiceOrderId(o.id)}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: 10,
+                        border: "1px solid rgba(34,211,238,0.45)",
+                        background: "rgba(8,47,73,0.45)",
+                        color: "#bae6fd",
+                        fontWeight: 800,
+                        fontSize: 12,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Open
+                    </button>
+                  </td>
                   <td style={{ padding: "14px 16px" }}>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                       {o.status === "PENDING" ? (
@@ -218,6 +239,13 @@ export default function SellerOrdersPage() {
         </Link>
         .
       </p>
+
+      <MarketplaceOrderInvoiceModal
+        open={invoiceOrderId !== null}
+        onClose={() => setInvoiceOrderId(null)}
+        orderId={invoiceOrderId}
+        role="seller"
+      />
     </div>
   );
 }

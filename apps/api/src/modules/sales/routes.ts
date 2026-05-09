@@ -237,6 +237,21 @@ salesRouter.get(
 );
 
 salesRouter.get(
+  "/buyer/orders/:orderId/invoice",
+  ...buyerMarketplaceHandlers(),
+  validate({ params: orderIdParam }),
+  asyncHandler(async (req, res) => {
+    const buyerCompanyId = getScopedCompanyId(req);
+    const { orderId } = req.params;
+    const invoice = await orderService.getMarketplaceOrderInvoice({
+      orderId,
+      participantCompanyId: buyerCompanyId,
+    });
+    res.json(invoice);
+  }),
+);
+
+salesRouter.get(
   "/seller/orders",
   ...sellerProductHandlers(),
   validate({ query: sellerOrdersQuerySchema }),
@@ -245,6 +260,21 @@ salesRouter.get(
     const status = typeof req.query.status === "string" ? req.query.status : "PENDING";
     const orders = await orderService.listSellerOrders(sellerCompanyId, status);
     res.json({ orders });
+  }),
+);
+
+salesRouter.get(
+  "/seller/orders/:orderId/invoice",
+  ...sellerProductHandlers(),
+  validate({ params: orderIdParam }),
+  asyncHandler(async (req, res) => {
+    const sellerCompanyId = getScopedCompanyId(req);
+    const { orderId } = req.params;
+    const invoice = await orderService.getMarketplaceOrderInvoice({
+      orderId,
+      participantCompanyId: sellerCompanyId,
+    });
+    res.json(invoice);
   }),
 );
 

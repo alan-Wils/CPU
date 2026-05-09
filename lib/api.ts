@@ -1,4 +1,5 @@
 import { clearAuthSession, getAuthToken, type LoginResponse } from "./auth";
+import type { MarketplaceOrderInvoiceDto } from "./marketplaceOrderInvoice";
 
 function resolveApiBaseUrl(): string {
   const raw =
@@ -1118,6 +1119,11 @@ export async function salesBuyerOrders() {
   return apiRequest<{ orders: Record<string, unknown>[] }>("/api/sales/buyer/orders");
 }
 
+/** Printable / exportable NexBatch marketplace order invoice (buyer workspace). */
+export async function salesBuyerOrderInvoice(orderId: string) {
+  return apiRequest<MarketplaceOrderInvoiceDto>(`/api/sales/buyer/orders/${encodeURIComponent(orderId)}/invoice`);
+}
+
 export async function salesSellerOrders(status?: string) {
   const q = status ? `?status=${encodeURIComponent(status)}` : "";
   return apiRequest<{ orders: Record<string, unknown>[] }>(`/api/sales/seller/orders${q}`);
@@ -1131,6 +1137,11 @@ export async function salesSellerOrderSetStatus(
     `/api/sales/seller/orders/${encodeURIComponent(orderId)}/status`,
     { method: "PATCH", body: { status } },
   );
+}
+
+/** Printable / exportable NexBatch marketplace order invoice (seller workspace). */
+export async function salesSellerOrderInvoice(orderId: string) {
+  return apiRequest<MarketplaceOrderInvoiceDto>(`/api/sales/seller/orders/${encodeURIComponent(orderId)}/invoice`);
 }
 
 /** `GET /api/sales/seller/dashboard` — Seller Platform KPIs, charts, and lists (scoped company). */
@@ -1283,4 +1294,93 @@ export type LatestOrderLiveDto = {
 
 export async function fetchLatestOrderLive(): Promise<LatestOrderLiveDto | null> {
   return apiRequest<LatestOrderLiveDto | null>("/api/orders/latest-live");
+}
+
+// =============================================================================
+// NexBatch direct messaging — company-to-company chat used by the seller hub
+// header mail icon and the buyer marketplace bottom-nav Messages tab.
+// =============================================================================
+
+export type MessagingCompanySummaryDto = {
+  id: string;
+  name: string;
+  slug: string;
+  initials: string;
+  /** Sales > Inventory print logo URL (resolved with `resolveCompanyLogoImgSrc`). */
+  logoUrl: string | null;
+};
+
+export type MessagingMessageDto = {
+  id: string;
+  conversationId: string;
+  senderCompanyId: string;
+  senderUserId: string;
+  senderUserEmail: string;
+  body: string;
+  createdAt: string;
+  /** True when authored by the current viewing company. */
+  mine: boolean;
+};
+
+export type MessagingConversationDto = {
+  id: string;
+  title: string | null;
+  createdAt: string;
+  lastMessageAt: string;
+  /** Other-side participants (excludes viewer), in stable name order. */
+  participants: MessagingCompanySummaryDto[];
+  lastMessage: MessagingMessageDto | null;
+  unreadCount: number;
+  lastReadAt: string | null;
+};
+
+export async function messagingListConversations() {
+  return apiRequest<{ conversations: MessagingConversationDto[] }>("/api/messaging/conversations");
+}
+
+export async function messagingGetUnreadTotal() {
+  return apiRequest<{ unread: number }>("/api/messaging/unread");
+}
+
+export async function messagingStartDirect(companyId: string) {
+  return apiRequest<{ conversationId: string; created: boolean }>(
+    "/api/messaging/conversations",
+    { method: "POST", body: { companyId } },
+  );
+}
+
+export async function messagingListMessages(
+  conversationId: string,
+  opts?: { before?: string; limit?: number },
+) {
+  const q = new URLSearchParams();
+  if (opts?.before) q.set("before", opts.before);
+  if (typeof opts?.limit === "number") q.set("limit", String(opts.limit));
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  return apiRequest<{ messages: MessagingMessageDto[]; hasMore: boolean }>(
+    `/api/messaging/conversations/${encodeURIComponent(conversationId)}/messages${suffix}`,
+  );
+}
+
+export async function messagingSendMessage(conversationId: string, body: string) {
+  return apiRequest<{ message: MessagingMessageDto }>(
+    `/api/messaging/conversations/${encodeURIComponent(conversationId)}/messages`,
+    { method: "POST", body: { body } },
+  );
+}
+
+export async function messagingMarkRead(conversationId: string) {
+  return apiRequest<{ ok: true }>(
+    `/api/messaging/conversations/${encodeURIComponent(conversationId)}/read`,
+    { method: "POST", body: {} },
+  );
+}
+
+export async function messagingSearchContacts(q: string, limit = 25) {
+  const params = new URLSearchParams();
+  if (q.trim()) params.set("q", q.trim());
+  params.set("limit", String(limit));
+  return apiRequest<{ contacts: MessagingCompanySummaryDto[] }>(
+    `/api/messaging/contacts/search?${params.toString()}`,
+  );
 }

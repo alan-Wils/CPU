@@ -14,7 +14,7 @@ import PageAccessGate from "@/components/PageAccessGate";
 import BrandLogo from "@/components/BrandLogo";
 import {
   fetchCompanyWithServices,
-  fetchPeerNotifyInbox,
+  messagingGetUnreadTotal,
   salesSellerOrders,
   type CompanyServicesDto,
 } from "@/lib/api";
@@ -120,14 +120,13 @@ export default function SellerHubLayoutClient({ children }: { children: ReactNod
       );
       if (s?.salesSellerEnabled && isLoggedIn()) {
         try {
-          const [ordRes, inboxRes] = await Promise.all([
+          const [ordRes, msgRes] = await Promise.all([
             salesSellerOrders("PENDING"),
-            fetchPeerNotifyInbox(),
+            messagingGetUnreadTotal(),
           ]);
           const orders = (ordRes.orders || []) as unknown[];
           setPendingOrders(orders.length);
-          const unread = (inboxRes.items || []).filter((i) => !i.read).length;
-          setMsgUnread(unread);
+          setMsgUnread(typeof msgRes.unread === "number" ? msgRes.unread : 0);
         } catch {
           setPendingOrders(0);
           setMsgUnread(0);
@@ -465,7 +464,7 @@ export default function SellerHubLayoutClient({ children }: { children: ReactNod
                   />
                 </Link>
                 <Link
-                  href="/"
+                  href="/messages"
                   title="Messages"
                   style={{
                     width: 42,

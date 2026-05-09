@@ -5,6 +5,38 @@ import { CompanyServiceSettingsService } from "./companyServiceSettingsService.j
 
 const settingsService = new CompanyServiceSettingsService();
 
+export type MarketplaceOrderInvoiceSalesBlock = {
+  primaryContactName: string;
+  primaryContactEmail: string;
+  primaryContactPhone: string;
+  defaultPaymentTerms: string;
+  fulfillmentNotes: string;
+};
+
+function parseSalesBlock(raw: string | undefined): MarketplaceOrderInvoiceSalesBlock | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as Record<string, unknown>;
+    if (!v || typeof v !== "object") return null;
+    return {
+      primaryContactName: typeof v.primaryContactName === "string" ? v.primaryContactName : "",
+      primaryContactEmail: typeof v.primaryContactEmail === "string" ? v.primaryContactEmail : "",
+      primaryContactPhone: typeof v.primaryContactPhone === "string" ? v.primaryContactPhone : "",
+      defaultPaymentTerms: typeof v.defaultPaymentTerms === "string" ? v.defaultPaymentTerms : "",
+      fulfillmentNotes: typeof v.fulfillmentNotes === "string" ? v.fulfillmentNotes : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function loadSalesConfigForCompany(companyId: string): Promise<MarketplaceOrderInvoiceSalesBlock | null> {
+  const row = await prisma.companyConfig.findUnique({
+    where: { companyId_key: { companyId, key: "sales" } },
+  });
+  return parseSalesBlock(row?.valueJson);
+}
+
 export type CreateOrderLine = { productId: string; quantity: number };
 
 export class MarketplaceOrderService {
@@ -162,5 +194,74 @@ export class MarketplaceOrderService {
       });
     });
     return updated;
+  }
+
+  /**
+   * Invoice payload for buyer or seller portal. Caller must scope `participantCompanyId` to the JWT company
+   * (buyer route → buyer company, seller route → seller company); this method ensures that company is a party on the order.
+   */
+  async getMarketplaceOrderInvoice(input: { orderId: string; participantCompanyId: string }) {
+    const orderId = String(input.orderId || "").trim();
+    const participantCompanyId = String(input.participantCompanyId || "").trim();
+    if (!orderId || !participantCompanyId) throw new AppError("Order id is required.", 400, "ORDER_BAD_ID");
+
+    const order = await prisma.marketplaceOrder.findFirst({
+      where: {
+        id: orderId,
+        OR: [{ buyerCompanyId: participantCompanyId }, { sellerCompanyId: participantCompanyId }],
+      },
+      include: {
+        buyerCompany: { select: { id: true, name: true, slug: true } },
+        sellerCompany: { select: { id: true, name: true, slug: true } },
+        items: { orderBy: { createdAt: "asc" } },
+      },
+    });
+    if (!order) throw new AppError("Order not found", 404, "ORDER_NOT_FOUND");
+
+    const [buyerSales, sellerSales] = await Promise.all([
+      loadSalesConfigForCompany(order.buyerCompanyId),
+      loadSalesConfigForCompany(order.sellerCompanyId),
+    ]);
+
+    const invoiceLabel = `NB-${order.id.slice(-6).toUpperCase()}`;
+    const lineItems = order.items.map((it) => ({
+      id: it.id,
+      productNameSnapshot: it.productNameSnapshot,
+      skuSnapshot: it.skuSnapshot,
+      unitSizeSnapshot: it.unitSizeSnapshot,
+      quantity: it.quantity,
+      unitPrice: it.priceSnapshot,
+      lineTotal: it.lineTotal,
+    }));
+
+    return {
+      invoiceLabel,
+      order: {
+        id: order.id,
+        status: order.status,
+        subtotal: order.subtotal,
+        total: order.total,
+        notes: order.notes,
+        createdAt: order.createdAt.toISOString(),
+        updatedAt: order.updatedAt.toISOString(),
+      },
+      buyer: {
+        id: order.buyerCompany.id,
+        name: order.buyerCompany.name,
+        slug: order.buyerCompany.slug,
+        sales: buyerSales,
+      },
+      seller: {
+        id: order.sellerCompany.id,
+        name: order.sellerCompany.name,
+        slug: order.sellerCompany.slug,
+        sales: sellerSales,
+      },
+      lineItems,
+      platformNotice:
+        "This document summarizes a NexBatch marketplace wholesale order between the buyer and seller companies shown above. " +
+        "Commercial terms, taxes, licenses, and payment execution are the responsibility of the parties. " +
+        "NexBatch provides software to record the order and is not a party to the sale.",
+    };
   }
 }

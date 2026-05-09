@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
+import MarketplaceOrderInvoiceModal from "@/components/MarketplaceOrderInvoiceModal";
 import MarketplaceBuyerBottomNav from "@/components/MarketplaceBuyerBottomNav";
 import { fetchCompanyWithServices, salesBuyerOrders, type CompanyServicesDto } from "@/lib/api";
 import { isLoggedIn, isPortalSession } from "@/lib/auth";
@@ -38,6 +39,7 @@ export default function NexBatchBuyerOrdersPage() {
   const [err, setErr] = useState("");
   const [orders, setOrders] = useState<BuyerOrderRow[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [invoiceOrderId, setInvoiceOrderId] = useState<string | null>(null);
 
   const profileHref = isPortalSession() ? "/portal" : "/";
 
@@ -199,34 +201,62 @@ export default function NexBatchBuyerOrdersPage() {
                   overflow: "hidden",
                 }}
               >
-                <button
-                  type="button"
-                  onClick={() => setExpandedId(open ? null : o.id)}
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: 16,
-                    border: "none",
-                    background: "transparent",
-                    color: "inherit",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-                    <div>
-                      <div style={{ fontWeight: 900, fontSize: 16 }}>{sellerName}</div>
-                      <div style={{ fontSize: 12, color: "#64748b", marginTop: 6 }}>
-                        {String(o.status)} · {new Date(o.createdAt).toLocaleString()}
+                <div style={{ display: "flex", alignItems: "stretch", gap: 0, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedId(open ? null : o.id)}
+                    style={{
+                      flex: "1 1 220px",
+                      textAlign: "left",
+                      padding: 16,
+                      border: "none",
+                      background: "transparent",
+                      color: "inherit",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+                      <div>
+                        <div style={{ fontWeight: 900, fontSize: 16 }}>{sellerName}</div>
+                        <div style={{ fontSize: 12, color: "#64748b", marginTop: 6 }}>
+                          {String(o.status)} · {new Date(o.createdAt).toLocaleString()}
+                        </div>
+                      </div>
+                      <div style={{ fontWeight: 900, fontSize: 18, color: "#a5b4fc" }}>
+                        ${Number(o.total).toFixed(2)}
                       </div>
                     </div>
-                    <div style={{ fontWeight: 900, fontSize: 18, color: "#a5b4fc" }}>
-                      ${Number(o.total).toFixed(2)}
+                    <div style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>
+                      {open ? "Hide line items ▲" : `Line items (${items.length}) ▼`}
                     </div>
+                  </button>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "12px 16px",
+                      borderLeft: "1px solid rgba(51,65,85,0.55)",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setInvoiceOrderId(o.id)}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: 12,
+                        border: "1px solid rgba(34,211,238,0.45)",
+                        background: "rgba(8,47,73,0.55)",
+                        color: "#e0f2fe",
+                        fontWeight: 800,
+                        fontSize: 13,
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Invoice
+                    </button>
                   </div>
-                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>
-                    {open ? "Hide line items ▲" : `Line items (${items.length}) ▼`}
-                  </div>
-                </button>
+                </div>
                 {open ? (
                   <div
                     style={{
@@ -262,6 +292,13 @@ export default function NexBatchBuyerOrdersPage() {
       )}
 
       <MarketplaceBuyerBottomNav active="nexbatch_orders" profileHref={profileHref} />
+
+      <MarketplaceOrderInvoiceModal
+        open={invoiceOrderId !== null}
+        onClose={() => setInvoiceOrderId(null)}
+        orderId={invoiceOrderId}
+        role="buyer"
+      />
     </main>
   );
 }

@@ -541,3 +541,29 @@ export const marketplaceSellerOrderStatusSchema = z.object({
 export const companyTenantLeafLinkSyncSchema = z.object({
     leafLinkInventorySyncEnabled: z.boolean(),
 });
+
+/** NexBatch direct messaging — start (or fetch) a 1:1 conversation between current company and one other company. */
+export const messagingStartConversationSchema = z.object({
+    companyId: z.string().cuid(),
+});
+
+/** NexBatch direct messaging — send a message into an existing conversation. */
+export const messagingSendMessageSchema = z.object({
+    body: z.string().trim().min(1).max(8000),
+});
+
+/** Server pages messages with `before` (cursor) for "load older" infinite scroll. */
+export const messagingMessagesQuerySchema = z.object({
+    before: z.string().datetime().optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+/** Contact search box — `q` matches company name/slug, returns at most 25 active companies (excludes self). */
+export const messagingContactsSearchSchema = z.object({
+    q: z.string().trim().max(160).optional(),
+    limit: z.coerce.number().int().min(1).max(50).optional(),
+});
+
+export const conversationIdParamSchema = z.object({
+    conversationId: z.string().cuid(),
+});
