@@ -40,7 +40,7 @@ export default function SellerPlatformPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [search, setSearch] = useState("");
-  const [availFilter, setAvailFilter] = useState<string>("");
+  const [availFilter, setAvailFilter] = useState<string>("AVAILABLE");
   const [syncBusy, setSyncBusy] = useState(false);
   const [orderBusyId, setOrderBusyId] = useState<string>("");
   const [modalOpen, setModalOpen] = useState(false);
