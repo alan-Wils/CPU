@@ -63,6 +63,24 @@ describe("normalizeLeafLinkInventoryRows", () => {
     expect(row?.unit).toBe("Gram");
   });
 
+  it("reads is_active and available_for_wholesale into listing signals", () => {
+    const raw = {
+      data: [
+        {
+          id: "flag1",
+          product_name: "Flagged",
+          wholesale_price: 1,
+          is_active: true,
+          available_for_wholesale: true,
+          available_inventory: 5,
+        },
+      ],
+    };
+    const [row] = normalizeLeafLinkInventoryRows(raw);
+    expect(row?.listingActive).toBe(true);
+    expect(row?.wholesaleAvailable).toBe(true);
+  });
+
   it("combines distinct product_type with strain when category matches type", () => {
     const raw = {
       data: [

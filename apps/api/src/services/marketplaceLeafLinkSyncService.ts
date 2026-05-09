@@ -7,15 +7,27 @@ import { CompanyServiceSettingsService } from "./companyServiceSettingsService.j
 const inventoryService = new LeafLinkInventoryService();
 const settingsService = new CompanyServiceSettingsService();
 
+/** Optional booleans parsed from LeafLink inventory rows (`is_active`, `available_for_wholesale`, nested `listing`, …). */
+export type LeafLinkListingSignals = {
+  listingActive?: boolean;
+  wholesaleAvailable?: boolean;
+};
+
 /**
  * Maps LeafLink listing-style `status` (see inventory normalizer: status / availability / listing_state, …)
  * into NexBatch marketplace availability. Checks `unavailable` before `available` because the former contains the latter as a substring.
+ *
+ * **Wholesale rule:** If LeafLink marks the row active / wholesale-available and there is stock, NexBatch uses `AVAILABLE`
+ * so buyers can purchase. LeafLink “Internal” visibility with inventory is treated as sellable unless status is a hard negative.
  */
 export function marketplaceAvailabilityFromLeafLinkStatus(
   leafStatus: string,
   availableQuantity: number,
+  signals?: LeafLinkListingSignals,
 ): MarketplaceProductAvailability {
   const s = String(leafStatus || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const qty = Number(availableQuantity);
+  const inStock = Number.isFinite(qty) && qty > 0;
 
   if (
     s.includes("unavailable") ||
@@ -30,12 +42,21 @@ export function marketplaceAvailabilityFromLeafLinkStatus(
   if (s.includes("out of stock") || s.includes("out_of_stock")) {
     return "NOT_AVAILABLE";
   }
-  if (s.includes("internal")) {
-    return "INTERNAL";
+
+  if (inStock && (signals?.listingActive === true || signals?.wholesaleAvailable === true)) {
+    return "AVAILABLE";
   }
+
   if (s.includes("draft") || s.includes("pending") || s.includes("hidden")) {
     return "INTERNAL";
   }
+
+  // LeafLink “internal” listing visibility: still offer on NexBatch when there is inventory to ship.
+  if (s.includes("internal")) {
+    if (inStock) return "AVAILABLE";
+    return "INTERNAL";
+  }
+
   if (
     s.includes("available") ||
     s === "live" ||
@@ -45,7 +66,12 @@ export function marketplaceAvailabilityFromLeafLinkStatus(
   ) {
     return "AVAILABLE";
   }
-  if (!Number.isFinite(availableQuantity) || availableQuantity <= 0) {
+
+  if (signals?.listingActive === false && !inStock) {
+    return "NOT_AVAILABLE";
+  }
+
+  if (!Number.isFinite(qty) || qty <= 0) {
     return "NOT_AVAILABLE";
   }
   return "AVAILABLE";
@@ -82,7 +108,10 @@ export async function syncLeafLinkInventoryToMarketplaceProducts(
     const descParts = [item.subcategory, item.brand].filter(Boolean).join(" · ");
     const description = descParts || null;
     const unitSize = [item.packageSize, item.unit].filter(Boolean).join(" ").trim() || null;
-    const availabilityStatus = marketplaceAvailabilityFromLeafLinkStatus(item.status, item.availableQuantity);
+    const availabilityStatus = marketplaceAvailabilityFromLeafLinkStatus(item.status, item.availableQuantity, {
+      listingActive: item.listingActive,
+      wholesaleAvailable: item.wholesaleAvailable,
+    });
     if (!existing) {
       await prisma.marketplaceProduct.create({
         data: {

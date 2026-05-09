@@ -286,6 +286,12 @@ export type LeafLinkInventoryItem = {
    * (e.g. `B1658(GUAV-LSW)` from SKU `B1658(GUAV-LSW) 2g`).
    */
   sourcePackageGroup: string;
+  /**
+   * When LeafLink sends explicit flags, inventory sync uses them with `status` to set NexBatch `availabilityStatus`.
+   * Omitted when not present on the payload.
+   */
+  listingActive?: boolean;
+  wholesaleAvailable?: boolean;
 };
 
 export type LeafLinkInventoryResponse = {
@@ -391,6 +397,22 @@ function pickInventoryQuantity(row: Record<string, unknown>, keys: string[]): nu
       return n;
   }
   return 0;
+}
+
+/** First matching key wins; `undefined` if no key present or value unrecognized. */
+function pickTriStateBool(row: Record<string, unknown>, keys: string[]): boolean | undefined {
+  for (const k of keys) {
+    if (!(k in row)) continue;
+    const v = row[k];
+    if (v === true) return true;
+    if (v === false) return false;
+    if (v === 1 || v === "1") return true;
+    if (v === 0 || v === "0") return false;
+    const t = typeof v === "string" ? v.trim().toLowerCase() : "";
+    if (t === "true" || t === "yes" || t === "on") return true;
+    if (t === "false" || t === "no" || t === "off") return false;
+  }
+  return undefined;
 }
 
 function coerceTotalCount(raw: unknown): number | null {
@@ -759,7 +781,41 @@ export function normalizeLeafLinkInventoryRows(raw: unknown): LeafLinkInventoryI
     const titleVariant = inferSubcategoryFromProductTitle(productName);
     const apiBlend = (subcategoryDisplay || productTypeStr).trim();
     const subcategoryResolved = titleVariant || apiBlend;
-    out.push({
+    const listingRec =
+      row.listing != null && typeof row.listing === "object" && !Array.isArray(row.listing)
+        ? asRecord(row.listing)
+        : null;
+    const listingActiveDirect = pickTriStateBool(row, [
+      "is_active",
+      "active",
+      "is_listed",
+      "listed",
+    ]);
+    const listingActiveNested = listingRec
+      ? pickTriStateBool(listingRec, ["is_active", "active", "is_listed", "listed"])
+      : undefined;
+    const listingActive =
+      listingActiveDirect !== undefined ? listingActiveDirect : listingActiveNested;
+
+    const wholesaleDirect = pickTriStateBool(row, [
+      "available_for_wholesale",
+      "sellable",
+      "for_sale",
+      "is_available_for_wholesale",
+      "wholesale_available",
+    ]);
+    const wholesaleNested = listingRec
+      ? pickTriStateBool(listingRec, [
+          "available_for_wholesale",
+          "sellable",
+          "for_sale",
+          "is_available_for_wholesale",
+        ])
+      : undefined;
+    const wholesaleAvailable =
+      wholesaleDirect !== undefined ? wholesaleDirect : wholesaleNested;
+
+    const rowOut: LeafLinkInventoryItem = {
       id,
       productName,
       sku,
@@ -782,7 +838,10 @@ export function normalizeLeafLinkInventoryRows(raw: unknown): LeafLinkInventoryI
           "thumbnail_url",
         ]),
       sourcePackageGroup: deriveSourcePackageGroup(sku, productName),
-    });
+    };
+    if (listingActive !== undefined) rowOut.listingActive = listingActive;
+    if (wholesaleAvailable !== undefined) rowOut.wholesaleAvailable = wholesaleAvailable;
+    out.push(rowOut);
   }
   return out;
 }
