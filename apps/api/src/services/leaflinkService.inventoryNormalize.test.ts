@@ -63,6 +63,30 @@ describe("normalizeLeafLinkInventoryRows", () => {
     expect(row?.unit).toBe("Gram");
   });
 
+  it("syncs listing/product images and absolutizes relative LeafLink media paths", () => {
+    const raw = {
+      data: [
+        {
+          id: "img1",
+          product_name: "Photo product",
+          wholesale_price: 1,
+          listing: { image_url: "/media/listing/photo.jpg" },
+        },
+        {
+          id: "img2",
+          product_name: "Nested product image",
+          wholesale_price: 2,
+          product: {
+            images: [{ url: "https://cdn.example.test/p.png" }],
+          },
+        },
+      ],
+    };
+    const rows = normalizeLeafLinkInventoryRows(raw);
+    expect(rows.find((r) => r.id === "img1")?.imageUrl).toMatch(/^https:\/\/app\.leaflink\.com\/media\/listing\/photo\.jpg$/);
+    expect(rows.find((r) => r.id === "img2")?.imageUrl).toBe("https://cdn.example.test/p.png");
+  });
+
   it("reads is_active and available_for_wholesale into listing signals", () => {
     const raw = {
       data: [

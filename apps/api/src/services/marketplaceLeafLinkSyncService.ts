@@ -80,7 +80,8 @@ export function marketplaceAvailabilityFromLeafLinkStatus(
 /**
  * Pulls LeafLink inventory via existing credentials and upserts `MarketplaceProduct` rows.
  * Sets `availabilityStatus` from LeafLink listing state on every sync (create + update).
- * Does not overwrite price/description/image on update (existing behavior).
+ * Updates `imageUrl` from LeafLink when the API provides a photo URL; leaves existing NxB uploads intact when LeafLink sends no image.
+ * Does not overwrite price or description on update (existing behavior).
  */
 export async function syncLeafLinkInventoryToMarketplaceProducts(
   companyId: string,
@@ -136,6 +137,7 @@ export async function syncLeafLinkInventoryToMarketplaceProducts(
       created += 1;
       continue;
     }
+    const leafImage = String(item.imageUrl || "").trim();
     await prisma.marketplaceProduct.update({
       where: { id: existing.id },
       data: {
@@ -148,6 +150,7 @@ export async function syncLeafLinkInventoryToMarketplaceProducts(
         leafLinkRawJson: item as unknown as Prisma.InputJsonValue,
         sku: item.sku ?? existing.sku,
         unitSize: unitSize ?? existing.unitSize,
+        ...(leafImage ? { imageUrl: leafImage } : {}),
       },
     });
     updated += 1;

@@ -415,6 +415,87 @@ function pickTriStateBool(row: Record<string, unknown>, keys: string[]): boolean
   return undefined;
 }
 
+function leafLinkPublicOrigin(): string {
+  const raw = String(env.LEAFLINK_BASE_URL || DEFAULT_BASE_URL).trim() || DEFAULT_BASE_URL;
+  try {
+    const u = new URL(raw);
+    return u.origin;
+  } catch {
+    return "https://app.leaflink.com";
+  }
+}
+
+/**
+ * LeafLink sometimes returns `/media/...` paths. NexBatch stores absolute URLs so `<img src>` works from the app origin.
+ */
+export function absolutizeLeafLinkMediaUrl(href: string): string {
+  const s = String(href || "").trim();
+  if (!s) return "";
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("//")) return `https:${s}`;
+  if (s.startsWith("/")) return `${leafLinkPublicOrigin()}${s}`;
+  return s;
+}
+
+const LEAFLINK_IMAGE_URL_KEYS = [
+  "image_url",
+  "thumbnail_url",
+  "photo_url",
+  "primary_image_url",
+  "large_image_url",
+  "product_image_url",
+  "listing_image_url",
+  "image_url_large",
+  "preview_image_url",
+  "hero_image_url",
+];
+
+/** Best-effort product/listing image URL from a LeafLink inventory API row. */
+export function pickLeafLinkImageUrl(row: Record<string, unknown>): string {
+  let s = pickString(row, LEAFLINK_IMAGE_URL_KEYS);
+  if (s) return absolutizeLeafLinkMediaUrl(s);
+
+  const topImage = row.image;
+  if (typeof topImage === "string") {
+    const t = cleanString(topImage);
+    if (t && !t.startsWith("[object "))
+      return absolutizeLeafLinkMediaUrl(t);
+  }
+
+  if (Array.isArray(row.images) && row.images[0]) {
+    const img0 = asRecord(row.images[0]);
+    s = pickString(img0, ["url", "image_url", "thumbnail_url", "src", "file"]);
+    if (s) return absolutizeLeafLinkMediaUrl(s);
+  }
+
+  if (row.listing != null && typeof row.listing === "object" && !Array.isArray(row.listing)) {
+    const l = asRecord(row.listing);
+    s = pickString(l, LEAFLINK_IMAGE_URL_KEYS);
+    if (s) return absolutizeLeafLinkMediaUrl(s);
+    if (Array.isArray(l.images) && l.images[0]) {
+      s = pickString(asRecord(l.images[0]), ["url", "image_url", "thumbnail_url", "src"]);
+      if (s) return absolutizeLeafLinkMediaUrl(s);
+    }
+    const li = l.image;
+    if (typeof li === "string") {
+      const t = cleanString(li);
+      if (t) return absolutizeLeafLinkMediaUrl(t);
+    }
+  }
+
+  if (row.product != null && typeof row.product === "object" && !Array.isArray(row.product)) {
+    const p = asRecord(row.product);
+    s = pickString(p, LEAFLINK_IMAGE_URL_KEYS);
+    if (s) return absolutizeLeafLinkMediaUrl(s);
+    if (Array.isArray(p.images) && p.images[0]) {
+      s = pickString(asRecord(p.images[0]), ["url", "image_url", "thumbnail_url"]);
+      if (s) return absolutizeLeafLinkMediaUrl(s);
+    }
+  }
+
+  return "";
+}
+
 function coerceTotalCount(raw: unknown): number | null {
   if (typeof raw === "number" && Number.isFinite(raw))
     return raw >= 0 ? raw : null;
@@ -830,13 +911,7 @@ export function normalizeLeafLinkInventoryRows(raw: unknown): LeafLinkInventoryI
       price: pickPrice(row),
       status: pickString(row, ["status", "availability", "state", "listing_state", "display_listing_state"]),
       updatedAt: pickString(row, ["updated_at", "updatedAt", "modified_at", "modified", "last_edit"]),
-      imageUrl:
-        pickString(row, ["image_url", "image", "thumbnail_url"]) ||
-        pickString(asRecord((Array.isArray(row.images) ? row.images[0] : undefined)), [
-          "url",
-          "image_url",
-          "thumbnail_url",
-        ]),
+      imageUrl: pickLeafLinkImageUrl(row),
       sourcePackageGroup: deriveSourcePackageGroup(sku, productName),
     };
     if (listingActive !== undefined) rowOut.listingActive = listingActive;
