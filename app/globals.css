@@ -241,6 +241,47 @@ nextjs-portal {
   }
 }
 
+/*
+ * Authenticated platform footer slogan (`PlatformFooterSlogan` in app/layout.tsx).
+ * Tailwind is not loaded in this app workspace; responsive bottom inset + type scale live here.
+ */
+.platform-footer-slogan-anchor {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+}
+
+@media (min-width: 768px) {
+  .platform-footer-slogan-anchor {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+  }
+}
+
+/* Buyer marketplace / messages — stay above floating bottom nav */
+.platform-footer-slogan-anchor--lifted {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 90px);
+}
+
+@media (min-width: 768px) {
+  .platform-footer-slogan-anchor--lifted {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 94px);
+  }
+}
+
+.platform-footer-slogan {
+  font-size: 11px;
+}
+
+@media (min-width: 768px) {
+  .platform-footer-slogan {
+    font-size: 12px;
+  }
+}
+
+.platform-footer-slogan:hover,
+.platform-footer-slogan:focus-visible {
+  color: rgba(255, 255, 255, 0.45);
+  opacity: 1;
+}
+
 /* Buyer marketplace — responsive product grid */
 .marketplace-product-grid {
   display: grid;
