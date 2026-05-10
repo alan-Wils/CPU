@@ -162,6 +162,11 @@ type AppConfig = {
     }>;
     /** Autogrow zone temp/RH thresholds → inbox alerts (see Admin → Users). */
     climateAlerts?: CultivationClimateAlertsConfig;
+    /**
+     * Grams per standard Fresh Frozen bundle. When greater than zero, Cultivation harvest auto-fills
+     * bundle count from total grams (floor). Operators can still edit bundles manually.
+     */
+    freshFrozenGramsPerBundle?: number;
   };
   extraction: {
     productNames: ProductNameRecord[];
@@ -269,6 +274,7 @@ const emptyConfig: AppConfig = {
     },
     customTasks: [],
     climateAlerts: { ...defaultCultivationClimateAlerts },
+    freshFrozenGramsPerBundle: 0,
   },
   extraction: {
     productNames: [],
@@ -2927,6 +2933,32 @@ export default function ConfigPage() {
             </label>
           </div>
         ))}
+        </div>
+
+        <div style={styles.configSubCard}>
+          <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Fresh Frozen harvest</h3>
+          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+            Set the standard <b>grams per bundle</b> for Fresh Frozen. When greater than zero, the Cultivation harvest form
+            auto-calculates bundle count from total grams (whole bundles only; operators can override). Extraction shows
+            package weight as lbs, grams, and bundles on source cards.
+          </p>
+          <label style={styles.label}>
+            Grams per bundle (0 = off, manual entry only)
+            <input
+              style={styles.input}
+              type="number"
+              min={0}
+              step={1}
+              value={config.cultivation.freshFrozenGramsPerBundle ?? 0}
+              onChange={(e) => {
+                const v = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                setConfig((prev) => ({
+                  ...prev,
+                  cultivation: { ...prev.cultivation, freshFrozenGramsPerBundle: v },
+                }));
+              }}
+            />
+          </label>
         </div>
 
         <div style={styles.configSubCard}>

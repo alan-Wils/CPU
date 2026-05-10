@@ -21,6 +21,10 @@ import {
 } from "@/lib/sourceBatchApi";
 import { getSourceAvailable, isCompletedSourceBatch } from "@/lib/sourceBatchActive";
 import {
+  freshFrozenAvailableLine,
+  freshFrozenPackageDisplay,
+} from "@/lib/freshFrozenPackageDisplay";
+import {
   loadExtractionBatches,
   createExtractionBatch,
   updateExtractionBatch,
@@ -2729,8 +2733,16 @@ export default function Extraction() {
                         : materialType === "dryTrim"
                         ? "Dry Trim"
                         : "Unknown"}{" "}
-                      | Status: {isEmpty ? "Used in Extraction" : b.status} |
-                      Available: {available} lbs
+                      | Status: {isEmpty ? "Used in Extraction" : b.status}
+                      {materialType === "freshFrozen" ? (
+                        <>
+                          {" "}
+                          | {freshFrozenPackageDisplay(b).packageLine} |{" "}
+                          {freshFrozenAvailableLine(available)}
+                        </>
+                      ) : (
+                        <> | Available: {available} lbs</>
+                      )}
                     </div>
 
                     {userCanDelete ? (
@@ -3007,7 +3019,9 @@ export default function Extraction() {
                                   : materialType === "dryTrim"
                                   ? "Dry Trim"
                                   : "Unknown"}{" "}
-                                | Available: {getSourceAvailable(b)} lbs
+                                {materialType === "freshFrozen"
+                                  ? `| ${freshFrozenPackageDisplay(b).packageLine} | ${freshFrozenAvailableLine(getSourceAvailable(b))}`
+                                  : `| Available: ${getSourceAvailable(b)} lbs`}
                               </option>
                             );
                           })}
@@ -3061,8 +3075,16 @@ export default function Extraction() {
                               : "Unknown"}
                           </div>
                           <div>
-                            <b>Available Amount:</b> {selectedAvailable} lbs
+                            <b>Available Amount:</b>{" "}
+                            {selectedMaterialType === "freshFrozen"
+                              ? freshFrozenAvailableLine(selectedAvailable)
+                              : `${selectedAvailable} lbs`}
                           </div>
+                          {selectedMaterialType === "freshFrozen" ? (
+                            <div>
+                              <b>Package (total):</b> {freshFrozenPackageDisplay(selectedSource).packageLine}
+                            </div>
+                          ) : null}
                         </div>
                       )}
 

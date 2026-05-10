@@ -75,6 +75,10 @@ import {
 } from "@/lib/laborBreaks";
 import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
 import {
+  bundlesFromTotalGrams,
+  parseFreshFrozenGramsPerBundle,
+} from "@/lib/freshFrozenPackageDisplay";
+import {
   DRY_FLOWER_UI_STAGE_META,
   DRY_FLOWER_UI_STAGE_ORDER,
   dryFlowerStageQuantityLabel,
@@ -1047,6 +1051,9 @@ export default function Cultivation() {
   const [harvestPlants, setHarvestPlants] = useState("");
   const [freshFrozenBundles, setFreshFrozenBundles] = useState("");
   const [freshFrozenGrams, setFreshFrozenGrams] = useState("");
+  /** Company config: grams per FF bundle (0 = manual bundles only). Kept in ref for async harvest-sheet extract. */
+  const [freshFrozenGramsPerBundle, setFreshFrozenGramsPerBundle] = useState(0);
+  const freshFrozenGramsPerBundleRef = useRef(0);
   /** Final live plant count when using Finish batch — must be 0 to close the batch. */
   const [finishBatchPlantCount, setFinishBatchPlantCount] = useState("0");
 
@@ -1221,7 +1228,11 @@ export default function Cultivation() {
     async function loadCompanyCultivationConfig() {
       try {
         const data = await apiRequest<{
-          cultivation?: { strains?: ConfigStrain[]; rooms?: unknown };
+          cultivation?: {
+            strains?: ConfigStrain[];
+            rooms?: unknown;
+            freshFrozenGramsPerBundle?: unknown;
+          };
           strains?: ConfigStrain[] | string[];
           company?: {
             settings?: { laborBreaks?: unknown };
@@ -1258,6 +1269,11 @@ export default function Cultivation() {
         setCloneTasks(mergeCultivationTasksForStage(cloneBase, ctDefs.cultivation, "clone"));
         setVegTasks(mergeCultivationTasksForStage(defaultVegTasks, ctDefs.cultivation, "veg"));
         setFlowerTasks(mergeCultivationTasksForStage(defaultFlowerTasks, ctDefs.cultivation, "flower"));
+
+        const rawPer = data.cultivation?.freshFrozenGramsPerBundle;
+        const per = parseFreshFrozenGramsPerBundle(rawPer);
+        freshFrozenGramsPerBundleRef.current = per;
+        setFreshFrozenGramsPerBundle(per);
       } catch (error) {
         console.error("Could not load company cultivation config:", error);
 
@@ -1266,6 +1282,8 @@ export default function Cultivation() {
           setCultivationRooms(emptyCultivationRooms);
           setRewardsCfg(null);
           setCustomTasksRewardDefs(extractCustomTasksRewardDefsFromCompanyConfig({}));
+          freshFrozenGramsPerBundleRef.current = 0;
+          setFreshFrozenGramsPerBundle(0);
         }
       }
     }
@@ -3786,10 +3804,16 @@ export default function Cultivation() {
         })),
       );
       if (harvestType === "Fresh Frozen") {
+        const per = freshFrozenGramsPerBundleRef.current;
         if (ex.totalGrams != null && Number.isFinite(ex.totalGrams)) {
-          setFreshFrozenGrams(String(Math.round(ex.totalGrams)));
-        }
-        if (ex.bundles != null && Number.isFinite(ex.bundles)) {
+          const g = Math.round(ex.totalGrams);
+          setFreshFrozenGrams(String(g));
+          if (per > 0) {
+            setFreshFrozenBundles(String(bundlesFromTotalGrams(g, per)));
+          } else if (ex.bundles != null && Number.isFinite(ex.bundles)) {
+            setFreshFrozenBundles(String(Math.round(ex.bundles)));
+          }
+        } else if (per <= 0 && ex.bundles != null && Number.isFinite(ex.bundles)) {
           setFreshFrozenBundles(String(Math.round(ex.bundles)));
         }
       }
@@ -8544,16 +8568,34 @@ export default function Cultivation() {
                     <>
                       <input
                         style={inputStyle}
+                        placeholder="Total grams (harvest weight)"
+                        value={freshFrozenGrams}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setFreshFrozenGrams(v);
+                          const g = num(String(v ?? "").replace(/,/g, ""));
+                          if (freshFrozenGramsPerBundle > 0 && g > 0) {
+                            setFreshFrozenBundles(
+                              String(bundlesFromTotalGrams(g, freshFrozenGramsPerBundle)),
+                            );
+                          }
+                        }}
+                      />
+                      <input
+                        style={inputStyle}
                         placeholder="Bundles"
                         value={freshFrozenBundles}
                         onChange={(e) => setFreshFrozenBundles(e.target.value)}
                       />
-                      <input
-                        style={inputStyle}
-                        placeholder="Grams"
-                        value={freshFrozenGrams}
-                        onChange={(e) => setFreshFrozenGrams(e.target.value)}
-                      />
+                      {freshFrozenGramsPerBundle > 0 ? (
+                        <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                          Bundles auto-fill as grams ÷ {freshFrozenGramsPerBundle} g/bundle (you can edit).
+                        </p>
+                      ) : (
+                        <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                          Set grams per bundle under Admin → Company Config → Fresh Frozen harvest to auto-fill bundles.
+                        </p>
+                      )}
                     </>
                   )}
 
@@ -8603,9 +8645,15 @@ export default function Cultivation() {
                         <button
                           type="button"
                           style={buttonStyle}
-                          onClick={() =>
-                            setFreshFrozenGrams(String(sumGramsFromHarvestSheetRows(harvestSheetRows)))
-                          }
+                          onClick={() => {
+                            const sum = String(sumGramsFromHarvestSheetRows(harvestSheetRows));
+                            setFreshFrozenGrams(sum);
+                            const per = freshFrozenGramsPerBundleRef.current;
+                            const g = num(sum.replace(/,/g, ""));
+                            if (per > 0 && g > 0) {
+                              setFreshFrozenBundles(String(bundlesFromTotalGrams(g, per)));
+                            }
+                          }}
                         >
                           Sum rows → grams
                         </button>

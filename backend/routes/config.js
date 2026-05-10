@@ -111,6 +111,8 @@ const defaultConfig = {
     },
     /** Extra cultivation tasks merged into Clone / Veg / Flower lists (see Admin Company Config). */
     customTasks: [],
+    /** Grams per Fresh Frozen bundle; 0 = operators enter bundles manually. */
+    freshFrozenGramsPerBundle: 0,
   },
 
   extraction: {
