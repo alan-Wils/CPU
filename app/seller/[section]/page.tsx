@@ -11,13 +11,6 @@ type StubCfg = {
 };
 
 const CONFIG: Record<string, StubCfg> = {
-  inventory: {
-    title: "Inventory",
-    description:
-      "Track packaged inventory, adjustments, and printing from the main NexBatch inventory workspace. Low-stock alerts on your dashboard use marketplace listing quantities.",
-    primaryAction: { href: "/inventory", label: "Open Inventory" },
-    secondaryAction: { href: "/seller/dashboard", label: "Back to dashboard" },
-  },
   transactions: {
     title: "Transactions",
     description:
