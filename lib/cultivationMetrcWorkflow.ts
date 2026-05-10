@@ -11,6 +11,11 @@ export const TASK_CREATE_IMMATURE_PLANT_BATCH = "Create Immature Plant Batch";
 /** Current UI label for Clone → Veg transition with METRC tag assignment. */
 export const TASK_MOVE_TO_VEG_ASSIGN_TAGS = "Move to Veg / Assign Plant Tags";
 
+/**
+ * Clone → Veg when company METRC integration is disabled: no immature batch or tag workflow.
+ */
+export const TASK_MOVE_TO_VEG = "Move to Veg";
+
 /** Legacy task name kept for log matching and backwards compatibility. */
 export const LEGACY_TASK_CLONE_TO_VEG = "Clone → Veg";
 
@@ -62,9 +67,21 @@ export type MetrcVegMovePayloadItem = {
   PatientLicenseNumber: null;
 };
 
-export function isMoveToVegTaskName(taskName: string): boolean {
+/** METRC-style veg move (immature batch + tag assignment). */
+export function isMetrcVegTagMoveTask(taskName: string): boolean {
   const t = String(taskName || "").trim();
   return t === TASK_MOVE_TO_VEG_ASSIGN_TAGS || t === LEGACY_TASK_CLONE_TO_VEG;
+}
+
+/** Any Clone → Veg transition task (METRC or simple). */
+export function isAnyMoveToVegTask(taskName: string): boolean {
+  const t = String(taskName || "").trim();
+  return isMetrcVegTagMoveTask(t) || t === TASK_MOVE_TO_VEG;
+}
+
+/** @deprecated Prefer isMetrcVegTagMoveTask or isAnyMoveToVegTask for new code. */
+export function isMoveToVegTaskName(taskName: string): boolean {
+  return isMetrcVegTagMoveTask(taskName);
 }
 
 export function generateMetrcTagSequence(

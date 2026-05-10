@@ -2062,6 +2062,10 @@ export default function ConfigPage() {
           />
           Enable METRC API integration for this company (server-side sync)
         </label>
+        <p style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 12px", lineHeight: 1.5 }}>
+          When unchecked, <strong style={{ color: "#e2e8f0" }}>Cultivation</strong> hides immature-batch and METRC tag
+          tasks; Clone batches use <strong style={{ color: "#e2e8f0" }}>Move to Veg</strong> with plant counts only.
+        </p>
 
         <div style={styles.grid}>
           <label style={styles.label}>
