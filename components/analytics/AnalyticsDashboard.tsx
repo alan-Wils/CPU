@@ -110,7 +110,6 @@ const SECTION_DEFAULTS: Record<AnalyticsSectionKey, boolean> = {
   sales: true,
   buyer: true,
   labor: true,
-  financial: true,
   executive: true,
   strain: true,
 };
@@ -621,45 +620,6 @@ export function AnalyticsDashboard(props: {
                       </div>
                       <div>
                         Labor cost (range): <strong>{money(Number(l.laborCostRange))}</strong>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-            </Panel>
-          ) : null}
-
-          {prefs.financial ? (
-            <Panel title="Financial & platform" subtitle="Revenue window + UsageEvent estimated vendor costs (UTC month).">
-              {(() => {
-                const f = pick(props.data, "financial") as Record<string, unknown> | null | undefined;
-                if (!f) return null;
-                const parts = (f.costBreakdown as { label: string; value: number }[]) || [];
-                return (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12, fontSize: 13 }}>
-                    <div style={{ color: "#cbd5e1" }}>
-                      Window revenue (orders + marketplace seller):{" "}
-                      <strong style={{ color: "#86efac" }}>{money(Number(f.revenueWindow))}</strong>
-                    </div>
-                    <div style={{ color: "#cbd5e1" }}>
-                      Platform costs (month est.):{" "}
-                      <strong>{money(Number(f.platformCostsMonth))}</strong>
-                    </div>
-                    <div style={{ gridColumn: "1 / -1" }}>
-                      <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 6 }}>Cost breakdown by provider</div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {parts.length === 0 ? (
-                          <span style={{ color: "#64748b" }}>No usage events this month.</span>
-                        ) : null}
-                        {parts.map((p) => (
-                          <div
-                            key={p.label}
-                            style={{ display: "flex", justifyContent: "space-between", color: "#e2e8f0" }}
-                          >
-                            <span>{p.label}</span>
-                            <span>{money(p.value)}</span>
-                          </div>
-                        ))}
                       </div>
                     </div>
                   </div>

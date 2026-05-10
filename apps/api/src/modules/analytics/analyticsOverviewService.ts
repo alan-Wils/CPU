@@ -103,7 +103,6 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     marketplaceBuyerAgg,
     buyerOrderCount,
     inventoryProducts,
-    usageMonth,
     ordersCurrent,
     ordersPrev,
   ] = await Promise.all([
@@ -180,14 +179,6 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
       where: { companyId },
       select: { price: true, quantityAvailable: true },
       take: 8000,
-    }),
-    prisma.usageEvent.groupBy({
-      by: ["provider"],
-      where: {
-        companyId,
-        createdAt: { gte: new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)) },
-      },
-      _sum: { estimatedCost: true },
     }),
     ordersService.getOrdersAnalytics(companyId, { dateFrom, dateTo }),
     ordersService.getOrdersAnalytics(companyId, { dateFrom: prevFromYmd, dateTo: prevToYmd }),
@@ -305,8 +296,6 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
       });
     }
   }
-
-  const platformCostsMonth = usageMonth.reduce((s, g) => s + (g._sum.estimatedCost ?? 0), 0);
 
   const liveOps = [
     {
@@ -466,17 +455,6 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     liveOps,
     insights,
     alerts,
-    financial: {
-      revenueWindow: totalRevenue,
-      netProfit: null as number | null,
-      ebitda: null as number | null,
-      cashFlow: null as number | null,
-      platformCostsMonth,
-      costBreakdown: usageMonth.map((u) => ({
-        label: u.provider,
-        value: u._sum.estimatedCost ?? 0,
-      })),
-    },
     executiveCompare,
     ordersMeta: {
       leafLinkConfigured: ordersCurrent.configured,
