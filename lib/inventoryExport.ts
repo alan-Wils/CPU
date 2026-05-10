@@ -497,7 +497,7 @@ export function openInventoryPrintWindow(
     </thead>
     <tbody>${rowsHtml}</tbody>
   </table>
-  <p class="footer">Printed from CPU Inventory — wholesale/unit pricing per LeafLink when present.</p>
+  <p class="footer">Printed by NexBatch — wholesale/unit pricing per LeafLink when present.</p>
 </body>
 </html>`;
 
