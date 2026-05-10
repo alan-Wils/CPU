@@ -63,7 +63,11 @@ import {
   type CustomTasksRewardDefs,
 } from "@/lib/customTasksConfig";
 import { computeAverageNormalizedMinutes } from "@/lib/taskChallengeMath";
-import { buildTaskChallengeAttachment, isTaskExcludedFromChallenge } from "@/lib/taskChallengePayload";
+import {
+  buildTaskChallengeAttachment,
+  isTaskExcludedFromChallenge,
+  rollSpeedChallengeOffer,
+} from "@/lib/taskChallengePayload";
 import {
   type LaborBreakWindow,
   computeLaborRangeDeduction,
@@ -901,8 +905,21 @@ export default function Cultivation() {
     extractCustomTasksRewardDefsFromCompanyConfig({}),
   );
   const [showRewardsChallengeModal, setShowRewardsChallengeModal] = useState(false);
-  /** User must accept the challenge to earn tier points; declines skip taskChallenge on save. */
-  const [taskChallengeChoice, setTaskChallengeChoice] = useState<"unset" | "accepted" | "declined">("unset");
+  /** null until decided for this save attempt; set before completing save after optional challenge modal. */
+  const cultivationChallengeOptInRef = useRef<boolean | null>(null);
+  type MoveToVegChallengeLab = {
+    ok: true;
+    peopleStr: string;
+    minutesStr: string;
+    totalLaborMinutes: number;
+    laborDetail: Record<string, unknown>;
+    outputSuffix: string;
+    netMinutesPerPerson: number;
+    laborOpen?: true;
+  };
+  const deferredAfterChallengeRef = useRef<null | { kind: "main" } | { kind: "moveToVeg"; lab: MoveToVegChallengeLab }>(
+    null,
+  );
   const [showDryTaskWindow, setShowDryTaskWindow] = useState(false);
   const [showAddTaskWindow, setShowAddTaskWindow] = useState(false);
   const [selectedStage, setSelectedStage] = useState<StageModalKey>(null);
@@ -3744,44 +3761,66 @@ export default function Cultivation() {
   useEffect(() => {
     if (!showTaskWindow) {
       setShowRewardsChallengeModal(false);
-      setTaskChallengeChoice("unset");
+      cultivationChallengeOptInRef.current = null;
+      deferredAfterChallengeRef.current = null;
+      setIsSavingTask(false);
     }
   }, [showTaskWindow]);
 
-  useEffect(() => {
-    if (!showTaskWindow || !selectedBatch || !rewardsCfg?.enabled || !rewardsCfg.taskChallenge.enabled) {
-      return;
+  function cultivationChallengeOfferOrWait(
+    lab: { ok: true; laborOpen?: true },
+    taskForChallenge: string,
+    resumingFromChallenge: boolean,
+  ): boolean | "wait" {
+    if (resumingFromChallenge && cultivationChallengeOptInRef.current === null) {
+      return false;
     }
-    if (selectedTask === "Print harvest sheet") {
-      setShowRewardsChallengeModal(false);
-      return;
+    if (cultivationChallengeOptInRef.current !== null) {
+      return cultivationChallengeOptInRef.current;
     }
-    if (isTaskExcludedFromChallenge(selectedTask, rewardsCfg.taskChallenge.excludedTaskSubstrings)) {
-      setShowRewardsChallengeModal(false);
-      return;
+    if (!rewardsCfg?.enabled || !rewardsCfg.taskChallenge.enabled) {
+      cultivationChallengeOptInRef.current = false;
+      return false;
     }
-    const rb = resolveConfigurableTaskRewards("Cultivation", selectedTask, customTasksRewardDefs);
+    if (!lab.ok || lab.laborOpen) {
+      cultivationChallengeOptInRef.current = false;
+      return false;
+    }
+    if (taskForChallenge === "Print harvest sheet") {
+      cultivationChallengeOptInRef.current = false;
+      return false;
+    }
+    if (isTaskExcludedFromChallenge(taskForChallenge, rewardsCfg.taskChallenge.excludedTaskSubstrings)) {
+      cultivationChallengeOptInRef.current = false;
+      return false;
+    }
+    const rb = resolveConfigurableTaskRewards("Cultivation", taskForChallenge, customTasksRewardDefs);
     if (!rb.eligible) {
-      setShowRewardsChallengeModal(false);
-      return;
+      cultivationChallengeOptInRef.current = false;
+      return false;
     }
     const u = getAuthUser();
     if (!u || (!u.rewardsEnrolled && !isElevatedManagerRole(String(u.role || "")))) {
-      setShowRewardsChallengeModal(false);
-      return;
+      cultivationChallengeOptInRef.current = false;
+      return false;
     }
-    setTaskChallengeChoice("unset");
-    const t = window.setTimeout(() => setShowRewardsChallengeModal(true), 0);
-    return () => window.clearTimeout(t);
-  }, [
-    showTaskWindow,
-    selectedBatch?.id,
-    selectedTask,
-    rewardsCfg?.enabled,
-    rewardsCfg?.taskChallenge.enabled,
-    rewardsCfg?.taskChallenge.excludedTaskSubstrings?.join("|"),
-    customTasksRewardDefs,
-  ]);
+    const pct = rewardsCfg.taskChallenge.offerChancePercent;
+    if (!rollSpeedChallengeOffer(pct)) {
+      cultivationChallengeOptInRef.current = false;
+      return false;
+    }
+    return "wait";
+  }
+
+  function completeSpeedChallengeModal(accepted: boolean) {
+    cultivationChallengeOptInRef.current = accepted;
+    setShowRewardsChallengeModal(false);
+    const def = deferredAfterChallengeRef.current;
+    deferredAfterChallengeRef.current = null;
+    if (!def) return;
+    if (def.kind === "main") void save(true);
+    else void saveMoveToVegWithoutMetrc(def.lab, true);
+  }
 
   function openTaskWindowForBatch(batch: any) {
     if (!batch) return;
@@ -6078,17 +6117,9 @@ export default function Cultivation() {
   }
 
   async function saveMoveToVegWithoutMetrc(
-    lab: {
-      ok: true;
-      peopleStr: string;
-      minutesStr: string;
-      totalLaborMinutes: number;
-      laborDetail: Record<string, unknown>;
-      outputSuffix: string;
-      netMinutesPerPerson: number;
-      laborOpen?: true;
-    },
-  ) {
+    lab: MoveToVegChallengeLab,
+    resumingFromChallenge = false,
+  ): Promise<"challenge-wait" | void> {
     if (!selectedBatch) return;
 
     if (String(selectedBatch.stage || "") !== "Clone") {
@@ -6154,6 +6185,14 @@ export default function Cultivation() {
     }`;
     const noteSuffix = vegMoveNotes.trim() ? ` Notes: ${vegMoveNotes.trim()}` : "";
 
+    const offer = cultivationChallengeOfferOrWait(lab, TASK_MOVE_TO_VEG, resumingFromChallenge);
+    if (offer === "wait") {
+      deferredAfterChallengeRef.current = { kind: "moveToVeg", lab };
+      setShowRewardsChallengeModal(true);
+      return "challenge-wait";
+    }
+    const challengeOptIn = offer;
+
     let challengeExtra: Record<string, unknown> = {};
     if (rewardsCfg?.enabled && rewardsCfg.taskChallenge.enabled) {
       const tcAttach = buildTaskChallengeAttachment({
@@ -6164,7 +6203,7 @@ export default function Cultivation() {
         logs: s.logs as any[],
         normalizedMinutesPerPerson: lab.netMinutesPerPerson,
         user: getAuthUser(),
-        optedIn: taskChallengeChoice === "accepted",
+        optedIn: challengeOptIn,
         laborGateOk: !lab.laborOpen,
       });
       if (tcAttach) {
@@ -6240,15 +6279,18 @@ export default function Cultivation() {
     }
   }
 
-  async function save() {
-    if (isSavingTask) return;
+  async function save(resumingFromChallenge = false) {
+    if (!resumingFromChallenge && isSavingTask) return;
     if (!canWriteRecords) {
       showReadOnlyNotice();
       return;
     }
 
     if (!selectedBatch) return;
-    setIsSavingTask(true);
+    if (!resumingFromChallenge) {
+      setIsSavingTask(true);
+      cultivationChallengeOptInRef.current = null;
+    }
 
     const taskRequiredFields: { label: string; value: any; positive?: boolean; zeroOrPositive?: boolean }[] = [];
 
@@ -6411,10 +6453,12 @@ export default function Cultivation() {
     }
 
     if (selectedTask === TASK_MOVE_TO_VEG) {
+      let challengeWait = false;
       try {
-        await saveMoveToVegWithoutMetrc(lab);
+        const st = await saveMoveToVegWithoutMetrc(lab);
+        challengeWait = st === "challenge-wait";
       } finally {
-        setIsSavingTask(false);
+        if (!challengeWait) setIsSavingTask(false);
       }
       return;
     }
@@ -6597,6 +6641,14 @@ export default function Cultivation() {
       }
     }
 
+    const offer = cultivationChallengeOfferOrWait(lab, selectedTask, resumingFromChallenge);
+    if (offer === "wait") {
+      deferredAfterChallengeRef.current = { kind: "main" };
+      setShowRewardsChallengeModal(true);
+      return;
+    }
+    const challengeOptIn = offer;
+
     let taskOutput = output;
     let logRoom: string | undefined;
     let logBay: string | undefined;
@@ -6626,7 +6678,7 @@ export default function Cultivation() {
         logs: s.logs as any[],
         normalizedMinutesPerPerson: lab.netMinutesPerPerson,
         user: getAuthUser(),
-        optedIn: taskChallengeChoice === "accepted",
+        optedIn: challengeOptIn,
         laborGateOk: lab.ok && !lab.laborOpen,
       });
       if (tcAttach) {
@@ -8136,8 +8188,8 @@ export default function Cultivation() {
                 Task: <b>{selectedTask}</b>
               </p>
               <p style={{ color: "#94a3b8", fontSize: 13, lineHeight: 1.5, textAlign: "center" }}>
-                Opt in to compete for bonus points based on how fast you finish vs the facility average. If you skip, this
-                log will not earn challenge points.
+                You&apos;re about to save this task. Opt in to compete for bonus points based on speed vs the facility
+                average. If you skip, this log will not earn challenge points.
               </p>
               {(() => {
                 const tc = rewardsCfg.taskChallenge;
@@ -8187,20 +8239,14 @@ export default function Cultivation() {
                     background: "#1e293b",
                     color: "#e2e8f0",
                   }}
-                  onClick={() => {
-                    setTaskChallengeChoice("declined");
-                    setShowRewardsChallengeModal(false);
-                  }}
+                  onClick={() => completeSpeedChallengeModal(false)}
                 >
                   No thanks
                 </button>
                 <button
                   type="button"
                   style={primaryButtonStyle}
-                  onClick={() => {
-                    setTaskChallengeChoice("accepted");
-                    setShowRewardsChallengeModal(false);
-                  }}
+                  onClick={() => completeSpeedChallengeModal(true)}
                 >
                   Accept challenge
                 </button>
@@ -8218,11 +8264,8 @@ export default function Cultivation() {
             </p>
             {rewardsCfg?.enabled && rewardsCfg.taskChallenge.enabled ? (
               <p style={{ textAlign: "center", color: "#64748b", fontSize: 12, marginTop: -4 }}>
-                {taskChallengeChoice === "accepted"
-                  ? "Speed challenge: accepted — tier points apply if you hit the target."
-                  : taskChallengeChoice === "declined"
-                    ? "Speed challenge: skipped — no challenge points for this log."
-                    : "Choose Accept or No thanks in the challenge prompt to opt in or out."}
+                After you tap Save, you may occasionally see a speed-challenge prompt (frequency is set in Company
+                Config).
               </p>
             ) : null}
 
@@ -9492,7 +9535,12 @@ export default function Cultivation() {
                   Open printable sheet
                 </button>
               ) : (
-                <button style={primaryButtonStyle} onClick={save} disabled={isSavingTask}>
+                <button
+                  type="button"
+                  style={primaryButtonStyle}
+                  onClick={() => void save()}
+                  disabled={isSavingTask}
+                >
                   {isSavingTask
                     ? "Saving..."
                     : !hasMinimumRole("MANAGER") && laborTimeMode === "range"

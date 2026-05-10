@@ -23,6 +23,14 @@ export type TaskChallengeLogAttachment = {
   reviewedByUserId?: string;
 };
 
+/** Returns true if the random roll says we should show the challenge offer (eligible callers still apply). */
+export function rollSpeedChallengeOffer(offerChancePercent: number, rng: () => number = Math.random): boolean {
+  const n = Math.min(100, Math.max(0, Number(offerChancePercent)));
+  if (n >= 100) return true;
+  if (n <= 0) return false;
+  return rng() * 100 < n;
+}
+
 export function isTaskExcludedFromChallenge(taskName: string, excluded: string[] | undefined): boolean {
   const t = String(taskName || "").toLowerCase();
   for (const ex of excluded || []) {

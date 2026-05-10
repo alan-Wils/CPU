@@ -3,6 +3,7 @@ import {
   buildTaskChallengeAttachment,
   effectiveTaskChallengePoints,
   isTaskExcludedFromChallenge,
+  rollSpeedChallengeOffer,
 } from "./taskChallengePayload";
 import type { RewardsSettings } from "./rewardsConfig";
 
@@ -29,6 +30,7 @@ const minimalRewards = (over: Partial<RewardsSettings["taskChallenge"]> = {}): R
     requireManagerApproval: false,
     rewardManagerUserIds: [],
     excludedTaskSubstrings: [],
+    offerChancePercent: 100,
     ...over,
   },
 });
@@ -71,6 +73,19 @@ describe("effectiveTaskChallengePoints", () => {
         reviewStatus: "denied",
       }),
     ).toBe(0);
+  });
+});
+
+describe("rollSpeedChallengeOffer", () => {
+  it("100 always true", () => {
+    expect(rollSpeedChallengeOffer(100, () => 0.99)).toBe(true);
+  });
+  it("0 always false", () => {
+    expect(rollSpeedChallengeOffer(0, () => 0)).toBe(false);
+  });
+  it("50 respects rng", () => {
+    expect(rollSpeedChallengeOffer(50, () => 0)).toBe(true);
+    expect(rollSpeedChallengeOffer(50, () => 0.5)).toBe(false);
   });
 });
 

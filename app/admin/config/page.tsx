@@ -140,6 +140,7 @@ type AppConfig = {
           requireManagerApproval: boolean;
           rewardManagerUserIds: string[];
           excludedTaskSubstrings: string[];
+          offerChancePercent: number;
         };
       };
     };
@@ -254,6 +255,7 @@ const emptyConfig: AppConfig = {
           requireManagerApproval: false,
           rewardManagerUserIds: [],
           excludedTaskSubstrings: [],
+          offerChancePercent: 35,
         },
       },
     },
@@ -387,6 +389,11 @@ function mergeRewardsSettings(
       excludedTaskSubstrings: Array.isArray(inc.taskChallenge?.excludedTaskSubstrings)
         ? inc.taskChallenge!.excludedTaskSubstrings.map((x) => String(x ?? "").trim()).filter(Boolean)
         : base.taskChallenge.excludedTaskSubstrings,
+      offerChancePercent:
+        inc.taskChallenge?.offerChancePercent != null &&
+        Number.isFinite(Number(inc.taskChallenge.offerChancePercent))
+          ? Math.min(100, Math.max(0, Number(inc.taskChallenge.offerChancePercent)))
+          : base.taskChallenge.offerChancePercent,
     },
   };
 }
@@ -2775,6 +2782,39 @@ export default function ConfigPage() {
             }
           />
         </label>
+        <label style={styles.label}>
+          Challenge prompt chance when saving (0–100%)
+          <input
+            style={styles.input}
+            type="number"
+            min={0}
+            max={100}
+            value={config.company.settings.rewards?.taskChallenge.offerChancePercent ?? 35}
+            onChange={(e) =>
+              setConfig((prev) => {
+                const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                const v = Math.min(100, Math.max(0, Number(e.target.value) || 0));
+                return {
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    settings: {
+                      ...prev.company.settings,
+                      rewards: {
+                        ...r,
+                        taskChallenge: { ...r.taskChallenge, offerChancePercent: v },
+                      },
+                    },
+                  },
+                };
+              })
+            }
+          />
+        </label>
+        <p style={{ color: "#64748b", fontSize: 12, margin: "0 0 8px" }}>
+          After labor is valid, the app may show the speed-challenge popup on <b>Save</b>. Use a lower percent so it only
+          appears occasionally (100 = every eligible save).
+        </p>
         <label style={styles.label}>
           Min samples for average
           <input

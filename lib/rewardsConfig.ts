@@ -37,6 +37,11 @@ export type RewardsSettings = {
     rewardManagerUserIds: string[];
     /** Task names containing any of these substrings (case-insensitive) never show the challenge offer. */
     excludedTaskSubstrings: string[];
+    /**
+     * When saving a task, chance (0–100) the speed-challenge prompt appears after validation.
+     * 100 = always (when eligible); 0 = never; e.g. 25 ≈ one in four saves.
+     */
+    offerChancePercent: number;
   };
 };
 
@@ -114,6 +119,7 @@ export function parseRewardsSettings(raw: unknown): RewardsSettings {
       requireManagerApproval: tc.requireManagerApproval !== undefined ? Boolean(tc.requireManagerApproval) : false,
       rewardManagerUserIds,
       excludedTaskSubstrings,
+      offerChancePercent: Math.min(100, Math.max(0, Number(tc.offerChancePercent) || 35)),
     },
   };
 }
