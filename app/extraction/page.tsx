@@ -19,6 +19,7 @@ import {
   updateSourceBatch,
   deleteSourceBatchRecord,
 } from "@/lib/sourceBatchApi";
+import { getSourceAvailable, isCompletedSourceBatch } from "@/lib/sourceBatchActive";
 import {
   loadExtractionBatches,
   createExtractionBatch,
@@ -98,15 +99,6 @@ function asArray(value: any) {
   return [value];
 }
 
-function isCompletedSourceBatch(batch: any) {
-  const status = String(batch?.status || "").toLowerCase();
-  return (
-    status === "complete" ||
-    status === "used in extraction" ||
-    status.includes("complete")
-  );
-}
-
 /** True when `id` is a Prisma `SourcePackage` cuid (merged from the real DB), not a legacy `FF-…` / `TRIM-…` tag. */
 function isLikelyDatabaseSourcePackageId(id: unknown): boolean {
   const s = String(id ?? "").trim();
@@ -177,18 +169,6 @@ function num(value: any) {
 
 function isBlank(value: any) {
   return String(value ?? "").trim() === "";
-}
-
-function parseAmountToLbs(value: any) {
-  const text = String(value || "").toLowerCase();
-
-  const gramsMatch = text.match(/(\d+(\.\d+)?)\s*grams?/);
-  if (gramsMatch) return num(gramsMatch[1]) / 453.592;
-
-  const lbsMatch = text.match(/(\d+(\.\d+)?)\s*lbs?/);
-  if (lbsMatch) return num(lbsMatch[1]);
-
-  return 0;
 }
 
 function getDateCode() {
@@ -1007,34 +987,6 @@ export default function Extraction() {
           new Date(String(b.lastUsedAt || 0)).getTime() -
           new Date(String(a.lastUsedAt || 0)).getTime()
       );
-  }
-
-  function getSourceOriginalLbs(source: any) {
-    if (!source) return 0;
-
-    if (source.weightLbs !== undefined) return num(source.weightLbs);
-    if (source.grams !== undefined) return num(source.grams) / 453.592;
-    if (source.amount !== undefined) return parseAmountToLbs(source.amount);
-
-    return 0;
-  }
-
-  function getSourceAvailable(source: any) {
-    if (!source) return 0;
-
-    const original = getSourceOriginalLbs(source);
-
-    if (source.remainingAmount !== undefined) {
-      const remaining = num(source.remainingAmount);
-
-      if (remaining <= 0 && source.status !== "Used in Extraction") {
-        return +original.toFixed(2);
-      }
-
-      return +remaining.toFixed(2);
-    }
-
-    return +original.toFixed(2);
   }
 
   function getSourceMaterialType(source: any) {

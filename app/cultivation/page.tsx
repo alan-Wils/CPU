@@ -34,7 +34,8 @@ import { resolveAbsorbedPlantsAndStageForUncombine } from "@/lib/cultivationMerg
 import { apiRequest, API_BASE_URL } from "@/lib/api";
 import { extractHarvestSheet, uploadHarvestSheetImage } from "@/lib/harvestSheetApi";
 import { fileToBase64DataUrl, shrinkHarvestSheetImageFileIfLarge } from "@/lib/shrinkHarvestSheetImage";
-import { createSourceBatch } from "@/lib/sourceBatchApi";
+import { createSourceBatch, loadSourceBatches } from "@/lib/sourceBatchApi";
+import { isActiveExtractionSourceBatch } from "@/lib/sourceBatchActive";
 import {
   createLog,
   deleteLog as deleteTaskLogRemote,
@@ -1240,18 +1241,37 @@ export default function Cultivation() {
         await hydrateTaskLogsFromApi();
         await loadCompanyCultivationConfig();
 
-        /** Company store may list FF/trim only under sourceBatches (DATABASE_ONLY skips full PUT); mirror into production panel. */
+        /**
+         * Mirror only active FF/trim (same rules as Extraction). Raw `sourceBatches` in the company
+         * store can contain stale rows; `GET /api/source-batches` merges DB + store like Extraction.
+         */
+        const rawSources = await loadSourceBatches().catch(() => null);
+        const sourceList = Array.isArray(rawSources) ? rawSources : [];
+        const activeFfTrimIds = new Set<string>();
+        for (const src of sourceList) {
+          const typ = String((src as any)?.type || "");
+          if (typ !== "Fresh Frozen" && typ !== "Dry Trim") continue;
+          if (!isActiveExtractionSourceBatch(src)) continue;
+          const id = String((src as any)?.id || "");
+          if (id) activeFfTrimIds.add(id);
+        }
+        s.productionBatches = (s.productionBatches || []).filter((p: any) => {
+          const typ = String(p?.type || "");
+          if (typ !== "Fresh Frozen" && typ !== "Dry Trim") return true;
+          const id = String(p?.id || "");
+          return Boolean(id && activeFfTrimIds.has(id));
+        });
         const prodIds = new Set(
           (s.productionBatches || []).map((b: any) => String(b?.id || ""))
         );
-        for (const src of s.sourceBatches || []) {
-          const id = String(src?.id || "");
+        for (const src of sourceList) {
+          const typ = String((src as any)?.type || "");
+          if (typ !== "Fresh Frozen" && typ !== "Dry Trim") continue;
+          if (!isActiveExtractionSourceBatch(src)) continue;
+          const id = String((src as any)?.id || "");
           if (!id || prodIds.has(id)) continue;
-          const typ = String(src?.type || "");
-          if (typ === "Fresh Frozen" || typ === "Dry Trim") {
-            s.productionBatches.unshift({ ...src });
-            prodIds.add(id);
-          }
+          s.productionBatches.unshift({ ...(src as object) });
+          prodIds.add(id);
         }
 
         const realCultivationBatches = await loadCultivationBatches();
