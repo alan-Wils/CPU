@@ -52,7 +52,6 @@ import {
 import {
   computeAllocatedDryCanopySqFt,
   computeDryYieldGPerSqFt,
-  isElevatedManagerRole,
   sumTableSquareFeetFromIds,
 } from "@cpu/shared";
 import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
@@ -3767,8 +3766,18 @@ export default function Cultivation() {
     }
   }, [showTaskWindow]);
 
+  /** Speed challenges: floor roles only (below Manager), clock start/end only — not manager quick total minutes. */
+  function cultivationSpeedChallengeRoleAndRangeOk(lab: {
+    laborOpen?: true;
+    laborDetail?: Record<string, unknown>;
+  }): boolean {
+    if (hasMinimumRole("MANAGER")) return false;
+    if (lab.laborOpen) return false;
+    return String(lab.laborDetail?.laborTimeMode ?? "") === "range";
+  }
+
   function cultivationChallengeOfferOrWait(
-    lab: { ok: true; laborOpen?: true },
+    lab: { ok: true; laborOpen?: true; laborDetail?: Record<string, unknown> },
     taskForChallenge: string,
     resumingFromChallenge: boolean,
   ): boolean | "wait" {
@@ -3786,6 +3795,10 @@ export default function Cultivation() {
       cultivationChallengeOptInRef.current = false;
       return false;
     }
+    if (!cultivationSpeedChallengeRoleAndRangeOk(lab)) {
+      cultivationChallengeOptInRef.current = false;
+      return false;
+    }
     if (taskForChallenge === "Print harvest sheet") {
       cultivationChallengeOptInRef.current = false;
       return false;
@@ -3800,7 +3813,7 @@ export default function Cultivation() {
       return false;
     }
     const u = getAuthUser();
-    if (!u || (!u.rewardsEnrolled && !isElevatedManagerRole(String(u.role || "")))) {
+    if (!u || !u.rewardsEnrolled) {
       cultivationChallengeOptInRef.current = false;
       return false;
     }
@@ -6203,7 +6216,7 @@ export default function Cultivation() {
         logs: s.logs as any[],
         normalizedMinutesPerPerson: lab.netMinutesPerPerson,
         user: getAuthUser(),
-        optedIn: challengeOptIn,
+        optedIn: challengeOptIn && cultivationSpeedChallengeRoleAndRangeOk(lab),
         laborGateOk: !lab.laborOpen,
       });
       if (tcAttach) {
@@ -6678,7 +6691,7 @@ export default function Cultivation() {
         logs: s.logs as any[],
         normalizedMinutesPerPerson: lab.netMinutesPerPerson,
         user: getAuthUser(),
-        optedIn: challengeOptIn,
+        optedIn: challengeOptIn && cultivationSpeedChallengeRoleAndRangeOk(lab),
         laborGateOk: lab.ok && !lab.laborOpen,
       });
       if (tcAttach) {
@@ -8189,7 +8202,7 @@ export default function Cultivation() {
               </p>
               <p style={{ color: "#94a3b8", fontSize: 13, lineHeight: 1.5, textAlign: "center" }}>
                 You&apos;re about to save this task. Opt in to compete for bonus points based on speed vs the facility
-                average. If you skip, this log will not earn challenge points.
+                average (clock start &amp; end only). If you skip, this log will not earn challenge points.
               </p>
               {(() => {
                 const tc = rewardsCfg.taskChallenge;
@@ -8264,8 +8277,8 @@ export default function Cultivation() {
             </p>
             {rewardsCfg?.enabled && rewardsCfg.taskChallenge.enabled ? (
               <p style={{ textAlign: "center", color: "#64748b", fontSize: 12, marginTop: -4 }}>
-                After you tap Save, you may occasionally see a speed-challenge prompt (frequency is set in Company
-                Config).
+                Enrolled cultivation staff (below Manager) may occasionally see a speed-challenge prompt after Save when
+                using <b>start &amp; end clock times</b> — not manager quick minutes. Frequency is set in Company Config.
               </p>
             ) : null}
 
