@@ -10,6 +10,7 @@ import {
     buildCultivationStrainMetricPoints,
     mergeFreshFrozenSourcesForAnalytics,
 } from "./buildCultivationStrainMetricPoints.js";
+import { buildAnalyticsOverview } from "./analyticsOverviewService.js";
 
 const storeService = new StoreService();
 
@@ -94,5 +95,35 @@ analyticsRouter.get(
         });
 
         res.json({ points });
+    }),
+);
+
+analyticsRouter.get(
+    "/overview",
+    requireRoleOrAppPermission(analyticsReadRoles, "page.analytics"),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const dateFrom = String(req.query.from ?? "").trim();
+        const dateTo = String(req.query.to ?? "").trim();
+        const facility = String(req.query.facility ?? "").trim() || null;
+        const department = String(req.query.department ?? "").trim().toLowerCase() || null;
+        const fromMs = parseYmdStartUtc(dateFrom);
+        const toMs = parseYmdEndUtc(dateTo);
+        if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
+            throw new AppError("Query params from and to are required as YYYY-MM-DD", 400);
+        }
+        if (fromMs > toMs) {
+            throw new AppError("from must be on or before to", 400);
+        }
+        const auth = req.auth as { platformRole?: string | null } | undefined;
+        const out = await buildAnalyticsOverview({
+            companyId,
+            dateFrom,
+            dateTo,
+            facility,
+            department: department === "all" ? null : department,
+            platformRole: auth?.platformRole ?? null,
+        });
+        res.json(out);
     }),
 );
