@@ -32,11 +32,9 @@ import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
 import {
   extractCustomTasksRewardDefsFromCompanyConfig,
   mergeWorkflowTaskList,
-  resolveConfigurableTaskRewards,
   type CustomTasksRewardDefs,
 } from "@/lib/customTasksConfig";
-import { computeAverageNormalizedMinutes, scoreChallengeByLoggedMinutes } from "@/lib/taskChallengeMath";
-import { isElevatedManagerRole } from "@cpu/shared";
+import { buildTaskChallengeAttachment } from "@/lib/taskChallengePayload";
 
 const BASE_PACKAGING_TASKS = [
   "Label",
@@ -1082,41 +1080,26 @@ export default function Packaging() {
         b.id === selectedInProgress.id ? selectedInProgress : b
       );
 
-      const rb = resolveConfigurableTaskRewards("Packaging", taskType, customTasksRewardDefs);
       let challengeExtra: Record<string, unknown> = {};
       if (
-        rb.eligible &&
         rewardsCfg?.enabled &&
         rewardsCfg.taskChallenge.enabled &&
         taskPeopleNum > 0 &&
         taskTimeNum > 0
       ) {
-        const u = getAuthUser();
-        if (u && (u.rewardsEnrolled || isElevatedManagerRole(String(u.role || "")))) {
-          const { avg, sampleCount } = computeAverageNormalizedMinutes(s.logs as any[], "Packaging", taskType, {
-            includeAreaInTaskKey: rewardsCfg.taskChallenge.includeAreaInTaskKey,
-            lookbackDays: rewardsCfg.primaryWindowDays * 3,
-          });
-          const minSamples = rewardsCfg.taskChallenge.minSamplesForAverage;
-          const effectiveAvg = sampleCount >= minSamples ? avg : null;
-          const tier = scoreChallengeByLoggedMinutes(
-            effectiveAvg,
-            taskTimeNum,
-            rewardsCfg.taskChallenge.tiers,
-            45,
-          );
-          if (tier) {
-            const pts = Math.max(0, Math.round(tier.points * rb.tierMultiplier));
-            challengeExtra = {
-              taskChallenge: {
-                pointsEarned: pts,
-                tierLabel: tier.label,
-                tierIndex: tier.tierIndex,
-                targetMinutes: tier.targetMinutes,
-                tierPointsMultiplier: rb.tierMultiplier,
-              },
-            };
-          }
+        const tcAttach = buildTaskChallengeAttachment({
+          rewards: rewardsCfg,
+          area: "Packaging",
+          task: taskType,
+          customTasksRewardDefs,
+          logs: s.logs as any[],
+          normalizedMinutesPerPerson: taskTimeNum,
+          user: getAuthUser(),
+          optedIn: true,
+          laborGateOk: true,
+        });
+        if (tcAttach) {
+          challengeExtra = { taskChallenge: tcAttach };
         }
       }
 

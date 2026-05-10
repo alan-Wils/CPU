@@ -6,7 +6,9 @@ import PageAccessGate from "@/components/PageAccessGate";
 import { apiRequest, getSelectedCompanyId } from "@/lib/api";
 import { getAuthUser } from "@/lib/auth";
 import { store } from "@/lib/store";
-import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
+import { extractRewardsFromCompanyConfig, type RewardsSettings } from "@/lib/rewardsConfig";
+import { patchLog } from "@/lib/logsApi";
+import { canUserApproveTaskChallenges, isTaskChallengePendingReview } from "@/lib/taskChallengePayload";
 import { extractCustomTasksRewardDefsFromCompanyConfig } from "@/lib/customTasksConfig";
 import {
   buildRewardsSnapshot,
@@ -47,6 +49,10 @@ function RewardsBody() {
   const [pointEvents, setPointEvents] = useState<RewardPointEvent[]>([]);
   const [facility, setFacility] = useState(0);
   const [windowDays, setWindowDays] = useState(30);
+  const [rewardsSettings, setRewardsSettings] = useState<RewardsSettings | null>(null);
+  const [pendingChallengeLogs, setPendingChallengeLogs] = useState<LogLike[]>([]);
+  const [dataRefreshKey, setDataRefreshKey] = useState(0);
+  const [reviewBusyLogId, setReviewBusyLogId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,13 +66,18 @@ function RewardsBody() {
         const rewards = extractRewardsFromCompanyConfig(cfg);
         const customTaskDefs = extractCustomTasksRewardDefsFromCompanyConfig(cfg);
         if (cancelled) return;
+        setRewardsSettings(rewards);
         setEnabled(rewards.enabled);
         if (!rewards.enabled) {
+          setPendingChallengeLogs([]);
           setReady(true);
           return;
         }
 
         const logs = ((store as { logs?: unknown }).logs || []) as LogLike[];
+        setPendingChallengeLogs(
+          logs.filter((l) => isTaskChallengePendingReview(l.data?.taskChallenge)),
+        );
         const dryFlowerBatches = (store as { dryFlowerBatches?: unknown[] }).dryFlowerBatches || [];
         const snap = buildRewardsSnapshot({
           rewards,
@@ -120,7 +131,49 @@ function RewardsBody() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [dataRefreshKey]);
+
+  const canReviewChallenges = useMemo(() => {
+    const me = getAuthUser();
+    if (!rewardsSettings || !me) return false;
+    return canUserApproveTaskChallenges(me, rewardsSettings);
+  }, [rewardsSettings]);
+
+  async function resolveChallengeReview(log: LogLike, decision: "approved" | "denied") {
+    const id = String(log.id || "").trim();
+    if (!id) return;
+    const me = getAuthUser();
+    const tc = log.data?.taskChallenge;
+    if (!tc || typeof tc !== "object") return;
+    const o = tc as Record<string, unknown>;
+    const proposed = Number(o.proposedPoints);
+    setReviewBusyLogId(id);
+    try {
+      const nextTc =
+        decision === "approved"
+          ? {
+              ...o,
+              reviewStatus: "approved",
+              pointsEarned: Number.isFinite(proposed) && proposed > 0 ? proposed : 0,
+              reviewedAt: new Date().toISOString(),
+              reviewedByUserId: me?.id || "",
+            }
+          : {
+              ...o,
+              reviewStatus: "denied",
+              pointsEarned: 0,
+              reviewedAt: new Date().toISOString(),
+              reviewedByUserId: me?.id || "",
+            };
+      await patchLog(id, { data: { taskChallenge: nextTc } });
+      await hydrateTaskLogsFromApi();
+      setDataRefreshKey((k) => k + 1);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setReviewBusyLogId(null);
+    }
+  }
 
   const gated = useMemo(() => {
     if (!enabled) return false;
@@ -172,6 +225,106 @@ function RewardsBody() {
         >
           {banner}
         </div>
+      ) : null}
+
+      {rewardsSettings?.taskChallenge.requireManagerApproval && canReviewChallenges ? (
+        <section
+          style={{
+            maxWidth: 720,
+            margin: "0 auto 28px",
+            padding: 18,
+            borderRadius: 16,
+            border: "1px solid rgba(251, 191, 36, 0.35)",
+            background: "rgba(120, 53, 15, 0.12)",
+          }}
+        >
+          <h2 style={{ marginTop: 0, textAlign: "center", fontSize: 18 }}>Challenge approvals</h2>
+          <p style={{ textAlign: "center", color: "#94a3b8", marginBottom: 16, fontSize: 14 }}>
+            Approve or deny speed-challenge points submitted by staff. Denied entries stay in the log but do not award
+            points.
+          </p>
+          {pendingChallengeLogs.length === 0 ? (
+            <p style={{ color: "#94a3b8", textAlign: "center", margin: 0 }}>No pending challenge reviews.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {pendingChallengeLogs.map((log) => {
+                const id = String(log.id || "").trim();
+                const tc = log.data?.taskChallenge as Record<string, unknown> | undefined;
+                const proposed = Number(tc?.proposedPoints);
+                const actor =
+                  String(log.data?.loggedBy?.username || "").trim() ||
+                  String(log.data?.loggedBy?.userId || "").trim() ||
+                  "Unknown";
+                const busy = reviewBusyLogId === id;
+                const when = log.createdAt || log.time || "";
+                return (
+                  <div
+                    key={id || `${log.area}-${log.task}-${when}`}
+                    style={{
+                      padding: "12px 14px",
+                      borderRadius: 10,
+                      background: "#0f172a",
+                      border: "1px solid #334155",
+                    }}
+                  >
+                    <div style={{ color: "#e2e8f0", fontWeight: 700, marginBottom: 6 }}>
+                      {String(log.area || "—")} · {String(log.task || "Task")}
+                    </div>
+                    <div style={{ color: "#94a3b8", fontSize: 13, lineHeight: 1.5 }}>
+                      Batch: {String(log.batch || "—")} · {actor}
+                      {when ? ` · ${formatRewardEventDate(String(when))}` : ""}
+                    </div>
+                    <div style={{ color: "#cbd5e1", fontSize: 13, marginTop: 8 }}>
+                      Proposed: <strong style={{ color: "#86efac" }}>{Math.round(proposed * 100) / 100} pts</strong>
+                      {tc?.tierLabel != null ? ` · Tier: ${String(tc.tierLabel)}` : ""}
+                      {tc?.normalizedMinutesPerPerson != null
+                        ? ` · ${Number(tc.normalizedMinutesPerPerson).toFixed(1)} min/person`
+                        : ""}
+                    </div>
+                    {!id ? (
+                      <p style={{ color: "#f87171", fontSize: 13, marginTop: 10 }}>This log has no server id yet.</p>
+                    ) : (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => resolveChallengeReview(log, "approved")}
+                          style={{
+                            padding: "8px 16px",
+                            borderRadius: 8,
+                            border: "none",
+                            background: busy ? "#334155" : "#16a34a",
+                            color: "#fff",
+                            fontWeight: 700,
+                            cursor: busy ? "default" : "pointer",
+                          }}
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => resolveChallengeReview(log, "denied")}
+                          style={{
+                            padding: "8px 16px",
+                            borderRadius: 8,
+                            border: "1px solid #64748b",
+                            background: "#1e293b",
+                            color: "#e2e8f0",
+                            fontWeight: 700,
+                            cursor: busy ? "default" : "pointer",
+                          }}
+                        >
+                          Deny
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
       ) : null}
 
       <section

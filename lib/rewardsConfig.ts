@@ -28,6 +28,15 @@ export type RewardsSettings = {
     minSamplesForAverage: number;
     includeAreaInTaskKey: boolean;
     tiers: TaskChallengeTierConfig[];
+    /**
+     * When true, challenge points stay at 0 until a reward manager approves the log entry.
+     * When false, points apply immediately (legacy behavior).
+     */
+    requireManagerApproval: boolean;
+    /** User ids allowed to approve/deny in Rewards. Empty = any Manager / Operations Manager / Admin / Owner. */
+    rewardManagerUserIds: string[];
+    /** Task names containing any of these substrings (case-insensitive) never show the challenge offer. */
+    excludedTaskSubstrings: string[];
   };
 };
 
@@ -49,6 +58,15 @@ export function parseRewardsSettings(raw: unknown): RewardsSettings {
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const scoring = o.scoring && typeof o.scoring === "object" ? (o.scoring as Record<string, unknown>) : {};
   const tc = o.taskChallenge && typeof o.taskChallenge === "object" ? (o.taskChallenge as Record<string, unknown>) : {};
+  const rewardManagerUserIdsRaw = Array.isArray(tc.rewardManagerUserIds) ? tc.rewardManagerUserIds : [];
+  const rewardManagerUserIds = rewardManagerUserIdsRaw
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean);
+  const excludedRaw = Array.isArray(tc.excludedTaskSubstrings) ? tc.excludedTaskSubstrings : [];
+  const excludedTaskSubstrings = excludedRaw
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean);
+
   const tiersRaw = Array.isArray(tc.tiers) ? tc.tiers : [];
   const tiers = tiersRaw
     .map((t) => {
@@ -93,6 +111,9 @@ export function parseRewardsSettings(raw: unknown): RewardsSettings {
       minSamplesForAverage: Math.max(1, Number(tc.minSamplesForAverage) || 5),
       includeAreaInTaskKey: tc.includeAreaInTaskKey !== undefined ? Boolean(tc.includeAreaInTaskKey) : true,
       tiers: tiers.length > 0 ? tiers : defaultTaskChallengeTiers,
+      requireManagerApproval: tc.requireManagerApproval !== undefined ? Boolean(tc.requireManagerApproval) : false,
+      rewardManagerUserIds,
+      excludedTaskSubstrings,
     },
   };
 }

@@ -4,15 +4,19 @@ import {
   resolveConfigurableTaskRewards,
   type CustomTasksRewardDefs,
 } from "./customTasksConfig";
+import { effectiveTaskChallengePoints } from "./taskChallengePayload";
 
 export type LogLike = {
+  id?: string;
   area?: string;
+  batch?: string;
   task?: string;
   output?: string;
+  time?: string;
   data?: {
     minutes?: unknown;
     people?: unknown;
-    loggedBy?: { userId?: string; username?: string };
+    loggedBy?: { userId?: string; username?: string; email?: string };
     taskChallenge?: { pointsEarned?: unknown };
   } | null;
   createdBy?: string | null;
@@ -147,8 +151,8 @@ export function buildRewardsSnapshot(input: {
       }
     }
 
-    const tcPts = Number(log.data?.taskChallenge?.pointsEarned);
-    if (rewardEligibleForLog(log) && Number.isFinite(tcPts) && tcPts > 0) {
+    const tcPts = effectiveTaskChallengePoints(log.data?.taskChallenge);
+    if (rewardEligibleForLog(log) && tcPts > 0) {
       row.breakdown.taskChallenge += tcPts;
     }
   }
@@ -275,8 +279,8 @@ export function listRewardEventsForUser(input: {
       }
     }
 
-    const tcPts = Number(log.data?.taskChallenge?.pointsEarned);
-    if (rewardEligibleForLog(log) && Number.isFinite(tcPts) && tcPts > 0) {
+    const tcPts = effectiveTaskChallengePoints(log.data?.taskChallenge);
+    if (rewardEligibleForLog(log) && tcPts > 0) {
       events.push({
         id: `tc-${n++}`,
         at: log.createdAt ? String(log.createdAt) : null,

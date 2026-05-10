@@ -137,6 +137,9 @@ type AppConfig = {
           minSamplesForAverage: number;
           includeAreaInTaskKey: boolean;
           tiers: Array<{ label: string; multiplierVsAvg: number; points: number }>;
+          requireManagerApproval: boolean;
+          rewardManagerUserIds: string[];
+          excludedTaskSubstrings: string[];
         };
       };
     };
@@ -248,6 +251,9 @@ const emptyConfig: AppConfig = {
             { label: "On target", multiplierVsAvg: 1, points: 20 },
             { label: "Stretch", multiplierVsAvg: 1.15, points: 10 },
           ],
+          requireManagerApproval: false,
+          rewardManagerUserIds: [],
+          excludedTaskSubstrings: [],
         },
       },
     },
@@ -375,6 +381,12 @@ function mergeRewardsSettings(
         Array.isArray(inc.taskChallenge?.tiers) && inc.taskChallenge!.tiers.length > 0
           ? inc.taskChallenge!.tiers
           : base.taskChallenge.tiers,
+      rewardManagerUserIds: Array.isArray(inc.taskChallenge?.rewardManagerUserIds)
+        ? inc.taskChallenge!.rewardManagerUserIds.map((x) => String(x ?? "").trim()).filter(Boolean)
+        : base.taskChallenge.rewardManagerUserIds,
+      excludedTaskSubstrings: Array.isArray(inc.taskChallenge?.excludedTaskSubstrings)
+        ? inc.taskChallenge!.excludedTaskSubstrings.map((x) => String(x ?? "").trim()).filter(Boolean)
+        : base.taskChallenge.excludedTaskSubstrings,
     },
   };
 }
@@ -2668,7 +2680,96 @@ export default function ConfigPage() {
               })
             }
           />
-          Show challenge popup when logging tasks
+          Enable timed task challenges
+        </label>
+        <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 10 }}>
+          <input
+            type="checkbox"
+            checked={config.company.settings.rewards?.taskChallenge.requireManagerApproval ?? false}
+            onChange={(e) =>
+              setConfig((prev) => {
+                const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                return {
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    settings: {
+                      ...prev.company.settings,
+                      rewards: {
+                        ...r,
+                        taskChallenge: { ...r.taskChallenge, requireManagerApproval: e.target.checked },
+                      },
+                    },
+                  },
+                };
+              })
+            }
+          />
+          Require reward manager approval before challenge points count
+        </label>
+        <p style={{ color: "#64748b", fontSize: 12, margin: "0 0 8px" }}>
+          When enabled, completed challenges appear under Rewards for designated managers to approve or deny. Leave manager
+          list empty to allow any Manager, Operations Manager, Admin, or Owner.
+        </p>
+        <label style={styles.label}>
+          Reward manager user IDs (optional, comma-separated)
+          <input
+            style={styles.input}
+            placeholder="e.g. clxxxxxxxx, clyyyyyyyy"
+            value={(config.company.settings.rewards?.taskChallenge.rewardManagerUserIds || []).join(", ")}
+            onChange={(e) =>
+              setConfig((prev) => {
+                const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                const ids = e.target.value
+                  .split(/[,;\s]+/)
+                  .map((x) => x.trim())
+                  .filter(Boolean);
+                return {
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    settings: {
+                      ...prev.company.settings,
+                      rewards: {
+                        ...r,
+                        taskChallenge: { ...r.taskChallenge, rewardManagerUserIds: ids },
+                      },
+                    },
+                  },
+                };
+              })
+            }
+          />
+        </label>
+        <label style={styles.label}>
+          Exclude tasks from challenges (substrings, comma-separated)
+          <input
+            style={styles.input}
+            placeholder="e.g. print harvest, metrc tag"
+            value={(config.company.settings.rewards?.taskChallenge.excludedTaskSubstrings || []).join(", ")}
+            onChange={(e) =>
+              setConfig((prev) => {
+                const r = prev.company.settings.rewards || mergeRewardsSettings(undefined);
+                const parts = e.target.value
+                  .split(/[,;\n]+/)
+                  .map((x) => x.trim())
+                  .filter(Boolean);
+                return {
+                  ...prev,
+                  company: {
+                    ...prev.company,
+                    settings: {
+                      ...prev.company.settings,
+                      rewards: {
+                        ...r,
+                        taskChallenge: { ...r.taskChallenge, excludedTaskSubstrings: parts },
+                      },
+                    },
+                  },
+                };
+              })
+            }
+          />
         </label>
         <label style={styles.label}>
           Min samples for average
