@@ -73,6 +73,41 @@ function pctTrend(current: number, previous: number): { pct: number; up: boolean
   return { pct, up: pct >= 0 };
 }
 
+const GRAMS_PER_LB = 453.59237;
+
+function eachUtcDayYmd(fromYmd: string, toYmd: string, maxDays: number): string[] {
+  const out: string[] = [];
+  let ms = parseYmdStartUtc(fromYmd);
+  const end = parseYmdEndUtc(toYmd);
+  let n = 0;
+  while (ms <= end && n < maxDays) {
+    out.push(ymdFromUtcMs(ms));
+    ms += 86_400_000;
+    n++;
+  }
+  return out;
+}
+
+function leafLinkUsdByDayFromOrders(qualifyingOrders: { createdAt: string; totalUsd: number }[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const q of qualifyingOrders) {
+    const day = String(q.createdAt || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+    m.set(day, (m.get(day) ?? 0) + (Number(q.totalUsd) || 0));
+  }
+  return m;
+}
+
+function mpSellerUsdByDay(rows: { createdAt: Date; total: unknown }[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of rows) {
+    const day = ymdFromUtcMs(r.createdAt.getTime());
+    const v = Number(r.total) || 0;
+    m.set(day, (m.get(day) ?? 0) + v);
+  }
+  return m;
+}
+
 export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
   const { companyId, dateFrom, dateTo, facility, department, platformRole } = input;
   const services = await companyServices.getOrCreate(companyId);
@@ -103,12 +138,24 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     marketplaceBuyerAgg,
     buyerOrderCount,
     inventoryProducts,
+    marketplaceSellerOrdersInRange,
     ordersCurrent,
     ordersPrev,
   ] = await Promise.all([
     prisma.cultivationBatch.findMany({
       where: batchWhere,
-      select: { id: true, cultivationUiState: true, room: true, updatedAt: true, createdAt: true },
+      select: {
+        id: true,
+        strain: true,
+        strainAcronym: true,
+        aGradeFlowerGrams: true,
+        popcornGrams: true,
+        trimGrams: true,
+        cultivationUiState: true,
+        room: true,
+        updatedAt: true,
+        createdAt: true,
+      },
       take: 5000,
     }),
     prisma.extractionRun.findMany({
@@ -118,7 +165,7 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     }),
     prisma.packagingLot.findMany({
       where: { companyId },
-      select: { id: true, status: true, finishedAt: true, updatedAt: true },
+      select: { id: true, status: true, finishedAt: true, updatedAt: true, sku: true, units: true },
       take: 2000,
     }),
     prisma.laborEntry.findMany({
@@ -178,6 +225,15 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     prisma.marketplaceProduct.findMany({
       where: { companyId },
       select: { price: true, quantityAvailable: true },
+      take: 8000,
+    }),
+    prisma.marketplaceOrder.findMany({
+      where: {
+        sellerCompanyId: companyId,
+        createdAt: { gte: new Date(fromMs), lte: new Date(toMs) },
+        status: { in: ["FULFILLED", "ACCEPTED"] },
+      },
+      select: { createdAt: true, total: true },
       take: 8000,
     }),
     ordersService.getOrdersAnalytics(companyId, { dateFrom, dateTo }),
@@ -251,10 +307,16 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
   if (activeCultivationBatches === 0 && services.productionEnabled) health -= 3;
   health = Math.max(40, Math.min(100, health));
 
-  const insights: { severity: "info" | "warning" | "critical"; title: string; detail: string }[] = [];
+  const insights: {
+    severity: "info" | "warning" | "critical";
+    category: string;
+    title: string;
+    detail: string;
+  }[] = [];
   if (plantsFlower > 0 && plantsVeg === 0 && services.productionEnabled) {
     insights.push({
       severity: "info",
+      category: "Production",
       title: "Flower-heavy pipeline",
       detail: "Veg plant count from synced batches is low relative to flower. Verify immature transitions are logging.",
     });
@@ -262,6 +324,7 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
   if (nexbatchSellerRevenue > 0 && leafLinkRevenue === 0 && services.salesSellerEnabled) {
     insights.push({
       severity: "warning",
+      category: "Sales",
       title: "Marketplace revenue without LeafLink wholesale in range",
       detail: "NexBatch marketplace has sales but LeafLink orders in this window are zero — confirm wholesale sync.",
     });
@@ -269,8 +332,24 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
   if (laborCostRange > 0 && productiveHours > 0 && laborCostRange / productiveHours > 120) {
     insights.push({
       severity: "warning",
+      category: "Labor",
       title: "Elevated labor cost per hour",
       detail: "Blended labor cost / hour is above a typical threshold for the selected window.",
+    });
+  }
+
+  const lowStockSkuCount =
+    sellerOrderCount > 0
+      ? await prisma.marketplaceProduct.count({
+          where: { companyId, quantityAvailable: { lte: 2 }, availabilityStatus: "AVAILABLE" },
+        })
+      : 0;
+  if (lowStockSkuCount > 0 && services.salesSellerEnabled) {
+    insights.push({
+      severity: "warning",
+      category: "Inventory",
+      title: "Inventory shortage risk",
+      detail: `${lowStockSkuCount} marketplace SKUs are at or below 2 units available.`,
     });
   }
 
@@ -283,21 +362,175 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
       at: new Date().toISOString(),
     });
   }
-  if (sellerOrderCount > 0) {
-    const lowStock = await prisma.marketplaceProduct.count({
-      where: { companyId, quantityAvailable: { lte: 2 }, availabilityStatus: "AVAILABLE" },
+  if (lowStockSkuCount > 0) {
+    alerts.push({
+      severity: "high",
+      title: "Low marketplace inventory SKUs",
+      detail: `${lowStockSkuCount} available products are at or below 2 units.`,
+      at: new Date().toISOString(),
     });
-    if (lowStock > 0) {
-      alerts.push({
-        severity: "high",
-        title: "Low marketplace inventory SKUs",
-        detail: `${lowStock} available products are at or below 2 units.`,
-        at: new Date().toISOString(),
-      });
-    }
   }
 
+  const llByDay = leafLinkUsdByDayFromOrders(ordersCurrent.qualifyingOrders);
+  const mpByDay = mpSellerUsdByDay(marketplaceSellerOrdersInRange);
+  const chartDays = eachUtcDayYmd(dateFrom, dateTo, 120);
+  const salesOverTime = chartDays.map((d) => {
+    const ll = llByDay.get(d) ?? 0;
+    const nb = mpByDay.get(d) ?? 0;
+    return { date: d, leafLink: ll, nexbatch: nb, combined: ll + nb };
+  });
+
+  const harvestEvents: { day: string; ac: string; lbs: number }[] = [];
+  for (const b of batches) {
+    const stage = stageFromCultivationUi(b.cultivationUiState);
+    if (!isCompleteStage(stage)) continue;
+    const ut = b.updatedAt.getTime();
+    if (ut < fromMs || ut > toMs) continue;
+    const g =
+      (Number(b.aGradeFlowerGrams) || 0) +
+      (Number(b.popcornGrams) || 0) +
+      (Number(b.trimGrams) || 0);
+    if (!(g > 0)) continue;
+    const lbs = g / GRAMS_PER_LB;
+    const ac = String(b.strainAcronym || "").trim().toUpperCase() || "UNK";
+    harvestEvents.push({ day: ymdFromUtcMs(ut), ac, lbs });
+  }
+  const strainTotals = new Map<string, number>();
+  for (const e of harvestEvents) {
+    strainTotals.set(e.ac, (strainTotals.get(e.ac) ?? 0) + e.lbs);
+  }
+  const topStrainKeys = [...strainTotals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([k]) => k);
+  const strainLabels = new Map<string, string>();
+  for (const b of batches) {
+    const ac = String(b.strainAcronym || "").trim().toUpperCase();
+    if (ac && !strainLabels.has(ac)) strainLabels.set(ac, String(b.strain || ac).trim() || ac);
+  }
+  const yieldTrendRows: Record<string, string | number>[] = [];
+  for (const d of chartDays) {
+    const row: Record<string, string | number> = { date: d };
+    for (const ac of topStrainKeys) {
+      let sum = 0;
+      for (const e of harvestEvents) {
+        if (e.ac === ac && e.day <= d) sum += e.lbs;
+      }
+      row[ac] = Math.round(sum * 100) / 100;
+    }
+    yieldTrendRows.push(row);
+  }
+  const yieldTrendsByStrain = {
+    strains: topStrainKeys.map((ac) => ({
+      key: ac,
+      label: strainLabels.get(ac) ?? ac,
+    })),
+    rows: yieldTrendRows,
+  };
+
+  let repeatCustomerPct: number | null = null;
+  if (ordersCurrent.customers?.length) {
+    let repeat = 0;
+    let total = 0;
+    for (const c of ordersCurrent.customers) {
+      const ordersN = (c.orderCountByDay ?? []).reduce((a, x) => a + x, 0);
+      if (ordersN <= 0 && (c.orderTotalInRange ?? 0) <= 0) continue;
+      total += 1;
+      if (ordersN > 1) repeat += 1;
+    }
+    repeatCustomerPct = total > 0 ? Math.round((repeat / total) * 1000) / 10 : null;
+  }
+
+  const laborByUser = new Map<string, { hours: number; cost: number; stage: string }>();
+  for (const e of laborEntriesRange) {
+    const cur = laborByUser.get(e.userId) ?? { hours: 0, cost: 0, stage: String(e.stage) };
+    cur.hours += Number(e.hours) || 0;
+    cur.cost += Number(e.totalCost) || 0;
+    laborByUser.set(e.userId, cur);
+  }
+  const topLaborIds = [...laborByUser.entries()]
+    .sort((a, b) => b[1].hours - a[1].hours)
+    .slice(0, 6)
+    .map(([id]) => id);
+  const laborUsers =
+    topLaborIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: topLaborIds } },
+          select: { id: true, email: true },
+        })
+      : [];
+  const emailById = new Map(laborUsers.map((u) => [u.id, u.email]));
+  const topPerformers = topLaborIds.map((id) => {
+    const agg = laborByUser.get(id)!;
+    const email = emailById.get(id) ?? id;
+    const name = email.includes("@") ? email.split("@")[0] : email;
+    return {
+      userId: id,
+      name,
+      department: agg.stage,
+      hours: Math.round(agg.hours * 10) / 10,
+      cost: Math.round(agg.cost * 100) / 100,
+      efficiencyPct:
+        agg.hours > 0 ? Math.min(100, Math.round((agg.hours / (agg.hours + 0.25)) * 100)) : null,
+    };
+  });
+
+  const activeExtractions = extractionRuns
+    .filter((r) => r.phase !== "COMPLETED" && !r.finishedAt)
+    .slice(0, 4)
+    .map((r) => ({
+      id: r.id,
+      phase: r.phase,
+      updatedAt: r.updatedAt.toISOString(),
+    }));
+  const activePackaging = packagingLots
+    .filter((p) => p.status === "IN_PROGRESS" && !p.finishedAt)
+    .slice(0, 4)
+    .map((p) => ({
+      id: p.id,
+      sku: p.sku,
+      units: p.units,
+      updatedAt: p.updatedAt.toISOString(),
+    }));
+
+  const taskLinkedRecent = await prisma.taskLog.count({
+    where: {
+      companyId,
+      referenceId: { not: null },
+      createdAt: { gte: new Date(Date.now() - 14 * 86_400_000) },
+    },
+  });
+
+  const dowMinutes = [0, 0, 0, 0, 0, 0, 0];
+  for (const t of taskLogsRecent) {
+    const wd = new Date(t.createdAt).getUTCDay();
+    dowMinutes[wd] += Number(t.minutes) || 0;
+  }
+  const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const downtimeByWeekday = weekdayLabels.map((label, i) => ({
+    label,
+    minutes: Math.round(dowMinutes[i] ?? 0),
+  }));
+
   const liveOps = [
+    ...activeExtractions.slice(0, 2).map((r) => ({
+      kind: "extraction_run",
+      title: "Extraction run in progress",
+      detail: `${r.id.slice(0, 10)}… · ${r.phase}`,
+      href: "/extraction",
+    })),
+    ...activePackaging.slice(0, 2).map((p) => ({
+      kind: "packaging_lot",
+      title: "Packaging lot running",
+      detail: `${p.sku} · ${p.units} units`,
+      href: "/packaging",
+    })),
+    {
+      kind: "tasks",
+      title: "Task logs with reference (14d)",
+      detail: `${taskLinkedRecent} entries`,
+      href: "/tasks",
+    },
     {
       kind: "extraction",
       title: "Extraction runs in progress",
@@ -379,8 +612,7 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
       seller: services.salesSellerEnabled,
       buyer: services.salesBuyerEnabled,
       leafLinkInventorySync: services.leafLinkInventorySyncEnabled,
-      /** Not yet a company toggle — UI hides until modeled. */
-      facilities: false,
+      facilities: services.productionEnabled,
       payrollLabor: services.productionEnabled,
       compliance: services.productionEnabled,
       executive: String(platformRole || "") === "nexbatch_admin",
@@ -417,6 +649,7 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
           costPerGram: null as number | null,
           failedBatches: 0,
           metrcSyncHealth: null as number | null,
+          yieldTrendsByStrain,
         }
       : null,
     sales: services.salesSellerEnabled
@@ -426,11 +659,12 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
             ordersCurrent.ordersIncluded + sellerOrderCount > 0
               ? (leafLinkRevenue + nexbatchSellerRevenue) / (ordersCurrent.ordersIncluded + sellerOrderCount)
               : 0,
-          repeatCustomerPct: null as number | null,
+          repeatCustomerPct,
           openInvoices: null as number | null,
           topProducts,
           leafLink: leafLinkRevenue,
           nexbatch: nexbatchSellerRevenue,
+          salesOverTime,
         }
       : null,
     buyer: services.salesBuyerEnabled
@@ -446,12 +680,46 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
           breakHours: 0,
           productivityPct: paidHours > 0 ? Math.round((productiveHours / (productiveHours + deadHours)) * 100) : null,
           laborCostRange,
+          laborCostToday,
+          laborCostPerHour:
+            productiveHours > 0 ? Math.round((laborCostRange / productiveHours) * 100) / 100 : null,
           laborCostPerGram: null as number | null,
           overtimeHours: null as number | null,
-          topPerformers: [] as { userId: string; hours: number; cost: number }[],
+          avgProductivityPct:
+            paidHours > 0 ? Math.round((productiveHours / (productiveHours + deadHours)) * 100) : null,
+          topPerformers,
         }
       : null,
-    facilities: null,
+    facilities: services.productionEnabled
+      ? {
+          openWorkOrdersApprox: taskLinkedRecent,
+          overdueRepairs: null as number | null,
+          compliancePct: null as number | null,
+          equipmentDowntimePct: null as number | null,
+          assetsOffline: null as number | null,
+          criticalAlerts: alerts.length,
+          equipmentHealth: [
+            { label: "HVAC", pct: null as number | null },
+            { label: "Irrigation", pct: null as number | null },
+            { label: "Extraction equipment", pct: null as number | null },
+            { label: "Generators", pct: null as number | null },
+            { label: "Lighting", pct: null as number | null },
+            { label: "Packaging lines", pct: null as number | null },
+          ],
+          downtimeByWeekday,
+        }
+      : null,
+    businessFinancial: {
+      revenue: totalRevenue,
+      netProfit: null as number | null,
+      ebitda: null as number | null,
+      cashFlow: null as number | null,
+      revenueByChannel: [
+        { label: "LeafLink wholesale", value: leafLinkRevenue },
+        { label: "NexBatch marketplace", value: nexbatchSellerRevenue },
+      ],
+      accountingNote: "Net profit, EBITDA, and cash flow require accounting system integration.",
+    },
     liveOps,
     insights,
     alerts,

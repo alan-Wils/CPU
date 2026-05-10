@@ -6,6 +6,8 @@ export type AnalyticsSectionKey =
   | "sales"
   | "buyer"
   | "labor"
+  | "facilities"
+  | "businessFinancial"
   | "executive"
   | "strain";
 
@@ -15,6 +17,8 @@ const defaults: Record<AnalyticsSectionKey, boolean> = {
   sales: true,
   buyer: true,
   labor: true,
+  facilities: true,
+  businessFinancial: true,
   executive: true,
   strain: true,
 };
