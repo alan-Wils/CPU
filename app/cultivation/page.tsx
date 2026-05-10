@@ -1176,6 +1176,11 @@ export default function Cultivation() {
   const [harvestDisposeReasonDraft, setHarvestDisposeReasonDraft] = useState("");
   const [harvestDisposeReasonError, setHarvestDisposeReasonError] = useState("");
 
+  /** Dismiss overlapping poll results so slower requests cannot repaint stale store rows. */
+  const cultivationPollGenRef = useRef(0);
+  /** When `loadSourceBatches` fails, keep filtering with the last good list (avoid empty → full flicker). */
+  const lastSourceListForProductionRef = useRef<unknown[]>([]);
+
   useEffect(() => {
     setCanDeleteRecords(userCanDeleteWorkflow());
     setCanWriteRecords(hasCultivationWriteAccess());
@@ -1235,18 +1240,29 @@ export default function Cultivation() {
     }
 
     async function loadSharedData() {
+      const pollGen = ++cultivationPollGenRef.current;
       try {
         /** CompanyStore JSON often lags `/api/cultivation`; applying it to cultivation lists causes stage flicker (e.g. Veg → Flower). */
         await loadBackendStore({ omitCultivation: true });
+        if (!mounted || pollGen !== cultivationPollGenRef.current) return;
+
         await hydrateTaskLogsFromApi();
-        await loadCompanyCultivationConfig();
+        if (!mounted || pollGen !== cultivationPollGenRef.current) return;
 
         /**
-         * Mirror only active FF/trim (same rules as Extraction). Raw `sourceBatches` in the company
-         * store can contain stale rows; `GET /api/source-batches` merges DB + store like Extraction.
+         * Run before `loadCompanyCultivationConfig`: that call `setState`s and would otherwise paint
+         * one frame with unfiltered `productionBatches` from the company snapshot (ghost FF/trim flash).
+         *
+         * Mirror only active FF/trim (same rules as Extraction). `GET /api/source-batches` merges DB + store.
          */
         const rawSources = await loadSourceBatches().catch(() => null);
-        const sourceList = Array.isArray(rawSources) ? rawSources : [];
+        const sourceList = Array.isArray(rawSources)
+          ? rawSources
+          : [...lastSourceListForProductionRef.current];
+        if (Array.isArray(rawSources)) {
+          lastSourceListForProductionRef.current = rawSources;
+        }
+
         const activeFfTrimIds = new Set<string>();
         for (const src of sourceList) {
           const typ = String((src as any)?.type || "");
@@ -1274,9 +1290,15 @@ export default function Cultivation() {
           prodIds.add(id);
         }
 
+        if (!mounted || pollGen !== cultivationPollGenRef.current) return;
+
+        await loadCompanyCultivationConfig();
+
+        if (!mounted || pollGen !== cultivationPollGenRef.current) return;
+
         const realCultivationBatches = await loadCultivationBatches();
 
-        if (!mounted) return;
+        if (!mounted || pollGen !== cultivationPollGenRef.current) return;
 
         if (Array.isArray(realCultivationBatches)) {
           s.cultivationBatches = realCultivationBatches.filter(
