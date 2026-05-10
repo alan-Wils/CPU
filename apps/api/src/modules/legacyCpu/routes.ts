@@ -546,6 +546,109 @@ legacyCpuRouter.post("/logs", asyncHandler(async (req, res) => {
     });
     res.status(201).json(taskRowToLegacyLog(row));
 }));
+/** SPA cultivation labor: close pending end time (cultivation writers) or manager-edit labor fields. */
+legacyCpuRouter.patch("/logs/:taskLogId", asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const taskLogId = String(req.params.taskLogId || "").trim();
+    const body = req.body || {};
+    const row = await prisma.taskLog.findFirst({
+        where: { id: taskLogId, companyId }
+    });
+    if (!row) {
+        throw new AppError("Log not found", 404);
+    }
+    const raw = String(row.note || "");
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    }
+    catch {
+        throw new AppError("Log cannot be edited (unparseable note)", 400);
+    }
+    if (!parsed || typeof parsed !== "object") {
+        throw new AppError("Log cannot be edited", 400);
+    }
+    const existingData = parsed.data && typeof parsed.data === "object" ? { ...parsed.data } : {};
+    const closeLabor = body.closeLaborPendingEnd === true;
+    const userRole = String(req.auth?.role || "").toUpperCase();
+    const canClose = [
+        "CULTIVATION",
+        "CULTIVATION_SPECIALIST",
+        "MANAGER",
+        "OPERATIONS_MANAGER",
+        "ADMIN",
+        "OWNER"
+    ].includes(userRole);
+    const canManagerEdit = ["MANAGER", "OPERATIONS_MANAGER", "ADMIN", "OWNER"].includes(userRole);
+    if (closeLabor) {
+        if (!canClose) {
+            throw new AppError("Your role cannot close open labor entries", 403);
+        }
+        if (!existingData.laborPendingEnd) {
+            throw new AppError("This log is not waiting for an end time", 400);
+        }
+        const patch = body.data && typeof body.data === "object" ? body.data : {};
+        if (!patch.taskEndTime) {
+            throw new AppError("End time is required to close this labor entry", 400);
+        }
+        const total = Number(patch.totalLaborMinutes);
+        if (!Number.isFinite(total) || total <= 0) {
+            throw new AppError("Closed labor must have a positive total person-minutes value", 400);
+        }
+        if (patch.laborPendingEnd === true) {
+            throw new AppError("Labor cannot stay in pending state when closing", 400);
+        }
+        const nextData = { ...existingData, ...patch, laborPendingEnd: false };
+        const nextOutput = body.output !== undefined ? String(body.output) : parsed.output;
+        const nextNote = JSON.stringify({
+            ...parsed,
+            output: nextOutput,
+            data: nextData
+        });
+        const perPersonMin = Number(nextData.minutes);
+        const rowMinutes = safeMinutes(Number.isFinite(perPersonMin) && perPersonMin > 0 ? perPersonMin : total);
+        await prisma.taskLog.update({
+            where: { id: row.id },
+            data: { note: nextNote, minutes: rowMinutes }
+        });
+        const updated = await prisma.taskLog.findFirst({ where: { id: row.id } });
+        if (!updated) {
+            throw new AppError("Log update failed", 500);
+        }
+        res.json(taskRowToLegacyLog(updated));
+        return;
+    }
+    if (!canManagerEdit) {
+        throw new AppError("Only Managers (and above) can edit saved labor on a task log", 403);
+    }
+    const patch = body.data && typeof body.data === "object" ? body.data : null;
+    if (!patch && body.output === undefined) {
+        throw new AppError("Nothing to update", 400);
+    }
+    const nextData = patch ? { ...existingData, ...patch } : existingData;
+    const nextOutput = body.output !== undefined ? String(body.output) : parsed.output;
+    const nextNote = JSON.stringify({
+        ...parsed,
+        output: nextOutput,
+        data: nextData
+    });
+    const perPersonMin = Number(nextData.minutes);
+    const totalLm = Number(nextData.totalLaborMinutes);
+    const rowMinutes = safeMinutes(Number.isFinite(perPersonMin) && perPersonMin > 0
+        ? perPersonMin
+        : Number.isFinite(totalLm) && totalLm > 0
+            ? totalLm
+            : row.minutes);
+    await prisma.taskLog.update({
+        where: { id: row.id },
+        data: { note: nextNote, minutes: rowMinutes }
+    });
+    const updated = await prisma.taskLog.findFirst({ where: { id: row.id } });
+    if (!updated) {
+        throw new AppError("Log update failed", 500);
+    }
+    res.json(taskRowToLegacyLog(updated));
+}));
 legacyCpuRouter.get("/cultivation", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const rows = await prisma.cultivationBatch.findMany({

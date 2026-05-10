@@ -6,6 +6,23 @@ const auditDelete = require("../utils/auditDelete");
 
 const router = express.Router();
 
+function userCanCloseOpenLabor(user) {
+  const role = String(user?.role || "").toUpperCase();
+  return [
+    "CULTIVATION",
+    "CULTIVATION_SPECIALIST",
+    "MANAGER",
+    "OPERATIONS_MANAGER",
+    "ADMIN",
+    "OWNER",
+  ].includes(role);
+}
+
+function userCanEditTaskLogLabor(user) {
+  const role = String(user?.role || "").toUpperCase();
+  return ["MANAGER", "OPERATIONS_MANAGER", "ADMIN", "OWNER"].includes(role);
+}
+
 function getRequestedCompanyId(req) {
   return (
     req.headers["x-company-id"] ||
@@ -42,6 +59,102 @@ router.get("/", authRequired, async (req, res) => {
   } catch (error) {
     console.error("Get logs error:", error);
     return res.status(500).json({ error: "Could not load logs" });
+  }
+});
+
+/**
+ * PATCH task log — used to close open cultivation labor (pending end) or
+ * manager-edit labor fields. Body: { output?: string, data?: object, closeLaborPendingEnd?: boolean }
+ */
+router.patch("/:id", authRequired, async (req, res) => {
+  try {
+    const targetCompanyId = getTargetCompanyId(req);
+    const existing = await prisma.taskLog.findFirst({
+      where: {
+        id: req.params.id,
+        companyId: targetCompanyId,
+      },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: "Log not found" });
+    }
+
+    const body = req.body || {};
+    const existingData =
+      existing.data && typeof existing.data === "object" ? { ...existing.data } : {};
+    const closeLabor = body.closeLaborPendingEnd === true;
+
+    const runClose = () => {
+      if (!existingData.laborPendingEnd) {
+        return { error: "This log is not waiting for an end time" };
+      }
+      const patch = body.data && typeof body.data === "object" ? body.data : null;
+      if (!patch || !patch.taskEndTime) {
+        return { error: "End time is required to close this labor entry" };
+      }
+      const total = Number(patch.totalLaborMinutes);
+      if (!Number.isFinite(total) || total <= 0) {
+        return { error: "Closed labor must have a positive total person-minutes value" };
+      }
+      if (patch.laborPendingEnd === true) {
+        return { error: "Labor cannot stay in pending state when closing" };
+      }
+      return null;
+    };
+
+    const runManagerEdit = () => {
+      const patch = body.data && typeof body.data === "object" ? body.data : null;
+      if (!patch && body.output === undefined) {
+        return { error: "Nothing to update" };
+      }
+      return null;
+    };
+
+    if (closeLabor) {
+      const err = runClose();
+      if (err) return res.status(400).json(err);
+      if (!userCanCloseOpenLabor(req.user)) {
+        return res.status(403).json({
+          error: "Your role cannot close open labor entries",
+        });
+      }
+      const patch = body.data && typeof body.data === "object" ? body.data : {};
+      const nextData = { ...existingData, ...patch, laborPendingEnd: false };
+      const nextOutput =
+        body.output !== undefined ? String(body.output) : existing.output;
+      const updated = await prisma.taskLog.update({
+        where: { id: existing.id },
+        data: {
+          output: nextOutput,
+          data: nextData,
+        },
+      });
+      return res.json(updated);
+    }
+
+    const err = runManagerEdit();
+    if (err) return res.status(400).json(err);
+    if (!userCanEditTaskLogLabor(req.user)) {
+      return res.status(403).json({
+        error: "Only Managers (and above) can edit saved labor on a task log",
+      });
+    }
+    const patch = body.data && typeof body.data === "object" ? body.data : {};
+    const nextData = { ...existingData, ...patch };
+    const nextOutput =
+      body.output !== undefined ? String(body.output) : existing.output;
+    const updated = await prisma.taskLog.update({
+      where: { id: existing.id },
+      data: {
+        output: nextOutput,
+        data: nextData,
+      },
+    });
+    return res.json(updated);
+  } catch (error) {
+    console.error("Patch log error:", error);
+    return res.status(500).json({ error: "Could not update log" });
   }
 });
 

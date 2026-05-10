@@ -26,6 +26,20 @@ export async function deleteLog(id: string) {
   });
 }
 
+export async function patchLog(
+  id: string,
+  body: {
+    output?: string;
+    data?: Record<string, unknown>;
+    closeLaborPendingEnd?: boolean;
+  },
+) {
+  return apiRequest(`/api/logs/${id}`, {
+    method: "PATCH",
+    body,
+  });
+}
+
 export async function deleteAllLogs() {
   return apiRequest("/api/logs/all/clear", {
     method: "DELETE",

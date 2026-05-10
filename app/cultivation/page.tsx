@@ -35,7 +35,12 @@ import { apiRequest, API_BASE_URL } from "@/lib/api";
 import { extractHarvestSheet, uploadHarvestSheetImage } from "@/lib/harvestSheetApi";
 import { fileToBase64DataUrl, shrinkHarvestSheetImageFileIfLarge } from "@/lib/shrinkHarvestSheetImage";
 import { createSourceBatch } from "@/lib/sourceBatchApi";
-import { createLog, deleteLog as deleteTaskLogRemote, getAllLogs } from "@/lib/logsApi";
+import {
+  createLog,
+  deleteLog as deleteTaskLogRemote,
+  getAllLogs,
+  patchLog,
+} from "@/lib/logsApi";
 import {
   formatLogDisplayTime,
   getCompanyDisplayTimezone,
@@ -440,6 +445,47 @@ function hasCultivationWriteAccess() {
     "ADMIN",
     "OWNER",
   ].includes(role);
+}
+
+function cultivationLogData(log: any): Record<string, any> {
+  const d = log?.data;
+  return d && typeof d === "object" ? d : {};
+}
+
+function cultivationOutputBaseFromLog(log: any): string {
+  const o = String(log?.output || "");
+  const tag = " | Labor:";
+  const i = o.indexOf(tag);
+  if (i === -1) return o.trim();
+  return o.slice(0, i).trimEnd();
+}
+
+function isCultivationOpenLaborLog(log: any): boolean {
+  if (String(log?.area || "") !== "Cultivation") return false;
+  const d = cultivationLogData(log);
+  return d.laborPendingEnd === true && d.laborTimeMode === "range";
+}
+
+function logPeopleDisplay(log: any): string {
+  const v = log?.people ?? cultivationLogData(log).people;
+  return v !== undefined && v !== null && String(v).trim() !== "" ? String(v) : "—";
+}
+
+function logMinutesDisplay(log: any): string {
+  const d = cultivationLogData(log);
+  if (d.laborPendingEnd) return "pending";
+  const v = log?.minutes ?? d.minutes;
+  return v !== undefined && v !== null && String(v).trim() !== "" ? String(v) : "—";
+}
+
+function cultivationLogHasLaborData(log: any): boolean {
+  const d = cultivationLogData(log);
+  return (
+    d.laborTimeMode === "range" ||
+    d.laborTimeMode === "total" ||
+    num(d.totalLaborMinutes) > 0 ||
+    Boolean(d.laborPendingEnd)
+  );
 }
 
 function makeDateCode(date: string) {
@@ -878,6 +924,17 @@ export default function Cultivation() {
   const [taskStartTime, setTaskStartTime] = useState("");
   const [taskEndTime, setTaskEndTime] = useState("");
   const [laborBreakSchedule, setLaborBreakSchedule] = useState<LaborBreakWindow[]>([]);
+  /** End time drafts for open labor rows keyed by log id (or temp key until id syncs). */
+  const [laborPendingEndDrafts, setLaborPendingEndDrafts] = useState<Record<string, string>>({});
+  const [laborPendingEndBusyKey, setLaborPendingEndBusyKey] = useState<string | null>(null);
+  const [laborManagerEditLog, setLaborManagerEditLog] = useState<any>(null);
+  const [laborManagerEditMode, setLaborManagerEditMode] = useState<"range" | "total">("range");
+  const [laborManagerEditDate, setLaborManagerEditDate] = useState("");
+  const [laborManagerEditStart, setLaborManagerEditStart] = useState("");
+  const [laborManagerEditEnd, setLaborManagerEditEnd] = useState("");
+  const [laborManagerEditPeople, setLaborManagerEditPeople] = useState("");
+  const [laborManagerEditMinutes, setLaborManagerEditMinutes] = useState("");
+  const [laborManagerEditBusy, setLaborManagerEditBusy] = useState(false);
   const [output, setOutput] = useState("");
   /** Cultivation batch id to merge into the currently selected batch (same stage grouping as Clones / Veg / Flower). */
   const [combinePartnerBatchId, setCombinePartnerBatchId] = useState("");
@@ -1426,9 +1483,16 @@ export default function Cultivation() {
       task: finalLog.task,
       output: finalLog.output,
       data: finalLog.data,
-    }).catch((err) => {
-      console.error("Failed to save log to backend:", err);
-    });
+    })
+      .then((row: any) => {
+        if (row?.id) {
+          finalLog.id = row.id;
+          forceRefresh();
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to save log to backend:", err);
+      });
 
     return finalLog;
   }
@@ -4973,6 +5037,7 @@ export default function Cultivation() {
         outputSuffix: string;
         peopleStr: string;
         minutesStr: string;
+        laborOpen?: true;
       }
     | { ok: false; title: string; message: string } {
     const p = num(people);
@@ -5014,8 +5079,51 @@ export default function Cultivation() {
     }
     const st = taskStartTime.trim();
     const en = taskEndTime.trim();
-    if (!st || !en) {
-      return { ok: false, title: "Start / end time", message: "Enter task start and end clock times (24h). If end is “earlier” than start, it counts as the next morning (overnight shift)." };
+    const isManager = hasMinimumRole("MANAGER");
+
+    if (!st) {
+      return {
+        ok: false,
+        title: "Start time",
+        message: "Enter when this task started (clock time on the work date).",
+      };
+    }
+
+    if (!isManager) {
+      if (en) {
+        return {
+          ok: false,
+          title: "Finish later",
+          message:
+            "Clear the end time field. Non-managers log a start here, then add the end time when the task is done (open labor list below or batch task history).",
+        };
+      }
+      return {
+        ok: true,
+        laborOpen: true,
+        people: p,
+        netMinutesPerPerson: 0,
+        totalLaborMinutes: 0,
+        laborDetail: {
+          laborTimeMode: "range",
+          laborDate: taskLaborDate.trim(),
+          taskStartTime: st,
+          laborPendingEnd: true,
+          totalLaborMinutes: 0,
+        },
+        outputSuffix: ` | Labor: ${p} people, started ${st} (${taskLaborDate.trim()}) — end time pending`,
+        peopleStr: String(p),
+        minutesStr: "pending",
+      };
+    }
+
+    if (!en) {
+      return {
+        ok: false,
+        title: "End time",
+        message:
+          "Enter start and end clock times (24h). If end is earlier than start on the same row, it counts as the next morning (overnight shift).",
+      };
     }
 
     const r = computeLaborRangeDeduction({
@@ -5076,6 +5184,231 @@ export default function Cultivation() {
       totalPersonMin: p > 0 ? p * r.netMinutes : null,
     };
   }, [laborTimeMode, taskStartTime, taskEndTime, laborBreakSchedule, people]);
+
+  const openLaborRowsForTaskModal = useMemo(() => {
+    const bid = selectedBatch?.id;
+    if (!bid || !showTaskWindow) return [];
+    return (s.logs || []).filter(
+      (log: any) =>
+        String(log?.area || "") === "Cultivation" &&
+        log.batch === bid &&
+        isCultivationOpenLaborLog(log),
+    );
+  }, [selectedBatch?.id, showTaskWindow, refresh, s.logs]);
+
+  function stableOpenLaborRowKey(log: any, index: number) {
+    return (
+      String(log?.id || "").trim() ||
+      `__pending_${index}_${String(log?.time || "")}_${String(log?.task || "")}`
+    );
+  }
+
+  async function submitCultivationOpenLaborEnd(log: any, rowKey: string) {
+    if (!canWriteRecords) {
+      showReadOnlyNotice();
+      return;
+    }
+    const id = String(log?.id || "").trim();
+    if (!id) {
+      showNotice("Please wait", "This entry is still syncing—try again in a moment.");
+      return;
+    }
+    const endHm = String(laborPendingEndDrafts[rowKey] || "").trim();
+    if (!endHm) {
+      showNotice("End time", "Enter when the task ended.");
+      return;
+    }
+    const d = cultivationLogData(log);
+    const st = String(d.taskStartTime || "").trim();
+    const laborDate = String(d.laborDate || "").trim();
+    const p = num(d.people ?? log.people);
+    if (!st || !laborDate || !(p > 0)) {
+      showNotice("Labor data", "Open entry is missing start time, date, or people.");
+      return;
+    }
+    const r = computeLaborRangeDeduction({
+      startHm: st,
+      endHm: endHm,
+      breaks: laborBreakSchedule,
+    });
+    if (!(r.netMinutes > 0)) {
+      showNotice("No net labor time", "Adjust the end time or break configuration.");
+      return;
+    }
+    const total = p * r.netMinutes;
+    const bnote =
+      r.breakDeductionMinutes > 0
+        ? `; breaks/lunch overlap removed ${r.breakDeductionMinutes} min from span`
+        : "";
+    const suffix = ` | Labor: ${p} people × ${r.netMinutes} min net (${r.grossMinutes} min span${bnote}) = ${total} person-min`;
+    const base = cultivationOutputBaseFromLog(log);
+    const newOutput = `${base}${suffix}`;
+    const nextData: Record<string, unknown> = {
+      ...d,
+      laborTimeMode: "range",
+      laborDate,
+      taskStartTime: st,
+      taskEndTime: endHm,
+      grossLaborMinutes: r.grossMinutes,
+      breakDeductionMinutes: r.breakDeductionMinutes,
+      totalLaborMinutes: total,
+      laborPendingEnd: false,
+      people: p,
+      minutes: String(r.netMinutes),
+    };
+    setLaborPendingEndBusyKey(rowKey);
+    try {
+      const updated: any = await patchLog(id, {
+        closeLaborPendingEnd: true,
+        output: newOutput,
+        data: nextData,
+      });
+      if (updated && typeof updated === "object") {
+        log.output = updated.output ?? newOutput;
+        log.data = {
+          ...cultivationLogData(log),
+          ...(typeof updated.data === "object" && updated.data ? updated.data : {}),
+          ...nextData,
+        };
+        log.people = String(p);
+        log.minutes = String(r.netMinutes);
+        log.totalLaborMinutes = total;
+        setLaborPendingEndDrafts((prev) => {
+          const next = { ...prev };
+          delete next[rowKey];
+          return next;
+        });
+        forceRefresh();
+        showSyncMessageNotice("End time saved.");
+      }
+    } catch (e) {
+      console.error(e);
+      showNotice("Could not save", "Closing labor on the server failed.");
+    } finally {
+      setLaborPendingEndBusyKey(null);
+    }
+  }
+
+  function openLaborManagerEdit(log: any) {
+    const d = cultivationLogData(log);
+    setLaborManagerEditLog(log);
+    if (d.laborTimeMode === "total") {
+      setLaborManagerEditMode("total");
+      const ppl = num(d.people ?? log.people);
+      const tot = num(d.totalLaborMinutes ?? log.totalLaborMinutes);
+      const per = ppl > 0 && tot > 0 ? Math.round(tot / ppl) : 0;
+      setLaborManagerEditMinutes(per > 0 ? String(per) : "");
+    } else {
+      setLaborManagerEditMode("range");
+      setLaborManagerEditDate(String(d.laborDate || ""));
+      setLaborManagerEditStart(String(d.taskStartTime || ""));
+      setLaborManagerEditEnd(String(d.taskEndTime || ""));
+    }
+    setLaborManagerEditPeople(String(d.people ?? log.people ?? ""));
+  }
+
+  async function saveLaborManagerEdit() {
+    if (!laborManagerEditLog || !hasMinimumRole("MANAGER")) return;
+    const log = laborManagerEditLog;
+    const id = String(log?.id || "").trim();
+    if (!id) {
+      showNotice("Please wait", "Log is still syncing.");
+      return;
+    }
+    const p = num(laborManagerEditPeople);
+    if (!(p > 0)) {
+      showNotice("People", "Enter how many people worked.");
+      return;
+    }
+    const prev = cultivationLogData(log);
+    setLaborManagerEditBusy(true);
+    try {
+      let laborDetail: Record<string, unknown> = {};
+      let suffix = "";
+      let minutesStr = "";
+
+      if (laborManagerEditMode === "total") {
+        const m = num(laborManagerEditMinutes);
+        if (!(m > 0)) {
+          showNotice("Minutes", "Enter minutes per person.");
+          return;
+        }
+        const totalLaborMinutes = p * m;
+        minutesStr = String(m);
+        laborDetail = {
+          laborTimeMode: "total",
+          totalLaborMinutes,
+          people: p,
+          minutes: minutesStr,
+          laborPendingEnd: false,
+          taskStartTime: null,
+          taskEndTime: null,
+          laborDate: null,
+          grossLaborMinutes: null,
+          breakDeductionMinutes: null,
+        };
+        suffix = ` | Labor: ${p} people × ${m} min = ${totalLaborMinutes} person-min (manager quick entry)`;
+      } else {
+        const date = laborManagerEditDate.trim();
+        const st = laborManagerEditStart.trim();
+        const en = laborManagerEditEnd.trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          showNotice("Labor date", "Use a valid work date.");
+          return;
+        }
+        if (!st || !en) {
+          showNotice("Times", "Enter start and end clock times.");
+          return;
+        }
+        const r = computeLaborRangeDeduction({
+          startHm: st,
+          endHm: en,
+          breaks: laborBreakSchedule,
+        });
+        if (!(r.netMinutes > 0)) {
+          showNotice("No net labor time", "Adjust times or break windows.");
+          return;
+        }
+        const totalLaborMinutes = p * r.netMinutes;
+        minutesStr = String(r.netMinutes);
+        const bnote =
+          r.breakDeductionMinutes > 0
+            ? `; breaks/lunch overlap removed ${r.breakDeductionMinutes} min from span`
+            : "";
+        suffix = ` | Labor: ${p} people × ${r.netMinutes} min net (${r.grossMinutes} min span${bnote}) = ${totalLaborMinutes} person-min`;
+        laborDetail = {
+          laborTimeMode: "range",
+          laborDate: date,
+          taskStartTime: st,
+          taskEndTime: en,
+          grossLaborMinutes: r.grossMinutes,
+          breakDeductionMinutes: r.breakDeductionMinutes,
+          totalLaborMinutes,
+          people: p,
+          minutes: minutesStr,
+          laborPendingEnd: false,
+        };
+      }
+
+      const base = cultivationOutputBaseFromLog(log);
+      const newOutput = `${base}${suffix}`;
+      const mergedData = { ...prev, ...laborDetail };
+      await patchLog(id, { output: newOutput, data: mergedData });
+      log.output = newOutput;
+      log.data = mergedData;
+      log.people = String(p);
+      log.minutes = minutesStr;
+      log.totalLaborMinutes = num((laborDetail as any).totalLaborMinutes);
+      setLaborManagerEditLog(null);
+      forceRefresh();
+      showSyncMessageNotice("Labor updated.");
+    } catch (e) {
+      console.error(e);
+      showNotice("Update failed", "Could not save labor changes.");
+    } finally {
+      setLaborManagerEditBusy(false);
+    }
+  }
 
   const vegTagPreview = useMemo(() => {
     const raw = vegMoveCount.trim();
@@ -5865,7 +6198,8 @@ export default function Cultivation() {
       rewardBehavior.eligible &&
       rewardsCfg?.enabled &&
       rewardsCfg.taskChallenge.enabled &&
-      lab.ok
+      lab.ok &&
+      !lab.laborOpen
     ) {
       const u = getAuthUser();
       if (u && (u.rewardsEnrolled || isElevatedManagerRole(String(u.role || "")))) {
@@ -8360,8 +8694,19 @@ export default function Cultivation() {
                 }}
               >
                 <p style={{ color: "#94a3b8", fontSize: 13, margin: 0, lineHeight: 1.45 }}>
-                  Labor (person-minutes): use clock start and end to subtract configured breaks and lunch, or — if you are
-                  a manager — enter total minutes per person. Break windows are set in{" "}
+                  Labor is stored as <strong style={{ color: "#e2e8f0" }}>person-minutes</strong>. Clock spans subtract
+                  configured breaks and lunch.{" "}
+                  {hasMinimumRole("MANAGER") ? (
+                    <>
+                      Managers can enter start and end together, use quick minutes, or fix mistakes in task history.
+                    </>
+                  ) : (
+                    <>
+                      Log a <strong style={{ color: "#e2e8f0" }}>start time</strong> when work begins; add the end time
+                      when finished (below or in batch task history).
+                    </>
+                  )}{" "}
+                  Break windows:{" "}
                   <strong style={{ color: "#e2e8f0" }}>Admin → Company Config → Labor — breaks &amp; lunch</strong>.
                 </p>
 
@@ -8379,7 +8724,7 @@ export default function Cultivation() {
                     }}
                     onClick={() => setLaborTimeMode("range")}
                   >
-                    Start &amp; end time
+                    {hasMinimumRole("MANAGER") ? "Start & end time" : "Clock start (finish later)"}
                   </button>
                   {hasMinimumRole("MANAGER") ? (
                     <button
@@ -8441,7 +8786,7 @@ export default function Cultivation() {
                       }}
                     >
                       <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
-                        Task on / start
+                        Start time
                         <input
                           style={inputStyle}
                           type="time"
@@ -8450,21 +8795,29 @@ export default function Cultivation() {
                           onChange={(e) => setTaskStartTime(e.target.value)}
                         />
                       </label>
-                      <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
-                        Task off / end
-                        <input
-                          style={inputStyle}
-                          type="time"
-                          step={60}
-                          value={taskEndTime}
-                          onChange={(e) => setTaskEndTime(e.target.value)}
-                        />
-                      </label>
+                      {hasMinimumRole("MANAGER") ? (
+                        <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                          End time
+                          <input
+                            style={inputStyle}
+                            type="time"
+                            step={60}
+                            value={taskEndTime}
+                            onChange={(e) => setTaskEndTime(e.target.value)}
+                          />
+                        </label>
+                      ) : (
+                        <div style={{ color: "#94a3b8", fontSize: 13, alignSelf: "end", paddingBottom: 8 }}>
+                          End time is added after work stops (open tasks below).
+                        </div>
+                      )}
                     </div>
-                    <p style={{ color: "#94a3b8", fontSize: 12, margin: 0 }}>
-                      If end clock time is before start on the same calendar row, the span continues into the next morning
-                      (overnight / long shift).
-                    </p>
+                    {hasMinimumRole("MANAGER") ? (
+                      <p style={{ color: "#94a3b8", fontSize: 12, margin: 0 }}>
+                        If end clock time is before start on the same calendar row, the span continues into the next
+                        morning (overnight / long shift).
+                      </p>
+                    ) : null}
                     {laborBreakSchedule.length === 0 ? (
                       <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
                         No break windows configured yet — net time equals clock span. Admins can add lunch and breaks in
@@ -8499,6 +8852,86 @@ export default function Cultivation() {
                           : ""}
                       </p>
                     ) : null}
+                    {openLaborRowsForTaskModal.length > 0 ? (
+                      <div
+                        style={{
+                          marginTop: 8,
+                          padding: 12,
+                          borderRadius: 12,
+                          border: "1px solid #334155",
+                          background: "#0f172a",
+                        }}
+                      >
+                        <p style={{ color: "#a5f3fc", fontSize: 14, margin: "0 0 10px", fontWeight: 700 }}>
+                          Open labor — add end time when done
+                        </p>
+                        {openLaborRowsForTaskModal.map((log: any, idx: number) => {
+                          const rowKey = stableOpenLaborRowKey(log, idx);
+                          const d = cultivationLogData(log);
+                          const hasId = Boolean(String(log?.id || "").trim());
+                          return (
+                            <div
+                              key={rowKey}
+                              style={{
+                                display: "grid",
+                                gap: 8,
+                                padding: "10px 0",
+                                borderTop: idx === 0 ? "none" : "1px solid #334155",
+                              }}
+                            >
+                              <div style={{ color: "#e2e8f0", fontSize: 13 }}>
+                                <strong>{log.task}</strong> — start {d.taskStartTime || "—"} on {d.laborDate || "—"} ·{" "}
+                                {d.people ?? log.people ?? "—"} people
+                              </div>
+                              <div
+                                style={{
+                                  display: "grid",
+                                  gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                                  gap: 10,
+                                  alignItems: "end",
+                                }}
+                              >
+                                <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                                  End time
+                                  <input
+                                    style={inputStyle}
+                                    type="time"
+                                    step={60}
+                                    value={laborPendingEndDrafts[rowKey] || ""}
+                                    onChange={(e) =>
+                                      setLaborPendingEndDrafts((prev) => ({
+                                        ...prev,
+                                        [rowKey]: e.target.value,
+                                      }))
+                                    }
+                                    disabled={!canWriteRecords || !hasId}
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  style={{
+                                    ...primaryButtonStyle,
+                                    opacity: !canWriteRecords || !hasId ? 0.5 : 1,
+                                  }}
+                                  disabled={
+                                    !canWriteRecords ||
+                                    !hasId ||
+                                    laborPendingEndBusyKey === rowKey
+                                  }
+                                  onClick={() => void submitCultivationOpenLaborEnd(log, rowKey)}
+                                >
+                                  {laborPendingEndBusyKey === rowKey
+                                    ? "Saving…"
+                                    : hasId
+                                      ? "Save end time"
+                                      : "Syncing…"}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
                   </>
                 )}
               </div>
@@ -8525,7 +8958,11 @@ export default function Cultivation() {
                 </button>
               ) : (
                 <button style={primaryButtonStyle} onClick={save} disabled={isSavingTask}>
-                  {isSavingTask ? "Saving..." : "Save Task to Batch"}
+                  {isSavingTask
+                    ? "Saving..."
+                    : !hasMinimumRole("MANAGER") && laborTimeMode === "range"
+                      ? "Start task on batch"
+                      : "Save Task to Batch"}
                 </button>
               )}
             </div>
@@ -8932,31 +9369,237 @@ export default function Cultivation() {
               {selectedBatchLogs.length === 0 ? (
                 <p style={{ textAlign: "center" }}>No tasks logged for this batch yet.</p>
               ) : (
-                selectedBatchLogs.map((log: any, index: number) => (
-                  <div
-                    key={index}
-                    style={{
-                      padding: 12,
-                      background: "#1e293b",
-                      borderRadius: 12,
-                      marginBottom: 10,
-                      border: "1px solid #334155",
-                    }}
-                  >
-                    <div>
-                      <b>{log.task}</b>
+                selectedBatchLogs.map((log: any, index: number) => {
+                  const rowKey = stableOpenLaborRowKey(log, index);
+                  const d = cultivationLogData(log);
+                  const pending = isCultivationOpenLaborLog(log);
+                  const hasId = Boolean(String(log?.id || "").trim());
+                  const showLaborEdit =
+                    hasMinimumRole("MANAGER") &&
+                    String(log?.area || "") === "Cultivation" &&
+                    cultivationLogHasLaborData(log);
+                  return (
+                    <div
+                      key={String(log?.id || rowKey)}
+                      style={{
+                        padding: 12,
+                        background: "#1e293b",
+                        borderRadius: 12,
+                        marginBottom: 10,
+                        border: pending ? "1px solid #fbbf24" : "1px solid #334155",
+                      }}
+                    >
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                        <b>{log.task}</b>
+                        {pending ? (
+                          <span
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 700,
+                              color: "#0f172a",
+                              background: "#fbbf24",
+                              padding: "2px 8px",
+                              borderRadius: 8,
+                            }}
+                          >
+                            End time pending
+                          </span>
+                        ) : null}
+                      </div>
+                      <div>People: {logPeopleDisplay(log)}</div>
+                      <div>Minutes (per person): {logMinutesDisplay(log)}</div>
+                      {d.laborDate ? (
+                        <div style={{ color: "#94a3b8", fontSize: 13 }}>
+                          Labor date: {d.laborDate}
+                          {d.taskStartTime ? ` · start ${d.taskStartTime}` : ""}
+                          {d.taskEndTime ? ` · end ${d.taskEndTime}` : ""}
+                        </div>
+                      ) : null}
+                      <div>Output: {log.output || "—"}</div>
+                      {log.linkedBatch && <div>Linked Batch: {log.linkedBatch}</div>}
+                      <div>Time: {formatLogDisplayTime(log)}</div>
+                      <div style={{ color: "#94a3b8", fontSize: 13 }}>
+                        Logged By: {formatLoggedBy(log.loggedBy || log.data?.loggedBy)}
+                      </div>
+                      {pending && canWriteRecords ? (
+                        <div
+                          style={{
+                            marginTop: 10,
+                            display: "grid",
+                            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                            gap: 10,
+                            alignItems: "end",
+                          }}
+                        >
+                          <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                            End time
+                            <input
+                              style={inputStyle}
+                              type="time"
+                              step={60}
+                              value={laborPendingEndDrafts[rowKey] || ""}
+                              onChange={(e) =>
+                                setLaborPendingEndDrafts((prev) => ({
+                                  ...prev,
+                                  [rowKey]: e.target.value,
+                                }))
+                              }
+                              disabled={!hasId}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            style={{
+                              ...primaryButtonStyle,
+                              opacity: !hasId ? 0.5 : 1,
+                            }}
+                            disabled={!hasId || laborPendingEndBusyKey === rowKey}
+                            onClick={() => void submitCultivationOpenLaborEnd(log, rowKey)}
+                          >
+                            {laborPendingEndBusyKey === rowKey ? "Saving…" : hasId ? "Save end time" : "Syncing…"}
+                          </button>
+                        </div>
+                      ) : null}
+                      {showLaborEdit ? (
+                        <div style={{ marginTop: 10 }}>
+                          <button
+                            type="button"
+                            style={{
+                              ...buttonStyle,
+                              background: "#0e7490",
+                              borderColor: "#06b6d4",
+                              color: "white",
+                            }}
+                            onClick={() => openLaborManagerEdit(log)}
+                          >
+                            Edit labor (manager)
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
-                    <div>People: {log.people || "—"}</div>
-                    <div>Minutes: {log.minutes || "—"}</div>
-                    <div>Output: {log.output || "—"}</div>
-                    {log.linkedBatch && <div>Linked Batch: {log.linkedBatch}</div>}
-                    <div>Time: {formatLogDisplayTime(log)}</div>
-                    <div style={{ color: "#94a3b8", fontSize: 13 }}>
-                      Logged By: {formatLoggedBy(log.loggedBy || log.data?.loggedBy)}
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {laborManagerEditLog && (
+        <div style={{ ...modalOverlayStyle, zIndex: 10004 }}>
+          <div style={{ ...modalStyle, maxWidth: 520 }}>
+            <h2 style={{ textAlign: "center", marginTop: 0 }}>Edit labor</h2>
+            <p style={{ color: "#94a3b8", fontSize: 13, textAlign: "center", marginTop: 0 }}>
+              Adjust person-minutes; task notes above the labor line are kept.
+            </p>
+            <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+              People on this task
+              <input
+                style={inputStyle}
+                value={laborManagerEditPeople}
+                onChange={(e) => setLaborManagerEditPeople(e.target.value)}
+              />
+            </label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+              <button
+                type="button"
+                style={{
+                  ...buttonStyle,
+                  border:
+                    laborManagerEditMode === "range" ? "1px solid #22d3ee" : "1px solid #475569",
+                  background: laborManagerEditMode === "range" ? "#22d3ee" : "#1e293b",
+                  color: laborManagerEditMode === "range" ? "#0f172a" : "white",
+                  fontWeight: laborManagerEditMode === "range" ? 700 : 400,
+                }}
+                onClick={() => setLaborManagerEditMode("range")}
+              >
+                Start &amp; end time
+              </button>
+              <button
+                type="button"
+                style={{
+                  ...buttonStyle,
+                  border:
+                    laborManagerEditMode === "total" ? "1px solid #22d3ee" : "1px solid #475569",
+                  background: laborManagerEditMode === "total" ? "#22d3ee" : "#1e293b",
+                  color: laborManagerEditMode === "total" ? "#0f172a" : "white",
+                  fontWeight: laborManagerEditMode === "total" ? 700 : 400,
+                }}
+                onClick={() => setLaborManagerEditMode("total")}
+              >
+                Quick minutes
+              </button>
+            </div>
+            {laborManagerEditMode === "total" ? (
+              <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14, marginTop: 10 }}>
+                Minutes per person
+                <input
+                  style={inputStyle}
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={laborManagerEditMinutes}
+                  onChange={(e) => setLaborManagerEditMinutes(e.target.value)}
+                />
+              </label>
+            ) : (
+              <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+                <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                  Work date
+                  <input
+                    style={inputStyle}
+                    type="date"
+                    value={laborManagerEditDate}
+                    onChange={(e) => setLaborManagerEditDate(e.target.value)}
+                  />
+                </label>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                    gap: 10,
+                  }}
+                >
+                  <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                    Start time
+                    <input
+                      style={inputStyle}
+                      type="time"
+                      step={60}
+                      value={laborManagerEditStart}
+                      onChange={(e) => setLaborManagerEditStart(e.target.value)}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                    End time
+                    <input
+                      style={inputStyle}
+                      type="time"
+                      step={60}
+                      value={laborManagerEditEnd}
+                      onChange={(e) => setLaborManagerEditEnd(e.target.value)}
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+            <div style={{ ...modalButtonRowStyle, marginTop: 16 }}>
+              <button
+                type="button"
+                style={buttonStyle}
+                onClick={() => setLaborManagerEditLog(null)}
+                disabled={laborManagerEditBusy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                style={primaryButtonStyle}
+                onClick={() => void saveLaborManagerEdit()}
+                disabled={laborManagerEditBusy}
+              >
+                {laborManagerEditBusy ? "Saving…" : "Save labor"}
+              </button>
             </div>
           </div>
         </div>
