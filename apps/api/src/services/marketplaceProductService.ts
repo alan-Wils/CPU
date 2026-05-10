@@ -73,7 +73,7 @@ async function marketplaceSellerSalesBrandingByCompanyIds(
     } catch {
       url = null;
     }
-    map.set(row.companyId, { logoUrl, buyerCardLogoMaxHeightPx, buyerChipLogoMaxHeightPx });
+    map.set(row.companyId, { logoUrl: url, buyerCardLogoMaxHeightPx, buyerChipLogoMaxHeightPx });
   }
   return map;
 }
