@@ -467,7 +467,7 @@ legacyCpuRouter.get("/logs", asyncHandler(async (req, res) => {
     const rows = await prisma.taskLog.findMany({
         where: { companyId },
         orderBy: { createdAt: "desc" },
-        take: 500
+        take: 2000
     });
     res.json(rows.map(taskRowToLegacyLog));
 }));

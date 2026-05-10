@@ -470,6 +470,37 @@ function cultivationLogData(log: any): Record<string, any> {
   return d && typeof d === "object" ? d : {};
 }
 
+/**
+ * Whether a task log belongs to the batch shown in the View modal.
+ * Covers cultivation id, dry-flower id, FF/TRIM ids, and `linkedBatch` stored only under `data`.
+ */
+function logRelatesToViewBatch(log: any, viewBatch: any): boolean {
+  const vid = String(viewBatch?.id || "").trim();
+  if (!vid) return false;
+
+  const d = cultivationLogData(log);
+  const linked =
+    String(log?.linkedBatch || "").trim() ||
+    String(d?.linkedBatch || "").trim();
+  const batch = String(log?.batch || "").trim();
+  const src = String(log?.source || "").trim();
+
+  if (batch === vid || linked === vid || src === vid) return true;
+
+  const parent = String(viewBatch?.source || "").trim();
+  const typ = String(viewBatch?.type || "");
+  if (
+    parent &&
+    (typ === "Fresh Frozen" || typ === "Dry Trim") &&
+    batch === parent &&
+    linked === vid
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function cultivationOutputBaseFromLog(log: any): string {
   const o = String(log?.output || "");
   const tag = " | Labor:";
@@ -6818,12 +6849,7 @@ export default function Cultivation() {
   }
 
   const selectedBatchLogs = viewBatch
-    ? s.logs.filter(
-        (log: any) =>
-          log.batch === viewBatch.id ||
-          log.linkedBatch === viewBatch.id ||
-          log.source === viewBatch.id
-      )
+    ? s.logs.filter((log: any) => logRelatesToViewBatch(log, viewBatch))
     : [];
 
 
@@ -10005,7 +10031,15 @@ export default function Cultivation() {
 
             <div style={{ marginTop: 20 }}>
               {selectedBatchLogs.length === 0 ? (
-                <p style={{ textAlign: "center" }}>No tasks logged for this batch yet.</p>
+                <div style={{ textAlign: "center", color: "#94a3b8", lineHeight: 1.5 }}>
+                  <p style={{ margin: "0 0 8px" }}>No tasks logged for this batch yet.</p>
+                  {s.logs.length === 0 ? (
+                    <p style={{ margin: 0, fontSize: 13 }}>
+                      Task history is loaded from the server. If all logs were deleted, previous tasks
+                      cannot be shown again.
+                    </p>
+                  ) : null}
+                </div>
               ) : (
                 selectedBatchLogs.map((log: any, index: number) => {
                   const rowKey = stableOpenLaborRowKey(log, index);
