@@ -8593,7 +8593,8 @@ export default function Cultivation() {
                         </p>
                       ) : (
                         <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
-                          Set grams per bundle under Admin → Company Config → Fresh Frozen harvest to auto-fill bundles.
+                          Set grams per bundle under Admin → Company Config → Cultivation → Fresh Frozen harvest to
+                          auto-fill bundles.
                         </p>
                       )}
                     </>

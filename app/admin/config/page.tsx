@@ -2936,32 +2936,6 @@ export default function ConfigPage() {
         </div>
 
         <div style={styles.configSubCard}>
-          <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Fresh Frozen harvest</h3>
-          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
-            Set the standard <b>grams per bundle</b> for Fresh Frozen. When greater than zero, the Cultivation harvest form
-            auto-calculates bundle count from total grams (whole bundles only; operators can override). Extraction shows
-            package weight as lbs, grams, and bundles on source cards.
-          </p>
-          <label style={styles.label}>
-            Grams per bundle (0 = off, manual entry only)
-            <input
-              style={styles.input}
-              type="number"
-              min={0}
-              step={1}
-              value={config.cultivation.freshFrozenGramsPerBundle ?? 0}
-              onChange={(e) => {
-                const v = Math.max(0, Math.floor(Number(e.target.value) || 0));
-                setConfig((prev) => ({
-                  ...prev,
-                  cultivation: { ...prev.cultivation, freshFrozenGramsPerBundle: v },
-                }));
-              }}
-            />
-          </label>
-        </div>
-
-        <div style={styles.configSubCard}>
         <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Workflow — extra tasks & rewards</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
           Add facility-specific tasks; they appear alongside built-in tasks in Cultivation, Extraction, and Packaging. For each
@@ -4543,9 +4517,38 @@ export default function ConfigPage() {
             {config.cultivation.strains.length} strain{config.cultivation.strains.length === 1 ? "" : "s"} ·{" "}
             {config.cultivation.rooms.vegRooms.length} veg · {config.cultivation.rooms.flowerRooms.length} flower ·{" "}
             {(config.cultivation.supplies || []).length} supply rows
+            {(config.cultivation.freshFrozenGramsPerBundle ?? 0) > 0
+              ? ` · FF ${config.cultivation.freshFrozenGramsPerBundle} g/bundle`
+              : ""}
           </>
         }
       >
+        <div style={{ ...styles.configSubCard, marginBottom: 16 }}>
+          <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Fresh Frozen harvest</h3>
+          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+            Set the standard <b>grams per bundle</b> for Fresh Frozen. When greater than zero, the Cultivation harvest form
+            auto-calculates bundle count from total grams (whole bundles only; operators can override). Extraction shows
+            package weight as lbs, grams, and bundles on source cards.
+          </p>
+          <label style={styles.label}>
+            Grams per bundle (0 = off, manual entry only)
+            <input
+              style={styles.input}
+              type="number"
+              min={0}
+              step={1}
+              value={config.cultivation.freshFrozenGramsPerBundle ?? 0}
+              onChange={(e) => {
+                const v = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                setConfig((prev) => ({
+                  ...prev,
+                  cultivation: { ...prev.cultivation, freshFrozenGramsPerBundle: v },
+                }));
+              }}
+            />
+          </label>
+        </div>
+
         <details style={styles.cultivationStrainsOuter}>
           <summary style={styles.cultivationStrainsSummary}>
             <span>Add Strains</span>
