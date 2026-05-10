@@ -65,6 +65,15 @@ import {
 } from "@/lib/laborBreaks";
 import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
 import {
+  DRY_FLOWER_UI_STAGE_META,
+  DRY_FLOWER_UI_STAGE_ORDER,
+  dryFlowerStageQuantityLabel,
+  dryFlowerStageQuantityLbs,
+  formatDryFlowerStageLbs,
+  groupActiveDryFlowerBatchesByUiStage,
+  type DryFlowerUiStageKey,
+} from "@/lib/dryFlowerBatchUiStage";
+import {
   buildMetrcVegMovePayload,
   collectExistingPlantTagsFromCultivationBatches,
   findOverlappingTags,
@@ -839,6 +848,8 @@ export default function Cultivation() {
   const [selectedStage, setSelectedStage] = useState<StageModalKey>(null);
   /** Veg/Flower stage modal: null = room picker when multiple rooms; otherwise selected room id or unassigned sentinel. */
   const [stageModalRoomId, setStageModalRoomId] = useState<string | null>(null);
+  /** Dry-flower panel stage filter (Buck/Trim, Decon/Cure, Lab Testing, Ready to Package). null = show all active. */
+  const [selectedDryFlowerStage, setSelectedDryFlowerStage] = useState<DryFlowerUiStageKey | null>(null);
 
   const [cloneTasks, setCloneTasks] = useState(defaultCloneTasks);
   const [vegTasks, setVegTasks] = useState(defaultVegTasks);
@@ -1592,6 +1603,11 @@ export default function Cultivation() {
   const activeDryFlowerBatches = s.dryFlowerBatches.filter(
     (batch: any) => batch.status !== "Complete"
   );
+
+  const dryFlowerBatchesByStage = groupActiveDryFlowerBatchesByUiStage(activeDryFlowerBatches);
+  const visibleDryFlowerBatches = selectedDryFlowerStage
+    ? dryFlowerBatchesByStage[selectedDryFlowerStage]
+    : activeDryFlowerBatches;
 
   function immatureHasAvailablePlants(batch: any): boolean {
     const arr = batch?.immaturePlantBatches;
@@ -6338,7 +6354,85 @@ export default function Cultivation() {
           {activeDryFlowerBatches.length === 0 ? (
             <p style={{ textAlign: "center", color: "#cbd5e1" }}>No active dry flower batches yet.</p>
           ) : (
-            activeDryFlowerBatches.map((b: any) => (
+            <>
+              <div style={stageCardsWrapStyle}>
+                {DRY_FLOWER_UI_STAGE_ORDER.map((stageKey) => {
+                  const meta = DRY_FLOWER_UI_STAGE_META[stageKey];
+                  const stageBatches = dryFlowerBatchesByStage[stageKey];
+                  const count = stageBatches.length;
+                  const selected = selectedDryFlowerStage === stageKey;
+                  const batchLabel = count === 1 ? "1 Batch" : `${count} Batches`;
+                  const qtyLbs = dryFlowerStageQuantityLbs(stageKey, stageBatches);
+                  const qtyLine = `${formatDryFlowerStageLbs(qtyLbs)} ${dryFlowerStageQuantityLabel(stageKey)}`;
+                  return (
+                    <button
+                      key={stageKey}
+                      type="button"
+                      style={{
+                        ...buttonStyle,
+                        width: "100%",
+                        minHeight: 86,
+                        textAlign: "left",
+                        display: "flex",
+                        flexDirection: "column",
+                        justifyContent: "center",
+                        gap: 4,
+                        background: "#0f172a",
+                        border: selected ? "1px solid rgba(34, 211, 238, 0.65)" : "1px solid #334155",
+                        boxShadow: selected ? "0 0 0 1px rgba(34, 211, 238, 0.2)" : undefined,
+                      }}
+                      onClick={() =>
+                        setSelectedDryFlowerStage((prev) => (prev === stageKey ? null : stageKey))
+                      }
+                    >
+                      <span style={{ fontWeight: 900, fontSize: 16, color: "#f8fafc" }}>{meta.label}</span>
+                      <span style={{ color: "#cbd5e1", fontWeight: 700 }}>{batchLabel}</span>
+                      <span style={{ color: "#93c5fd", fontWeight: 700 }}>{qtyLine}</span>
+                      <span style={{ color: "#22d3ee", fontWeight: 800, fontSize: 12, marginTop: 4 }}>
+                        View this stage →
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  marginTop: 18,
+                  borderTop: "1px solid #1e293b",
+                  paddingTop: 14,
+                }}
+              >
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#e2e8f0" }}>
+                  {selectedDryFlowerStage
+                    ? `${DRY_FLOWER_UI_STAGE_META[selectedDryFlowerStage].label} (${visibleDryFlowerBatches.length})`
+                    : `Batch list (${visibleDryFlowerBatches.length})`}
+                </h3>
+                {selectedDryFlowerStage ? (
+                  <button
+                    type="button"
+                    style={{ ...buttonStyle, fontSize: 13 }}
+                    onClick={() => setSelectedDryFlowerStage(null)}
+                  >
+                    Clear stage filter
+                  </button>
+                ) : null}
+              </div>
+
+              {visibleDryFlowerBatches.length === 0 ? (
+                <p style={{ textAlign: "center", color: "#94a3b8", marginTop: 10 }}>
+                  No batches in this stage yet.
+                </p>
+              ) : null}
+            </>
+          )}
+
+          {visibleDryFlowerBatches.map((b: any) => (
               <div
                 key={b.id}
                 style={{
@@ -6380,8 +6474,7 @@ export default function Cultivation() {
                   )}
                 </div>
               </div>
-            ))
-          )}
+            ))}
 
           {selectedDryFlowerBatch && selectedDryFlowerBatch.status !== "Complete" && (
             <div style={{ marginTop: 16, textAlign: "center" }}>
