@@ -176,8 +176,6 @@ export function AnalyticsDashboard(props: {
   onFacilityChange: (v: string) => void;
   department: string;
   onDepartmentChange: (v: string) => void;
-  autoRefresh: boolean;
-  onAutoRefreshChange: (v: boolean) => void;
   onManualRefresh: () => void;
   /** When set, section visibility is controlled by the parent (e.g. analytics page + strain charts). */
   sectionPrefs?: Record<AnalyticsSectionKey, boolean>;
@@ -269,6 +267,8 @@ export function AnalyticsDashboard(props: {
           </h1>
           <p style={{ margin: "8px 0 0", color: "#94a3b8", fontSize: 15 }}>
             Real-time insights across all operations · <span style={{ color: "#cbd5e1" }}>{headerRangeLabel}</span>
+            {" · "}
+            <span style={{ color: "#64748b" }}>Refreshes every 15s while this tab is visible</span>
           </p>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
@@ -357,26 +357,6 @@ export function AnalyticsDashboard(props: {
           >
             Filters
           </button>
-          <label
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              color: "#cbd5e1",
-              fontSize: 13,
-              padding: "8px 10px",
-              border: "1px solid #334155",
-              borderRadius: 10,
-              background: "#0f172a",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={props.autoRefresh}
-              onChange={(e) => props.onAutoRefreshChange(e.target.checked)}
-            />
-            Auto 60s
-          </label>
           <button
             type="button"
             onClick={exportCsv}

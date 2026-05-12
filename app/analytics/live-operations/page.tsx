@@ -170,22 +170,51 @@ export default function AnalyticsLiveOperationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const out = await fetchAnalyticsLiveOperations();
       setData(out);
+      if (silent) setError(null);
     } catch (e) {
-      setData(null);
-      setError(e instanceof Error ? e.message : "Failed to load live operations");
+      if (!silent) {
+        setData(null);
+        setError(e instanceof Error ? e.message : "Failed to load live operations");
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+
+    const tick = async () => {
+      if (cancelled || inFlight || document.hidden) return;
+      inFlight = true;
+      try {
+        await load({ silent: true });
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const id = window.setInterval(() => {
+      void tick();
+    }, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, [load]);
 
   const pageStyle = {
@@ -208,7 +237,8 @@ export default function AnalyticsLiveOperationsPage() {
           <h1 style={{ margin: "0 0 8px", fontSize: 26, fontWeight: 800 }}>Live operations</h1>
           <p style={{ margin: "0 0 20px", color: "#94a3b8", fontSize: 14, maxWidth: 720 }}>
             Task logs (14 days, linked to a reference), active extraction and packaging work, and labor logged today
-            in UTC. Expand a card for the full scrollable list.
+            in UTC. Expand a card for the full scrollable list. Data refreshes every 15 seconds while this tab is
+            visible.
           </p>
           {loading ? <p style={{ color: "#94a3b8" }}>Loading…</p> : null}
           {error ? <p style={{ color: "#fca5a5" }}>{error}</p> : null}

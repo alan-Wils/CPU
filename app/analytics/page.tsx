@@ -17,15 +17,17 @@ export default function AnalyticsPage() {
   const [{ from, to }, setRange] = useState(defaultAnalyticsDateRange);
   const [facility, setFacility] = useState("");
   const [department, setDepartment] = useState("all");
-  const [autoRefresh, setAutoRefresh] = useState(false);
   const [data, setData] = useState<AnalyticsOverviewJson | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sectionPrefs, setSectionPrefs] = useState(loadAnalyticsDashboardPrefs);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const out = await fetchAnalyticsOverview({
         from,
@@ -34,11 +36,14 @@ export default function AnalyticsPage() {
         department: department === "all" ? undefined : department,
       });
       setData(out);
+      if (silent) setError(null);
     } catch (e) {
-      setData(null);
-      setError(e instanceof Error ? e.message : "Failed to load analytics");
+      if (!silent) {
+        setData(null);
+        setError(e instanceof Error ? e.message : "Failed to load analytics");
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [from, to, facility, department]);
 
@@ -47,12 +52,27 @@ export default function AnalyticsPage() {
   }, [load]);
 
   useEffect(() => {
-    if (!autoRefresh) return;
+    let cancelled = false;
+    let inFlight = false;
+
+    const tick = async () => {
+      if (cancelled || inFlight || document.hidden) return;
+      inFlight = true;
+      try {
+        await load({ silent: true });
+      } finally {
+        inFlight = false;
+      }
+    };
+
     const id = window.setInterval(() => {
-      void load();
-    }, 60_000);
-    return () => clearInterval(id);
-  }, [autoRefresh, load]);
+      void tick();
+    }, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [load]);
 
   const onSectionPrefsChange = useCallback((next: Record<AnalyticsSectionKey, boolean>) => {
     setSectionPrefs(next);
@@ -83,8 +103,6 @@ export default function AnalyticsPage() {
           onFacilityChange={setFacility}
           department={department}
           onDepartmentChange={setDepartment}
-          autoRefresh={autoRefresh}
-          onAutoRefreshChange={setAutoRefresh}
           onManualRefresh={() => void load()}
           sectionPrefs={sectionPrefs}
           onSectionPrefsChange={onSectionPrefsChange}

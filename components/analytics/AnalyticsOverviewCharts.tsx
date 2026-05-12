@@ -106,7 +106,18 @@ export function SalesOverTimeChart(props: {
           <YAxis stroke="#64748b" tick={{ fontSize: 10 }} tickFormatter={(v) => moneyShort(Number(v))} width={52} />
           <Tooltip
             contentStyle={tooltipStyle}
-            formatter={(v: number, name: string) => [moneyShort(v), name === "combined" ? "Combined" : name === "leafLink" ? "LeafLink" : "NexBatch"]}
+            formatter={(v: number, name: string) => {
+              const n = String(name);
+              const label =
+                n === "combined" || n === "Combined"
+                  ? "Combined"
+                  : n === "leafLink" || n === "LeafLink"
+                    ? "LeafLink"
+                    : n === "nexbatch" || n === "NexBatch"
+                      ? "NexBatch"
+                      : n;
+              return [moneyShort(v), label];
+            }}
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
           <Area type="monotone" dataKey="leafLink" stackId="1" stroke="#38bdf8" fill="url(#llSales)" name="LeafLink" />
