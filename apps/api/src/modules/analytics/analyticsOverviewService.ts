@@ -8,7 +8,7 @@ import {
   sumLeafLinkInventoryValueUsd,
   type LeafLinkInventoryItem,
 } from "../../services/leaflinkService.js";
-import { LeafLinkOrdersService } from "../../services/leafLinkOrdersService.js";
+import { LeafLinkOrdersService, type OrdersAnalyticsDto } from "../../services/leafLinkOrdersService.js";
 
 const companyServices = new CompanyServiceSettingsService();
 const ordersService = new LeafLinkOrdersService();
@@ -28,6 +28,14 @@ export type AnalyticsOverviewInput = {
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+/** KPI revenue uses full in-range totals; scatter payload may truncate `qualifyingOrders`. */
+function leafLinkQualifyingRevenueUsd(d: OrdersAnalyticsDto): number {
+  if (typeof d.qualifyingRevenueTotalUsd === "number" && Number.isFinite(d.qualifyingRevenueTotalUsd)) {
+    return d.qualifyingRevenueTotalUsd;
+  }
+  return d.qualifyingOrders.reduce((s, o) => s + (Number(o.totalUsd) || 0), 0);
 }
 
 function ymdFromUtcMs(ms: number): string {
@@ -274,8 +282,8 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
   const extractionInProgress = extractionRuns.filter((r) => r.phase !== "COMPLETED" && !r.finishedAt).length;
   const packagingInProgress = packagingLots.filter((p) => p.status === "IN_PROGRESS" && !p.finishedAt).length;
 
-  const leafLinkRevenue = ordersCurrent.qualifyingOrders.reduce((s, o) => s + (Number(o.totalUsd) || 0), 0);
-  const leafLinkPrev = ordersPrev.qualifyingOrders.reduce((s, o) => s + (Number(o.totalUsd) || 0), 0);
+  const leafLinkRevenue = leafLinkQualifyingRevenueUsd(ordersCurrent);
+  const leafLinkPrev = leafLinkQualifyingRevenueUsd(ordersPrev);
   const nexbatchSellerRevenue = marketplaceSellerAgg._sum.total ?? 0;
   const nexbatchForTotals = sellerWorkspaceOn ? nexbatchSellerRevenue : 0;
   const totalRevenue = leafLinkRevenue + nexbatchForTotals;
@@ -606,7 +614,7 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     executiveCompare = [];
     for (const c of multiCompany) {
       const o = await ordersService.getOrdersAnalytics(c.id, { dateFrom, dateTo });
-      const rev = o.qualifyingOrders.reduce((s, x) => s + (Number(x.totalUsd) || 0), 0);
+      const rev = leafLinkQualifyingRevenueUsd(o);
       const m = await prisma.marketplaceOrder.aggregate({
         where: {
           sellerCompanyId: c.id,

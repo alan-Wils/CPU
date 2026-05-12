@@ -200,7 +200,7 @@ export type OrdersAnalyticsDto = {
   integrationEnabled: boolean;
   dateFrom: string;
   dateTo: string;
-  /** Orders in this snapshot with a parseable placed date (headline totals; includes cancelled/sample-sized lines — no dollar floor). */
+  /** Orders in this snapshot in the selected UTC range after LeafLink-aligned filters (excludes draft/cancelled/void; headline count matches KPI totals). */
   ordersIncluded: number;
   /** Always 0 — no minimum order filter in analytics. Present for backwards-compatible clients. */
   minOrderTotal: number;
@@ -212,6 +212,8 @@ export type OrdersAnalyticsDto = {
   /** One row per order for scatter chart. May be truncated — see `qualifyingOrdersTruncated`. */
   qualifyingOrders: OrdersAnalyticsQualifyingOrderDto[];
   qualifyingOrdersTruncated: boolean;
+  /** Sum of `totalUsd` over every qualifying order in range (not truncated). Use for KPI totals when `qualifyingOrders` is sliced. */
+  qualifyingRevenueTotalUsd: number;
   /** Series are built from saved orders (see persisted rows when Orders / sync runs). */
   readFromDatabase: boolean;
   /** This request refreshed LeafLink into the DB before aggregating (`refresh=true`). */
@@ -399,9 +401,9 @@ function fieldIsoDate(v: unknown): string {
 }
 
 /**
- * Wholesale order payloads differ by endpoint; normalize created timestamps so DB range queries & analytics UTC bucketing agree.
+ * All parseable order timestamps from a stored wholesale payload (deduped). Order matches {@link leafLinkOrderCreatedIso} priority for the first element.
  */
-function leafLinkOrderCreatedIso(row: Record<string, unknown>): string {
+function collectLeafLinkOrderTimestampIsos(row: Record<string, unknown>): string[] {
   const nest = nestedOrderRecord(row);
   /** Cover list vs detail quirks so `LeafLinkStoredOrder.createdOn` is rarely null (range queries + analytics). */
   const keys: unknown[] = [
@@ -418,6 +420,8 @@ function leafLinkOrderCreatedIso(row: Record<string, unknown>): string {
     row.submitted_on,
     row.submitted_at,
     row.submitted_date,
+    row.submit_date,
+    row.order_submitted_date,
     row.inserted_at,
     nest.created_on,
     nest.created_at,
@@ -427,14 +431,67 @@ function leafLinkOrderCreatedIso(row: Record<string, unknown>): string {
     nest.date_ordered,
     nest.submitted_on,
     nest.submitted_at,
+    nest.submitted_date,
+    nest.submit_date,
+    nest.order_submitted_date,
     nest.timestamp,
     nest.placed_at,
   ];
+  const out: string[] = [];
+  const seen = new Set<string>();
   for (const k of keys) {
     const iso = fieldIsoDate(k);
-    if (iso) return iso;
+    if (!iso || seen.has(iso)) continue;
+    seen.add(iso);
+    out.push(iso);
   }
-  return "";
+  return out;
+}
+
+/**
+ * Wholesale order payloads differ by endpoint; normalize created timestamps so DB range queries & analytics UTC bucketing agree.
+ */
+function leafLinkOrderCreatedIso(row: Record<string, unknown>): string {
+  const all = collectLeafLinkOrderTimestampIsos(row);
+  return all[0] ?? "";
+}
+
+/** LeafLink sales KPIs omit draft / void / cancelled — align stored-order analytics the same way. */
+function isExcludedFromLeafLinkSalesKpi(o: LeafLinkOrderSummaryDto): boolean {
+  const norm = cleanString(o.statusNormalized).toLowerCase();
+  if (norm === "cancelled" || norm === "draft") return true;
+  const s = cleanString(o.status).toLowerCase();
+  if (s.includes("void") || s.includes("cancel")) return true;
+  if (s === "draft") return true;
+  return false;
+}
+
+/**
+ * If any of summary / payload timestamps fall in `[fromMs, toMs]`, returns the latest such instant (UTC). Matches LeafLink-style “in period” when submit vs create differ.
+ */
+function orderChosenInstantMsForUtcRange(
+  raw: Record<string, unknown>,
+  o: LeafLinkOrderSummaryDto,
+  fromMs: number,
+  toMs: number,
+): number | null {
+  const seenIso = new Set<string>();
+  const timesMs: number[] = [];
+  const addIso = (iso: string) => {
+    const s = cleanString(iso);
+    if (!s || seenIso.has(s)) return;
+    seenIso.add(s);
+    const t = Date.parse(s);
+    if (Number.isFinite(t)) timesMs.push(t);
+  };
+  addIso(cleanString(o.createdAt) || "");
+  for (const iso of collectLeafLinkOrderTimestampIsos(raw)) addIso(iso);
+  let best: number | null = null;
+  for (const t of timesMs) {
+    if (t < fromMs || t > toMs) continue;
+    if (best == null || t > best) best = t;
+  }
+  return best;
 }
 
 function idLikeFromBuyerObject(o: Record<string, unknown>): string {
@@ -2246,7 +2303,7 @@ export class LeafLinkOrdersService {
    * Aggregate wholesale orders for a **UTC date range** from **saved** DB rows only.
    * Hydrates with a **padded `createdOn` window** (DB timestamps can skew from LeafLink payload “placed” time),
    * merges `createdOn=null` rows, then a **repair scan** over recent stored orders so payload-in-range rows are never dropped.
-   * Totals use **payload placed time** in the strict `[dateFrom, dateTo]` UTC window (same as `summary.createdAt` / upsert).
+   * Totals use the **latest timestamp** among summary `createdAt` and known payload fields that falls in the strict `[dateFrom, dateTo]` UTC window (aligns with LeafLink when submit vs create differ). Draft / cancelled / void orders are excluded.
    * Does not call LeafLink — run **Multi-page sync** / **Refresh** on the Orders page to update Postgres first.
    */
   async getOrdersAnalytics(
@@ -2268,6 +2325,7 @@ export class LeafLinkOrdersService {
       | "filteredByLeafLinkCurrentCustomerStatus"
       | "leafLinkCurrentCustomerCount"
       | "chartDaysCapped"
+      | "qualifyingRevenueTotalUsd"
     > => ({
       readFromDatabase: true,
       leafLinkRefreshRan: false,
@@ -2277,6 +2335,7 @@ export class LeafLinkOrdersService {
       filteredByLeafLinkCurrentCustomerStatus: false,
       leafLinkCurrentCustomerCount: 0,
       chartDaysCapped: false,
+      qualifyingRevenueTotalUsd: 0,
     });
 
     if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) {
@@ -2325,12 +2384,6 @@ export class LeafLinkOrdersService {
 
     type AnalyticsStoredRow = { id: string; payload: unknown; updatedAt: Date };
 
-    /** LeafLink “placed” instant used for analytics range — must match loop + upsert semantics. */
-    function orderPayloadPlacedMs(raw: Record<string, unknown>, o: LeafLinkOrderSummaryDto): number {
-      const createdIsoAgg = cleanString(o.createdAt) || leafLinkOrderCreatedIso(raw);
-      return Date.parse(createdIsoAgg || "");
-    }
-
     /** Extra `createdOn` slack so rows whose DB timestamp skews from payload still hydrate (MTD vs LeafLink). */
     function padMsForCreatedOnHydration(windowFromMs: number, windowToMs: number): number {
       const span = windowToMs - windowFromMs;
@@ -2355,14 +2408,19 @@ export class LeafLinkOrdersService {
     );
 
     const byId = new Map<string, AnalyticsStoredRow>();
-    for (const r of paddedDb) byId.set(r.id, { id: r.id, payload: r.payload, updatedAt: r.updatedAt });
+    for (const r of paddedDb) {
+      const pair = collectedPairFromStoredPayload(r.payload);
+      if (pair && isExcludedFromLeafLinkSalesKpi(pair.summary)) continue;
+      byId.set(r.id, { id: r.id, payload: r.payload, updatedAt: r.updatedAt });
+    }
 
     for (const r of nullCreatedDb) {
       if (byId.has(r.id)) continue;
       const pair = collectedPairFromStoredPayload(r.payload);
       if (!pair) continue;
-      const t = orderPayloadPlacedMs(pair.raw, pair.summary);
-      if (!Number.isFinite(t) || t < fromMs || t > toMs) continue;
+      if (isExcludedFromLeafLinkSalesKpi(pair.summary)) continue;
+      const t = orderChosenInstantMsForUtcRange(pair.raw, pair.summary, fromMs, toMs);
+      if (t == null) continue;
       byId.set(r.id, { id: r.id, payload: r.payload, updatedAt: r.updatedAt });
     }
 
@@ -2372,8 +2430,9 @@ export class LeafLinkOrdersService {
       if (byId.has(r.id)) continue;
       const pair = collectedPairFromStoredPayload(r.payload);
       if (!pair) continue;
-      const t = orderPayloadPlacedMs(pair.raw, pair.summary);
-      if (!Number.isFinite(t) || t < fromMs || t > toMs) continue;
+      if (isExcludedFromLeafLinkSalesKpi(pair.summary)) continue;
+      const t = orderChosenInstantMsForUtcRange(pair.raw, pair.summary, fromMs, toMs);
+      if (t == null) continue;
       byId.set(r.id, { id: r.id, payload: r.payload, updatedAt: r.updatedAt });
     }
 
@@ -2384,7 +2443,7 @@ export class LeafLinkOrdersService {
         companyId,
         syncedTotal: totalStoredOrders,
         rowsHydratedForAnalytics: storedDb.length,
-        note: "Hydrates padded createdOn window + null-created + recent repair; totals use payload placed time in strict UTC range.",
+        note: "Hydrates padded createdOn window + null-created + recent repair; totals use latest in-range payload/summary timestamp (UTC).",
       });
     }
 
@@ -2392,8 +2451,9 @@ export class LeafLinkOrdersService {
     for (const r of storedDb) {
       const pair = collectedPairFromStoredPayload(r.payload);
       if (!pair) continue;
-      const t = orderPayloadPlacedMs(pair.raw, pair.summary);
-      if (!Number.isFinite(t) || t < fromMs || t > toMs) continue;
+      if (isExcludedFromLeafLinkSalesKpi(pair.summary)) continue;
+      const t = orderChosenInstantMsForUtcRange(pair.raw, pair.summary, fromMs, toMs);
+      if (t == null) continue;
       storedRowsInRange++;
     }
 
@@ -2407,8 +2467,9 @@ export class LeafLinkOrdersService {
     for (const r of storedDb) {
       const pair = collectedPairFromStoredPayload(r.payload);
       if (!pair) continue;
-      const t = orderPayloadPlacedMs(pair.raw, pair.summary);
-      if (!Number.isFinite(t) || t < fromMs || t > toMs) continue;
+      if (isExcludedFromLeafLinkSalesKpi(pair.summary)) continue;
+      const t = orderChosenInstantMsForUtcRange(pair.raw, pair.summary, fromMs, toMs);
+      if (t == null) continue;
       collected.push(pair);
     }
 
@@ -2483,8 +2544,10 @@ export class LeafLinkOrdersService {
 
       const buyerCanon = buyerKeys[0];
 
-      const t = orderPayloadPlacedMs(raw, o);
-      if (!Number.isFinite(t)) continue;
+      if (isExcludedFromLeafLinkSalesKpi(o)) continue;
+
+      const t = orderChosenInstantMsForUtcRange(raw, o, fromMs, toMs);
+      if (t == null) continue;
 
       const rawMoney = effectiveOrderTotalUsd(raw, o);
       const money = typeof rawMoney === "number" && Number.isFinite(rawMoney) ? Math.max(0, rawMoney) : 0;
@@ -2562,6 +2625,11 @@ export class LeafLinkOrdersService {
       qualifyingOrdersTruncated = true;
     }
 
+    const qualifyingRevenueTotalUsd =
+      Math.round(
+        qualifyingOrdersFull.reduce((s, row) => s + (Number(row.totalUsd) || 0), 0) * 100,
+      ) / 100;
+
     const customers: OrdersAnalyticsCustomerDto[] = [...agg.entries()]
       .map(([key, v]) => ({
         key,
@@ -2620,6 +2688,7 @@ export class LeafLinkOrdersService {
       customers,
       qualifyingOrders,
       qualifyingOrdersTruncated,
+      qualifyingRevenueTotalUsd,
       readFromDatabase: true,
       leafLinkRefreshRan: false,
       storedRowsInRange,

@@ -914,6 +914,7 @@ export type OrdersAnalyticsDto = {
   customers: OrdersAnalyticsCustomerDto[];
   qualifyingOrders: OrdersAnalyticsQualifyingOrderDto[];
   qualifyingOrdersTruncated: boolean;
+  qualifyingRevenueTotalUsd: number;
   readFromDatabase: boolean;
   leafLinkRefreshRan: boolean;
   storedRowsInRange: number;
