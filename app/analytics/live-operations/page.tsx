@@ -9,6 +9,7 @@ import {
   type AnalyticsLiveOperationsJson,
   type LiveOperationsCardJson,
 } from "@/lib/analyticsLiveOperationsApi";
+import { SilentRefreshToast } from "@/components/analytics/SilentRefreshToast";
 
 function formatTs(iso: string | undefined): string {
   if (!iso) return "—";
@@ -169,6 +170,7 @@ export default function AnalyticsLiveOperationsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [silentRefreshPulse, setSilentRefreshPulse] = useState(0);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = Boolean(opts?.silent);
@@ -179,7 +181,10 @@ export default function AnalyticsLiveOperationsPage() {
     try {
       const out = await fetchAnalyticsLiveOperations();
       setData(out);
-      if (silent) setError(null);
+      if (silent) {
+        setError(null);
+        setSilentRefreshPulse((p) => p + 1);
+      }
     } catch (e) {
       if (!silent) {
         setData(null);
@@ -211,9 +216,13 @@ export default function AnalyticsLiveOperationsPage() {
     const id = window.setInterval(() => {
       void tick();
     }, 15_000);
+    const boot = window.setTimeout(() => {
+      void tick();
+    }, 1200);
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      window.clearTimeout(boot);
     };
   }, [load]);
 
@@ -307,6 +316,7 @@ export default function AnalyticsLiveOperationsPage() {
             })}
           </div>
         </div>
+        <SilentRefreshToast pulse={silentRefreshPulse} />
       </main>
     </PageAccessGate>
   );

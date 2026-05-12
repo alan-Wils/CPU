@@ -12,6 +12,7 @@ import {
   type AnalyticsSectionKey,
 } from "@/lib/analyticsDashboardPrefs";
 import { defaultAnalyticsDateRange } from "@/lib/analyticsDefaultDateRange";
+import { SilentRefreshToast } from "@/components/analytics/SilentRefreshToast";
 
 export default function AnalyticsPage() {
   const [{ from, to }, setRange] = useState(defaultAnalyticsDateRange);
@@ -21,6 +22,7 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sectionPrefs, setSectionPrefs] = useState(loadAnalyticsDashboardPrefs);
+  const [silentRefreshPulse, setSilentRefreshPulse] = useState(0);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = Boolean(opts?.silent);
@@ -36,7 +38,10 @@ export default function AnalyticsPage() {
         department: department === "all" ? undefined : department,
       });
       setData(out);
-      if (silent) setError(null);
+      if (silent) {
+        setError(null);
+        setSilentRefreshPulse((p) => p + 1);
+      }
     } catch (e) {
       if (!silent) {
         setData(null);
@@ -68,9 +73,14 @@ export default function AnalyticsPage() {
     const id = window.setInterval(() => {
       void tick();
     }, 15_000);
+    /** First silent poll soon after mount so the toast is noticeable without waiting 15s. */
+    const boot = window.setTimeout(() => {
+      void tick();
+    }, 1200);
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      window.clearTimeout(boot);
     };
   }, [load]);
 
@@ -112,6 +122,7 @@ export default function AnalyticsPage() {
             <CultivationStrainMetricsCharts from={from} to={to} />
           </div>
         ) : null}
+        <SilentRefreshToast pulse={silentRefreshPulse} />
       </main>
     </PageAccessGate>
   );
