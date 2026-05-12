@@ -15,7 +15,10 @@ import {
 import {
   upsertLeafLinkStoredOrders,
   countLeafLinkStoredOrdersForCompany,
+  findLeafLinkStoredOrdersForCompanyInRange,
   findRecentLeafLinkStoredOrdersForCompany,
+  findRecentLeafLinkStoredOrdersWithNullCreatedOn,
+  STORED_ORDER_FETCH_HARD_CAP,
   type LeafLinkStoredOrderUpsertInput,
 } from "./leafLinkOrdersStorePrimitives.js";
 
@@ -213,7 +216,7 @@ export type OrdersAnalyticsDto = {
   readFromDatabase: boolean;
   /** This request refreshed LeafLink into the DB before aggregating (`refresh=true`). */
   leafLinkRefreshRan: boolean;
-  /** Stored wholesale rows loaded for this report (same cap as the Orders page — full saved catalogue up to scan limit). */
+  /** Stored wholesale rows whose `createdOn` falls in the UTC window (plus null-`createdOn` rows matched by payload date). */
   storedRowsInRange: number;
   /** All `LeafLinkStoredOrder` rows for this company (same pool as Orders page cache). */
   totalStoredOrders: number;
@@ -2240,7 +2243,9 @@ export class LeafLinkOrdersService {
   }
 
   /**
-   * Aggregate wholesale orders for a **UTC date range** from **saved** DB rows only (same hydration cap as the Orders page).
+   * Aggregate wholesale orders for a **UTC date range** from **saved** DB rows only.
+   * Loads rows by indexed `LeafLinkStoredOrder.createdOn` for the range (not capped to the newest 25k rows),
+   * plus a capped set of `createdOn=null` rows filtered by payload placed-date so MTD totals align with synced LeafLink data.
    * Does not call LeafLink — run **Multi-page sync** / **Refresh** on the Orders page to update Postgres first.
    */
   async getOrdersAnalytics(
@@ -2317,15 +2322,39 @@ export class LeafLinkOrdersService {
     const filteredByLeafLinkCurrentCustomerStatus = false;
     const leafLinkCurrentCustomerCount = 0;
 
-    const fetchLimit = Math.min(STORED_ORDERS_LIST_SCAN_LIMIT, Math.max(totalStoredOrders, 1));
-    const storedDb = await findRecentLeafLinkStoredOrdersForCompany(companyId, fetchLimit);
+    /** Indexed `createdOn` range — avoids undercounting MTD vs LeafLink when the catalogue exceeds the old “newest 25k” scan cap. */
+    const inRangeDb = await findLeafLinkStoredOrdersForCompanyInRange(companyId, {
+      from: new Date(fromMs),
+      to: new Date(toMs),
+    });
+
+    const nullCreatedDb = await findRecentLeafLinkStoredOrdersWithNullCreatedOn(
+      companyId,
+      STORED_ORDER_FETCH_HARD_CAP,
+    );
+
+    type AnalyticsStoredRow = { id: string; payload: unknown; updatedAt: Date };
+    const seenRowIds = new Set(inRangeDb.map((r) => r.id));
+    const extraNullCreatedInRange: AnalyticsStoredRow[] = [];
+    for (const r of nullCreatedDb) {
+      const pair = collectedPairFromStoredPayload(r.payload);
+      if (!pair) continue;
+      const iso = cleanString(pair.summary.createdAt) || leafLinkOrderCreatedIso(pair.raw);
+      const t = Date.parse(iso || "");
+      if (!Number.isFinite(t) || t < fromMs || t > toMs) continue;
+      if (seenRowIds.has(r.id)) continue;
+      seenRowIds.add(r.id);
+      extraNullCreatedInRange.push(r);
+    }
+
+    const storedDb: AnalyticsStoredRow[] = [...inRangeDb, ...extraNullCreatedInRange];
 
     if (totalStoredOrders > STORED_ORDERS_LIST_SCAN_LIMIT) {
-      logWarn("[LEAFLINK] orders_analytics_snapshot_truncated", {
+      logWarn("[LEAFLINK] orders_analytics_catalogue_large", {
         companyId,
         syncedTotal: totalStoredOrders,
-        rowsLoaded: storedDb.length,
-        scanCap: STORED_ORDERS_LIST_SCAN_LIMIT,
+        rowsHydratedForRange: storedDb.length,
+        note: "Totals use createdOn range query plus recent createdOn=null rows (payload date filter).",
       });
     }
 
