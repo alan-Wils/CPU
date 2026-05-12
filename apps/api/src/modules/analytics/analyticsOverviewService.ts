@@ -118,6 +118,8 @@ function mpSellerUsdByDay(rows: { createdAt: Date; total: unknown }[]): Map<stri
 export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
   const { companyId, dateFrom, dateTo, facility, department, platformRole } = input;
   const services = await companyServices.getOrCreate(companyId);
+  /** When false, analytics excludes NexBatch seller marketplace $ and seller order counts from blended KPIs. */
+  const sellerWorkspaceOn = services.salesSellerEnabled;
 
   const fromMs = parseYmdStartUtc(dateFrom);
   const toMs = parseYmdEndUtc(dateTo);
@@ -275,7 +277,8 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
   const leafLinkRevenue = ordersCurrent.qualifyingOrders.reduce((s, o) => s + (Number(o.totalUsd) || 0), 0);
   const leafLinkPrev = ordersPrev.qualifyingOrders.reduce((s, o) => s + (Number(o.totalUsd) || 0), 0);
   const nexbatchSellerRevenue = marketplaceSellerAgg._sum.total ?? 0;
-  const totalRevenue = leafLinkRevenue + nexbatchSellerRevenue;
+  const nexbatchForTotals = sellerWorkspaceOn ? nexbatchSellerRevenue : 0;
+  const totalRevenue = leafLinkRevenue + nexbatchForTotals;
   const prevLeaf = leafLinkPrev;
   const prevNexAgg = await prisma.marketplaceOrder.aggregate({
     where: {
@@ -289,9 +292,11 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     _sum: { total: true },
   });
   const prevNex = prevNexAgg._sum.total ?? 0;
-  const totalRevenuePrev = prevLeaf + prevNex;
+  const prevNexForTotals = sellerWorkspaceOn ? prevNex : 0;
+  const totalRevenuePrev = prevLeaf + prevNexForTotals;
 
-  const totalOrders = ordersCurrent.ordersIncluded + sellerOrderCount + buyerOrderCount;
+  const totalOrders =
+    ordersCurrent.ordersIncluded + (sellerWorkspaceOn ? sellerOrderCount : 0) + buyerOrderCount;
   const activeBatches = activeCultivationBatches + extractionInProgress + packagingInProgress;
 
   const inventoryValue = sumLeafLinkInventoryValueUsd(
@@ -388,7 +393,7 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
   const chartDays = eachUtcDayYmd(dateFrom, dateTo, 120);
   const salesOverTime = chartDays.map((d) => {
     const ll = llByDay.get(d) ?? 0;
-    const nb = mpByDay.get(d) ?? 0;
+    const nb = sellerWorkspaceOn ? (mpByDay.get(d) ?? 0) : 0;
     return { date: d, leafLink: ll, nexbatch: nb, combined: ll + nb };
   });
 
@@ -563,26 +568,29 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     },
   ];
 
-  const orderItems = await prisma.marketplaceOrderItem.findMany({
-    where: {
-      order: {
-        sellerCompanyId: companyId,
-        createdAt: { gte: new Date(fromMs), lte: new Date(toMs) },
-        status: { in: ["FULFILLED", "ACCEPTED"] },
+  let topProducts: { name: string; revenue: number }[] = [];
+  if (sellerWorkspaceOn) {
+    const orderItems = await prisma.marketplaceOrderItem.findMany({
+      where: {
+        order: {
+          sellerCompanyId: companyId,
+          createdAt: { gte: new Date(fromMs), lte: new Date(toMs) },
+          status: { in: ["FULFILLED", "ACCEPTED"] },
+        },
       },
-    },
-    select: { productNameSnapshot: true, lineTotal: true },
-    take: 4000,
-  });
-  const byName = new Map<string, number>();
-  for (const it of orderItems) {
-    const k = String(it.productNameSnapshot || "").trim() || "Unknown";
-    byName.set(k, (byName.get(k) ?? 0) + (Number(it.lineTotal) || 0));
+      select: { productNameSnapshot: true, lineTotal: true },
+      take: 4000,
+    });
+    const byName = new Map<string, number>();
+    for (const it of orderItems) {
+      const k = String(it.productNameSnapshot || "").trim() || "Unknown";
+      byName.set(k, (byName.get(k) ?? 0) + (Number(it.lineTotal) || 0));
+    }
+    topProducts = [...byName.entries()]
+      .map(([name, revenue]) => ({ name, revenue }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 6);
   }
-  const topProducts = [...byName.entries()]
-    .map(([name, revenue]) => ({ name, revenue }))
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 6);
 
   const multiCompany =
     String(platformRole || "") === "nexbatch_admin"
@@ -630,12 +638,18 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
       executive: String(platformRole || "") === "nexbatch_admin",
     },
     kpis: {
-      totalRevenue: { value: totalRevenue, trend: revenueTrend, source: "LeafLink + NexBatch marketplace (seller)" },
+      totalRevenue: {
+        value: totalRevenue,
+        trend: revenueTrend,
+        source: sellerWorkspaceOn
+          ? "LeafLink + NexBatch marketplace (seller)"
+          : "LeafLink wholesale only (seller marketplace workspace off)",
+      },
       totalOrders: {
         value: totalOrders,
         trend: ordersTrend,
         leafLink: ordersCurrent.ordersIncluded,
-        marketplace: sellerOrderCount + buyerOrderCount,
+        marketplace: (sellerWorkspaceOn ? sellerOrderCount : 0) + buyerOrderCount,
       },
       activeBatches: { value: activeBatches, cultivationOpen: activeCultivationBatches, extraction: extractionInProgress, packaging: packagingInProgress },
       inventoryValue: {
@@ -667,21 +681,19 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
           yieldTrendsByStrain,
         }
       : null,
-    sales: services.salesSellerEnabled
-      ? {
-          totalSales: leafLinkRevenue + nexbatchSellerRevenue,
-          avgOrderValue:
-            ordersCurrent.ordersIncluded + sellerOrderCount > 0
-              ? (leafLinkRevenue + nexbatchSellerRevenue) / (ordersCurrent.ordersIncluded + sellerOrderCount)
-              : 0,
-          repeatCustomerPct,
-          openInvoices: null as number | null,
-          topProducts,
-          leafLink: leafLinkRevenue,
-          nexbatch: nexbatchSellerRevenue,
-          salesOverTime,
-        }
-      : null,
+    sales: {
+      totalSales: leafLinkRevenue + nexbatchForTotals,
+      avgOrderValue: (() => {
+        const denom = ordersCurrent.ordersIncluded + (sellerWorkspaceOn ? sellerOrderCount : 0);
+        return denom > 0 ? (leafLinkRevenue + nexbatchForTotals) / denom : 0;
+      })(),
+      repeatCustomerPct,
+      openInvoices: null as number | null,
+      topProducts,
+      leafLink: leafLinkRevenue,
+      nexbatch: nexbatchForTotals,
+      salesOverTime,
+    },
     buyer: services.salesBuyerEnabled
       ? {
           totalPurchases: marketplaceBuyerAgg._sum.total ?? 0,
@@ -731,7 +743,7 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
       cashFlow: null as number | null,
       revenueByChannel: [
         { label: "LeafLink wholesale", value: leafLinkRevenue },
-        { label: "NexBatch marketplace", value: nexbatchSellerRevenue },
+        { label: "NexBatch marketplace (seller)", value: nexbatchForTotals },
       ],
       accountingNote: "Net profit, EBITDA, and cash flow require accounting system integration.",
     },

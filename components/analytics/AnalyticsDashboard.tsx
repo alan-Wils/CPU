@@ -538,14 +538,22 @@ export function AnalyticsDashboard(props: {
           }}
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-          {prefs.production && services?.production ? (
+          {prefs.production ? (
             <Panel
               title="Production overview"
               subtitle="Cultivation, extraction, and packaging signals from relational workflow data."
             >
               {(() => {
                 const p = pick(props.data, "production") as Record<string, unknown> | null | undefined;
-                if (!p) return <p style={{ color: "#94a3b8" }}>No production snapshot.</p>;
+                if (!p) {
+                  return (
+                    <p style={{ color: "#94a3b8" }}>
+                      {services?.production
+                        ? "No production snapshot for this range."
+                        : "Production workspace is off for this company — enable it under NexBatch portal → Workspace services to populate this panel."}
+                    </p>
+                  );
+                }
                 const yieldTrends = p.yieldTrendsByStrain as
                   | { strains: { key: string; label: string }[]; rows: Record<string, string | number>[] }
                   | undefined;
@@ -618,8 +626,15 @@ export function AnalyticsDashboard(props: {
           ) : null}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-          {prefs.sales && services?.seller ? (
-            <Panel title="Sales overview" subtitle="LeafLink wholesale (synced DB) + NexBatch marketplace seller totals.">
+          {prefs.sales ? (
+            <Panel
+              title="Sales overview"
+              subtitle={
+                services?.seller
+                  ? "LeafLink wholesale (synced DB) + NexBatch marketplace seller totals."
+                  : "LeafLink wholesale (synced DB). Seller marketplace workspace is off — NexBatch seller revenue is excluded from totals here."
+              }
+            >
               {(() => {
                 const s = pick(props.data, "sales") as Record<string, unknown> | null | undefined;
                 if (!s) return <p style={{ color: "#94a3b8" }}>No sales snapshot.</p>;
@@ -639,10 +654,16 @@ export function AnalyticsDashboard(props: {
                           <span style={{ color: "#94a3b8" }}>LeafLink</span>{" "}
                           <strong>{money(Number(s.leafLink))}</strong>
                         </div>
-                        <div>
-                          <span style={{ color: "#94a3b8" }}>NexBatch</span>{" "}
-                          <strong>{money(Number(s.nexbatch))}</strong>
-                        </div>
+                        {services?.seller ? (
+                          <div>
+                            <span style={{ color: "#94a3b8" }}>NexBatch</span>{" "}
+                            <strong>{money(Number(s.nexbatch))}</strong>
+                          </div>
+                        ) : (
+                          <div style={{ color: "#64748b", fontSize: 12 }}>
+                            NexBatch seller marketplace is disabled for this workspace.
+                          </div>
+                        )}
                         <div>
                           <span style={{ color: "#94a3b8" }}>Avg order</span>{" "}
                           <strong>{money(Number(s.avgOrderValue))}</strong>
