@@ -363,6 +363,27 @@ function buildLeafLinkStats(items: LeafLinkInventoryItem[]) {
   };
 }
 
+/**
+ * Rows counted in the Inventory page "Total Inventory Value" with **default** UI filters:
+ * `availabilityFilter === "in_stock"` and `statusFilter === "Available"`.
+ * Keep aligned with `app/inventory/page.tsx`.
+ */
+export function leafLinkInventoryRowsForPageDefaultTotals(rows: LeafLinkInventoryItem[]): LeafLinkInventoryItem[] {
+  return rows.filter((row) => {
+    if (!(toNumber(row.availableQuantity) > 0)) return false;
+    const a = String(row.status || "").trim().toLowerCase();
+    return a === "available";
+  });
+}
+
+/** Sum wholesale/unit price × available qty (same formula as Inventory page stats). */
+export function sumLeafLinkInventoryValueUsd(rows: LeafLinkInventoryItem[]): number {
+  return rows.reduce((sum, row) => {
+    const p = row.price == null ? 0 : toNumber(row.price);
+    return sum + p * toNumber(row.availableQuantity);
+  }, 0);
+}
+
 function toNumber(v: unknown): number {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : 0;

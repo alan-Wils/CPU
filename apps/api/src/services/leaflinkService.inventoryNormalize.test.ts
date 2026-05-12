@@ -6,7 +6,12 @@ vi.mock("../config/env.js", () => ({
   },
 }));
 
-import { normalizeLeafLinkInventoryRows } from "./leaflinkService.js";
+import {
+  leafLinkInventoryRowsForPageDefaultTotals,
+  normalizeLeafLinkInventoryRows,
+  sumLeafLinkInventoryValueUsd,
+  type LeafLinkInventoryItem,
+} from "./leaflinkService.js";
 
 describe("normalizeLeafLinkInventoryRows", () => {
   it("resolves nested sub_category and product_line labels", () => {
@@ -120,5 +125,41 @@ describe("normalizeLeafLinkInventoryRows", () => {
     };
     const [row] = normalizeLeafLinkInventoryRows(raw);
     expect(row?.subcategory).toContain("Indica");
+  });
+});
+
+describe("leafLinkInventoryRowsForPageDefaultTotals + sumLeafLinkInventoryValueUsd", () => {
+  function row(p: Partial<LeafLinkInventoryItem>): LeafLinkInventoryItem {
+    return {
+      id: "id",
+      productName: "n",
+      sku: "s",
+      strain: "",
+      category: "",
+      productType: "",
+      subcategory: "",
+      brand: "",
+      availableQuantity: 0,
+      unit: "",
+      packageSize: "",
+      price: 0,
+      status: "",
+      updatedAt: "",
+      imageUrl: "",
+      sourcePackageGroup: "",
+      ...p,
+    };
+  }
+
+  it("matches Inventory page defaults: Available + qty > 0", () => {
+    const rows = [
+      row({ id: "a", availableQuantity: 2, price: 10, status: "Available" }),
+      row({ id: "b", availableQuantity: 1, price: 5, status: "Internal" }),
+      row({ id: "c", availableQuantity: 0, price: 99, status: "Available" }),
+      row({ id: "d", availableQuantity: 3, price: 1, status: "available" }),
+    ];
+    const f = leafLinkInventoryRowsForPageDefaultTotals(rows);
+    expect(f.map((r) => r.id).sort()).toEqual(["a", "d"]);
+    expect(sumLeafLinkInventoryValueUsd(f)).toBeCloseTo(23);
   });
 });

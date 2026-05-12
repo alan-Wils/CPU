@@ -2,10 +2,17 @@ import type { Prisma, WorkflowStage } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { parseYmdEndUtc, parseYmdStartUtc } from "../../lib/analyticsDateRange.js";
 import { CompanyServiceSettingsService } from "../../services/companyServiceSettingsService.js";
+import {
+  LeafLinkInventoryService,
+  leafLinkInventoryRowsForPageDefaultTotals,
+  sumLeafLinkInventoryValueUsd,
+  type LeafLinkInventoryItem,
+} from "../../services/leaflinkService.js";
 import { LeafLinkOrdersService } from "../../services/leafLinkOrdersService.js";
 
 const companyServices = new CompanyServiceSettingsService();
 const ordersService = new LeafLinkOrdersService();
+const leafLinkInventoryService = new LeafLinkInventoryService();
 
 export type AnalyticsOverviewInput = {
   companyId: string;
@@ -137,7 +144,7 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     sellerOrderCount,
     marketplaceBuyerAgg,
     buyerOrderCount,
-    inventoryProducts,
+    leafLinkInventoryItems,
     marketplaceSellerOrdersInRange,
     ordersCurrent,
     ordersPrev,
@@ -222,11 +229,17 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
         createdAt: { gte: new Date(fromMs), lte: new Date(toMs) },
       },
     }),
-    prisma.marketplaceProduct.findMany({
-      where: { companyId },
-      select: { price: true, quantityAvailable: true },
-      take: 8000,
-    }),
+    (async (): Promise<LeafLinkInventoryItem[]> => {
+      try {
+        const inv = await leafLinkInventoryService.fetchAvailableInventory(companyId, {
+          refresh: false,
+          actorUserId: "system",
+        });
+        return inv.items;
+      } catch {
+        return [];
+      }
+    })(),
     prisma.marketplaceOrder.findMany({
       where: {
         sellerCompanyId: companyId,
@@ -281,9 +294,8 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
   const totalOrders = ordersCurrent.ordersIncluded + sellerOrderCount + buyerOrderCount;
   const activeBatches = activeCultivationBatches + extractionInProgress + packagingInProgress;
 
-  const inventoryValue = inventoryProducts.reduce(
-    (s, p) => s + (Number(p.price) || 0) * (Number(p.quantityAvailable) || 0),
-    0,
+  const inventoryValue = sumLeafLinkInventoryValueUsd(
+    leafLinkInventoryRowsForPageDefaultTotals(leafLinkInventoryItems),
   );
 
   const laborCostRange = laborEntriesRange.reduce((s, e) => s + (Number(e.totalCost) || 0), 0);
@@ -626,7 +638,10 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
         marketplace: sellerOrderCount + buyerOrderCount,
       },
       activeBatches: { value: activeBatches, cultivationOpen: activeCultivationBatches, extraction: extractionInProgress, packaging: packagingInProgress },
-      inventoryValue: { value: inventoryValue, note: "Σ list price × qty available (seller catalog)" },
+      inventoryValue: {
+        value: inventoryValue,
+        note: "LeafLink: Σ price × qty (status Available, qty>0 — matches Inventory page defaults)",
+      },
       grossMarginPct: { value: null as number | null, note: "Requires COGS allocation — not computed server-side yet." },
       laborCostToday: { value: laborCostToday },
       employeesClockedIn: {
