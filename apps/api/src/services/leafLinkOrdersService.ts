@@ -216,7 +216,7 @@ export type OrdersAnalyticsDto = {
   readFromDatabase: boolean;
   /** This request refreshed LeafLink into the DB before aggregating (`refresh=true`). */
   leafLinkRefreshRan: boolean;
-  /** Stored wholesale rows whose `createdOn` falls in the UTC window (plus null-`createdOn` rows matched by payload date). */
+  /** Stored wholesale rows considered for this report (padded `createdOn` fetch + null-created + repair); strict totals filter by payload placed instant. */
   storedRowsInRange: number;
   /** All `LeafLinkStoredOrder` rows for this company (same pool as Orders page cache). */
   totalStoredOrders: number;
@@ -2244,8 +2244,9 @@ export class LeafLinkOrdersService {
 
   /**
    * Aggregate wholesale orders for a **UTC date range** from **saved** DB rows only.
-   * Loads rows by indexed `LeafLinkStoredOrder.createdOn` for the range (not capped to the newest 25k rows),
-   * plus a capped set of `createdOn=null` rows filtered by payload placed-date so MTD totals align with synced LeafLink data.
+   * Hydrates with a **padded `createdOn` window** (DB timestamps can skew from LeafLink payload “placed” time),
+   * merges `createdOn=null` rows, then a **repair scan** over recent stored orders so payload-in-range rows are never dropped.
+   * Totals use **payload placed time** in the strict `[dateFrom, dateTo]` UTC window (same as `summary.createdAt` / upsert).
    * Does not call LeafLink — run **Multi-page sync** / **Refresh** on the Orders page to update Postgres first.
    */
   async getOrdersAnalytics(
@@ -2322,10 +2323,30 @@ export class LeafLinkOrdersService {
     const filteredByLeafLinkCurrentCustomerStatus = false;
     const leafLinkCurrentCustomerCount = 0;
 
-    /** Indexed `createdOn` range — avoids undercounting MTD vs LeafLink when the catalogue exceeds the old “newest 25k” scan cap. */
-    const inRangeDb = await findLeafLinkStoredOrdersForCompanyInRange(companyId, {
-      from: new Date(fromMs),
-      to: new Date(toMs),
+    type AnalyticsStoredRow = { id: string; payload: unknown; updatedAt: Date };
+
+    /** LeafLink “placed” instant used for analytics range — must match loop + upsert semantics. */
+    function orderPayloadPlacedMs(raw: Record<string, unknown>, o: LeafLinkOrderSummaryDto): number {
+      const createdIsoAgg = cleanString(o.createdAt) || leafLinkOrderCreatedIso(raw);
+      return Date.parse(createdIsoAgg || "");
+    }
+
+    /** Extra `createdOn` slack so rows whose DB timestamp skews from payload still hydrate (MTD vs LeafLink). */
+    function padMsForCreatedOnHydration(windowFromMs: number, windowToMs: number): number {
+      const span = windowToMs - windowFromMs;
+      if (!Number.isFinite(span) || span < 0) return 86_400_000;
+      if (span > 120 * 86_400_000) return 24 * 3600000;
+      if (span > 31 * 86_400_000) return 2 * 86_400_000;
+      return 4 * 86_400_000;
+    }
+
+    const padMs = padMsForCreatedOnHydration(fromMs, toMs);
+    const paddedFrom = new Date(fromMs - padMs);
+    const paddedTo = new Date(toMs + padMs);
+
+    const paddedDb = await findLeafLinkStoredOrdersForCompanyInRange(companyId, {
+      from: paddedFrom,
+      to: paddedTo,
     });
 
     const nullCreatedDb = await findRecentLeafLinkStoredOrdersWithNullCreatedOn(
@@ -2333,28 +2354,37 @@ export class LeafLinkOrdersService {
       STORED_ORDER_FETCH_HARD_CAP,
     );
 
-    type AnalyticsStoredRow = { id: string; payload: unknown; updatedAt: Date };
-    const seenRowIds = new Set(inRangeDb.map((r) => r.id));
-    const extraNullCreatedInRange: AnalyticsStoredRow[] = [];
+    const byId = new Map<string, AnalyticsStoredRow>();
+    for (const r of paddedDb) byId.set(r.id, { id: r.id, payload: r.payload, updatedAt: r.updatedAt });
+
     for (const r of nullCreatedDb) {
+      if (byId.has(r.id)) continue;
       const pair = collectedPairFromStoredPayload(r.payload);
       if (!pair) continue;
-      const iso = cleanString(pair.summary.createdAt) || leafLinkOrderCreatedIso(pair.raw);
-      const t = Date.parse(iso || "");
+      const t = orderPayloadPlacedMs(pair.raw, pair.summary);
       if (!Number.isFinite(t) || t < fromMs || t > toMs) continue;
-      if (seenRowIds.has(r.id)) continue;
-      seenRowIds.add(r.id);
-      extraNullCreatedInRange.push(r);
+      byId.set(r.id, { id: r.id, payload: r.payload, updatedAt: r.updatedAt });
     }
 
-    const storedDb: AnalyticsStoredRow[] = [...inRangeDb, ...extraNullCreatedInRange];
+    const repairFetch = Math.min(STORED_ORDERS_LIST_SCAN_LIMIT, Math.max(totalStoredOrders, 1));
+    const recentForRepair = await findRecentLeafLinkStoredOrdersForCompany(companyId, repairFetch);
+    for (const r of recentForRepair) {
+      if (byId.has(r.id)) continue;
+      const pair = collectedPairFromStoredPayload(r.payload);
+      if (!pair) continue;
+      const t = orderPayloadPlacedMs(pair.raw, pair.summary);
+      if (!Number.isFinite(t) || t < fromMs || t > toMs) continue;
+      byId.set(r.id, { id: r.id, payload: r.payload, updatedAt: r.updatedAt });
+    }
+
+    const storedDb = [...byId.values()];
 
     if (totalStoredOrders > STORED_ORDERS_LIST_SCAN_LIMIT) {
       logWarn("[LEAFLINK] orders_analytics_catalogue_large", {
         companyId,
         syncedTotal: totalStoredOrders,
-        rowsHydratedForRange: storedDb.length,
-        note: "Totals use createdOn range query plus recent createdOn=null rows (payload date filter).",
+        rowsHydratedForAnalytics: storedDb.length,
+        note: "Hydrates padded createdOn window + null-created + recent repair; totals use payload placed time in strict UTC range.",
       });
     }
 
@@ -2362,8 +2392,7 @@ export class LeafLinkOrdersService {
     for (const r of storedDb) {
       const pair = collectedPairFromStoredPayload(r.payload);
       if (!pair) continue;
-      const iso = cleanString(pair.summary.createdAt) || leafLinkOrderCreatedIso(pair.raw);
-      const t = Date.parse(iso || "");
+      const t = orderPayloadPlacedMs(pair.raw, pair.summary);
       if (!Number.isFinite(t) || t < fromMs || t > toMs) continue;
       storedRowsInRange++;
     }
@@ -2377,8 +2406,10 @@ export class LeafLinkOrdersService {
     const collected: { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }[] = [];
     for (const r of storedDb) {
       const pair = collectedPairFromStoredPayload(r.payload);
-      if (pair)
-        collected.push(pair);
+      if (!pair) continue;
+      const t = orderPayloadPlacedMs(pair.raw, pair.summary);
+      if (!Number.isFinite(t) || t < fromMs || t > toMs) continue;
+      collected.push(pair);
     }
 
     let dayList = enumerateUtcDaysInclusive(dateFrom, dateTo);
@@ -2452,10 +2483,8 @@ export class LeafLinkOrdersService {
 
       const buyerCanon = buyerKeys[0];
 
-      const createdIsoAgg = cleanString(o.createdAt) || leafLinkOrderCreatedIso(raw);
-      const t = Date.parse(createdIsoAgg || "");
+      const t = orderPayloadPlacedMs(raw, o);
       if (!Number.isFinite(t)) continue;
-      if (t < fromMs || t > toMs) continue;
 
       const rawMoney = effectiveOrderTotalUsd(raw, o);
       const money = typeof rawMoney === "number" && Number.isFinite(rawMoney) ? Math.max(0, rawMoney) : 0;

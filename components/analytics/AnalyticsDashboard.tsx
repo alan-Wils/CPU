@@ -236,7 +236,9 @@ export function AnalyticsDashboard(props: {
     try {
       const a = new Date(`${props.from}T00:00:00Z`);
       const b = new Date(`${props.to}T00:00:00Z`);
-      return `${a.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${b.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+      const opts = { month: "short" as const, day: "numeric" as const, timeZone: "UTC" };
+      const endOpts = { ...opts, year: "numeric" as const };
+      return `${a.toLocaleDateString(undefined, opts)} – ${b.toLocaleDateString(undefined, endOpts)}`;
     } catch {
       return `${props.from} – ${props.to}`;
     }
