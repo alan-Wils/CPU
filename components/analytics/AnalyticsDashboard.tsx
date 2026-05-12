@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import type { AnalyticsOverviewJson } from "@/lib/analyticsOverviewApi";
@@ -717,8 +718,8 @@ export function AnalyticsDashboard(props: {
                   ),
                 )}
               </ul>
-              <a
-                href="/extraction"
+              <Link
+                href="/analytics/live-operations"
                 style={{
                   display: "inline-block",
                   marginTop: 12,
@@ -732,11 +733,11 @@ export function AnalyticsDashboard(props: {
                 }}
               >
                 Go to Live Operations →
-              </a>
+              </Link>
               <div style={{ marginTop: 14, color: "#94a3b8", fontSize: 12, fontWeight: 700 }}>Recent task logs</div>
               <ul style={{ margin: "8px 0 0", paddingLeft: 16, color: "#cbd5e1", fontSize: 12, listStyle: "circle" }}>
                 {(pick(props.data, "taskLogPreview") as { stage?: string; minutes?: number; at?: string }[] | undefined)
-                  ?.slice(0, 6)
+                  ?.slice(0, 3)
                   .map((t, i) => (
                     <li key={`${t.at}-top-${i}`} style={{ marginBottom: 6 }}>
                       <span style={{ color: "#e2e8f0" }}>{String(t.stage ?? "—")}</span> · {t.minutes ?? 0}m ·{" "}
@@ -744,6 +745,13 @@ export function AnalyticsDashboard(props: {
                     </li>
                   ))}
               </ul>
+              <p style={{ margin: "10px 0 0", color: "#64748b", fontSize: 12 }}>
+                Open{" "}
+                <Link href="/analytics/live-operations" style={{ color: "#38bdf8", fontWeight: 600 }}>
+                  Live operations
+                </Link>{" "}
+                for full task, extraction, packaging, and labor lists.
+              </p>
             </Panel>
           </div>
         </div>

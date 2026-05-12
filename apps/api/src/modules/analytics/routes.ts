@@ -11,6 +11,7 @@ import {
     mergeFreshFrozenSourcesForAnalytics,
 } from "./buildCultivationStrainMetricPoints.js";
 import { buildAnalyticsOverview } from "./analyticsOverviewService.js";
+import { buildLiveOperationsDetail } from "./liveOperationsDetailService.js";
 
 const storeService = new StoreService();
 
@@ -124,6 +125,16 @@ analyticsRouter.get(
             department: department === "all" ? null : department,
             platformRole: auth?.platformRole ?? null,
         });
+        res.json(out);
+    }),
+);
+
+analyticsRouter.get(
+    "/live-operations",
+    requireRoleOrAppPermission(analyticsReadRoles, "page.analytics"),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const out = await buildLiveOperationsDetail(companyId);
         res.json(out);
     }),
 );
