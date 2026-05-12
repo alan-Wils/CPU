@@ -960,6 +960,9 @@ export default function Cultivation() {
   const [selectedStage, setSelectedStage] = useState<StageModalKey>(null);
   /** Veg/Flower stage modal: null = room picker when multiple rooms; otherwise selected room id or unassigned sentinel. */
   const [stageModalRoomId, setStageModalRoomId] = useState<string | null>(null);
+  /** Veg/Flower room detail: collapsed bay cards; expand one bay to see table rows, then expand a table to see batch cards. */
+  const [stageModalExpandedBayId, setStageModalExpandedBayId] = useState<string | null>(null);
+  const [stageModalExpandedTableKeys, setStageModalExpandedTableKeys] = useState<string[]>([]);
   /** Dry-flower panel stage filter (Buck/Trim, Decon/Cure, Lab Testing, Ready to Package). null = show all active. */
   const [selectedDryFlowerStage, setSelectedDryFlowerStage] = useState<DryFlowerUiStageKey | null>(null);
 
@@ -1796,6 +1799,29 @@ export default function Cultivation() {
           cultivationStageModalRoomConfig,
         )
       : [];
+
+  const cultivationStageModalBaysGrouped = useMemo(() => {
+    const groups = cultivationStageModalBayTableGroups;
+    const order: string[] = [];
+    const byBay = new Map<string, StageModalBayTableGroup[]>();
+    for (const g of groups) {
+      if (!byBay.has(g.bayId)) {
+        byBay.set(g.bayId, []);
+        order.push(g.bayId);
+      }
+      byBay.get(g.bayId)!.push(g);
+    }
+    return order.map((bayId) => {
+      const tables = byBay.get(bayId)!;
+      const batchCount = tables.reduce((sum, t) => sum + t.batches.length, 0);
+      return { bayId, bayLabel: tables[0]?.bayLabel ?? bayId, tables, batchCount };
+    });
+  }, [cultivationStageModalBayTableGroups]);
+
+  useEffect(() => {
+    setStageModalExpandedBayId(null);
+    setStageModalExpandedTableKeys([]);
+  }, [stageModalEffectiveRoomId, selectedStage, showStageModalRoomPicker]);
 
   const activeDryFlowerBatches = s.dryFlowerBatches.filter(
     (batch: any) => batch.status !== "Complete"
@@ -7611,42 +7637,78 @@ export default function Cultivation() {
                 ))}
               </div>
             ) : selectedStage !== "Clones" && stageModalUsesRoomHierarchy ? (
-              <div>
-                {cultivationStageModalBayTableGroups.map((grp, gi) => {
-                  const prev = cultivationStageModalBayTableGroups[gi - 1];
-                  const showBayHeading = !prev || prev.bayId !== grp.bayId;
+              <div style={{ display: "grid", gap: 10 }}>
+                {cultivationStageModalBaysGrouped.map((bay) => {
+                  const isBayOpen = stageModalExpandedBayId === bay.bayId;
                   return (
-                    <div
-                      key={`${grp.bayId}:${grp.tableKey}:${gi}`}
-                      style={{
-                        marginBottom: 14,
-                        paddingBottom: gi === cultivationStageModalBayTableGroups.length - 1 ? 0 : 4,
-                      }}
-                    >
-                      {showBayHeading ? (
-                        <div
-                          style={{
-                            fontWeight: 800,
-                            fontSize: 15,
-                            marginBottom: 8,
-                            color: "#93c5fd",
-                            letterSpacing: 0.3,
-                          }}
-                        >
-                          {grp.bayLabel}
-                        </div>
-                      ) : null}
-                      <div
+                    <div key={bay.bayId} style={{ display: "grid", gap: 8 }}>
+                      <button
+                        type="button"
                         style={{
-                          fontWeight: 600,
-                          color: "#e2e8f0",
-                          marginBottom: 8,
-                          fontSize: 13,
+                          ...rowStyle,
+                          cursor: "pointer",
+                          textAlign: "left",
+                          justifyContent: "flex-start",
+                          marginBottom: 0,
+                        }}
+                        onClick={() => {
+                          setStageModalExpandedBayId((prev) => (prev === bay.bayId ? null : bay.bayId));
+                          setStageModalExpandedTableKeys([]);
                         }}
                       >
-                        Tables: {grp.tableLabel}
-                      </div>
-                      {grp.batches.map((b: any) => cultivationStageModalBatchCard(b))}
+                        <div style={{ flex: 1, lineHeight: 1.5 }}>
+                          <b style={{ fontSize: 16, color: "#93c5fd" }}>{bay.bayLabel}</b>
+                          <span style={{ color: "#cbd5e1", marginLeft: 8 }}>
+                            ({bay.batchCount} batch{bay.batchCount === 1 ? "" : "es"})
+                          </span>
+                          <span style={{ color: "#64748b", marginLeft: 8, fontSize: 12 }}>{isBayOpen ? "▼" : "▶"}</span>
+                        </div>
+                      </button>
+                      {isBayOpen ? (
+                        <div style={{ paddingLeft: 8, display: "grid", gap: 10 }}>
+                          {bay.tables.map((grp) => {
+                            const tableRowKey = `${bay.bayId}\u0001${grp.tableKey}`;
+                            const isTableOpen = stageModalExpandedTableKeys.includes(tableRowKey);
+                            return (
+                              <div key={tableRowKey} style={{ display: "grid", gap: 8 }}>
+                                <button
+                                  type="button"
+                                  style={{
+                                    ...rowStyle,
+                                    cursor: "pointer",
+                                    textAlign: "left",
+                                    justifyContent: "flex-start",
+                                    marginBottom: 0,
+                                    padding: "8px 10px",
+                                  }}
+                                  onClick={() => {
+                                    setStageModalExpandedTableKeys((prev) =>
+                                      prev.includes(tableRowKey) ? prev.filter((x) => x !== tableRowKey) : [...prev, tableRowKey],
+                                    );
+                                  }}
+                                >
+                                  <div style={{ flex: 1, lineHeight: 1.45 }}>
+                                    <span style={{ fontWeight: 600, color: "#e2e8f0", fontSize: 13 }}>
+                                      Tables: {grp.tableLabel}
+                                    </span>
+                                    <span style={{ color: "#cbd5e1", marginLeft: 8, fontSize: 13 }}>
+                                      ({grp.batches.length} batch{grp.batches.length === 1 ? "" : "es"})
+                                    </span>
+                                    <span style={{ color: "#64748b", marginLeft: 8, fontSize: 11 }}>
+                                      {isTableOpen ? "▼" : "▶"}
+                                    </span>
+                                  </div>
+                                </button>
+                                {isTableOpen ? (
+                                  <div style={{ paddingLeft: 6, display: "grid", gap: 4 }}>
+                                    {grp.batches.map((b: any) => cultivationStageModalBatchCard(b))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })}
