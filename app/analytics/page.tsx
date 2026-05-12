@@ -11,17 +11,10 @@ import {
   saveAnalyticsDashboardPrefs,
   type AnalyticsSectionKey,
 } from "@/lib/analyticsDashboardPrefs";
-
-function defaultDateRange() {
-  const to = new Date();
-  const from = new Date();
-  from.setDate(from.getDate() - 6);
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  return { from: iso(from), to: iso(to) };
-}
+import { defaultAnalyticsDateRange } from "@/lib/analyticsDefaultDateRange";
 
 export default function AnalyticsPage() {
-  const [{ from, to }, setRange] = useState(defaultDateRange);
+  const [{ from, to }, setRange] = useState(defaultAnalyticsDateRange);
   const [facility, setFacility] = useState("");
   const [department, setDepartment] = useState("all");
   const [autoRefresh, setAutoRefresh] = useState(false);
