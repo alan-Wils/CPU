@@ -200,6 +200,14 @@ export default function AnalyticsLiveOperationsPage() {
   }, [load]);
 
   useEffect(() => {
+    if (!data?.cards?.length) return;
+    const h = typeof window !== "undefined" ? window.location.hash.slice(1) : "";
+    if (!h.startsWith("live-ops-card-")) return;
+    const cardId = h.slice("live-ops-card-".length);
+    if (data.cards.some((c) => c.id === cardId)) setExpandedId(cardId);
+  }, [data]);
+
+  useEffect(() => {
     let cancelled = false;
     let inFlight = false;
 
@@ -268,6 +276,7 @@ export default function AnalyticsLiveOperationsPage() {
               return (
                 <div
                   key={card.id}
+                  id={`live-ops-card-${card.id}`}
                   style={{
                     borderRadius: 14,
                     border: "1px solid rgba(51,65,85,0.85)",

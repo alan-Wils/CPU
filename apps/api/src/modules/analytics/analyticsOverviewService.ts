@@ -554,7 +554,7 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
       kind: "tasks",
       title: "Task logs with reference (14d)",
       detail: `${taskLinkedRecent} entries`,
-      href: "/tasks",
+      href: "/analytics/live-operations#live-ops-card-task_logs",
     },
     {
       kind: "extraction",
