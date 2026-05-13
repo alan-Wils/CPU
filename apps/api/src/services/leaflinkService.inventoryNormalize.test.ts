@@ -7,12 +7,27 @@ vi.mock("../config/env.js", () => ({
 }));
 
 import {
+  CURRENT_LEAFLINK_INVENTORY_NORMALIZATION_VERSION,
+  isLeafLinkInventorySnapshotCurrent,
   leafLinkActiveProductsQtyBreakdown,
   leafLinkInventoryRowsForPageDefaultTotals,
   normalizeLeafLinkInventoryRows,
   sumLeafLinkInventoryValueUsd,
   type LeafLinkInventoryItem,
 } from "./leaflinkService.js";
+
+describe("isLeafLinkInventorySnapshotCurrent", () => {
+  it("accepts only the current normalization version", () => {
+    expect(isLeafLinkInventorySnapshotCurrent({ normalizationVersion: 2 })).toBe(true);
+    expect(isLeafLinkInventorySnapshotCurrent({ normalizationVersion: 1 })).toBe(false);
+    expect(isLeafLinkInventorySnapshotCurrent({})).toBe(false);
+    expect(isLeafLinkInventorySnapshotCurrent(null)).toBe(false);
+  });
+
+  it("exports a stable CURRENT_LEAFLINK_INVENTORY_NORMALIZATION_VERSION", () => {
+    expect(CURRENT_LEAFLINK_INVENTORY_NORMALIZATION_VERSION).toBeGreaterThanOrEqual(2);
+  });
+});
 
 describe("leafLinkActiveProductsQtyBreakdown", () => {
   it("matches LeafLink UI: 538 total, 137 reserved, 401 available", () => {

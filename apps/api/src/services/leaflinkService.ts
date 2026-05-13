@@ -319,15 +319,28 @@ export type LeafLinkInventoryResponse = {
     listSource: string;
     rawRowCount: number;
     firstRowKeys: string[];
+    /** Snapshot / normalization contract used for this pull (see `CURRENT_LEAFLINK_INVENTORY_NORMALIZATION_VERSION`). */
+    normalizationVersion?: number;
   };
 };
 
 const LEAFLINK_INVENTORY_CACHE_KEY = "leaflink_inventory_snapshot";
 
+/** Bump when inventory normalization semantics change so Postgres snapshots re-pull (avoids stale availableQuantity). */
+export const CURRENT_LEAFLINK_INVENTORY_NORMALIZATION_VERSION = 2;
+
 type LeafLinkPersistedInventory = {
   items: LeafLinkInventoryItem[];
   lastSyncedAt: string;
+  /** When missing or stale, cached rows are not served and incremental `modified__gte` is not used. */
+  normalizationVersion?: number;
 };
+
+export function isLeafLinkInventorySnapshotCurrent(
+  snapshot: { normalizationVersion?: number } | null | undefined,
+): boolean {
+  return snapshot != null && snapshot.normalizationVersion === CURRENT_LEAFLINK_INVENTORY_NORMALIZATION_VERSION;
+}
 
 function appendModifiedGteFilter(endpointUrl: string, iso?: string): string {
   if (!iso?.trim()) return endpointUrl;
@@ -350,6 +363,45 @@ function mergeLeafLinkSnapshots(
   const map = new Map(previous.map((x) => [x.id, x]));
   for (const row of incoming) map.set(row.id, row);
   return Array.from(map.values());
+}
+
+const LEAFLINK_QTY_TRACE_SKU = /B1677|BBM-LRO/i;
+
+/** Debug-only: LeafLink row → normalized item qty for hot SKUs (e.g. active-products vs cache bugs). */
+function leafLinkLogInventoryQtyDebugTrace(
+  companyId: string,
+  phase: string,
+  rawRows: Record<string, unknown>[] | undefined,
+  items: LeafLinkInventoryItem[] | undefined,
+): void {
+  const rowsOut: unknown[] = [];
+  if (rawRows?.length) {
+    for (const r of rawRows) {
+      const sku = pickString(r, ["sku", "product_sku"]) || pickString(r, ["id"]);
+      if (!LEAFLINK_QTY_TRACE_SKU.test(sku)) continue;
+      rowsOut.push({
+        phase: `${phase}_raw`,
+        sku,
+        quantity: r.quantity ?? null,
+        reserved_qty: r.reserved_qty ?? null,
+      });
+    }
+  }
+  if (items?.length) {
+    for (const r of items) {
+      if (!LEAFLINK_QTY_TRACE_SKU.test(r.sku) && !LEAFLINK_QTY_TRACE_SKU.test(r.id)) continue;
+      rowsOut.push({
+        phase: `${phase}_normalized`,
+        id: r.id,
+        sku: r.sku,
+        availableQuantity: r.availableQuantity,
+        totalQuantity: r.totalQuantity ?? null,
+        reservedQuantity: r.reservedQuantity ?? null,
+      });
+    }
+  }
+  if (!rowsOut.length) return;
+  logInfo("[LEAFLINK] inventory_qty_trace", { companyId, phase, rows: rowsOut });
 }
 
 function buildLeafLinkStats(items: LeafLinkInventoryItem[]) {
@@ -1363,6 +1415,12 @@ async function fetchLeafLinkInventoryFromApi(
       itemCount: items.length,
       modifiedGte: modifiedGte || null,
     });
+    leafLinkLogInventoryQtyDebugTrace(
+      String(creds.companyId || creds.companySlug || "leaflink"),
+      "post_normalize_pull",
+      merged.rows.map((x) => asRecord(x)),
+      items,
+    );
   }
   return {
     items,
@@ -1399,11 +1457,15 @@ export class LeafLinkInventoryService {
     snapshot: LeafLinkPersistedInventory,
     actorUserId: string,
   ): Promise<void> {
+    const value: LeafLinkPersistedInventory = {
+      ...snapshot,
+      normalizationVersion: CURRENT_LEAFLINK_INVENTORY_NORMALIZATION_VERSION,
+    };
     await this.configService.upsert({
       companyId,
       actorUserId: actorUserId || "system",
       key: LEAFLINK_INVENTORY_CACHE_KEY,
-      value: snapshot,
+      value,
     });
   }
 
@@ -1451,15 +1513,30 @@ export class LeafLinkInventoryService {
     const actorUserId = String(opts?.actorUserId || "").trim();
 
     const persisted = await this.loadPersistedInventory(companyId);
-    if (!refresh && persisted?.items?.length) {
+    const cacheIsCurrent = isLeafLinkInventorySnapshotCurrent(persisted ?? undefined);
+
+    if (!refresh && persisted?.items?.length && cacheIsCurrent) {
+      if (debug) {
+        leafLinkLogInventoryQtyDebugTrace(companyId, "cache_hit_response", undefined, persisted.items);
+      }
       return this.responseFromItems(persisted.items, persisted.lastSyncedAt, {
         fromCache: true,
         syncMode: "cache",
       });
     }
 
+    if (!refresh && persisted?.items?.length && !cacheIsCurrent) {
+      logInfo("[LEAFLINK] inventory_cache_stale_normalization", {
+        companyId,
+        storedVersion: persisted.normalizationVersion ?? null,
+        expectedVersion: CURRENT_LEAFLINK_INVENTORY_NORMALIZATION_VERSION,
+      });
+    }
+
     const incrementalSince =
-      refresh && persisted?.items?.length && persisted.lastSyncedAt ? persisted.lastSyncedAt : undefined;
+      refresh && persisted?.items?.length && persisted.lastSyncedAt && cacheIsCurrent
+        ? persisted.lastSyncedAt
+        : undefined;
 
     const runPull = (modifiedGte: string | undefined) =>
       fetchLeafLinkInventoryFromApi(creds, creds.source, modifiedGte, debug);
@@ -1511,8 +1588,13 @@ export class LeafLinkInventoryService {
             listSource: pull.mergedListSourceTag,
             rawRowCount: pull.rawRowCount,
             firstRowKeys: pull.firstRowKeys,
+            normalizationVersion: CURRENT_LEAFLINK_INVENTORY_NORMALIZATION_VERSION,
           }
         : undefined;
+
+    if (debug) {
+      leafLinkLogInventoryQtyDebugTrace(companyId, "final_api_response", undefined, mergedItems);
+    }
 
     return this.responseFromItems(mergedItems, lastSyncedAt, {
       fromCache: false,
