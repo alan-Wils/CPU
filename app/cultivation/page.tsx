@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
+import SectionCalendarLauncher from "@/components/SectionCalendarLauncher";
 import {
   canDeleteRecords as userCanDeleteWorkflow,
   canManageCultivationBatchPlacement,
@@ -1872,6 +1873,15 @@ export default function Cultivation() {
       setSelectedTask(currentTasks[0]);
     }
   }, [selectedBatch, currentTasks, selectedTask]);
+
+  const cultivationCalendarTaskSuggestions = useMemo(() => {
+    const out = new Set<string>();
+    for (const t of [...cloneTasks, ...vegTasks, ...flowerTasks]) {
+      const s = String(t || "").trim();
+      if (s) out.add(s);
+    }
+    return [...out].sort((a, b) => a.localeCompare(b));
+  }, [cloneTasks, vegTasks, flowerTasks]);
 
   function forceRefresh() {
     persistStore();
@@ -7199,24 +7209,31 @@ export default function Cultivation() {
                 Manage clone, veg, flower, dry flower, testing, packaging, and completed batch history.
               </p>
             </div>
-            <Link
-              href="/cultivation/room-stats"
-              style={{
-                flexShrink: 0,
-                alignSelf: "center",
-                padding: "10px 16px",
-                borderRadius: 10,
-                border: "1px solid #0891b2",
-                background: "#0c4a6e",
-                color: "#a5f3fc",
-                fontWeight: 800,
-                fontSize: 14,
-                textDecoration: "none",
-                boxShadow: "0 0 0 1px rgba(6,182,212,0.25)",
-              }}
-            >
-              Room stats
-            </Link>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", flexShrink: 0 }}>
+              <SectionCalendarLauncher
+                section="cultivation"
+                taskSuggestions={cultivationCalendarTaskSuggestions}
+                readOnly={!canWriteRecords}
+              />
+              <Link
+                href="/cultivation/room-stats"
+                style={{
+                  flexShrink: 0,
+                  alignSelf: "center",
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "1px solid #0891b2",
+                  background: "#0c4a6e",
+                  color: "#a5f3fc",
+                  fontWeight: 800,
+                  fontSize: 14,
+                  textDecoration: "none",
+                  boxShadow: "0 0 0 1px rgba(6,182,212,0.25)",
+                }}
+              >
+                Room stats
+              </Link>
+            </div>
           </div>
         </div>
 

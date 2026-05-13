@@ -174,6 +174,8 @@ model Company {
   marketplaceOrdersAsBuyer  MarketplaceOrder[] @relation("MarketplaceOrderBuyer")
   marketplaceOrdersAsSeller MarketplaceOrder[] @relation("MarketplaceOrderSeller")
 
+  sectionCalendarEvents SectionCalendarEvent[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -685,6 +687,25 @@ model TaskLog {
   createdAt   DateTime      @default(now())
 
   @@index([companyId, createdAt])
+}
+
+/// Per-section scheduled tasks (company timezone `dateYmd`); not workflow TaskLog completions.
+model SectionCalendarEvent {
+  id                String   @id @default(cuid())
+  companyId         String
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  /// cultivation | extraction | packaging
+  section           String
+  /// YYYY-MM-DD in company display timezone
+  dateYmd           String
+  title             String
+  notes             String?
+  batchRef          String?
+  createdByUserId   String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([companyId, section, dateYmd])
 }
 
 model CompanyConfig {

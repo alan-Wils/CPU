@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
+import SectionCalendarLauncher from "@/components/SectionCalendarLauncher";
 import { store } from "@/lib/store";
 import {
   displayNameFromLogActor,
@@ -2648,12 +2649,28 @@ export default function Extraction() {
       <div style={shellStyle}>
         <Nav />
 
-        <div style={{ textAlign: "center", marginTop: 24 }}>
-          <h1 style={{ margin: 0 }}>Extraction</h1>
-          <p style={{ color: "#94a3b8", marginTop: 8 }}>
-            Create extraction batches and log purge, whip, terp separation,
-            decarb, testing, and finish tasks.
-          </p>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 14,
+            marginTop: 24,
+          }}
+        >
+          <div style={{ textAlign: "center" }}>
+            <h1 style={{ margin: 0 }}>Extraction</h1>
+            <p style={{ color: "#94a3b8", marginTop: 8 }}>
+              Create extraction batches and log purge, whip, terp separation,
+              decarb, testing, and finish tasks.
+            </p>
+          </div>
+          <SectionCalendarLauncher
+            section="extraction"
+            taskSuggestions={extractionTaskList}
+            readOnly={!userCanWrite}
+          />
         </div>
 
         {!userCanWrite && (

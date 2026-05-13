@@ -174,14 +174,13 @@ model Company {
   marketplaceOrdersAsBuyer  MarketplaceOrder[] @relation("MarketplaceOrderBuyer")
   marketplaceOrdersAsSeller MarketplaceOrder[] @relation("MarketplaceOrderSeller")
 
-  /// NexBatch direct messages: this company appears as a participant or as a sender.
-  conversationParticipations ConversationParticipant[] @relation("ConversationCompany")
-  conversationMessagesSent   ConversationMessage[]     @relation("MessageSenderCompany")
+  sectionCalendarEvents SectionCalendarEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
+/// Per-company feature flags (NexBatch portal + Sales Platform).
 model CompanyServiceSettings {
   id        String  @id @default(cuid())
   companyId String  @unique
@@ -218,13 +217,10 @@ model MarketplaceProduct {
   source               MarketplaceProductSource
   leafLinkInventoryId  String?
   leafLinkRawJson      Json?
-  /// Seller-entered potency line for marketplace cards (e.g. "24% THC", "100mg THC").
   potencyLabel         String?
-  /// Seller-entered dominance / lineage (e.g. Hybrid, Indica, Sativa).
   strainDominance      String?
 
-  orderItems MarketplaceOrderItem[]
-  /// Optional gallery photos. The primary display photo stays on `imageUrl`/`imageKey` for backwards compatibility.
+  orderItems  MarketplaceOrderItem[]
   extraImages MarketplaceProductImage[]
 
   createdAt DateTime @default(now())
@@ -236,21 +232,18 @@ model MarketplaceProduct {
   @@index([leafLinkInventoryId])
 }
 
-/// Additional photos for a `MarketplaceProduct`. The primary photo continues to live on `imageUrl`.
-/// Buyers see all of these in a swipeable carousel on the product detail modal.
 model MarketplaceProductImage {
   id        String             @id @default(cuid())
   productId String
   product   MarketplaceProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
   imageUrl  String
   imageKey  String?
-  /// 0-based index for stable ordering within the gallery (excluding the primary `imageUrl`).
   position  Int                @default(0)
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
 
-  @@unique([productId, position])
   @@index([productId])
+  @@unique([productId, position])
 }
 
 model MarketplaceOrder {
@@ -277,70 +270,19 @@ model MarketplaceOrder {
   @@index([createdAt])
 }
 
-/// NexBatch direct messaging: a thread between two (or more) company workspaces.
-model Conversation {
-  id            String                    @id @default(cuid())
-  /// Optional title for group threads; direct (1:1) chats display the other participant's company name on the client.
-  title         String?
-  createdAt     DateTime                  @default(now())
-  /// Mirrors latest message timestamp for cheap conversation-list ordering.
-  lastMessageAt DateTime                  @default(now())
-  participants  ConversationParticipant[]
-  messages      ConversationMessage[]
-
-  @@index([lastMessageAt])
-}
-
-/// Workspace-level membership in a conversation. Each row is a Company; the human user is recorded on the message.
-model ConversationParticipant {
-  id             String       @id @default(cuid())
-  conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  companyId      String
-  company        Company      @relation("ConversationCompany", fields: [companyId], references: [id], onDelete: Cascade)
-  /// Per-company "read up to" marker; null means none read yet.
-  lastReadAt     DateTime?
-  createdAt      DateTime     @default(now())
-
-  @@unique([conversationId, companyId])
-  @@index([companyId])
-}
-
-model ConversationMessage {
-  id              String       @id @default(cuid())
-  conversationId  String
-  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  /// Sender's company workspace (always one of the conversation participants).
-  senderCompanyId String
-  senderCompany   Company      @relation("MessageSenderCompany", fields: [senderCompanyId], references: [id], onDelete: Cascade)
-  /// Sender's user account (the human who typed).
-  senderUserId    String
-  senderUser      User         @relation("MessageSenderUser", fields: [senderUserId], references: [id], onDelete: Cascade)
-  body            String
-  createdAt       DateTime     @default(now())
-  /// Soft-delete marker. Set by an owner/admin of the sender company; readers + senders no longer see the message.
-  deletedAt       DateTime?
-  /// User who performed the delete (audit trail; never null when `deletedAt` is set).
-  deletedByUserId String?
-
-  @@index([conversationId, createdAt])
-  @@index([senderCompanyId])
-  @@index([deletedAt])
-}
-
 model MarketplaceOrderItem {
-  id                  String              @id @default(cuid())
-  orderId             String
-  order               MarketplaceOrder    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  productId           String?
-  product             MarketplaceProduct? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  id                String              @id @default(cuid())
+  orderId           String
+  order             MarketplaceOrder    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId         String?
+  product           MarketplaceProduct? @relation(fields: [productId], references: [id], onDelete: SetNull)
   productNameSnapshot String
-  skuSnapshot         String?
-  unitSizeSnapshot    String?
-  priceSnapshot       Float
-  quantity            Float
-  lineTotal           Float
-  imageUrlSnapshot    String?
+  skuSnapshot       String?
+  unitSizeSnapshot  String?
+  priceSnapshot     Float
+  quantity          Float
+  lineTotal         Float
+  imageUrlSnapshot  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -424,7 +366,6 @@ model User {
   checkCaptures       CheckCapture[]       @relation("CheckCaptureCreatedBy")
   cashLogEntries      CashLogEntry[]       @relation("CashLogCreatedBy")
   marketplaceOrdersCreated MarketplaceOrder[]
-  conversationMessagesSent ConversationMessage[] @relation("MessageSenderUser")
 
   @@index([companyId])
 }
@@ -746,6 +687,25 @@ model TaskLog {
   createdAt   DateTime      @default(now())
 
   @@index([companyId, createdAt])
+}
+
+/// Per-section scheduled tasks (company timezone `dateYmd`); not workflow TaskLog completions.
+model SectionCalendarEvent {
+  id                String   @id @default(cuid())
+  companyId         String
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  /// cultivation | extraction | packaging
+  section           String
+  /// YYYY-MM-DD in company display timezone
+  dateYmd           String
+  title             String
+  notes             String?
+  batchRef          String?
+  createdByUserId   String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([companyId, section, dateYmd])
 }
 
 model CompanyConfig {

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
+import SectionCalendarLauncher from "@/components/SectionCalendarLauncher";
 import { store } from "@/lib/store";
 import {
   displayNameFromLogActor,
@@ -1355,11 +1356,27 @@ export default function Packaging() {
       <div style={shellStyle}>
         <Nav />
 
-        <div style={{ textAlign: "center", marginTop: 24 }}>
-          <h1 style={{ margin: 0 }}>Packaging</h1>
-          <p style={{ color: "#94a3b8", marginTop: 8 }}>
-            Package finished extraction batches into sellable units.
-          </p>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 14,
+            marginTop: 24,
+          }}
+        >
+          <div style={{ textAlign: "center" }}>
+            <h1 style={{ margin: 0 }}>Packaging</h1>
+            <p style={{ color: "#94a3b8", marginTop: 8 }}>
+              Package finished extraction batches into sellable units.
+            </p>
+          </div>
+          <SectionCalendarLauncher
+            section="packaging"
+            taskSuggestions={packagingTaskList}
+            readOnly={!canWriteRecords}
+          />
         </div>
 
         {!canWriteRecords && (

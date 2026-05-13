@@ -17,6 +17,7 @@ import { storeRouter } from "./modules/store/routes.js";
 import { checksRouter } from "./modules/checks/routes.js";
 import { cashLogRouter } from "./modules/cashLog/routes.js";
 import { legacyCpuRouter } from "./modules/legacyCpu/routes.js";
+import { sectionCalendarRouter } from "./modules/sectionCalendar/routes.js";
 import { analyticsRouter } from "./modules/analytics/routes.js";
 import { nexbatchRouter } from "./modules/nexbatch/routes.js";
 import { extractionAssistRouter } from "./modules/extractionAssist/routes.js";
@@ -63,5 +64,6 @@ appRouter.use("/cash-log", cashLogRouter);
 appRouter.use("/extraction-assist", extractionAssistRouter);
 appRouter.use("/harvest-sheet", harvestSheetRouter);
 appRouter.use("/analytics", analyticsRouter);
+appRouter.use("/section-calendar", sectionCalendarRouter);
 /** Legacy SPA paths (`/api/cultivation`, `/api/logs`, …) used before `@cpu/api` workflow router. */
 appRouter.use(legacyCpuRouter);
