@@ -5,6 +5,8 @@ import Link from "next/link";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import SectionCalendarLauncher from "@/components/SectionCalendarLauncher";
+import { normalizeCultivationScheduleTemplateList } from "@/lib/cultivationSectionScheduleTemplates";
+import { syncCultivationSectionScheduleTemplates } from "@/lib/sectionCalendarApi";
 import {
   canDeleteRecords as userCanDeleteWorkflow,
   canManageCultivationBatchPlacement,
@@ -940,7 +942,7 @@ export default function Cultivation() {
   const [customTasksRewardDefs, setCustomTasksRewardDefs] = useState<CustomTasksRewardDefs>(() =>
     extractCustomTasksRewardDefsFromCompanyConfig({}),
   );
-  const [showRewardsChallengeModal, setShowRewardsChallengeModal] = useState(false);
+  const [cultivationScheduleTemplateTitles, setCultivationScheduleTemplateTitles] = useState<string[]>([]);
   /** null until decided for this save attempt; set before completing save after optional challenge modal. */
   const cultivationChallengeOptInRef = useRef<boolean | null>(null);
   type MoveToVegChallengeLab = {
@@ -1262,6 +1264,10 @@ export default function Cultivation() {
         setRewardsCfg(rewards);
         const ctDefs = extractCustomTasksRewardDefsFromCompanyConfig(data);
         setCustomTasksRewardDefs(ctDefs);
+        const scheduleTpl = normalizeCultivationScheduleTemplateList(
+          (data.cultivation as { scheduleTemplates?: unknown } | undefined)?.scheduleTemplates,
+        );
+        setCultivationScheduleTemplateTitles(scheduleTpl.map((x) => x.title));
         const co = data.company && typeof data.company === "object" ? data.company : null;
         const met = co?.metrc && typeof co.metrc === "object" ? co.metrc : null;
         const metrcOn =
@@ -1286,6 +1292,7 @@ export default function Cultivation() {
           setCultivationRooms(emptyCultivationRooms);
           setRewardsCfg(null);
           setCustomTasksRewardDefs(extractCustomTasksRewardDefsFromCompanyConfig({}));
+          setCultivationScheduleTemplateTitles([]);
           freshFrozenGramsPerBundleRef.current = 0;
           setFreshFrozenGramsPerBundle(0);
         }
@@ -1887,8 +1894,22 @@ export default function Cultivation() {
       const s = String(t || "").trim();
       if (s) out.add(s);
     }
+    for (const t of cultivationScheduleTemplateTitles) {
+      const s = String(t || "").trim();
+      if (s) out.add(s);
+    }
     return [...out].sort((a, b) => a.localeCompare(b));
-  }, [cloneTasks, vegTasks, flowerTasks]);
+  }, [cloneTasks, vegTasks, flowerTasks, cultivationScheduleTemplateTitles]);
+
+  useEffect(() => {
+    if (!canWriteRecords) return;
+    const t = window.setTimeout(() => {
+      void syncCultivationSectionScheduleTemplates().catch((e) => {
+        console.error("Cultivation schedule template sync failed:", e);
+      });
+    }, 1200);
+    return () => window.clearTimeout(t);
+  }, [canWriteRecords, refresh]);
 
   function forceRefresh() {
     persistStore();
@@ -1908,6 +1929,9 @@ export default function Cultivation() {
       if (updated && typeof updated === "object") {
         Object.assign(batch, updated);
       }
+      void syncCultivationSectionScheduleTemplates().catch((e) => {
+        console.error("Cultivation schedule template sync failed:", e);
+      });
       return true;
     } catch (error) {
       console.error("Could not update real cultivation table:", error);

@@ -16,6 +16,9 @@ export const TASK_MOVE_TO_VEG_ASSIGN_TAGS = "Move to Veg / Assign Plant Tags";
  */
 export const TASK_MOVE_TO_VEG = "Move to Veg";
 
+/** Veg → Flower transition (calendar anchor for flower-stage schedule templates). */
+export const TASK_MOVE_TO_FLOWER = "Move to Flower";
+
 /** Legacy task name kept for log matching and backwards compatibility. */
 export const LEGACY_TASK_CLONE_TO_VEG = "Clone → Veg";
 

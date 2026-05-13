@@ -49,6 +49,7 @@ import {
   mergeCultivationClimateAlerts,
   type CultivationClimateAlertsConfig,
 } from "@/lib/cultivationClimateAlertsConfig";
+import { syncCultivationSectionScheduleTemplates } from "@/lib/sectionCalendarApi";
 
 type Strain = {
   id: string;
@@ -167,6 +168,17 @@ type AppConfig = {
      * bundle count from total grams (floor). Operators can still edit bundles manually.
      */
     freshFrozenGramsPerBundle?: number;
+    /**
+     * Per-stage offsets from batch anchors (clone date, first veg move date, first flower move date)
+     * used to populate the cultivation section schedule calendar.
+     */
+    scheduleTemplates?: Array<{
+      id: string;
+      stage: "clone" | "veg" | "flower";
+      title: string;
+      daysFromStageStart: number;
+      defaultNotes?: string;
+    }>;
   };
   extraction: {
     productNames: ProductNameRecord[];
@@ -275,6 +287,7 @@ const emptyConfig: AppConfig = {
     customTasks: [],
     climateAlerts: { ...defaultCultivationClimateAlerts },
     freshFrozenGramsPerBundle: 0,
+    scheduleTemplates: [],
   },
   extraction: {
     productNames: [],
@@ -707,6 +720,15 @@ export default function ConfigPage() {
           customTasks: Array.isArray((data.cultivation as { customTasks?: unknown } | undefined)?.customTasks)
             ? ((data.cultivation as { customTasks: NonNullable<AppConfig["cultivation"]["customTasks"]> }).customTasks)
             : [],
+          scheduleTemplates: Array.isArray(
+            (data.cultivation as { scheduleTemplates?: unknown } | undefined)?.scheduleTemplates,
+          )
+            ? (
+                data.cultivation as {
+                  scheduleTemplates: NonNullable<AppConfig["cultivation"]["scheduleTemplates"]>;
+                }
+              ).scheduleTemplates
+            : [],
           rooms: {
             ...emptyConfig.cultivation.rooms,
             ...(data.cultivation?.rooms || {}),
@@ -876,6 +898,15 @@ export default function ConfigPage() {
           customTasks: Array.isArray((data.cultivation as { customTasks?: unknown } | undefined)?.customTasks)
             ? ((data.cultivation as { customTasks: NonNullable<AppConfig["cultivation"]["customTasks"]> }).customTasks)
             : [],
+          scheduleTemplates: Array.isArray(
+            (data.cultivation as { scheduleTemplates?: unknown } | undefined)?.scheduleTemplates,
+          )
+            ? (
+                data.cultivation as {
+                  scheduleTemplates: NonNullable<AppConfig["cultivation"]["scheduleTemplates"]>;
+                }
+              ).scheduleTemplates
+            : [],
           rooms: {
             ...emptyConfig.cultivation.rooms,
             ...(data.cultivation?.rooms || {}),
@@ -933,6 +964,9 @@ export default function ConfigPage() {
       });
       syncCompanyTimezoneFromConfigPayload(data);
       setSaveSuccessModalOpen(true);
+      void syncCultivationSectionScheduleTemplates().catch((e) => {
+        console.error("Cultivation schedule template sync failed:", e);
+      });
     } catch (error) {
       console.error(error);
       alert("Could not save config");
@@ -3082,6 +3116,146 @@ export default function ConfigPage() {
             }}
           >
             Add cultivation task
+          </button>
+        </div>
+
+        <h4 style={{ ...styles.subTitle, fontSize: 16, marginTop: 20, marginBottom: 8 }}>
+          Cultivation schedule templates
+        </h4>
+        <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+          Tasks below are added to the <b>Cultivation → Schedule</b> calendar for each active batch.{" "}
+          <b>Clone</b> rows use the batch clone date. <b>Veg</b> rows use the first logged move-to-veg date.{" "}
+          <b>Flower</b> rows use the first logged move-to-flower date. Offsets are whole days after that anchor.
+          Operators can still edit or move a generated row on the calendar; those edits are not overwritten by sync.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+          {(config.cultivation.scheduleTemplates || []).map((row, idx) => (
+            <div
+              key={row.id || `cult-st-${idx}`}
+              style={{
+                ...styles.grid,
+                border: "1px solid #334155",
+                borderRadius: 10,
+                padding: 10,
+                alignItems: "center",
+              }}
+            >
+              <label style={{ ...styles.label, margin: 0 }}>
+                Stage
+                <select
+                  style={styles.input}
+                  value={row.stage}
+                  onChange={(e) => {
+                    const v = e.target.value as "clone" | "veg" | "flower";
+                    setConfig((prev) => {
+                      const list = [...(prev.cultivation.scheduleTemplates || [])];
+                      list[idx] = { ...list[idx], stage: v };
+                      return {
+                        ...prev,
+                        cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                      };
+                    });
+                  }}
+                >
+                  <option value="clone">Clone (from clone date)</option>
+                  <option value="veg">Veg (from first veg move date)</option>
+                  <option value="flower">Flower (from first flower move date)</option>
+                </select>
+              </label>
+              <input
+                style={styles.input}
+                placeholder="Calendar task title"
+                value={row.title}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setConfig((prev) => {
+                    const list = [...(prev.cultivation.scheduleTemplates || [])];
+                    list[idx] = { ...list[idx], title: v };
+                    return {
+                      ...prev,
+                      cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                    };
+                  });
+                }}
+              />
+              <label style={styles.label}>
+                Days after stage start
+                <input
+                  style={styles.input}
+                  type="number"
+                  step={1}
+                  value={Number.isFinite(row.daysFromStageStart) ? row.daysFromStageStart : 0}
+                  onChange={(e) => {
+                    const v = Math.trunc(Number(e.target.value));
+                    setConfig((prev) => {
+                      const list = [...(prev.cultivation.scheduleTemplates || [])];
+                      list[idx] = {
+                        ...list[idx],
+                        daysFromStageStart: Number.isFinite(v) ? v : 0,
+                      };
+                      return {
+                        ...prev,
+                        cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <input
+                style={styles.input}
+                placeholder="Default notes (optional)"
+                value={row.defaultNotes ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setConfig((prev) => {
+                    const list = [...(prev.cultivation.scheduleTemplates || [])];
+                    list[idx] = { ...list[idx], defaultNotes: v || undefined };
+                    return {
+                      ...prev,
+                      cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                    };
+                  });
+                }}
+              />
+              <button
+                type="button"
+                style={{ ...styles.deleteButton, justifySelf: "end" }}
+                onClick={() => {
+                  setConfig((prev) => ({
+                    ...prev,
+                    cultivation: {
+                      ...prev.cultivation,
+                      scheduleTemplates: (prev.cultivation.scheduleTemplates || []).filter((_, i) => i !== idx),
+                    },
+                  }));
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            style={{ ...styles.addButton, alignSelf: "start" }}
+            onClick={() => {
+              setConfig((prev) => ({
+                ...prev,
+                cultivation: {
+                  ...prev.cultivation,
+                  scheduleTemplates: [
+                    ...(prev.cultivation.scheduleTemplates || []),
+                    {
+                      id: makeId("cult-stpl"),
+                      stage: "clone",
+                      title: "",
+                      daysFromStageStart: 0,
+                    },
+                  ],
+                },
+              }));
+            }}
+          >
+            Add schedule template
           </button>
         </div>
 

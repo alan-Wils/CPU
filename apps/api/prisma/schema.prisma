@@ -705,11 +705,16 @@ model SectionCalendarEvent {
   title             String
   notes             String?
   batchRef          String?
+  /// Stable key for cultivation template sync upserts (e.g. cult:tpl:{id}:batch:{batchId}).
+  templateDedupeKey String?
+  /// When true, sync may update date/title/notes; set false when an operator edits the row in the UI.
+  templateManaged   Boolean  @default(false)
   createdByUserId   String
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   @@index([companyId, section, dateYmd])
+  @@unique([companyId, section, templateDedupeKey])
 }
 
 /// Direct messaging between company workspaces (PostgreSQL migrations 20260514120000, 20260516120000).

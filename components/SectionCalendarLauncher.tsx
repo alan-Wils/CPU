@@ -158,6 +158,13 @@ export default function SectionCalendarLauncher({
     return m;
   }, [cultivationBatchGroups]);
 
+  const cultivationBatchSelectValue = useMemo(() => {
+    if (cultivationBatchGroups.length === 0) return "";
+    if (batchLinkMode === "list" && batchRef.trim()) return batchRef.trim();
+    if (batchLinkMode === "custom") return "__custom__";
+    return "";
+  }, [cultivationBatchGroups.length, batchLinkMode, batchRef]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -238,7 +245,13 @@ export default function SectionCalendarLauncher({
           title,
           notes: notes.trim() || null,
           batchRef: batchRef.trim() || null,
+          templateDedupeKey: null,
+          templateManaged: false,
         });
+        const nm = String(row.dateYmd || "").slice(0, 7);
+        if (/^\d{4}-\d{2}$/.test(nm) && nm !== monthYyyyMm) {
+          setMonthYyyyMm(nm);
+        }
         setEvents((prev) => prev.map((x) => (x.id === row.id ? row : x)));
       } else {
         const row = await createSectionCalendarEvent({
@@ -248,6 +261,10 @@ export default function SectionCalendarLauncher({
           notes: notes.trim() || null,
           batchRef: batchRef.trim() || null,
         });
+        const nm = String(row.dateYmd || "").slice(0, 7);
+        if (/^\d{4}-\d{2}$/.test(nm) && nm !== monthYyyyMm) {
+          setMonthYyyyMm(nm);
+        }
         setEvents((prev) => [...prev, row].sort((a, b) => a.dateYmd.localeCompare(b.dateYmd) || a.id.localeCompare(b.id)));
       }
       resetForm();
@@ -468,6 +485,21 @@ export default function SectionCalendarLauncher({
                       <input style={inputStyle} value={customTitle} onChange={(e) => setCustomTitle(e.target.value)} placeholder="New task name" />
                     </label>
                   ) : null}
+                  <label style={{ display: "grid", gap: 4 }}>
+                    <span style={{ color: "#94a3b8", fontSize: 12 }}>Task date (YYYY-MM-DD)</span>
+                    <input
+                      style={inputStyle}
+                      type="date"
+                      value={selectedYmd || ""}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
+                        setSelectedYmd(v);
+                        const m = v.slice(0, 7);
+                        if (/^\d{4}-\d{2}$/.test(m) && m !== monthYyyyMm) setMonthYyyyMm(m);
+                      }}
+                    />
+                  </label>
                   <label style={{ display: "grid", gap: 4 }}>
                     <span style={{ color: "#94a3b8", fontSize: 12 }}>Notes (optional)</span>
                     <input style={inputStyle} value={notes} onChange={(e) => setNotes(e.target.value)} />

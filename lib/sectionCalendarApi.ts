@@ -10,6 +10,8 @@ export type SectionCalendarEventDto = {
   title: string;
   notes: string | null;
   batchRef: string | null;
+  templateDedupeKey?: string | null;
+  templateManaged?: boolean;
   createdByUserId: string;
   createdAt: string;
   updatedAt: string;
@@ -42,7 +44,12 @@ export async function createSectionCalendarEvent(body: {
 
 export async function patchSectionCalendarEvent(
   id: string,
-  body: Partial<Pick<SectionCalendarEventDto, "dateYmd" | "title" | "notes" | "batchRef">>,
+  body: Partial<
+    Pick<
+      SectionCalendarEventDto,
+      "dateYmd" | "title" | "notes" | "batchRef" | "templateDedupeKey" | "templateManaged"
+    >
+  >,
 ): Promise<SectionCalendarEventDto> {
   return apiRequest(`/api/section-calendar/events/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -53,5 +60,16 @@ export async function patchSectionCalendarEvent(
 export async function deleteSectionCalendarEvent(id: string): Promise<{ ok: boolean }> {
   return apiRequest(`/api/section-calendar/events/${encodeURIComponent(id)}`, {
     method: "DELETE",
+  });
+}
+
+/** Upserts cultivation section calendar rows from Admin schedule templates + batch anchors + store logs. */
+export async function syncCultivationSectionScheduleTemplates(): Promise<{
+  upserted: number;
+  deletedOrphans: number;
+}> {
+  return apiRequest("/api/section-calendar/cultivation/sync-templates", {
+    method: "POST",
+    body: {},
   });
 }

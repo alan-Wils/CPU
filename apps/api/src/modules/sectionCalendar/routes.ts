@@ -12,6 +12,7 @@ import {
     parseSectionCalendarSection,
     type SectionCalendarSection,
 } from "./sectionCalendarAccess.js";
+import { syncCultivationSectionCalendarFromTemplates } from "../../services/sectionCalendarCultivationTemplateSyncService.js";
 
 export const sectionCalendarRouter = Router();
 
@@ -28,6 +29,8 @@ const createBodySchema = z.object({
     title: z.string().trim().min(1).max(500),
     notes: z.string().trim().max(2000).optional().nullable(),
     batchRef: z.string().trim().max(200).optional().nullable(),
+    templateDedupeKey: z.string().trim().min(1).max(260).optional().nullable(),
+    templateManaged: z.boolean().optional(),
 });
 
 const patchBodySchema = z
@@ -36,6 +39,8 @@ const patchBodySchema = z
         title: z.string().trim().min(1).max(500).optional(),
         notes: z.string().trim().max(2000).optional().nullable(),
         batchRef: z.string().trim().max(200).optional().nullable(),
+        templateDedupeKey: z.union([z.string().trim().min(1).max(260), z.null()]).optional(),
+        templateManaged: z.boolean().optional(),
     })
     .refine((b) => Object.keys(b).length > 0, { message: "At least one field required" });
 
@@ -113,6 +118,8 @@ sectionCalendarRouter.post(
                 notes: body.notes ?? null,
                 batchRef: body.batchRef ?? null,
                 createdByUserId: userId,
+                templateDedupeKey: body.templateDedupeKey ?? null,
+                templateManaged: body.templateManaged === true,
             },
         });
         res.status(201).json(row);
@@ -145,6 +152,8 @@ sectionCalendarRouter.patch(
                 ...(body.title !== undefined ? { title: body.title } : {}),
                 ...(body.notes !== undefined ? { notes: body.notes } : {}),
                 ...(body.batchRef !== undefined ? { batchRef: body.batchRef } : {}),
+                ...(body.templateDedupeKey !== undefined ? { templateDedupeKey: body.templateDedupeKey } : {}),
+                ...(body.templateManaged !== undefined ? { templateManaged: body.templateManaged } : {}),
             },
         });
         res.json(updated);
@@ -171,5 +180,21 @@ sectionCalendarRouter.delete(
         assertWrite(sec, role, permissions);
         await prisma.sectionCalendarEvent.delete({ where: { id } });
         res.json({ ok: true });
+    }),
+);
+
+sectionCalendarRouter.post(
+    "/cultivation/sync-templates",
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        if (!companyId)
+            throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
+        const { userId, role, permissions } = authPayload(req);
+        assertWrite("cultivation", role, permissions);
+        const out = await syncCultivationSectionCalendarFromTemplates({
+            companyId,
+            actorUserId: userId,
+        });
+        res.json(out);
     }),
 );
