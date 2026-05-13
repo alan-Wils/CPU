@@ -11,6 +11,8 @@ type Props = {
   title: string;
   /** One-line summary shown when collapsed. */
   summaryCollapsed?: ReactNode;
+  /** When true, section starts expanded (e.g. long forms users often need first visit). */
+  defaultOpen?: boolean;
   children: ReactNode;
 };
 
@@ -22,9 +24,10 @@ export function CollapsibleConfigSection({
   sectionNumber,
   title,
   summaryCollapsed,
+  defaultOpen = false,
   children,
 }: Props) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(defaultOpen));
   return (
     <section style={sectionStyle}>
       <button

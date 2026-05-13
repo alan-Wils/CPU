@@ -4555,6 +4555,7 @@ export default function ConfigPage() {
         sectionStyle={{ ...styles.card, marginTop: 18 }}
         sectionNumber="5"
         title="Cultivation"
+        defaultOpen
         summaryCollapsed={
           <>
             <span style={{ color: "#a5f3fc" }}>Scheduled calendar:</span>{" "}
@@ -4567,7 +4568,8 @@ export default function ConfigPage() {
               ? ` · FF ${config.cultivation.freshFrozenGramsPerBundle} g/bundle`
               : ""}
             <span style={{ display: "block", marginTop: 6, color: "#64748b", fontSize: 12 }}>
-              Click <b>5. Cultivation</b> (▶) to expand — use <b>Add scheduled calendar task</b> in the cyan block.
+              If this section is collapsed, click <b>5. Cultivation</b> — the cyan block is at the top with{" "}
+              <b>Add scheduled calendar task</b>.
             </span>
           </>
         }
@@ -4790,7 +4792,7 @@ export default function ConfigPage() {
               Add scheduled calendar task
             </button>
           </div>
-
+        </div>
 
         <div style={{ ...styles.configSubCard, marginBottom: 16 }}>
           <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Fresh Frozen harvest</h3>
@@ -4816,7 +4818,7 @@ export default function ConfigPage() {
               }}
             />
           </label>
-        </div>        </div>
+        </div>
 
         <details style={styles.cultivationStrainsOuter}>
           <summary style={styles.cultivationStrainsSummary}>
