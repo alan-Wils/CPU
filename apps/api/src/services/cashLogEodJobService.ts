@@ -4,6 +4,8 @@ import { resolvePublicWebBaseUrl } from "../config/publicWebUrl.js";
 import { parseCashLogEodPrefs, type CashLogEodPrefs } from "../lib/cashLogEodPrefs.js";
 import { CashLogService } from "./cashLogService.js";
 import { CheckCaptureService } from "./checkCaptureService.js";
+import { findRecentLeafLinkStoredOrdersForCompany } from "./leafLinkOrdersStorePrimitives.js";
+import { summarizeLeafLinkInvoiceFromStoredRows } from "./leafLinkOrdersService.js";
 import { sendHtmlEmail } from "../lib/mailer.js";
 import { logInfo, logWarn } from "../lib/logger.js";
 import { recordUsageEventSafe } from "./usageEventRecord.js";
@@ -239,12 +241,47 @@ function escapeHtml(text: string): string {
 
 type CashDigestRow = Awaited<ReturnType<CashLogService["listByCreatedAtRange"]>>[number];
 
-function rowsToHtmlTable(rows: CashDigestRow[]): string {
+function cashDigestLeafLinkCell(
+  r: CashDigestRow,
+  storedScan: Awaited<ReturnType<typeof findRecentLeafLinkStoredOrdersForCompany>>,
+): string {
+  if (r.direction === "OUTGOING") return "—";
+  const sync = String(r.leaflinkPaymentSyncStatus || "").trim();
+  const syncErr = String(r.leaflinkPaymentSyncError || "").trim();
+  if (sync === "payment_posted") {
+    return "Payment posted to LeafLink";
+  }
+  if (sync === "matched") {
+    return "Matched (open / unpaid in LeafLink from CPU view)";
+  }
+  if (sync === "failed") {
+    return syncErr ? escapeHtml(syncErr.slice(0, 120)) : "LeafLink sync failed";
+  }
+  const s = summarizeLeafLinkInvoiceFromStoredRows(storedScan, {
+    invoiceNumber: r.invoiceNumber,
+    payerName: r.payeeCompany,
+    amount: typeof r.amount === "number" ? r.amount : null,
+  });
+  if (!s.hasInvoiceTokens) return "—";
+  if (s.matchedOrderNumber) {
+    return escapeHtml(
+      s.markedPaidInLeafLink
+        ? `Paid in LeafLink (#${s.matchedOrderNumber})`
+        : `Open in LeafLink (#${s.matchedOrderNumber}${s.paymentStatus ? `, ${s.paymentStatus}` : ""})`,
+    );
+  }
+  return escapeHtml(s.summary || "No LeafLink match in saved cache");
+}
+
+function rowsToHtmlTable(
+  rows: CashDigestRow[],
+  storedScan: Awaited<ReturnType<typeof findRecentLeafLinkStoredOrdersForCompany>>,
+): string {
   if (!rows.length) {
     return "<p>No cash log entries in this period.</p>";
   }
   const head =
-    "<tr><th>Date (UTC)</th><th>Direction</th><th>Amount</th><th>Payee / Dept</th><th>Invoice #</th><th>Memo</th></tr>";
+    "<tr><th>Date (UTC)</th><th>Direction</th><th>Amount</th><th>Payee / Dept</th><th>Invoice #</th><th>Memo</th><th>LeafLink</th></tr>";
   const body = rows
     .map((r) => {
       const whenIso =
@@ -253,7 +290,8 @@ function rowsToHtmlTable(rows: CashDigestRow[]): string {
         r.direction === "INCOMING"
           ? escapeHtml(String(r.payeeCompany || ""))
           : escapeHtml(String(r.department || ""));
-      return `<tr><td>${escapeHtml(whenIso)}</td><td>${escapeHtml(r.direction)}</td><td>${escapeHtml(String(r.amount))}</td><td>${extra}</td><td>${escapeHtml(String(r.invoiceNumber || ""))}</td><td>${escapeHtml(String(r.memo || ""))}</td></tr>`;
+      const leaf = cashDigestLeafLinkCell(r, storedScan);
+      return `<tr><td>${escapeHtml(whenIso)}</td><td>${escapeHtml(r.direction)}</td><td>${escapeHtml(String(r.amount))}</td><td>${extra}</td><td>${escapeHtml(String(r.invoiceNumber || ""))}</td><td>${escapeHtml(String(r.memo || ""))}</td><td>${leaf}</td></tr>`;
     })
     .join("");
   return `<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">${head}${body}</table>`;
@@ -288,18 +326,50 @@ function checkImageLinksCell(r: CheckDigestRow, publicWebBase: string): string {
   return parts.length ? parts.join(" · ") : "—";
 }
 
-function checkRowsToHtmlTable(rows: CheckDigestRow[], publicWebBase: string): string {
+function checkDigestLeafLinkCell(
+  r: CheckDigestRow,
+  storedScan: Awaited<ReturnType<typeof findRecentLeafLinkStoredOrdersForCompany>>,
+): string {
+  const payStatus = String(r.leaflinkPaymentStatus || "").toLowerCase();
+  const ps = String(r.paymentSyncStatus || "").trim();
+  const ord = String(r.leaflinkOrderNumber || "").trim();
+  const paidAt = r.leaflinkPaidAt;
+  if (paidAt || ps === "payment_posted" || payStatus === "paid") {
+    return escapeHtml(ord ? `Paid in LeafLink (#${ord})` : "Paid in LeafLink");
+  }
+  const s = summarizeLeafLinkInvoiceFromStoredRows(storedScan, {
+    invoiceNumber: r.invoiceNumber,
+    payerName: r.payerName,
+    amount: typeof r.amount === "number" ? r.amount : null,
+  });
+  if (!s.hasInvoiceTokens) return "—";
+  if (s.matchedOrderNumber) {
+    return escapeHtml(
+      s.markedPaidInLeafLink
+        ? `Paid in LeafLink (#${s.matchedOrderNumber})`
+        : `Open in LeafLink (#${s.matchedOrderNumber}${s.paymentStatus ? `, ${s.paymentStatus}` : ""})`,
+    );
+  }
+  return escapeHtml(s.summary || "No LeafLink match in saved cache");
+}
+
+function checkRowsToHtmlTable(
+  rows: CheckDigestRow[],
+  publicWebBase: string,
+  storedScan: Awaited<ReturnType<typeof findRecentLeafLinkStoredOrdersForCompany>>,
+): string {
   if (!rows.length) {
     return "<p>No check captures in this period.</p>";
   }
   const head =
-    "<tr><th>Logged (UTC)</th><th>Check date</th><th>Amount</th><th>Payee</th><th>Check #</th><th>Invoice #</th><th>Memo</th><th>Images</th></tr>";
+    "<tr><th>Logged (UTC)</th><th>Check date</th><th>Amount</th><th>Payee</th><th>Check #</th><th>Invoice #</th><th>Memo</th><th>LeafLink</th><th>Images</th></tr>";
   const body = rows
     .map((r) => {
       const logged = r.createdAt.toISOString();
       const checkDateIso = r.checkDate != null ? r.checkDate.toISOString() : "—";
       const imgs = checkImageLinksCell(r, publicWebBase);
-      return `<tr><td>${escapeHtml(logged)}</td><td>${escapeHtml(checkDateIso)}</td><td>${escapeHtml(String(r.amount ?? ""))}</td><td>${escapeHtml(String(r.payerName || ""))}</td><td>${escapeHtml(String(r.checkNumber || ""))}</td><td>${escapeHtml(String(r.invoiceNumber || ""))}</td><td>${escapeHtml(String(r.memo || ""))}</td><td>${imgs}</td></tr>`;
+      const leaf = checkDigestLeafLinkCell(r, storedScan);
+      return `<tr><td>${escapeHtml(logged)}</td><td>${escapeHtml(checkDateIso)}</td><td>${escapeHtml(String(r.amount ?? ""))}</td><td>${escapeHtml(String(r.payerName || ""))}</td><td>${escapeHtml(String(r.checkNumber || ""))}</td><td>${escapeHtml(String(r.invoiceNumber || ""))}</td><td>${escapeHtml(String(r.memo || ""))}</td><td>${leaf}</td><td>${imgs}</td></tr>`;
     })
     .join("");
   return `<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">${head}${body}</table>`;
@@ -699,6 +769,10 @@ export async function runCashLogEodJob(options?: {
         cashService.listByCreatedAtRange(m.companyId, from, to),
         checkService.listByCreatedAtRange(m.companyId, from, to),
       ]);
+      const leafStored =
+        rows.length || checkRows.length
+          ? await findRecentLeafLinkStoredOrdersForCompany(m.companyId, 4000)
+          : [];
       const publicWebBase = resolvePublicWebBaseUrl().replace(/\/+$/, "");
       const dailyFlowPeriod =
         prefs.window === "LAST_7_DAYS" ? "Last 7 days" : "Last 24 hours";
@@ -709,9 +783,9 @@ export async function runCashLogEodJob(options?: {
           <p><strong>Company:</strong> ${escapeHtml(m.company?.name || "")}</p>
           <p><strong>Period:</strong> ${escapeHtml(from.toISOString())} to ${escapeHtml(to.toISOString())} (UTC)</p>
           <h3 style="margin-top:1.25em">Cash log</h3>
-          ${rowsToHtmlTable(rows)}
+          ${rowsToHtmlTable(rows, leafStored)}
           <h3 style="margin-top:1.25em">Check log</h3>
-          ${checkRowsToHtmlTable(checkRows, publicWebBase)}
+          ${checkRowsToHtmlTable(checkRows, publicWebBase, leafStored)}
           <p style="font-size:12px;color:#666">Sent by NexBatch.</p>
         </div>`;
 

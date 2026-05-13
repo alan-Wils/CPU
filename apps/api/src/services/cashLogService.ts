@@ -378,6 +378,8 @@ export class CashLogService {
                 entryDate: true,
                 receiptImageUrl: true,
                 createdAt: true,
+                leaflinkPaymentSyncStatus: true,
+                leaflinkPaymentSyncError: true,
             },
         });
     }

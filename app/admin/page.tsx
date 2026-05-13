@@ -308,6 +308,15 @@ function canAccessFinancialAdminTools(role: string) {
 
 type CheckMime = "image/jpeg" | "image/jpg" | "image/png" | "image/webp";
 
+/** Matches API `LeafLinkInvoiceLineStatusDto` on check/cash list rows. */
+type LeafLinkInvoiceLineStatus = {
+  hasInvoiceTokens: boolean;
+  matchedOrderNumber: string | null;
+  markedPaidInLeafLink: boolean;
+  paymentStatus: string | null;
+  summary: string;
+};
+
 type CheckCaptureRow = {
   id: string;
   createdAt: string;
@@ -327,6 +336,7 @@ type CheckCaptureRow = {
   leaflinkPaidAt?: string | null;
   paymentSyncStatus?: string | null;
   paymentSyncError?: string | null;
+  leafLinkInvoiceStatus?: LeafLinkInvoiceLineStatus | null;
 };
 
 type CheckLeafLinkMatchCandidate = {
@@ -360,7 +370,49 @@ type CashLogRow = {
   leaflinkPostedPayments?: unknown;
   leaflinkPaymentSyncStatus?: string | null;
   leaflinkPaymentSyncError?: string | null;
+  leafLinkInvoiceStatus?: LeafLinkInvoiceLineStatus | null;
 };
+
+function formatLeafLinkAdminListCell(row: {
+  direction?: "INCOMING" | "OUTGOING";
+  leafLinkInvoiceStatus?: LeafLinkInvoiceLineStatus | null;
+  leaflinkOrderNumber?: string | null;
+  leaflinkPaymentStatus?: string | null;
+  leaflinkPaidAt?: string | null;
+  paymentSyncStatus?: string | null;
+  leaflinkPaymentSyncStatus?: string | null;
+}): string {
+  const payPosted =
+    Boolean(row.leaflinkPaidAt) ||
+    String(row.paymentSyncStatus || "").toLowerCase() === "payment_posted" ||
+    String(row.leaflinkPaymentStatus || "").toLowerCase() === "paid";
+  if (payPosted) {
+    return row.leaflinkOrderNumber
+      ? `Paid in LeafLink (#${row.leaflinkOrderNumber})`
+      : "Paid in LeafLink";
+  }
+  const cashSync = String(row.leaflinkPaymentSyncStatus || "").toLowerCase();
+  if (cashSync === "payment_posted") {
+    return "Payment posted to LeafLink";
+  }
+  if (cashSync === "matched") {
+    return "Matched (not paid in LeafLink yet)";
+  }
+  if (cashSync === "failed") {
+    return "LeafLink sync failed";
+  }
+  const li = row.leafLinkInvoiceStatus;
+  if (!li) return "—";
+  if (!li.hasInvoiceTokens) return "—";
+  if (li.matchedOrderNumber) {
+    return li.markedPaidInLeafLink
+      ? `Paid in LeafLink (#${li.matchedOrderNumber})`
+      : `Open · ${li.paymentStatus || "unpaid"} · #${li.matchedOrderNumber}`;
+  }
+  const s = li.summary || "";
+  if (s.length > 56) return `${s.slice(0, 53)}…`;
+  return s || "No LeafLink match (cache)";
+}
 
 function formatUsdLeafLink(n: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -627,6 +679,15 @@ export default function AdminPage() {
       const list = [...merged.values()].filter(
         (c) => String(c.paymentStatus || "").toLowerCase() !== "paid",
       );
+      if (merged.size === 0) {
+        setLeafLinkToast({
+          message: "No matching LeafLink invoice found for the invoice number on this check.",
+        });
+      } else if (list.length === 0) {
+        setLeafLinkToast({
+          message: "LeafLink matched order(s) are already marked paid — nothing to post.",
+        });
+      }
       for (const c of list) {
         const ob =
           typeof c.outstandingBalance === "number" && Number.isFinite(c.outstandingBalance)
@@ -663,8 +724,10 @@ export default function AdminPage() {
         }
       }
       await loadCheckCaptures();
-    } catch {
-      /* Matching is best-effort after save */
+    } catch (e: unknown) {
+      const msg =
+        e instanceof Error ? e.message : "Could not search LeafLink for a matching invoice after save.";
+      setLeafLinkToast({ message: msg });
     }
   }
 
@@ -693,6 +756,15 @@ export default function AdminPage() {
       const list = [...merged.values()].filter(
         (c) => String(c.paymentStatus || "").toLowerCase() !== "paid",
       );
+      if (merged.size === 0) {
+        setLeafLinkToast({
+          message: "No matching LeafLink invoice found for the invoice number on this cash entry.",
+        });
+      } else if (list.length === 0) {
+        setLeafLinkToast({
+          message: "LeafLink matched order(s) are already marked paid — nothing to post.",
+        });
+      }
       for (const c of list) {
         const ob =
           typeof c.outstandingBalance === "number" && Number.isFinite(c.outstandingBalance)
@@ -729,8 +801,10 @@ export default function AdminPage() {
         }
       }
       await loadCashEntries();
-    } catch {
-      /* best-effort */
+    } catch (e: unknown) {
+      const msg =
+        e instanceof Error ? e.message : "Could not search LeafLink for a matching invoice after save.";
+      setLeafLinkToast({ message: msg });
     }
   }
 
@@ -848,7 +922,7 @@ export default function AdminPage() {
       setCheckFileKey((k) => k + 1);
       await loadCheckCaptures();
       if (invoiceTrim && saved?.id) {
-        await promptLeafLinkPaymentsAfterCheckSave(saved.id, true);
+        void promptLeafLinkPaymentsAfterCheckSave(saved.id, true);
       }
     } catch (e: any) {
       setCheckFormError(e?.message || "Could not save check capture.");
@@ -1085,7 +1159,7 @@ export default function AdminPage() {
       setCashEntryDate("");
       await loadCashEntries();
       if (wasIncoming && invoiceTrimCash && savedCash?.id) {
-        await promptLeafLinkPaymentsAfterCashSave(savedCash.id, true);
+        void promptLeafLinkPaymentsAfterCashSave(savedCash.id, true);
       }
     } catch (e: any) {
       setCashFormError(e?.message || "Could not save cash entry.");
@@ -1333,6 +1407,7 @@ export default function AdminPage() {
       const combined = [...exact, ...possible];
       if (!combined.length) {
         setLeafLinkMatchError("No open LeafLink invoice found.");
+        setLeafLinkToast({ message: "No matching LeafLink invoice found." });
         return;
       }
       setLeafLinkMatchChoices(combined);
@@ -1757,6 +1832,11 @@ export default function AdminPage() {
   /** Styled confirm matching admin notification modal (not `window.confirm`). */
   function showLeafLinkPaymentConfirmDialog(title: string, message: string, details: string): Promise<boolean> {
     return new Promise((resolve) => {
+      const dangling = leafLinkPaymentConfirmRef.current;
+      if (dangling) {
+        leafLinkPaymentConfirmRef.current = null;
+        dangling(false);
+      }
       leafLinkPaymentConfirmRef.current = resolve;
       setNotificationModal({
         open: true,
@@ -3180,6 +3260,7 @@ export default function AdminPage() {
                             <th style={checkThStyle}>Payee</th>
                             <th style={checkThStyle}>Total</th>
                             <th style={checkThStyle}>Invoice #</th>
+                            <th style={checkThStyle}>LeafLink</th>
                             <th style={checkThStyle}>Images</th>
                             <th style={checkThStyle}>Actions</th>
                           </tr>
@@ -3187,7 +3268,7 @@ export default function AdminPage() {
                         <tbody>
                           {checkRows.length === 0 ? (
                             <tr>
-                              <td colSpan={6} style={checkTdStyle}>
+                              <td colSpan={7} style={checkTdStyle}>
                                 No rows for this filter.
                               </td>
                             </tr>
@@ -3204,6 +3285,9 @@ export default function AdminPage() {
                                   {row.amount != null ? String(row.amount) : "—"}
                                 </td>
                                 <td style={checkTdStyle}>{row.invoiceNumber || row.memo || "—"}</td>
+                                <td style={{ ...checkTdStyle, maxWidth: 220, whiteSpace: "normal", wordBreak: "break-word" }}>
+                                  {formatLeafLinkAdminListCell(row)}
+                                </td>
                                 <td style={checkTdStyle}>
                                   <a
                                     href={row.imageUrl}
@@ -3657,6 +3741,7 @@ export default function AdminPage() {
                         <th style={checkThStyle}>Total</th>
                         <th style={checkThStyle}>Payee co.</th>
                         <th style={checkThStyle}>Invoice #</th>
+                        <th style={checkThStyle}>LeafLink</th>
                         <th style={checkThStyle}>Dept</th>
                         <th style={checkThStyle}>Entry date</th>
                         <th style={checkThStyle}>Memo</th>
@@ -3667,7 +3752,7 @@ export default function AdminPage() {
                     <tbody>
                       {cashRows.length === 0 ? (
                         <tr>
-                          <td colSpan={10} style={checkTdStyle}>
+                          <td colSpan={11} style={checkTdStyle}>
                             No rows for this filter.
                           </td>
                         </tr>
@@ -3683,6 +3768,9 @@ export default function AdminPage() {
                             <td style={checkTdStyle}>{String(row.amount)}</td>
                             <td style={checkTdStyle}>{row.payeeCompany || "—"}</td>
                             <td style={checkTdStyle}>{row.invoiceNumber || "—"}</td>
+                            <td style={{ ...checkTdStyle, maxWidth: 200, whiteSpace: "normal", wordBreak: "break-word" }}>
+                              {formatLeafLinkAdminListCell(row)}
+                            </td>
                             <td style={checkTdStyle}>{formatCashDepartment(row.department)}</td>
                             <td style={checkTdStyle}>
                               {row.entryDate

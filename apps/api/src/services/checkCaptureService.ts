@@ -671,6 +671,10 @@ export class CheckCaptureService {
                 imageUrl: true,
                 stubImageUrl: true,
                 createdAt: true,
+                leaflinkOrderNumber: true,
+                leaflinkPaymentStatus: true,
+                leaflinkPaidAt: true,
+                paymentSyncStatus: true,
             },
         });
     }
