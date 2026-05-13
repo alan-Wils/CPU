@@ -4557,47 +4557,21 @@ export default function ConfigPage() {
         title="Cultivation"
         summaryCollapsed={
           <>
-            {(config.cultivation.scheduleTemplates || []).length > 0 ? (
-              <>
-                {(config.cultivation.scheduleTemplates || []).length} batch calendar task
-                {(config.cultivation.scheduleTemplates || []).length === 1 ? "" : "s"} ·{" "}
-              </>
-            ) : null}
+            <span style={{ color: "#a5f3fc" }}>Scheduled calendar:</span>{" "}
+            {(config.cultivation.scheduleTemplates || []).length} task
+            {(config.cultivation.scheduleTemplates || []).length === 1 ? "" : "s"} ·{" "}
             {config.cultivation.strains.length} strain{config.cultivation.strains.length === 1 ? "" : "s"} ·{" "}
             {config.cultivation.rooms.vegRooms.length} veg · {config.cultivation.rooms.flowerRooms.length} flower ·{" "}
             {(config.cultivation.supplies || []).length} supply rows
             {(config.cultivation.freshFrozenGramsPerBundle ?? 0) > 0
               ? ` · FF ${config.cultivation.freshFrozenGramsPerBundle} g/bundle`
               : ""}
+            <span style={{ display: "block", marginTop: 6, color: "#64748b", fontSize: 12 }}>
+              Click <b>5. Cultivation</b> (▶) to expand — use <b>Add scheduled calendar task</b> in the cyan block.
+            </span>
           </>
         }
       >
-        <div style={{ ...styles.configSubCard, marginBottom: 16 }}>
-          <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Fresh Frozen harvest</h3>
-          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
-            Set the standard <b>grams per bundle</b> for Fresh Frozen. When greater than zero, the Cultivation harvest form
-            auto-calculates bundle count from total grams (whole bundles only; operators can override). Extraction shows
-            package weight as lbs, grams, and bundles on source cards.
-          </p>
-          <label style={styles.label}>
-            Grams per bundle (0 = off, manual entry only)
-            <input
-              style={styles.input}
-              type="number"
-              min={0}
-              step={1}
-              value={config.cultivation.freshFrozenGramsPerBundle ?? 0}
-              onChange={(e) => {
-                const v = Math.max(0, Math.floor(Number(e.target.value) || 0));
-                setConfig((prev) => ({
-                  ...prev,
-                  cultivation: { ...prev.cultivation, freshFrozenGramsPerBundle: v },
-                }));
-              }}
-            />
-          </label>
-        </div>
-
         <div
           id="cultivation-scheduled-calendar"
           style={{
@@ -4816,7 +4790,33 @@ export default function ConfigPage() {
               Add scheduled calendar task
             </button>
           </div>
-        </div>
+
+
+        <div style={{ ...styles.configSubCard, marginBottom: 16 }}>
+          <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Fresh Frozen harvest</h3>
+          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+            Set the standard <b>grams per bundle</b> for Fresh Frozen. When greater than zero, the Cultivation harvest form
+            auto-calculates bundle count from total grams (whole bundles only; operators can override). Extraction shows
+            package weight as lbs, grams, and bundles on source cards.
+          </p>
+          <label style={styles.label}>
+            Grams per bundle (0 = off, manual entry only)
+            <input
+              style={styles.input}
+              type="number"
+              min={0}
+              step={1}
+              value={config.cultivation.freshFrozenGramsPerBundle ?? 0}
+              onChange={(e) => {
+                const v = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                setConfig((prev) => ({
+                  ...prev,
+                  cultivation: { ...prev.cultivation, freshFrozenGramsPerBundle: v },
+                }));
+              }}
+            />
+          </label>
+        </div>        </div>
 
         <details style={styles.cultivationStrainsOuter}>
           <summary style={styles.cultivationStrainsSummary}>
