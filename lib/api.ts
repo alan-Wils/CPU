@@ -679,6 +679,10 @@ export type LeafLinkInventoryItemDto = {
   subcategory?: string;
   brand: string;
   availableQuantity: number;
+  /** Present when LeafLink sends total on-hand (e.g. `quantity`) on the payload. */
+  totalQuantity?: number;
+  /** Present when LeafLink sends reserved units (e.g. `reserved_qty`) on the payload. */
+  reservedQuantity?: number;
   unit: string;
   packageSize: string;
   price: number | null;

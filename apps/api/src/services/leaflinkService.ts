@@ -275,6 +275,10 @@ export type LeafLinkInventoryItem = {
   subcategory: string;
   brand: string;
   availableQuantity: number;
+  /** LeafLink `reserved_qty` / reserved_* when present on the payload (units reserved, not wholesale-available). */
+  reservedQuantity?: number;
+  /** LeafLink `quantity` / total on-hand when present (may exceed available when inventory is reserved). */
+  totalQuantity?: number;
   unit: string;
   packageSize: string;
   price: number | null;
@@ -437,6 +441,7 @@ const LEAFLINK_AVAILABLE_QTY_KEYS = [
 
 const LEAFLINK_RESERVED_QTY_KEYS = [
   "reserved_quantity",
+  "reserved_qty",
   "quantity_reserved",
   "reserved",
   "committed_quantity",
@@ -468,7 +473,9 @@ function pickExplicitAvailableFrom(src: Record<string, unknown>): number | null 
 }
 
 function pickTotalMinusReservedFrom(src: Record<string, unknown>): number | null {
-  const hasReserved = LEAFLINK_RESERVED_QTY_KEYS.some((k) => k in src);
+  const hasReserved = LEAFLINK_RESERVED_QTY_KEYS.some(
+    (k) => k in src && src[k] !== undefined && src[k] !== null,
+  );
   if (!hasReserved) return null;
   const total = pickInventoryQuantity(src, [...LEAFLINK_TOTAL_QTY_KEYS]);
   const reserved = pickInventoryQuantity(src, [...LEAFLINK_RESERVED_QTY_KEYS]);
@@ -477,11 +484,15 @@ function pickTotalMinusReservedFrom(src: Record<string, unknown>): number | null
   return Math.max(0, Math.floor(total - reserved));
 }
 
-/**
- * Wholesale / orderable units LeafLink shows as **Available**, not total on hand (reserved is not sellable).
- * Checks top-level row plus nested `listing` and `product` objects.
- */
-function pickLeafLinkAvailableQuantity(row: Record<string, unknown>): number {
+function hasExplicitTotalField(src: Record<string, unknown>): boolean {
+  return LEAFLINK_TOTAL_QTY_KEYS.some((k) => k in src && src[k] !== undefined && src[k] !== null);
+}
+
+function hasExplicitReservedField(src: Record<string, unknown>): boolean {
+  return LEAFLINK_RESERVED_QTY_KEYS.some((k) => k in src && src[k] !== undefined && src[k] !== null);
+}
+
+function leafLinkInventoryQtySources(row: Record<string, unknown>): Record<string, unknown>[] {
   const listing =
     row.listing != null && typeof row.listing === "object" && !Array.isArray(row.listing)
       ? asRecord(row.listing)
@@ -490,7 +501,35 @@ function pickLeafLinkAvailableQuantity(row: Record<string, unknown>): number {
     row.product != null && typeof row.product === "object" && !Array.isArray(row.product)
       ? asRecord(row.product)
       : null;
-  const sources = [row, listing, product].filter((s): s is Record<string, unknown> => s != null);
+  return [row, listing, product].filter((s): s is Record<string, unknown> => s != null);
+}
+
+function pickLeafLinkTotalQuantityFromRow(row: Record<string, unknown>): number | undefined {
+  for (const src of leafLinkInventoryQtySources(row)) {
+    if (!hasExplicitTotalField(src)) continue;
+    const t = pickInventoryQuantity(src, [...LEAFLINK_TOTAL_QTY_KEYS]);
+    return Math.max(0, Math.floor(t));
+  }
+  return undefined;
+}
+
+function pickLeafLinkReservedQuantityFromRow(row: Record<string, unknown>): number | undefined {
+  for (const src of leafLinkInventoryQtySources(row)) {
+    if (!hasExplicitReservedField(src)) continue;
+    const r = pickInventoryQuantity(src, [...LEAFLINK_RESERVED_QTY_KEYS]);
+    return Math.max(0, Math.floor(r));
+  }
+  return undefined;
+}
+
+/**
+ * Wholesale / orderable units LeafLink shows as **Available**, not total on hand (reserved is not sellable).
+ * Checks top-level row plus nested `listing` and `product` objects.
+ * Prefers explicit available_* / `available`, then **quantity minus any reserved field** (including `reserved_qty`),
+ * then total-only fallbacks.
+ */
+function pickLeafLinkAvailableQuantity(row: Record<string, unknown>): number {
+  const sources = leafLinkInventoryQtySources(row);
 
   for (const src of sources) {
     const v = pickExplicitAvailableFrom(src);
@@ -948,6 +987,8 @@ export function normalizeLeafLinkInventoryRows(raw: unknown): LeafLinkInventoryI
     const id = pickString(row, ["id", "inventory_id", "product_id", "sku"]);
     if (!id) continue;
     const availableQuantity = pickLeafLinkAvailableQuantity(row);
+    const totalQuantity = pickLeafLinkTotalQuantityFromRow(row);
+    const reservedQuantity = pickLeafLinkReservedQuantityFromRow(row);
     const status = pickString(row, [
       "status",
       "availability",
@@ -1014,6 +1055,8 @@ export function normalizeLeafLinkInventoryRows(raw: unknown): LeafLinkInventoryI
       subcategory: subcategoryResolved,
       brand: pickString(row, ["brand", "brand_name", "vendor_name"]),
       availableQuantity,
+      ...(totalQuantity !== undefined ? { totalQuantity } : {}),
+      ...(reservedQuantity !== undefined ? { reservedQuantity } : {}),
       unit: pickSellUnit(row),
       packageSize: pickString(row, ["package_size", "size", "unit_multiplier"]),
       price: pickPrice(row),

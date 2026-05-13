@@ -141,6 +141,46 @@ describe("normalizeLeafLinkInventoryRows", () => {
     };
     const [row] = normalizeLeafLinkInventoryRows(raw);
     expect(row?.availableQuantity).toBe(401);
+    expect(row?.totalQuantity).toBe(538);
+    expect(row?.reservedQuantity).toBe(137);
+  });
+
+  it("uses reserved_qty with string decimals like LeafLink active products API", () => {
+    const raw = {
+      data: [
+        {
+          id: "bbm",
+          sku: "B1677(BBM-LRO)",
+          product_name: "Bubba Banana Melt",
+          wholesale_price: 11,
+          quantity: "538.0000",
+          reserved_qty: "137.0000",
+          status: "Available",
+        },
+      ],
+    };
+    const [row] = normalizeLeafLinkInventoryRows(raw);
+    expect(row?.availableQuantity).toBe(401);
+    expect(row?.totalQuantity).toBe(538);
+    expect(row?.reservedQuantity).toBe(137);
+  });
+
+  it("normalizes zero quantity and reserved_qty to available 0 with totals", () => {
+    const raw = {
+      data: [
+        {
+          id: "zero1",
+          product_name: "Empty",
+          wholesale_price: 1,
+          quantity: "0.0000",
+          reserved_qty: "0.0000",
+        },
+      ],
+    };
+    const [row] = normalizeLeafLinkInventoryRows(raw);
+    expect(row?.availableQuantity).toBe(0);
+    expect(row?.totalQuantity).toBe(0);
+    expect(row?.reservedQuantity).toBe(0);
   });
 
   it("reads available from nested listing when top-level quantity is total only", () => {
