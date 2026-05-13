@@ -11,6 +11,7 @@ import {
   type SectionCalendarSection,
 } from "@/lib/sectionCalendarApi";
 import { monthYmdBounds } from "@/lib/sectionCalendarMonth";
+import { groupMonthEventsIntoBatchCards } from "@/lib/sectionCalendarMonthBatchCards";
 import { getCompanyDisplayTimezone, getTodayYmdInCompanyTimezone, logTimeIsoForStageMoveDate } from "@/lib/companyTimezone";
 import {
   formatCultivationBatchCalendarOptionLabel,
@@ -161,6 +162,8 @@ export default function SectionCalendarLauncher({
   const [editingId, setEditingId] = useState<string | null>(null);
   /** When set, a compact day panel lists tasks for that date and hosts add/edit. */
   const [dayPanelYmd, setDayPanelYmd] = useState<string | null>(null);
+  /** Expanded batch card in "This month" list (groupKey from `groupMonthEventsIntoBatchCards`). */
+  const [expandedMonthBatchGroupKey, setExpandedMonthBatchGroupKey] = useState<string | null>(null);
 
   const suggestions = useMemo(() => dedupeTasks(taskSuggestions), [taskSuggestions]);
 
@@ -210,6 +213,10 @@ export default function SectionCalendarLauncher({
     void load();
   }, [open, load]);
 
+  useEffect(() => {
+    setExpandedMonthBatchGroupKey(null);
+  }, [monthYyyyMm]);
+
   const eventsByYmd = useMemo(() => {
     const m = new Map<string, SectionCalendarEventDto[]>();
     for (const ev of events) {
@@ -255,6 +262,7 @@ export default function SectionCalendarLauncher({
     resetForm();
     setSelectedYmd(null);
     setDayPanelYmd(null);
+    setExpandedMonthBatchGroupKey(null);
   }
 
   function closeDayPanel() {
@@ -355,6 +363,11 @@ export default function SectionCalendarLauncher({
     const { fromYmd, toYmd } = monthYmdBounds(monthYyyyMm);
     return events.filter((e) => e.dateYmd >= fromYmd && e.dateYmd <= toYmd);
   }, [events, monthYyyyMm]);
+
+  const monthBatchCards = useMemo(() => {
+    const todayYmd = getTodayYmdInCompanyTimezone();
+    return groupMonthEventsIntoBatchCards(monthEvents, cultivationBatchLabelById, todayYmd);
+  }, [monthEvents, cultivationBatchLabelById]);
 
   return (
     <>
@@ -717,55 +730,122 @@ export default function SectionCalendarLauncher({
             <div style={{ marginTop: 20, borderTop: "1px solid #1e293b", paddingTop: 16 }}>
               <p style={{ margin: "0 0 12px", color: "#94a3b8", fontSize: 13, lineHeight: 1.5 }}>
                 {readOnly
-                  ? "All scheduled items this month are listed below."
-                  : "Click a day on the grid to open its tasks. Use This month for a quick overview."}
+                  ? "Each batch shows its next task this month. Click a card to list every scheduled item for that batch."
+                  : "Click a day on the grid to open its tasks. Batches below show the next task in this month — click a card to expand and edit or delete any task."}
               </p>
 
               <div style={{ marginTop: 4 }}>
                 <div style={{ fontWeight: 800, marginBottom: 8, color: "#cbd5e1" }}>This month</div>
                 {loading && events.length === 0 ? (
                   <p style={{ color: "#94a3b8" }}>Loading…</p>
-                ) : monthEvents.length === 0 ? (
+                ) : monthBatchCards.length === 0 ? (
                   <p style={{ color: "#94a3b8" }}>No scheduled items.</p>
                 ) : (
-                  <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
-                    {monthEvents.map((ev) => (
-                      <li
-                        key={ev.id}
-                        style={{
-                          border: "1px solid #334155",
-                          borderRadius: 10,
-                          padding: "10px 12px",
-                          background: "#0f172a",
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: 10,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <div style={{ flex: 1, minWidth: 200 }}>
-                          <div style={{ fontWeight: 900 }}>
-                            {ev.dateYmd} — {ev.title}
-                          </div>
-                          {ev.notes ? <div style={{ color: "#94a3b8", marginTop: 4, fontSize: 13 }}>{ev.notes}</div> : null}
-                          {ev.batchRef ? (
-                            <div style={{ color: "#64748b", marginTop: 4, fontSize: 12 }}>
-                              {cultivationBatchLabelById.get(ev.batchRef) ?? `Ref: ${ev.batchRef}`}
+                  <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 10 }}>
+                    {monthBatchCards.map((card) => {
+                      const expanded = expandedMonthBatchGroupKey === card.groupKey;
+                      return (
+                        <li
+                          key={card.groupKey}
+                          style={{
+                            border: "1px solid #334155",
+                            borderRadius: 10,
+                            background: "#0f172a",
+                            overflow: "hidden",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedMonthBatchGroupKey((k) => (k === card.groupKey ? null : card.groupKey))
+                            }
+                            style={{
+                              width: "100%",
+                              textAlign: "left",
+                              cursor: "pointer",
+                              padding: "12px 14px",
+                              background: "transparent",
+                              border: "none",
+                              color: "inherit",
+                              display: "block",
+                              boxSizing: "border-box",
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: 900, color: "#f8fafc" }}>{card.label}</div>
+                                <div style={{ color: "#a5f3fc", marginTop: 6, fontSize: 13, fontWeight: 700 }}>
+                                  Next: {card.next.dateYmd} — {card.next.title}
+                                </div>
+                                <div style={{ color: "#64748b", marginTop: 4, fontSize: 12 }}>
+                                  {card.events.length} scheduled {card.events.length === 1 ? "task" : "tasks"} this month
+                                </div>
+                              </div>
+                              <span style={{ color: "#94a3b8", fontSize: 14, flexShrink: 0 }} aria-hidden>
+                                {expanded ? "▼" : "▶"}
+                              </span>
+                            </div>
+                          </button>
+                          {expanded ? (
+                            <div
+                              style={{ padding: "0 12px 12px", borderTop: "1px solid #1e293b" }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ul style={{ listStyle: "none", padding: 0, margin: "10px 0 0", display: "grid", gap: 8 }}>
+                                {card.events.map((ev) => (
+                                  <li
+                                    key={ev.id}
+                                    style={{
+                                      border: "1px solid #1e293b",
+                                      borderRadius: 8,
+                                      padding: "10px 12px",
+                                      background: "#020617",
+                                      display: "flex",
+                                      justifyContent: "space-between",
+                                      gap: 10,
+                                      flexWrap: "wrap",
+                                    }}
+                                  >
+                                    <div style={{ flex: 1, minWidth: 200 }}>
+                                      <div style={{ fontWeight: 800 }}>
+                                        {ev.dateYmd} — {ev.title}
+                                      </div>
+                                      {ev.notes ? (
+                                        <div style={{ color: "#94a3b8", marginTop: 4, fontSize: 13 }}>{ev.notes}</div>
+                                      ) : null}
+                                    </div>
+                                    {!readOnly ? (
+                                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                        <button
+                                          type="button"
+                                          style={buttonStyle}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            startEdit(ev);
+                                          }}
+                                        >
+                                          Edit
+                                        </button>
+                                        <button
+                                          type="button"
+                                          style={{ ...buttonStyle, borderColor: "#b91c1c", color: "#fecaca" }}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            void onDelete(ev.id);
+                                          }}
+                                        >
+                                          Delete
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                  </li>
+                                ))}
+                              </ul>
                             </div>
                           ) : null}
-                        </div>
-                        {!readOnly ? (
-                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                            <button type="button" style={buttonStyle} onClick={() => startEdit(ev)}>
-                              Edit
-                            </button>
-                            <button type="button" style={{ ...buttonStyle, borderColor: "#b91c1c", color: "#fecaca" }} onClick={() => void onDelete(ev.id)}>
-                              Delete
-                            </button>
-                          </div>
-                        ) : null}
-                      </li>
-                    ))}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
