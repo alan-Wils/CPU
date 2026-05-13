@@ -69,6 +69,31 @@ const primaryButtonStyle: CSSProperties = {
   border: "1px solid #22c55e",
 };
 
+/** Nested overlay on top of the main schedule modal (day click). */
+const dayPanelOverlayStyle: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(0,0,0,0.55)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 10000,
+  padding: 16,
+};
+
+const dayPanelStyle: CSSProperties = {
+  background: "#0f172a",
+  color: "#e2e8f0",
+  border: "1px solid #22d3ee",
+  borderRadius: 14,
+  padding: 18,
+  width: "100%",
+  maxWidth: 440,
+  maxHeight: "min(82vh, 640px)",
+  overflowY: "auto",
+  boxShadow: "0 24px 64px rgba(0,0,0,0.65)",
+};
+
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function ymdWeekdaySun0(ymd: string): number {
@@ -134,6 +159,8 @@ export default function SectionCalendarLauncher({
   /** When cultivation picker is shown: whether the ref came from the grouped list, custom text, or none. */
   const [batchLinkMode, setBatchLinkMode] = useState<"none" | "list" | "custom">("none");
   const [editingId, setEditingId] = useState<string | null>(null);
+  /** When set, a compact day panel lists tasks for that date and hosts add/edit. */
+  const [dayPanelYmd, setDayPanelYmd] = useState<string | null>(null);
 
   const suggestions = useMemo(() => dedupeTasks(taskSuggestions), [taskSuggestions]);
 
@@ -227,6 +254,13 @@ export default function SectionCalendarLauncher({
     setError(null);
     resetForm();
     setSelectedYmd(null);
+    setDayPanelYmd(null);
+  }
+
+  function closeDayPanel() {
+    setDayPanelYmd(null);
+    resetForm();
+    setSelectedYmd(null);
   }
 
   async function onSave() {
@@ -293,6 +327,9 @@ export default function SectionCalendarLauncher({
 
   function startEdit(ev: SectionCalendarEventDto) {
     setSelectedYmd(ev.dateYmd);
+    setDayPanelYmd(ev.dateYmd);
+    const m = ev.dateYmd.slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(m) && m !== monthYyyyMm) setMonthYyyyMm(m);
     setEditingId(ev.id);
     const inList = suggestions.includes(ev.title);
     if (inList) {
@@ -325,6 +362,9 @@ export default function SectionCalendarLauncher({
         type="button"
         onClick={() => {
           setMonthYyyyMm(getTodayYmdInCompanyTimezone().slice(0, 7));
+          setDayPanelYmd(null);
+          setSelectedYmd(null);
+          resetForm();
           setOpen(true);
         }}
         style={{
@@ -417,13 +457,18 @@ export default function SectionCalendarLauncher({
                 }
                 const ymd = cell.ymd!;
                 const count = (eventsByYmd.get(ymd) || []).length;
-                const sel = selectedYmd === ymd;
+                const sel = dayPanelYmd === ymd;
                 return (
                   <button
                     key={ymd}
                     type="button"
                     onClick={() => {
+                      if (dayPanelYmd === ymd) {
+                        closeDayPanel();
+                        return;
+                      }
                       setSelectedYmd(ymd);
+                      setDayPanelYmd(ymd);
                       if (!editingId) resetForm();
                     }}
                     style={{
@@ -456,123 +501,227 @@ export default function SectionCalendarLauncher({
               })}
             </div>
 
-            <div style={{ marginTop: 20, borderTop: "1px solid #1e293b", paddingTop: 16 }}>
-              <h3 style={{ margin: "0 0 10px", fontSize: 15 }}>
-                {readOnly
-                  ? "Scheduled items (read only)"
-                  : selectedYmd
-                    ? `Add / edit — ${selectedYmd}`
-                    : "Pick a day to add a task"}
-              </h3>
-
-              {!readOnly && selectedYmd ? (
-                <div style={{ display: "grid", gap: 10 }}>
-                  <label style={{ display: "grid", gap: 4 }}>
-                    <span style={{ color: "#94a3b8", fontSize: 12 }}>Task</span>
-                    <select style={inputStyle} value={taskPick} onChange={(e) => setTaskPick(e.target.value)}>
-                      <option value="">Select from list…</option>
-                      {suggestions.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                      <option value="__custom__">Custom title…</option>
-                    </select>
-                  </label>
-                  {taskPick === "__custom__" ? (
-                    <label style={{ display: "grid", gap: 4 }}>
-                      <span style={{ color: "#94a3b8", fontSize: 12 }}>Custom title</span>
-                      <input style={inputStyle} value={customTitle} onChange={(e) => setCustomTitle(e.target.value)} placeholder="New task name" />
-                    </label>
-                  ) : null}
-                  <label style={{ display: "grid", gap: 4 }}>
-                    <span style={{ color: "#94a3b8", fontSize: 12 }}>Task date (YYYY-MM-DD)</span>
-                    <input
-                      style={inputStyle}
-                      type="date"
-                      value={selectedYmd || ""}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
-                        setSelectedYmd(v);
-                        const m = v.slice(0, 7);
-                        if (/^\d{4}-\d{2}$/.test(m) && m !== monthYyyyMm) setMonthYyyyMm(m);
-                      }}
-                    />
-                  </label>
-                  <label style={{ display: "grid", gap: 4 }}>
-                    <span style={{ color: "#94a3b8", fontSize: 12 }}>Notes (optional)</span>
-                    <input style={inputStyle} value={notes} onChange={(e) => setNotes(e.target.value)} />
-                  </label>
-                  <label style={{ display: "grid", gap: 4 }}>
-                    <span style={{ color: "#94a3b8", fontSize: 12 }}>Batch / ref (optional)</span>
-                    {cultivationBatchGroups.length > 0 ? (
-                      <>
-                        <select
-                          style={inputStyle}
-                          value={cultivationBatchSelectValue}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            if (v === "") {
-                              setBatchLinkMode("none");
-                              setBatchRef("");
-                            } else if (v === "__custom__") {
-                              setBatchLinkMode("custom");
-                              setBatchRef("");
-                            } else {
-                              setBatchLinkMode("list");
-                              setBatchRef(v);
-                            }
+            {dayPanelYmd ? (
+              <div style={dayPanelOverlayStyle} onClick={closeDayPanel} role="presentation">
+                <div
+                  style={dayPanelStyle}
+                  onClick={(e) => e.stopPropagation()}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={`Schedule tasks for ${dayPanelYmd}`}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 10,
+                      marginBottom: 12,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <h3 style={{ margin: 0, fontSize: 16, color: "#f1f5f9" }}>Tasks — {dayPanelYmd}</h3>
+                    <button type="button" style={buttonStyle} onClick={closeDayPanel}>
+                      Close
+                    </button>
+                  </div>
+                  <p style={{ margin: "0 0 12px", color: "#64748b", fontSize: 12, lineHeight: 1.45 }}>
+                    {readOnly ? "Scheduled for this day." : "Click a task row to load it into the form below, or add a new task."}
+                  </p>
+                  <ul style={{ listStyle: "none", padding: 0, margin: "0 0 14px", display: "grid", gap: 8 }}>
+                    {(eventsByYmd.get(dayPanelYmd) || []).length === 0 ? (
+                      <li style={{ color: "#94a3b8", fontSize: 13 }}>No tasks on this day.</li>
+                    ) : (
+                      (eventsByYmd.get(dayPanelYmd) || []).map((ev) => (
+                        <li
+                          key={ev.id}
+                          style={{
+                            border: "1px solid #334155",
+                            borderRadius: 10,
+                            padding: "10px 12px",
+                            background: "#020617",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            flexWrap: "wrap",
+                            alignItems: "flex-start",
                           }}
                         >
-                          <option value="">— No batch linked —</option>
-                          {cultivationBatchGroups.map((g) => (
-                            <optgroup key={g.group} label={g.label}>
-                              {g.batches.map((b) => (
-                                <option key={b.id} value={b.id}>
-                                  {formatCultivationBatchCalendarOptionLabel(b)}
-                                </option>
-                              ))}
-                            </optgroup>
+                          <div
+                            role={readOnly ? undefined : "button"}
+                            tabIndex={readOnly ? undefined : 0}
+                            onClick={() => {
+                              if (readOnly) return;
+                              startEdit(ev);
+                            }}
+                            onKeyDown={(e) => {
+                              if (readOnly) return;
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                startEdit(ev);
+                              }
+                            }}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              cursor: readOnly ? "default" : "pointer",
+                              outline: "none",
+                            }}
+                          >
+                            <div style={{ fontWeight: 800 }}>{ev.title}</div>
+                            {ev.notes ? <div style={{ color: "#94a3b8", marginTop: 4, fontSize: 13 }}>{ev.notes}</div> : null}
+                            {ev.batchRef ? (
+                              <div style={{ color: "#64748b", marginTop: 4, fontSize: 12 }}>
+                                {cultivationBatchLabelById.get(ev.batchRef) ?? `Ref: ${ev.batchRef}`}
+                              </div>
+                            ) : null}
+                            {!readOnly ? (
+                              <div style={{ color: "#38bdf8", marginTop: 6, fontSize: 12, fontWeight: 700 }}>Click to edit →</div>
+                            ) : null}
+                          </div>
+                          {!readOnly ? (
+                            <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                              <button
+                                type="button"
+                                style={{ ...buttonStyle, borderColor: "#b91c1c", color: "#fecaca" }}
+                                onClick={() => void onDelete(ev.id)}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          ) : null}
+                        </li>
+                      ))
+                    )}
+                  </ul>
+
+                  {!readOnly && selectedYmd && dayPanelYmd === selectedYmd ? (
+                    <div style={{ display: "grid", gap: 10, borderTop: "1px solid #1e293b", paddingTop: 14 }}>
+                      <div style={{ fontWeight: 800, fontSize: 13, color: "#a5f3fc" }}>
+                        {editingId ? "Edit task" : "Add task"}
+                      </div>
+                      <label style={{ display: "grid", gap: 4 }}>
+                        <span style={{ color: "#94a3b8", fontSize: 12 }}>Task</span>
+                        <select style={inputStyle} value={taskPick} onChange={(e) => setTaskPick(e.target.value)}>
+                          <option value="">Select from list…</option>
+                          {suggestions.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
                           ))}
-                          <option value="__custom__">Custom reference (type below)…</option>
+                          <option value="__custom__">Custom title…</option>
                         </select>
-                        {cultivationBatchSelectValue === "__custom__" ? (
+                      </label>
+                      {taskPick === "__custom__" ? (
+                        <label style={{ display: "grid", gap: 4 }}>
+                          <span style={{ color: "#94a3b8", fontSize: 12 }}>Custom title</span>
+                          <input
+                            style={inputStyle}
+                            value={customTitle}
+                            onChange={(e) => setCustomTitle(e.target.value)}
+                            placeholder="New task name"
+                          />
+                        </label>
+                      ) : null}
+                      <label style={{ display: "grid", gap: 4 }}>
+                        <span style={{ color: "#94a3b8", fontSize: 12 }}>Task date (YYYY-MM-DD)</span>
+                        <input
+                          style={inputStyle}
+                          type="date"
+                          value={selectedYmd || ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
+                            setSelectedYmd(v);
+                            setDayPanelYmd(v);
+                            const m = v.slice(0, 7);
+                            if (/^\d{4}-\d{2}$/.test(m) && m !== monthYyyyMm) setMonthYyyyMm(m);
+                          }}
+                        />
+                      </label>
+                      <label style={{ display: "grid", gap: 4 }}>
+                        <span style={{ color: "#94a3b8", fontSize: 12 }}>Notes (optional)</span>
+                        <input style={inputStyle} value={notes} onChange={(e) => setNotes(e.target.value)} />
+                      </label>
+                      <label style={{ display: "grid", gap: 4 }}>
+                        <span style={{ color: "#94a3b8", fontSize: 12 }}>Batch / ref (optional)</span>
+                        {cultivationBatchGroups.length > 0 ? (
+                          <>
+                            <select
+                              style={inputStyle}
+                              value={cultivationBatchSelectValue}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === "") {
+                                  setBatchLinkMode("none");
+                                  setBatchRef("");
+                                } else if (v === "__custom__") {
+                                  setBatchLinkMode("custom");
+                                  setBatchRef("");
+                                } else {
+                                  setBatchLinkMode("list");
+                                  setBatchRef(v);
+                                }
+                              }}
+                            >
+                              <option value="">— No batch linked —</option>
+                              {cultivationBatchGroups.map((g) => (
+                                <optgroup key={g.group} label={g.label}>
+                                  {g.batches.map((b) => (
+                                    <option key={b.id} value={b.id}>
+                                      {formatCultivationBatchCalendarOptionLabel(b)}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              ))}
+                              <option value="__custom__">Custom reference (type below)…</option>
+                            </select>
+                            {cultivationBatchSelectValue === "__custom__" ? (
+                              <input
+                                style={inputStyle}
+                                value={batchRef}
+                                onChange={(e) => setBatchRef(e.target.value)}
+                                placeholder="Batch id, METRC tag, or other note"
+                              />
+                            ) : (
+                              <p style={{ margin: 0, fontSize: 11, color: "#64748b" }}>
+                                Stages are grouped so clone, veg, and flower batches are easy to tell apart.
+                              </p>
+                            )}
+                          </>
+                        ) : (
                           <input
                             style={inputStyle}
                             value={batchRef}
                             onChange={(e) => setBatchRef(e.target.value)}
-                            placeholder="Batch id, METRC tag, or other note"
+                            placeholder="Batch id or reference"
                           />
-                        ) : (
-                          <p style={{ margin: 0, fontSize: 11, color: "#64748b" }}>
-                            Stages are grouped so clone, veg, and flower batches are easy to tell apart.
-                          </p>
                         )}
-                      </>
-                    ) : (
-                      <input
-                        style={inputStyle}
-                        value={batchRef}
-                        onChange={(e) => setBatchRef(e.target.value)}
-                        placeholder="Batch id or reference"
-                      />
-                    )}
-                  </label>
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    {editingId ? (
-                      <button type="button" style={buttonStyle} onClick={resetForm}>
-                        Cancel edit
-                      </button>
-                    ) : null}
-                    <button type="button" style={primaryButtonStyle} disabled={loading} onClick={() => void onSave()}>
-                      {editingId ? "Save changes" : "Add to calendar"}
-                    </button>
-                  </div>
+                      </label>
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        {editingId ? (
+                          <button type="button" style={buttonStyle} onClick={resetForm}>
+                            Cancel edit
+                          </button>
+                        ) : null}
+                        <button type="button" style={primaryButtonStyle} disabled={loading} onClick={() => void onSave()}>
+                          {editingId ? "Save changes" : "Add to calendar"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
+              </div>
+            ) : null}
 
-              <div style={{ marginTop: 16 }}>
+            <div style={{ marginTop: 20, borderTop: "1px solid #1e293b", paddingTop: 16 }}>
+              <p style={{ margin: "0 0 12px", color: "#94a3b8", fontSize: 13, lineHeight: 1.5 }}>
+                {readOnly
+                  ? "All scheduled items this month are listed below."
+                  : "Click a day on the grid to open its tasks. Use This month for a quick overview."}
+              </p>
+
+              <div style={{ marginTop: 4 }}>
                 <div style={{ fontWeight: 800, marginBottom: 8, color: "#cbd5e1" }}>This month</div>
                 {loading && events.length === 0 ? (
                   <p style={{ color: "#94a3b8" }}>Loading…</p>
