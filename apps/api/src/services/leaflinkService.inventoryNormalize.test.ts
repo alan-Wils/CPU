@@ -108,6 +108,55 @@ describe("normalizeLeafLinkInventoryRows", () => {
     const [row] = normalizeLeafLinkInventoryRows(raw);
     expect(row?.listingActive).toBe(true);
     expect(row?.wholesaleAvailable).toBe(true);
+    expect(row?.availableQuantity).toBe(5);
+  });
+
+  it("prefers explicit available over total quantity when both exist", () => {
+    const raw = {
+      data: [
+        {
+          id: "avail1",
+          product_name: "Split qty",
+          wholesale_price: 11,
+          quantity: 538,
+          available: 401,
+        },
+      ],
+    };
+    const [row] = normalizeLeafLinkInventoryRows(raw);
+    expect(row?.availableQuantity).toBe(401);
+  });
+
+  it("derives available from total minus reserved when explicit available is missing", () => {
+    const raw = {
+      data: [
+        {
+          id: "res1",
+          product_name: "Reserved split",
+          wholesale_price: 11,
+          quantity: 538,
+          reserved_quantity: 137,
+        },
+      ],
+    };
+    const [row] = normalizeLeafLinkInventoryRows(raw);
+    expect(row?.availableQuantity).toBe(401);
+  });
+
+  it("reads available from nested listing when top-level quantity is total only", () => {
+    const raw = {
+      data: [
+        {
+          id: "nest1",
+          product_name: "Nested",
+          wholesale_price: 1,
+          quantity: 538,
+          listing: { available_inventory: 401 },
+        },
+      ],
+    };
+    const [row] = normalizeLeafLinkInventoryRows(raw);
+    expect(row?.availableQuantity).toBe(401);
   });
 
   it("combines distinct product_type with strain when category matches type", () => {
