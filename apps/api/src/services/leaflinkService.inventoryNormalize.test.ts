@@ -7,11 +7,48 @@ vi.mock("../config/env.js", () => ({
 }));
 
 import {
+  leafLinkActiveProductsQtyBreakdown,
   leafLinkInventoryRowsForPageDefaultTotals,
   normalizeLeafLinkInventoryRows,
   sumLeafLinkInventoryValueUsd,
   type LeafLinkInventoryItem,
 } from "./leaflinkService.js";
+
+describe("leafLinkActiveProductsQtyBreakdown", () => {
+  it("matches LeafLink UI: 538 total, 137 reserved, 401 available", () => {
+    expect(
+      leafLinkActiveProductsQtyBreakdown({
+        sku: "B1677(BBM-LRO)",
+        quantity: "538.0000",
+        reserved_qty: "137.0000",
+      }),
+    ).toEqual({
+      totalQuantity: 538,
+      reservedQuantity: 137,
+      availableQuantity: 401,
+    });
+  });
+
+  it("clamps to zero when fully reserved or zero stock", () => {
+    expect(leafLinkActiveProductsQtyBreakdown({ quantity: 65, reserved_qty: 65 })).toEqual({
+      totalQuantity: 65,
+      reservedQuantity: 65,
+      availableQuantity: 0,
+    });
+    expect(
+      leafLinkActiveProductsQtyBreakdown({ quantity: "0.0000", reserved_qty: "0.0000" }),
+    ).toEqual({
+      totalQuantity: 0,
+      reservedQuantity: 0,
+      availableQuantity: 0,
+    });
+  });
+
+  it("returns null when reserved_qty or quantity is missing", () => {
+    expect(leafLinkActiveProductsQtyBreakdown({ quantity: "538.0000" })).toBeNull();
+    expect(leafLinkActiveProductsQtyBreakdown({ reserved_qty: "0" })).toBeNull();
+  });
+});
 
 describe("normalizeLeafLinkInventoryRows", () => {
   it("resolves nested sub_category and product_line labels", () => {
@@ -156,6 +193,26 @@ describe("normalizeLeafLinkInventoryRows", () => {
           quantity: "538.0000",
           reserved_qty: "137.0000",
           status: "Available",
+        },
+      ],
+    };
+    const [row] = normalizeLeafLinkInventoryRows(raw);
+    expect(row?.availableQuantity).toBe(401);
+    expect(row?.totalQuantity).toBe(538);
+    expect(row?.reservedQuantity).toBe(137);
+  });
+
+  it("active-products quantity+reserved_qty wins over nested listing.available heuristics", () => {
+    const raw = {
+      data: [
+        {
+          id: "bbm2",
+          sku: "B1677(BBM-LRO)",
+          product_name: "Bubba Banana Melt",
+          wholesale_price: 11,
+          quantity: "538.0000",
+          reserved_qty: "137.0000",
+          listing: { available: 683, available_inventory: 683 },
         },
       ],
     };

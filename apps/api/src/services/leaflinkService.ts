@@ -460,6 +460,36 @@ const LEAFLINK_TOTAL_QTY_KEYS = [
   "inventory_quantity",
 ] as const;
 
+/**
+ * LeafLink `/api/internal/active-products/` style rows: root `quantity` (total on hand) and
+ * `reserved_qty` (not sellable). Available = quantity − reserved_qty (clamped).
+ * Applied before scanning nested `listing` / `product` or other available_* heuristics so a
+ * mismatched `listing.available` cannot override (e.g. NexBatch showing 683 instead of 401).
+ */
+export function leafLinkActiveProductsQtyBreakdown(
+  row: Record<string, unknown>,
+): { totalQuantity: number; reservedQuantity: number; availableQuantity: number } | null {
+  if (
+    !("quantity" in row) ||
+    row.quantity === undefined ||
+    row.quantity === null ||
+    !("reserved_qty" in row) ||
+    row.reserved_qty === undefined ||
+    row.reserved_qty === null
+  ) {
+    return null;
+  }
+  const total = toNumber(row.quantity);
+  const reserved = toNumber(row.reserved_qty);
+  if (!Number.isFinite(total) || total < 0) return null;
+  if (!Number.isFinite(reserved) || reserved < 0) return null;
+  return {
+    totalQuantity: Math.max(0, Math.floor(total)),
+    reservedQuantity: Math.max(0, Math.floor(reserved)),
+    availableQuantity: Math.max(0, Math.floor(total - reserved)),
+  };
+}
+
 function hasExplicitAvailableField(src: Record<string, unknown>): boolean {
   for (const k of LEAFLINK_AVAILABLE_QTY_KEYS) {
     if (k in src && src[k] !== undefined && src[k] !== null) return true;
@@ -522,11 +552,18 @@ function pickLeafLinkReservedQuantityFromRow(row: Record<string, unknown>): numb
   return undefined;
 }
 
+/** Skip quantity-only sellable fallback when this object carries LeafLink `reserved_qty` (use total − reserved instead). */
+function hasReservedQtyOnSource(src: Record<string, unknown>): boolean {
+  return (
+    "reserved_qty" in src &&
+    src.reserved_qty !== undefined &&
+    src.reserved_qty !== null
+  );
+}
+
 /**
- * Wholesale / orderable units LeafLink shows as **Available**, not total on hand (reserved is not sellable).
- * Checks top-level row plus nested `listing` and `product` objects.
- * Prefers explicit available_* / `available`, then **quantity minus any reserved field** (including `reserved_qty`),
- * then total-only fallbacks.
+ * Sellable units for rows **not** handled by `leafLinkActiveProductsQtyBreakdown` in `normalizeLeafLinkInventoryRows`.
+ * Root active-products rows (`quantity` + `reserved_qty`) are resolved there first so nested `listing.available` cannot override.
  */
 function pickLeafLinkAvailableQuantity(row: Record<string, unknown>): number {
   const sources = leafLinkInventoryQtySources(row);
@@ -542,11 +579,13 @@ function pickLeafLinkAvailableQuantity(row: Record<string, unknown>): number {
   }
 
   for (const src of sources) {
+    if (hasReservedQtyOnSource(src)) continue;
     const q = pickInventoryQuantity(src, [...LEAFLINK_TOTAL_QTY_KEYS]);
     if (q > 0) return Math.max(0, Math.floor(q));
   }
 
   for (const src of sources) {
+    if (hasReservedQtyOnSource(src)) continue;
     const q = pickInventoryQuantity(src, [...LEAFLINK_TOTAL_QTY_KEYS]);
     if (Number.isFinite(q)) return Math.max(0, Math.floor(q));
   }
@@ -986,9 +1025,16 @@ export function normalizeLeafLinkInventoryRows(raw: unknown): LeafLinkInventoryI
     const row = asRecord(item);
     const id = pickString(row, ["id", "inventory_id", "product_id", "sku"]);
     if (!id) continue;
-    const availableQuantity = pickLeafLinkAvailableQuantity(row);
-    const totalQuantity = pickLeafLinkTotalQuantityFromRow(row);
-    const reservedQuantity = pickLeafLinkReservedQuantityFromRow(row);
+    const apBreakdown = leafLinkActiveProductsQtyBreakdown(row);
+    const availableQuantity = apBreakdown
+      ? apBreakdown.availableQuantity
+      : pickLeafLinkAvailableQuantity(row);
+    const totalQuantity = apBreakdown
+      ? apBreakdown.totalQuantity
+      : pickLeafLinkTotalQuantityFromRow(row);
+    const reservedQuantity = apBreakdown
+      ? apBreakdown.reservedQuantity
+      : pickLeafLinkReservedQuantityFromRow(row);
     const status = pickString(row, [
       "status",
       "availability",
@@ -1273,6 +1319,29 @@ async function fetchLeafLinkInventoryFromApi(
 
   const firstRowKeys =
     merged.rows.length > 0 ? Object.keys(asRecord(merged.rows[0])).slice(0, 80) : [];
+  const activeProductsQtyPreview = merged.rows
+    .slice(0, 400)
+    .map((x) => asRecord(x))
+    .filter(
+      (r) =>
+        "quantity" in r &&
+        r.quantity !== undefined &&
+        r.quantity !== null &&
+        "reserved_qty" in r &&
+        r.reserved_qty !== undefined &&
+        r.reserved_qty !== null,
+    )
+    .slice(0, 12)
+    .map((r) => {
+      const sku = pickString(r, ["sku", "product_sku"]) || pickString(r, ["id"]);
+      const bd = leafLinkActiveProductsQtyBreakdown(r);
+      return {
+        sku: sku || null,
+        quantity: r.quantity,
+        reserved_qty: r.reserved_qty,
+        normalizedAvailable: bd?.availableQuantity ?? null,
+      };
+    });
   logInfo("[LEAFLINK] normalize_preview", {
     companyId: creds.companyId || null,
     authSource,
@@ -1284,6 +1353,7 @@ async function fetchLeafLinkInventoryFromApi(
     rawRowCount: merged.rows.length,
     rawRowCountFirstPage: firstPageCount,
     firstRowKeys,
+    activeProductsQtyPreview,
     modifiedGte: modifiedGte || null,
   });
 
