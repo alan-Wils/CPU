@@ -938,6 +938,7 @@ export default function Cultivation() {
 
   const [showCreateBatch, setShowCreateBatch] = useState(false);
   const [showTaskWindow, setShowTaskWindow] = useState(false);
+  const [showRewardsChallengeModal, setShowRewardsChallengeModal] = useState(false);
   const [rewardsCfg, setRewardsCfg] = useState<ReturnType<typeof extractRewardsFromCompanyConfig> | null>(null);
   const [customTasksRewardDefs, setCustomTasksRewardDefs] = useState<CustomTasksRewardDefs>(() =>
     extractCustomTasksRewardDefsFromCompanyConfig({}),
