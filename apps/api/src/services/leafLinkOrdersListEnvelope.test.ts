@@ -83,4 +83,50 @@ describe("normalizeOrder (analytics prerequisites)", () => {
     expect(normalizeOrder(raw).buyerCustomerId.trim()).toBe("");
     expect(normalizeOrder(raw).id.trim().length > 0).toBe(true);
   });
+
+  it("reads headline total from alternate keys when top-level total is zero", () => {
+    const raw = {
+      id: "ord-alt-total-1",
+      number: "ALT-1",
+      status: "accepted",
+      total: 0,
+      total_amount: "432.10",
+      created_on: "2026-03-10T12:00:00Z",
+      customer: { display_name: "Retailer A" },
+      line_items: [],
+    };
+    expect(normalizeOrder(raw).total).toBeCloseTo(432.1, 5);
+  });
+
+  it("reads nested order totals and line_items when list payload nests under order", () => {
+    const raw = {
+      id: "ord-nested-1",
+      number: "NST-1",
+      status: "accepted",
+      total: 0,
+      created_on: "2026-03-11T15:30:00Z",
+      customer: { display_name: "Retailer B" },
+      order: {
+        total_amount: "250.00",
+        line_items: [
+          {
+            id: "li-1",
+            quantity: 2,
+            line_total: "125.00",
+            product_name: "Widget",
+          },
+          {
+            id: "li-2",
+            quantity: 1,
+            line_total: "125.00",
+            product_name: "Gadget",
+          },
+        ],
+      },
+    };
+    const o = normalizeOrder(raw);
+    expect(o.total).toBeCloseTo(250, 5);
+    expect(o.lineItems.length).toBe(2);
+    expect((o.lineItems[0]?.lineTotal ?? 0) + (o.lineItems[1]?.lineTotal ?? 0)).toBeCloseTo(250, 5);
+  });
 });

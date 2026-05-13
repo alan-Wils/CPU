@@ -62,6 +62,36 @@ function moneyAmount(v: unknown): number | null {
   return null;
 }
 
+/** First strictly-positive money field on a LeafLink order-ish record (list/detail shapes vary). */
+function firstPositiveMoneyInRecord(rec: Record<string, unknown>, keys: readonly string[]): number | null {
+  for (const k of keys) {
+    const m = moneyAmount(rec[k]);
+    if (m != null && m > 0) return m;
+  }
+  return null;
+}
+
+const LEAFLINK_ORDER_TOTAL_FIELDS = [
+  "total",
+  "grand_total",
+  "final_total",
+  "order_total",
+  "total_amount",
+  "invoice_total",
+  "amount_due",
+  "order_amount",
+  "total_cost",
+  "amount",
+] as const;
+
+const LEAFLINK_ORDER_SUBTOTAL_FIELDS = [
+  "subtotal",
+  "order_subtotal",
+  "sub_total",
+  "sub_total_amount",
+  "merchandise_total",
+] as const;
+
 /** Standardized wholesale order — detail + summary. */
 export type LeafLinkOrderLineItemDto = {
   id: string;
@@ -552,17 +582,16 @@ function leafLinkBuyerCustomerId(row: Record<string, unknown>): string {
 function effectiveOrderTotalUsd(raw: Record<string, unknown>, summary: LeafLinkOrderSummaryDto): number {
   const nest = nestedOrderRecord(raw);
   const headline =
-    moneyAmount(raw.total)
-    ?? moneyAmount(nest.total)
-    ?? moneyAmount(raw.grand_total)
-    ?? moneyAmount(raw.final_total)
-    ?? moneyAmount(raw.order_total);
+    firstPositiveMoneyInRecord(raw, LEAFLINK_ORDER_TOTAL_FIELDS)
+    ?? firstPositiveMoneyInRecord(nest, LEAFLINK_ORDER_TOTAL_FIELDS);
 
   const lines = summary.lineItems;
   const linesSum = lines.reduce((acc, li) => acc + (li.lineTotal ?? 0), 0);
   const lineCount = lines.length;
 
-  const rawSub = moneyAmount(raw.subtotal) ?? moneyAmount(nest.subtotal);
+  const rawSub =
+    firstPositiveMoneyInRecord(raw, LEAFLINK_ORDER_SUBTOTAL_FIELDS)
+    ?? firstPositiveMoneyInRecord(nest, LEAFLINK_ORDER_SUBTOTAL_FIELDS);
 
   if (headline != null && headline > 0) {
     /** Some list embeds return bloated `line_items`; keep the API order total. */
@@ -820,8 +849,15 @@ async function enrichDetailLineItems(
 }
 
 function extractLineItems(raw: Record<string, unknown>): LeafLinkOrderLineItemDto[] {
-  const arr = raw.line_items;
-  if (!Array.isArray(arr)) return [];
+  const nest =
+    raw.order != null && typeof raw.order === "object" && !Array.isArray(raw.order)
+      ? asRecord(raw.order)
+      : {};
+  const top = Array.isArray(raw.line_items) ? raw.line_items : [];
+  const nested = Array.isArray(nest.line_items) ? nest.line_items : [];
+  /** List payloads often nest line rows only under `order`; pick whichever side has rows (prefer longer). */
+  const arr = nested.length > top.length ? nested : top;
+  if (!Array.isArray(arr) || arr.length === 0) return [];
   const out: LeafLinkOrderLineItemDto[] = [];
   for (let i = 0; i < arr.length; i++) {
     const li = arr[i];
@@ -876,9 +912,13 @@ function extractLineItems(raw: Record<string, unknown>): LeafLinkOrderLineItemDt
       sku = frozenHints.sku;
     const qty = toNumber(r.quantity);
     const unitPrice = moneyAmount(r.ordered_unit_price) ?? moneyAmount(r.sale_price) ?? moneyAmount(r.wholesale_price);
-    let lineTotal: number | null = null;
-    if (typeof r.total === "number" && Number.isFinite(r.total)) lineTotal = r.total;
-    else if (unitPrice != null && qty > 0) lineTotal = unitPrice * qty;
+    let lineTotal: number | null =
+      moneyAmount(r.total)
+      ?? moneyAmount(r.line_total)
+      ?? moneyAmount(r.extended_price)
+      ?? moneyAmount(r.subtotal)
+      ?? moneyAmount(r.amount);
+    if (lineTotal == null && unitPrice != null && qty > 0) lineTotal = unitPrice * qty;
 
     const fr = r.frozen_data != null && typeof r.frozen_data === "object" && !Array.isArray(r.frozen_data)
       ? asRecord(r.frozen_data)
@@ -980,13 +1020,17 @@ export function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
   }
 
   const lineItems = extractLineItems(row);
-  let subtotal: number | null = moneyAmount(row.subtotal);
+  let subtotal: number | null =
+    firstPositiveMoneyInRecord(row, LEAFLINK_ORDER_SUBTOTAL_FIELDS)
+    ?? firstPositiveMoneyInRecord(nestedOrder, LEAFLINK_ORDER_SUBTOTAL_FIELDS);
   if (subtotal == null && lineItems.length) {
     const sum = lineItems.reduce((acc, x) => acc + (x.lineTotal ?? 0), 0);
     subtotal = sum > 0 ? sum : null;
   }
 
-  const total = moneyAmount(row.total);
+  const total =
+    firstPositiveMoneyInRecord(row, LEAFLINK_ORDER_TOTAL_FIELDS)
+    ?? firstPositiveMoneyInRecord(nestedOrder, LEAFLINK_ORDER_TOTAL_FIELDS);
   const taxAmount = typeof row.tax_amount === "number" ? row.tax_amount : moneyAmount(row.tax_amount);
   const finalTaxAmt = moneyAmount(row.final_tax);
   const ship = row.shipping_charge;

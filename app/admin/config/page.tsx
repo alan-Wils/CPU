@@ -2984,6 +2984,10 @@ export default function ConfigPage() {
         </p>
 
         <h4 style={{ ...styles.subTitle, fontSize: 16, marginBottom: 8 }}>Cultivation (Clone / Veg / Flower)</h4>
+        <p style={{ color: "#64748b", fontSize: 12, marginTop: -4, marginBottom: 10, lineHeight: 1.45 }}>
+          Task names here also appear in the <b>Cultivation</b> section (below) when you configure{" "}
+          <b>Scheduled cultivation calendar (per batch)</b>.
+        </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
           {(config.cultivation.customTasks || []).map((row, idx) => (
             <div
@@ -3121,215 +3125,6 @@ export default function ConfigPage() {
             }}
           >
             Add cultivation task
-          </button>
-        </div>
-
-        <h4 style={{ ...styles.subTitle, fontSize: 16, marginTop: 20, marginBottom: 8 }}>
-          Automatic cultivation calendar (static stage tasks)
-        </h4>
-        <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
-          Each row is a <b>static task</b> (same built-in names as on the Cultivation page, plus your extra cultivation
-          tasks above when they apply to that stage). For every <b>active batch</b>, the app <b>automatically</b> adds a
-          calendar entry on <b>Cultivation → Schedule</b>: <b>Clone</b> uses the batch clone date, <b>Veg</b> uses the
-          first logged move-to-veg date, <b>Flower</b> uses the first move-to-flower date, plus the day offset you set.
-          Save Company Config (or save a batch on Cultivation) refreshes generated dates. Operators can still edit a
-          generated row on the calendar; those rows stop auto-updating.
-        </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
-          {(config.cultivation.scheduleTemplates || []).map((row, idx) => {
-            const metOn = config.company.metrc?.integrationEnabled !== false;
-            const taskOptions = listStaticCultivationTasksForSchedulePicker(
-              row.stage,
-              metOn,
-              config.cultivation.customTasks,
-            );
-            const selectVal = scheduleTemplateTitleSelectValue(row.title, taskOptions);
-            const showCustomTitle = selectVal === SCHEDULE_TEMPLATE_TASK_CUSTOM;
-            return (
-            <div
-              key={row.id || `cult-st-${idx}`}
-              style={{
-                ...styles.grid,
-                border: "1px solid #334155",
-                borderRadius: 10,
-                padding: 10,
-                alignItems: "center",
-              }}
-            >
-              <label style={{ ...styles.label, margin: 0 }}>
-                Stage
-                <select
-                  style={styles.input}
-                  value={row.stage}
-                  onChange={(e) => {
-                    const v = e.target.value as "clone" | "veg" | "flower";
-                    setConfig((prev) => {
-                      const list = [...(prev.cultivation.scheduleTemplates || [])];
-                      const met = prev.company.metrc?.integrationEnabled !== false;
-                      const nextOpts = listStaticCultivationTasksForSchedulePicker(
-                        v,
-                        met,
-                        prev.cultivation.customTasks,
-                      );
-                      const curTitle = String(list[idx].title || "").trim();
-                      const nextTitle = nextOpts.includes(curTitle) ? curTitle : (nextOpts[0] || "");
-                      list[idx] = { ...list[idx], stage: v, title: nextTitle };
-                      return {
-                        ...prev,
-                        cultivation: { ...prev.cultivation, scheduleTemplates: list },
-                      };
-                    });
-                  }}
-                >
-                  <option value="clone">Clone (from clone date)</option>
-                  <option value="veg">Veg (from first veg move date)</option>
-                  <option value="flower">Flower (from first flower move date)</option>
-                </select>
-              </label>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
-                <span style={{ color: "#94a3b8", fontSize: 12 }}>Static task (calendar title)</span>
-                <select
-                  style={styles.input}
-                  value={selectVal}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setConfig((prev) => {
-                      const list = [...(prev.cultivation.scheduleTemplates || [])];
-                      if (v === SCHEDULE_TEMPLATE_TASK_CUSTOM) {
-                        const cur = String(list[idx].title || "").trim();
-                        const met = prev.company.metrc?.integrationEnabled !== false;
-                        const o = listStaticCultivationTasksForSchedulePicker(
-                          list[idx].stage,
-                          met,
-                          prev.cultivation.customTasks,
-                        );
-                        list[idx] = {
-                          ...list[idx],
-                          title: o.includes(cur) ? "" : cur,
-                        };
-                      } else {
-                        list[idx] = { ...list[idx], title: v };
-                      }
-                      return {
-                        ...prev,
-                        cultivation: { ...prev.cultivation, scheduleTemplates: list },
-                      };
-                    });
-                  }}
-                >
-                  {taskOptions.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                  <option value={SCHEDULE_TEMPLATE_TASK_CUSTOM}>Custom title…</option>
-                </select>
-                {showCustomTitle ? (
-                  <input
-                    style={styles.input}
-                    placeholder="Type calendar task title"
-                    value={row.title}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setConfig((prev) => {
-                        const list = [...(prev.cultivation.scheduleTemplates || [])];
-                        list[idx] = { ...list[idx], title: v };
-                        return {
-                          ...prev,
-                          cultivation: { ...prev.cultivation, scheduleTemplates: list },
-                        };
-                      });
-                    }}
-                  />
-                ) : null}
-              </div>
-              <label style={styles.label}>
-                Days after stage start
-                <input
-                  style={styles.input}
-                  type="number"
-                  step={1}
-                  value={Number.isFinite(row.daysFromStageStart) ? row.daysFromStageStart : 0}
-                  onChange={(e) => {
-                    const v = Math.trunc(Number(e.target.value));
-                    setConfig((prev) => {
-                      const list = [...(prev.cultivation.scheduleTemplates || [])];
-                      list[idx] = {
-                        ...list[idx],
-                        daysFromStageStart: Number.isFinite(v) ? v : 0,
-                      };
-                      return {
-                        ...prev,
-                        cultivation: { ...prev.cultivation, scheduleTemplates: list },
-                      };
-                    });
-                  }}
-                />
-              </label>
-              <input
-                style={styles.input}
-                placeholder="Default notes (optional)"
-                value={row.defaultNotes ?? ""}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setConfig((prev) => {
-                    const list = [...(prev.cultivation.scheduleTemplates || [])];
-                    list[idx] = { ...list[idx], defaultNotes: v || undefined };
-                    return {
-                      ...prev,
-                      cultivation: { ...prev.cultivation, scheduleTemplates: list },
-                    };
-                  });
-                }}
-              />
-              <button
-                type="button"
-                style={{ ...styles.deleteButton, justifySelf: "end" }}
-                onClick={() => {
-                  setConfig((prev) => ({
-                    ...prev,
-                    cultivation: {
-                      ...prev.cultivation,
-                      scheduleTemplates: (prev.cultivation.scheduleTemplates || []).filter((_, i) => i !== idx),
-                    },
-                  }));
-                }}
-              >
-                Remove
-              </button>
-            </div>
-            );
-          })}
-          <button
-            type="button"
-            style={{ ...styles.addButton, alignSelf: "start" }}
-            onClick={() => {
-              setConfig((prev) => {
-                const met = prev.company.metrc?.integrationEnabled !== false;
-                const pick = listStaticCultivationTasksForSchedulePicker(
-                  "clone",
-                  met,
-                  prev.cultivation.customTasks,
-                );
-                return {
-                  ...prev,
-                  cultivation: {
-                    ...prev.cultivation,
-                    scheduleTemplates: [
-                      ...(prev.cultivation.scheduleTemplates || []),
-                      {
-                        id: makeId("cult-stpl"),
-                        stage: "clone",
-                        title: pick[0] || "Maintenance",
-                        daysFromStageStart: 0,
-                      },
-                    ],
-                  },
-                };
-              });
-            }}
-          >
-            Add automatic calendar task
           </button>
         </div>
 
@@ -4762,6 +4557,12 @@ export default function ConfigPage() {
         title="Cultivation"
         summaryCollapsed={
           <>
+            {(config.cultivation.scheduleTemplates || []).length > 0 ? (
+              <>
+                {(config.cultivation.scheduleTemplates || []).length} batch calendar task
+                {(config.cultivation.scheduleTemplates || []).length === 1 ? "" : "s"} ·{" "}
+              </>
+            ) : null}
             {config.cultivation.strains.length} strain{config.cultivation.strains.length === 1 ? "" : "s"} ·{" "}
             {config.cultivation.rooms.vegRooms.length} veg · {config.cultivation.rooms.flowerRooms.length} flower ·{" "}
             {(config.cultivation.supplies || []).length} supply rows
@@ -4795,6 +4596,226 @@ export default function ConfigPage() {
               }}
             />
           </label>
+        </div>
+
+        <div
+          id="cultivation-scheduled-calendar"
+          style={{
+            ...styles.configSubCard,
+            marginBottom: 16,
+            border: "1px solid rgba(6, 182, 212, 0.45)",
+            boxShadow: "0 0 0 1px rgba(6, 182, 212, 0.12)",
+          }}
+        >
+          <h3 style={{ ...styles.subTitle, marginTop: 0, color: "#a5f3fc" }}>
+            Scheduled cultivation calendar (per batch)
+          </h3>
+          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+            Add one row per task you want on the <b>Cultivation → Schedule</b> calendar. For each <b>active batch</b>, the
+            app creates an event automatically: pick <b>Clone</b> (anchor = clone date), <b>Veg</b> (anchor = first
+            move-to-veg date in logs), or <b>Flower</b> (anchor = first move-to-flower date), then how many{" "}
+            <b>days after</b> that anchor the task falls. Task names match the built-in Cultivation lists plus any{" "}
+            <b>extra cultivation tasks</b> you define under <b>Workflow → Cultivation (Clone / Veg / Flower)</b> when
+            their stages match. Save Company Config (or save a batch on Cultivation) refreshes dates. Editing a
+            generated event on the calendar stops auto-updates for that row.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {(config.cultivation.scheduleTemplates || []).map((row, idx) => {
+              const metOn = config.company.metrc?.integrationEnabled !== false;
+              const taskOptions = listStaticCultivationTasksForSchedulePicker(
+                row.stage,
+                metOn,
+                config.cultivation.customTasks,
+              );
+              const selectVal = scheduleTemplateTitleSelectValue(row.title, taskOptions);
+              const showCustomTitle = selectVal === SCHEDULE_TEMPLATE_TASK_CUSTOM;
+              return (
+                <div
+                  key={row.id || `cult-st-${idx}`}
+                  style={{
+                    ...styles.grid,
+                    border: "1px solid #334155",
+                    borderRadius: 10,
+                    padding: 10,
+                    alignItems: "center",
+                  }}
+                >
+                  <label style={{ ...styles.label, margin: 0 }}>
+                    Stage
+                    <select
+                      style={styles.input}
+                      value={row.stage}
+                      onChange={(e) => {
+                        const v = e.target.value as "clone" | "veg" | "flower";
+                        setConfig((prev) => {
+                          const list = [...(prev.cultivation.scheduleTemplates || [])];
+                          const met = prev.company.metrc?.integrationEnabled !== false;
+                          const nextOpts = listStaticCultivationTasksForSchedulePicker(
+                            v,
+                            met,
+                            prev.cultivation.customTasks,
+                          );
+                          const curTitle = String(list[idx].title || "").trim();
+                          const nextTitle = nextOpts.includes(curTitle) ? curTitle : (nextOpts[0] || "");
+                          list[idx] = { ...list[idx], stage: v, title: nextTitle };
+                          return {
+                            ...prev,
+                            cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                          };
+                        });
+                      }}
+                    >
+                      <option value="clone">Clone (from clone date)</option>
+                      <option value="veg">Veg (from first veg move date)</option>
+                      <option value="flower">Flower (from first flower move date)</option>
+                    </select>
+                  </label>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+                    <span style={{ color: "#94a3b8", fontSize: 12 }}>Task (calendar title)</span>
+                    <select
+                      style={styles.input}
+                      value={selectVal}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setConfig((prev) => {
+                          const list = [...(prev.cultivation.scheduleTemplates || [])];
+                          if (v === SCHEDULE_TEMPLATE_TASK_CUSTOM) {
+                            const cur = String(list[idx].title || "").trim();
+                            const met = prev.company.metrc?.integrationEnabled !== false;
+                            const o = listStaticCultivationTasksForSchedulePicker(
+                              list[idx].stage,
+                              met,
+                              prev.cultivation.customTasks,
+                            );
+                            list[idx] = {
+                              ...list[idx],
+                              title: o.includes(cur) ? "" : cur,
+                            };
+                          } else {
+                            list[idx] = { ...list[idx], title: v };
+                          }
+                          return {
+                            ...prev,
+                            cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                          };
+                        });
+                      }}
+                    >
+                      {taskOptions.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                      <option value={SCHEDULE_TEMPLATE_TASK_CUSTOM}>Custom title…</option>
+                    </select>
+                    {showCustomTitle ? (
+                      <input
+                        style={styles.input}
+                        placeholder="Type calendar task title"
+                        value={row.title}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setConfig((prev) => {
+                            const list = [...(prev.cultivation.scheduleTemplates || [])];
+                            list[idx] = { ...list[idx], title: v };
+                            return {
+                              ...prev,
+                              cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                            };
+                          });
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                  <label style={styles.label}>
+                    Days after stage start
+                    <input
+                      style={styles.input}
+                      type="number"
+                      step={1}
+                      value={Number.isFinite(row.daysFromStageStart) ? row.daysFromStageStart : 0}
+                      onChange={(e) => {
+                        const v = Math.trunc(Number(e.target.value));
+                        setConfig((prev) => {
+                          const list = [...(prev.cultivation.scheduleTemplates || [])];
+                          list[idx] = {
+                            ...list[idx],
+                            daysFromStageStart: Number.isFinite(v) ? v : 0,
+                          };
+                          return {
+                            ...prev,
+                            cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                          };
+                        });
+                      }}
+                    />
+                  </label>
+                  <input
+                    style={styles.input}
+                    placeholder="Default notes (optional)"
+                    value={row.defaultNotes ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setConfig((prev) => {
+                        const list = [...(prev.cultivation.scheduleTemplates || [])];
+                        list[idx] = { ...list[idx], defaultNotes: v || undefined };
+                        return {
+                          ...prev,
+                          cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                        };
+                      });
+                    }}
+                  />
+                  <button
+                    type="button"
+                    style={{ ...styles.deleteButton, justifySelf: "end" }}
+                    onClick={() => {
+                      setConfig((prev) => ({
+                        ...prev,
+                        cultivation: {
+                          ...prev.cultivation,
+                          scheduleTemplates: (prev.cultivation.scheduleTemplates || []).filter((_, i) => i !== idx),
+                        },
+                      }));
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              );
+            })}
+            <button
+              type="button"
+              style={{ ...styles.addButton, alignSelf: "start" }}
+              onClick={() => {
+                setConfig((prev) => {
+                  const met = prev.company.metrc?.integrationEnabled !== false;
+                  const pick = listStaticCultivationTasksForSchedulePicker(
+                    "clone",
+                    met,
+                    prev.cultivation.customTasks,
+                  );
+                  return {
+                    ...prev,
+                    cultivation: {
+                      ...prev.cultivation,
+                      scheduleTemplates: [
+                        ...(prev.cultivation.scheduleTemplates || []),
+                        {
+                          id: makeId("cult-stpl"),
+                          stage: "clone",
+                          title: pick[0] || "Maintenance",
+                          daysFromStageStart: 0,
+                        },
+                      ],
+                    },
+                  };
+                });
+              }}
+            >
+              Add scheduled calendar task
+            </button>
+          </div>
         </div>
 
         <details style={styles.cultivationStrainsOuter}>
