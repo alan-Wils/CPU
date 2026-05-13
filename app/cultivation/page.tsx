@@ -235,6 +235,13 @@ function tableGroupLabelFromKey(
     .join(", ");
 }
 
+function formatBatchesAndPlants(batchCount: number, plantTotal: number): string {
+  const batches = `${batchCount} batch${batchCount === 1 ? "" : "es"}`;
+  const n = Number.isFinite(plantTotal) ? Math.max(0, Math.round(plantTotal)) : 0;
+  const plants = `${n.toLocaleString()} plant${n === 1 ? "" : "s"}`;
+  return `${batches} · ${plants}`;
+}
+
 type StageModalBayTableGroup = {
   bayId: string;
   bayLabel: string;
@@ -1762,17 +1769,20 @@ export default function Cultivation() {
           const rooms =
             selectedStage === "Veg" ? cultivationRooms.vegRooms : cultivationRooms.flowerRooms;
           const counts = new Map<string, number>();
+          const plantSums = new Map<string, number>();
           for (const b of selectedStageBatchesOldestFirst) {
             const id =
               selectedStage === "Veg"
                 ? resolveVegRoomIdForBatch(b, cultivationRooms.vegRooms)
                 : resolveFlowerRoomIdForBatch(b, cultivationRooms.flowerRooms);
             counts.set(id, (counts.get(id) || 0) + 1);
+            plantSums.set(id, (plantSums.get(id) || 0) + num(b?.plants));
           }
           return [...counts.entries()]
             .map(([id, count]) => ({
               id,
               count,
+              plants: plantSums.get(id) || 0,
               name:
                 id === STAGE_MODAL_UNASSIGNED_ROOM_ID
                   ? "Unassigned"
@@ -1830,7 +1840,11 @@ export default function Cultivation() {
     return order.map((bayId) => {
       const tables = byBay.get(bayId)!;
       const batchCount = tables.reduce((sum, t) => sum + t.batches.length, 0);
-      return { bayId, bayLabel: tables[0]?.bayLabel ?? bayId, tables, batchCount };
+      const plantCount = tables.reduce(
+        (sum, t) => sum + t.batches.reduce((ps: number, b: any) => ps + num(b?.plants), 0),
+        0,
+      );
+      return { bayId, bayLabel: tables[0]?.bayLabel ?? bayId, tables, batchCount, plantCount };
     });
   }, [cultivationStageModalBayTableGroups]);
 
@@ -7074,14 +7088,23 @@ export default function Cultivation() {
 
   const cultivationStageModalTitle =
     selectedStage === "Clones"
-      ? `Clones Batches (${selectedStageBatches.length})`
+      ? `Clones Batches (${formatBatchesAndPlants(
+          selectedStageBatches.length,
+          selectedStageBatches.reduce((s: number, b: any) => s + num(b?.plants), 0),
+        )})`
       : showStageModalRoomPicker
-        ? `${selectedStage} — Select a room (${selectedStageBatches.length} batches)`
+        ? `${selectedStage} — Select a room (${formatBatchesAndPlants(
+            selectedStageBatches.length,
+            selectedStageBatches.reduce((s: number, b: any) => s + num(b?.plants), 0),
+          )})`
         : `${selectedStage} — ${
             stageModalEffectiveRoomId === STAGE_MODAL_UNASSIGNED_ROOM_ID
               ? "Unassigned"
               : cultivationStageModalRoomConfig?.name || "Room"
-          } (${batchesForCultivationStageModal.length} batches)`;
+          } (${formatBatchesAndPlants(
+            batchesForCultivationStageModal.length,
+            batchesForCultivationStageModal.reduce((s: number, b: any) => s + num(b?.plants), 0),
+          )})`;
 
   function cultivationStageModalBatchCard(b: any) {
     return (
@@ -7680,7 +7703,7 @@ export default function Cultivation() {
                     <div style={{ flex: 1, lineHeight: 1.5 }}>
                       <b>{r.name}</b>
                       <span style={{ color: "#cbd5e1", marginLeft: 8 }}>
-                        ({r.count} batch{r.count === 1 ? "" : "es"})
+                        ({formatBatchesAndPlants(r.count, r.plants)})
                       </span>
                     </div>
                   </button>
@@ -7709,7 +7732,7 @@ export default function Cultivation() {
                         <div style={{ flex: 1, lineHeight: 1.5 }}>
                           <b style={{ fontSize: 16, color: "#93c5fd" }}>{bay.bayLabel}</b>
                           <span style={{ color: "#cbd5e1", marginLeft: 8 }}>
-                            ({bay.batchCount} batch{bay.batchCount === 1 ? "" : "es"})
+                            ({formatBatchesAndPlants(bay.batchCount, bay.plantCount)})
                           </span>
                           <span style={{ color: "#64748b", marginLeft: 8, fontSize: 12 }}>{isBayOpen ? "▼" : "▶"}</span>
                         </div>
@@ -7742,7 +7765,10 @@ export default function Cultivation() {
                                       Tables: {grp.tableLabel}
                                     </span>
                                     <span style={{ color: "#cbd5e1", marginLeft: 8, fontSize: 13 }}>
-                                      ({grp.batches.length} batch{grp.batches.length === 1 ? "" : "es"})
+                                      ({formatBatchesAndPlants(
+                                        grp.batches.length,
+                                        grp.batches.reduce((s: number, b: any) => s + num(b?.plants), 0),
+                                      )})
                                     </span>
                                     <span style={{ color: "#64748b", marginLeft: 8, fontSize: 11 }}>
                                       {isTableOpen ? "▼" : "▶"}
