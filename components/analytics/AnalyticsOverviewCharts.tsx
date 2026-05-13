@@ -87,6 +87,8 @@ export function SalesOverTimeChart(props: {
       </div>
     );
   }
+  /** Stacked Areas put the *second* series stroke on the cumulative top edge; when NexBatch is all zeros that edge is still LeafLink revenue but drawn in green. Omit the zero series so the line reads as LeafLink (cyan). */
+  const showNexBatchSeries = rows.some((r) => Number(r.nexbatch) > 0);
   return (
     <div style={{ width: "100%", height: 240 }}>
       <ResponsiveContainer>
@@ -120,8 +122,17 @@ export function SalesOverTimeChart(props: {
             }}
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
-          <Area type="monotone" dataKey="leafLink" stackId="1" stroke="#38bdf8" fill="url(#llSales)" name="LeafLink" />
-          <Area type="monotone" dataKey="nexbatch" stackId="1" stroke="#22c55e" fill="url(#nbSales)" name="NexBatch" />
+          <Area
+            type="monotone"
+            dataKey="leafLink"
+            stackId={showNexBatchSeries ? "1" : undefined}
+            stroke="#38bdf8"
+            fill="url(#llSales)"
+            name="LeafLink"
+          />
+          {showNexBatchSeries ? (
+            <Area type="monotone" dataKey="nexbatch" stackId="1" stroke="#22c55e" fill="url(#nbSales)" name="NexBatch" />
+          ) : null}
         </AreaChart>
       </ResponsiveContainer>
     </div>
