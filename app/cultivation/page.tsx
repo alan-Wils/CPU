@@ -1678,6 +1678,13 @@ export default function Cultivation() {
     (batch: any) => batch.status !== "Complete"
   );
 
+  const cultivationCalendarBatchPickRows = activeBatches.map((b: any) => ({
+    id: String(b?.id || ""),
+    stage: b?.stage,
+    strain: typeof b?.strain === "string" ? b.strain : undefined,
+    plants: b?.plants,
+  }));
+
   const stageOrder: Exclude<StageModalKey, null>[] = ["Clones", "Veg", "Flower"];
   const activeBatchesByStage = {
     Clones: activeBatches.filter((b: any) => stageBucketFromBatchStage(b?.stage) === "Clones"),
@@ -7214,6 +7221,7 @@ export default function Cultivation() {
                 section="cultivation"
                 taskSuggestions={cultivationCalendarTaskSuggestions}
                 readOnly={!canWriteRecords}
+                cultivationBatchesForPicker={cultivationCalendarBatchPickRows}
               />
               <Link
                 href="/cultivation/room-stats"

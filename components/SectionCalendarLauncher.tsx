@@ -12,6 +12,11 @@ import {
 } from "@/lib/sectionCalendarApi";
 import { monthYmdBounds } from "@/lib/sectionCalendarMonth";
 import { getCompanyDisplayTimezone, getTodayYmdInCompanyTimezone, logTimeIsoForStageMoveDate } from "@/lib/companyTimezone";
+import {
+  formatCultivationBatchCalendarOptionLabel,
+  groupCultivationBatchesForCalendarPicker,
+  type CultivationBatchCalendarPickRow,
+} from "@/lib/cultivationCalendarBatchPick";
 
 const modalOverlayStyle: CSSProperties = {
   position: "fixed",
@@ -106,12 +111,15 @@ export type SectionCalendarLauncherProps = {
   section: SectionCalendarSection;
   taskSuggestions: string[];
   readOnly?: boolean;
+  /** When set (cultivation page), batch ref is chosen from Clone / Veg / Flower groups instead of free text only. */
+  cultivationBatchesForPicker?: CultivationBatchCalendarPickRow[];
 };
 
 export default function SectionCalendarLauncher({
   section,
   taskSuggestions,
   readOnly = false,
+  cultivationBatchesForPicker,
 }: SectionCalendarLauncherProps) {
   const [open, setOpen] = useState(false);
   const [monthYyyyMm, setMonthYyyyMm] = useState(() => getTodayYmdInCompanyTimezone().slice(0, 7));
@@ -123,9 +131,32 @@ export default function SectionCalendarLauncher({
   const [customTitle, setCustomTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [batchRef, setBatchRef] = useState("");
+  /** When cultivation picker is shown: whether the ref came from the grouped list, custom text, or none. */
+  const [batchLinkMode, setBatchLinkMode] = useState<"none" | "list" | "custom">("none");
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const suggestions = useMemo(() => dedupeTasks(taskSuggestions), [taskSuggestions]);
+
+  const cultivationBatchGroups = useMemo(() => {
+    if (section !== "cultivation" || !cultivationBatchesForPicker?.length) return [];
+    return groupCultivationBatchesForCalendarPicker(cultivationBatchesForPicker);
+  }, [section, cultivationBatchesForPicker]);
+
+  const cultivationPickerIdSet = useMemo(() => {
+    const ids = new Set<string>();
+    for (const g of cultivationBatchGroups) for (const b of g.batches) ids.add(b.id);
+    return ids;
+  }, [cultivationBatchGroups]);
+
+  const cultivationBatchLabelById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const g of cultivationBatchGroups) {
+      for (const b of g.batches) {
+        m.set(b.id, `${g.label}: ${formatCultivationBatchCalendarOptionLabel(b)}`);
+      }
+    }
+    return m;
+  }, [cultivationBatchGroups]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -180,6 +211,7 @@ export default function SectionCalendarLauncher({
     setCustomTitle("");
     setNotes("");
     setBatchRef("");
+    setBatchLinkMode("none");
     setEditingId(null);
   }
 
@@ -254,7 +286,15 @@ export default function SectionCalendarLauncher({
       setCustomTitle(ev.title);
     }
     setNotes(ev.notes || "");
-    setBatchRef(ev.batchRef || "");
+    const ref = String(ev.batchRef || "").trim();
+    setBatchRef(ref);
+    if (cultivationPickerIdSet.size && ref && cultivationPickerIdSet.has(ref)) {
+      setBatchLinkMode("list");
+    } else if (ref) {
+      setBatchLinkMode("custom");
+    } else {
+      setBatchLinkMode("none");
+    }
   }
 
   const monthEvents = useMemo(() => {
@@ -434,7 +474,58 @@ export default function SectionCalendarLauncher({
                   </label>
                   <label style={{ display: "grid", gap: 4 }}>
                     <span style={{ color: "#94a3b8", fontSize: 12 }}>Batch / ref (optional)</span>
-                    <input style={inputStyle} value={batchRef} onChange={(e) => setBatchRef(e.target.value)} placeholder="Batch id or reference" />
+                    {cultivationBatchGroups.length > 0 ? (
+                      <>
+                        <select
+                          style={inputStyle}
+                          value={cultivationBatchSelectValue}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === "") {
+                              setBatchLinkMode("none");
+                              setBatchRef("");
+                            } else if (v === "__custom__") {
+                              setBatchLinkMode("custom");
+                              setBatchRef("");
+                            } else {
+                              setBatchLinkMode("list");
+                              setBatchRef(v);
+                            }
+                          }}
+                        >
+                          <option value="">— No batch linked —</option>
+                          {cultivationBatchGroups.map((g) => (
+                            <optgroup key={g.group} label={g.label}>
+                              {g.batches.map((b) => (
+                                <option key={b.id} value={b.id}>
+                                  {formatCultivationBatchCalendarOptionLabel(b)}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                          <option value="__custom__">Custom reference (type below)…</option>
+                        </select>
+                        {cultivationBatchSelectValue === "__custom__" ? (
+                          <input
+                            style={inputStyle}
+                            value={batchRef}
+                            onChange={(e) => setBatchRef(e.target.value)}
+                            placeholder="Batch id, METRC tag, or other note"
+                          />
+                        ) : (
+                          <p style={{ margin: 0, fontSize: 11, color: "#64748b" }}>
+                            Stages are grouped so clone, veg, and flower batches are easy to tell apart.
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <input
+                        style={inputStyle}
+                        value={batchRef}
+                        onChange={(e) => setBatchRef(e.target.value)}
+                        placeholder="Batch id or reference"
+                      />
+                    )}
                   </label>
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
                     {editingId ? (
@@ -477,7 +568,9 @@ export default function SectionCalendarLauncher({
                           </div>
                           {ev.notes ? <div style={{ color: "#94a3b8", marginTop: 4, fontSize: 13 }}>{ev.notes}</div> : null}
                           {ev.batchRef ? (
-                            <div style={{ color: "#64748b", marginTop: 4, fontSize: 12 }}>Ref: {ev.batchRef}</div>
+                            <div style={{ color: "#64748b", marginTop: 4, fontSize: 12 }}>
+                              {cultivationBatchLabelById.get(ev.batchRef) ?? `Ref: ${ev.batchRef}`}
+                            </div>
                           ) : null}
                         </div>
                         {!readOnly ? (
