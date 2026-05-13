@@ -772,7 +772,7 @@ export default function SectionCalendarLauncher({
                             }}
                           >
                             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
                                 <div style={{ fontWeight: 900, color: "#f8fafc" }}>{card.label}</div>
                                 <div style={{ color: "#a5f3fc", marginTop: 6, fontSize: 13, fontWeight: 700 }}>
                                   Next: {card.next.dateYmd} — {card.next.title}

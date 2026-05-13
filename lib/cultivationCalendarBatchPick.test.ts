@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cultivationCalendarStageGroup,
+  formatCultivationBatchCalendarOptionLabel,
   groupCultivationBatchesForCalendarPicker,
 } from "./cultivationCalendarBatchPick";
 
@@ -15,6 +16,20 @@ describe("cultivationCalendarStageGroup", () => {
   it("maps other stages to flower bucket", () => {
     expect(cultivationCalendarStageGroup("Flower")).toBe("flower");
     expect(cultivationCalendarStageGroup("Partially Harvested")).toBe("flower");
+  });
+});
+
+describe("formatCultivationBatchCalendarOptionLabel", () => {
+  it("includes the full batch id for long refs", () => {
+    const id = "ALLI.042726";
+    expect(
+      formatCultivationBatchCalendarOptionLabel({
+        id,
+        stage: "clone",
+        strain: "Guava",
+        plants: 100,
+      }),
+    ).toBe(`Guava · 100 plants · ${id}`);
   });
 });
 

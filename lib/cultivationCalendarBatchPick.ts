@@ -20,13 +20,13 @@ function numPlants(batch: CultivationBatchCalendarPickRow): number {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
-/** One-line label for dropdowns: easy to scan strain, plant count, and id. */
+/** One-line label for dropdowns and calendar cards: strain, plant count, and full batch id (never truncated). */
 export function formatCultivationBatchCalendarOptionLabel(batch: CultivationBatchCalendarPickRow): string {
   const strain = String(batch.strain || "").trim() || "—";
   const plants = numPlants(batch);
   const plantSeg = plants > 0 ? ` · ${plants} plants` : "";
-  const shortId = batch.id.length > 10 ? `${batch.id.slice(0, 8)}…` : batch.id;
-  return `${strain}${plantSeg} · ${shortId}`;
+  const id = String(batch.id || "").trim() || "—";
+  return `${strain}${plantSeg} · ${id}`;
 }
 
 const GROUP_ORDER: CultivationCalendarStageGroup[] = ["clone", "veg", "flower"];
