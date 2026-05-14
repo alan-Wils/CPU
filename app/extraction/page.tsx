@@ -91,7 +91,7 @@ const extractionTasks = [
   "Finish Batch",
 ];
 
-const optionalRepeatableTasks = ["Whip", "Adding Terps"];
+const optionalRepeatableTasks = ["Whip", "Adding Terps", "Print Batch Label"];
 
 const testingOptions = [
   "Metals",
@@ -909,7 +909,6 @@ export default function Extraction() {
   function getNextAllowedTask(batch: any) {
     if (!hasCompletedTask(batch, "Pack Socks Start")) return "Pack Socks Start";
     if (!hasCompletedTask(batch, "Pack Socks Stop")) return "Pack Socks Stop";
-    if (!hasCompletedTask(batch, "Print Batch Label")) return "Print Batch Label";
     if (!hasCompletedTask(batch, "Run Extraction")) return "Run Extraction";
     if (!hasCompletedTask(batch, "Start Purge")) return "Start Purge";
     if (!hasCompletedTask(batch, "End Purge")) return "End Purge";
@@ -932,20 +931,9 @@ export default function Extraction() {
 
     if (task === "Pack Socks Start") return !packSocksStarted;
     if (task === "Pack Socks Stop") return packSocksStarted && !packSocksStopped;
-    if (task === "Print Batch Label") {
-      return (
-        packSocksStopped &&
-        !hasCompletedTask(batch, "Print Batch Label") &&
-        !hasRun
-      );
-    }
-    if (task === "Run Extraction") {
-      return (
-        packSocksStopped &&
-        hasCompletedTask(batch, "Print Batch Label") &&
-        !hasRun
-      );
-    }
+    /** Anytime reprint; does not gate other tasks. */
+    if (task === "Print Batch Label") return true;
+    if (task === "Run Extraction") return packSocksStopped && !hasRun;
     if (task === "Start Purge") return hasRun && !purgeStarted;
 
     if (task === "Start Terp Separation") {
@@ -2255,6 +2243,10 @@ export default function Extraction() {
     if (!selectedExt.completedTasks) selectedExt.completedTasks = [];
 
     if (optionalRepeatableTasks.includes(selectedTask)) {
+      const existing = selectedExt.taskData[selectedTask];
+      if (existing != null && !Array.isArray(existing)) {
+        selectedExt.taskData[selectedTask] = [existing];
+      }
       if (!selectedExt.taskData[selectedTask]) {
         selectedExt.taskData[selectedTask] = [];
       }
@@ -2815,7 +2807,7 @@ export default function Extraction() {
             <div style={{ flex: "1 1 280px" }}>
               <h2 style={{ margin: 0 }}>Extraction Batches</h2>
               <p style={{ color: "#94a3b8", margin: "6px 0 0" }}>
-                {`Required path: Pack Socks Start → Pack Socks Stop → Print Batch Label → Run Extraction → Start Purge → End Purge → Testing Passed → Finish Batch. Optional tasks can be logged while purge is active.`}
+                {`Required path: Pack Socks Start → Pack Socks Stop → Run Extraction → Start Purge → End Purge → Testing Passed → Finish Batch. Print Batch Label is available anytime (reprints allowed). Optional tasks (Whip, Adding Terps, etc.) can be logged while purge is active.`}
               </p>
             </div>
 
@@ -3307,11 +3299,13 @@ export default function Extraction() {
                 {selectedTask === "Print Batch Label" && selectedExt && (
                   <>
                     <p style={{ color: "#94a3b8", margin: "0 0 8px" }}>
-                      Print batch info on a{" "}
+                      This task is <strong style={{ color: "#e2e8f0" }}>always available</strong> at
+                      any workflow stage (including after the batch is finished) so you can reprint
+                      labels whenever needed. Print batch info on a{" "}
                       <strong style={{ color: "#e2e8f0" }}>DYMO LabelWriter 450 Turbo</strong>{" "}
                       using <strong style={{ color: "#e2e8f0" }}>1&quot; × 1.5&quot;</strong> stock.
-                      Use <strong>Print label</strong> to open the system print dialog (choose your
-                      DYMO printer and label size), then log this task when the label is printed.
+                      Use <strong>Print label</strong> to open the system print dialog, then save to
+                      log each print.
                     </p>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
                       <ExtractionBatchLabelPreview

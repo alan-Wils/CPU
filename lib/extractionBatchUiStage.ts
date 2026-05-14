@@ -3,7 +3,7 @@
  * Safe fallbacks use `status` when task logs look empty (legacy / partial data).
  */
 
-const OPTIONAL_REPEATABLE_TASKS = ["Whip", "Adding Terps"];
+const OPTIONAL_REPEATABLE_TASKS = ["Whip", "Adding Terps", "Print Batch Label"];
 
 export type ExtractionUiStageKey = "prep" | "extraction" | "post" | "testing";
 
