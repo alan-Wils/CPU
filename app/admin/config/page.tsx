@@ -93,6 +93,8 @@ type BayConfig = {
 type RoomWithBayLayout = {
   id: string;
   name: string;
+  /** Optional capacity goal for cultivation stage / room cards (plants). */
+  targetPlantCount?: number;
   bays: BayConfig[];
 };
 
@@ -471,7 +473,13 @@ function normalizeRoomsLayout(raw: unknown): RoomWithBayLayout[] {
       });
       return { id: bayId, name: bayName, tables };
     });
-    return { id, name, bays };
+    const rawTarget = obj.targetPlantCount;
+    let targetPlantCount: number | undefined;
+    if (rawTarget != null && rawTarget !== "") {
+      const tn = Math.floor(Number(rawTarget));
+      if (Number.isFinite(tn) && tn >= 0) targetPlantCount = tn;
+    }
+    return { id, name, bays, ...(targetPlantCount !== undefined ? { targetPlantCount } : {}) };
   });
 }
 
@@ -1403,6 +1411,39 @@ export default function ConfigPage() {
           flowerRooms: prev.cultivation.rooms.flowerRooms.filter(
             (r) => r.id !== roomId
           ),
+        },
+      },
+    }));
+  }
+
+  function setCultivationRoomTargetPlantCount(
+    suite: "vegRooms" | "flowerRooms",
+    roomId: string,
+    raw: string,
+  ) {
+    const t = raw.trim();
+    let targetPlantCount: number | undefined;
+    if (t === "") {
+      targetPlantCount = undefined;
+    } else {
+      const n = Math.floor(Number(t));
+      if (!Number.isFinite(n) || n < 0) return;
+      targetPlantCount = n;
+    }
+    setConfig((prev) => ({
+      ...prev,
+      cultivation: {
+        ...prev.cultivation,
+        rooms: {
+          ...prev.cultivation.rooms,
+          [suite]: prev.cultivation.rooms[suite].map((r) => {
+            if (r.id !== roomId) return r;
+            if (targetPlantCount === undefined) {
+              const { targetPlantCount: _omit, ...rest } = r;
+              return rest as RoomWithBayLayout;
+            }
+            return { ...r, targetPlantCount };
+          }),
         },
       },
     }));
@@ -5048,6 +5089,7 @@ export default function ConfigPage() {
         </div>
 
         <CultivationRoomAccordionList
+          suite="vegRooms"
           rooms={config.cultivation.rooms.vegRooms}
           onOpenAddBay={(roomId) => openAddBayModal("vegRooms", roomId)}
           onRemoveRoom={removeVegRoom}
@@ -5055,6 +5097,7 @@ export default function ConfigPage() {
           onEditTable={(roomId, bayId, tableId) => openEditTableModal("vegRooms", roomId, bayId, tableId)}
           onRemoveBay={(roomId, bayId) => removeBay("vegRooms", roomId, bayId)}
           onRemoveTable={(roomId, bayId, tableId) => removeTable("vegRooms", roomId, bayId, tableId)}
+          onRoomTargetPlantCountChange={setCultivationRoomTargetPlantCount}
         />
         </div>
 
@@ -5113,6 +5156,7 @@ export default function ConfigPage() {
         </div>
 
         <CultivationRoomAccordionList
+          suite="flowerRooms"
           rooms={config.cultivation.rooms.flowerRooms}
           onOpenAddBay={(roomId) => openAddBayModal("flowerRooms", roomId)}
           onRemoveRoom={removeFlowerRoom}
@@ -5122,6 +5166,7 @@ export default function ConfigPage() {
           onRemoveTable={(roomId, bayId, tableId) =>
             removeTable("flowerRooms", roomId, bayId, tableId)
           }
+          onRoomTargetPlantCountChange={setCultivationRoomTargetPlantCount}
         />
         </div>
       </CollapsibleConfigSection>
@@ -5772,6 +5817,7 @@ function SupplyList({
 }
 
 function CultivationRoomAccordionList({
+  suite,
   rooms,
   onOpenAddBay,
   onRemoveRoom,
@@ -5779,7 +5825,9 @@ function CultivationRoomAccordionList({
   onEditTable,
   onRemoveBay,
   onRemoveTable,
+  onRoomTargetPlantCountChange,
 }: {
+  suite: "vegRooms" | "flowerRooms";
   rooms: RoomWithBayLayout[];
   onOpenAddBay: (roomId: string) => void;
   onRemoveRoom: (roomId: string) => void;
@@ -5787,6 +5835,11 @@ function CultivationRoomAccordionList({
   onEditTable: (roomId: string, bayId: string, tableId: string) => void;
   onRemoveBay: (roomId: string, bayId: string) => void;
   onRemoveTable: (roomId: string, bayId: string, tableId: string) => void;
+  onRoomTargetPlantCountChange?: (
+    suite: "vegRooms" | "flowerRooms",
+    roomId: string,
+    value: string,
+  ) => void;
 }) {
   const n = rooms.length;
   if (n === 0) {
@@ -5831,6 +5884,35 @@ function CultivationRoomAccordionList({
               </span>
             </summary>
             <div style={styles.cultivationRoomBody}>
+              {onRoomTargetPlantCountChange ? (
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    gap: 10,
+                    marginBottom: 10,
+                    paddingBottom: 10,
+                    borderBottom: "1px solid #1e293b",
+                  }}
+                >
+                  <label style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 13, color: "#cbd5e1" }}>
+                    Target plant count
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      placeholder="—"
+                      value={room.targetPlantCount ?? ""}
+                      onChange={(e) => onRoomTargetPlantCountChange(suite, room.id, e.target.value)}
+                      style={{ ...styles.cultivationField, width: 120, maxWidth: "100%" }}
+                    />
+                  </label>
+                  <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.35 }}>
+                    Shown on cultivation stage and room cards (optional). Save Config to persist.
+                  </span>
+                </div>
+              ) : null}
               {room.bays.length === 0 ? (
                 <p style={{ color: "#64748b", fontSize: 12, margin: "4px 0 0" }}>No bays yet — use + Bay.</p>
               ) : (

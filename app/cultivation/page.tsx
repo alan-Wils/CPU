@@ -130,6 +130,8 @@ type CultivationFlowerRoom = {
   id: string;
   name: string;
   bays: CultivationBayConfig[];
+  /** Optional capacity goal from Company Config (veg/flower rooms). */
+  targetPlantCount?: number;
 };
 
 /** Same structure as flower — bays and tables from Company Config. */
@@ -235,11 +237,34 @@ function tableGroupLabelFromKey(
     .join(", ");
 }
 
-function formatBatchesAndPlants(batchCount: number, plantTotal: number): string {
+function formatBatchesAndPlants(
+  batchCount: number,
+  plantTotal: number,
+  plantTarget?: number,
+): string {
   const batches = `${batchCount} batch${batchCount === 1 ? "" : "es"}`;
   const n = Number.isFinite(plantTotal) ? Math.max(0, Math.round(plantTotal)) : 0;
-  const plants = `${n.toLocaleString()} plant${n === 1 ? "" : "s"}`;
+  const tgt =
+    plantTarget != null && Number.isFinite(plantTarget) && plantTarget >= 0
+      ? Math.max(0, Math.round(plantTarget))
+      : null;
+  const plants =
+    tgt != null
+      ? `${n.toLocaleString()} / ${tgt.toLocaleString()} plants`
+      : `${n.toLocaleString()} plant${n === 1 ? "" : "s"}`;
   return `${batches} · ${plants}`;
+}
+
+function sumConfiguredRoomTargets(rooms: CultivationFlowerRoom[]): number | undefined {
+  let sum = 0;
+  let has = false;
+  for (const r of rooms) {
+    if (typeof r.targetPlantCount === "number" && Number.isFinite(r.targetPlantCount) && r.targetPlantCount >= 0) {
+      sum += Math.round(r.targetPlantCount);
+      has = true;
+    }
+  }
+  return has ? sum : undefined;
 }
 
 type StageModalBayTableGroup = {
@@ -312,9 +337,16 @@ function normalizeCultivationRoomLayouts(rawRooms: unknown): CultivationFlowerRo
   if (!Array.isArray(rawRooms)) return [];
   return rawRooms.map((item: unknown) => {
     const r = item as Record<string, unknown>;
+    let targetPlantCount: number | undefined;
+    const rawT = (r as Record<string, unknown>)?.targetPlantCount;
+    if (rawT != null && rawT !== "") {
+      const tn = Math.floor(Number(rawT));
+      if (Number.isFinite(tn) && tn >= 0) targetPlantCount = tn;
+    }
     return {
       id: String(r?.id ?? ""),
       name: String(r?.name ?? ""),
+      ...(targetPlantCount !== undefined ? { targetPlantCount } : {}),
       bays: Array.isArray(r?.bays)
         ? (r.bays as unknown[]).map((bayItem: unknown) => {
             const bay = bayItem as Record<string, unknown>;
@@ -1711,6 +1743,17 @@ export default function Cultivation() {
     Veg: activeBatchesByStage.Veg.reduce((sum: number, b: any) => sum + num(b?.plants), 0),
     Flower: activeBatchesByStage.Flower.reduce((sum: number, b: any) => sum + num(b?.plants), 0),
   } as const;
+  const stagePlantTargetTotals = {
+    Clones: undefined as number | undefined,
+    Veg: sumConfiguredRoomTargets(cultivationRooms.vegRooms),
+    Flower: sumConfiguredRoomTargets(cultivationRooms.flowerRooms),
+  } as const;
+  const selectedStageRoomTargetSum =
+    selectedStage === "Veg"
+      ? stagePlantTargetTotals.Veg
+      : selectedStage === "Flower"
+        ? stagePlantTargetTotals.Flower
+        : undefined;
 
   const combinePartnerOptions = selectedBatch
     ? activeBatches.filter(
@@ -1779,15 +1822,27 @@ export default function Cultivation() {
             plantSums.set(id, (plantSums.get(id) || 0) + num(b?.plants));
           }
           return [...counts.entries()]
-            .map(([id, count]) => ({
-              id,
-              count,
-              plants: plantSums.get(id) || 0,
-              name:
-                id === STAGE_MODAL_UNASSIGNED_ROOM_ID
-                  ? "Unassigned"
-                  : rooms.find((r) => r.id === id)?.name || id || "Room",
-            }))
+            .map(([id, count]) => {
+              const roomCfg =
+                id === STAGE_MODAL_UNASSIGNED_ROOM_ID ? undefined : rooms.find((r) => r.id === id);
+              const plantTarget =
+                roomCfg &&
+                typeof roomCfg.targetPlantCount === "number" &&
+                Number.isFinite(roomCfg.targetPlantCount) &&
+                roomCfg.targetPlantCount >= 0
+                  ? Math.round(roomCfg.targetPlantCount)
+                  : undefined;
+              return {
+                id,
+                count,
+                plants: plantSums.get(id) || 0,
+                plantTarget,
+                name:
+                  id === STAGE_MODAL_UNASSIGNED_ROOM_ID
+                    ? "Unassigned"
+                    : rooms.find((r) => r.id === id)?.name || id || "Room",
+              };
+            })
             .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
         })()
       : [];
@@ -7086,6 +7141,14 @@ export default function Cultivation() {
     marginTop: 10,
   } as const;
 
+  const stageModalRoomPlantTarget =
+    cultivationStageModalRoomConfig &&
+    typeof cultivationStageModalRoomConfig.targetPlantCount === "number" &&
+    Number.isFinite(cultivationStageModalRoomConfig.targetPlantCount) &&
+    cultivationStageModalRoomConfig.targetPlantCount >= 0
+      ? Math.round(cultivationStageModalRoomConfig.targetPlantCount)
+      : undefined;
+
   const cultivationStageModalTitle =
     selectedStage === "Clones"
       ? `Clones Batches (${formatBatchesAndPlants(
@@ -7096,6 +7159,7 @@ export default function Cultivation() {
         ? `${selectedStage} — Select a room (${formatBatchesAndPlants(
             selectedStageBatches.length,
             selectedStageBatches.reduce((s: number, b: any) => s + num(b?.plants), 0),
+            selectedStageRoomTargetSum,
           )})`
         : `${selectedStage} — ${
             stageModalEffectiveRoomId === STAGE_MODAL_UNASSIGNED_ROOM_ID
@@ -7104,6 +7168,7 @@ export default function Cultivation() {
           } (${formatBatchesAndPlants(
             batchesForCultivationStageModal.length,
             batchesForCultivationStageModal.reduce((s: number, b: any) => s + num(b?.plants), 0),
+            stageModalRoomPlantTarget,
           )})`;
 
   function cultivationStageModalBatchCard(b: any) {
@@ -7334,7 +7399,16 @@ export default function Cultivation() {
                     {activeBatchesByStage[stageName].length} Batches
                   </span>
                   <span style={{ color: "#93c5fd", fontWeight: 700 }}>
-                    {stagePlantTotals[stageName]} Amount of plants
+                    {stagePlantTotals[stageName].toLocaleString()} plant
+                    {stagePlantTotals[stageName] === 1 ? "" : "s"}
+                    {typeof stagePlantTargetTotals[stageName] === "number" ? (
+                      <>
+                        {" "}
+                        <span style={{ color: "#64748b" }}>/</span>{" "}
+                        {stagePlantTargetTotals[stageName]!.toLocaleString()}{" "}
+                        <span style={{ color: "#94a3b8", fontWeight: 600 }}>target</span>
+                      </>
+                    ) : null}
                   </span>
                 </button>
               ))}
@@ -7703,7 +7777,7 @@ export default function Cultivation() {
                     <div style={{ flex: 1, lineHeight: 1.5 }}>
                       <b>{r.name}</b>
                       <span style={{ color: "#cbd5e1", marginLeft: 8 }}>
-                        ({formatBatchesAndPlants(r.count, r.plants)})
+                        ({formatBatchesAndPlants(r.count, r.plants, r.plantTarget)})
                       </span>
                     </div>
                   </button>
