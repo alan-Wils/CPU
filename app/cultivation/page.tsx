@@ -1260,6 +1260,18 @@ export default function Cultivation() {
   const [harvestDisposeReasonDraft, setHarvestDisposeReasonDraft] = useState("");
   const [harvestDisposeReasonError, setHarvestDisposeReasonError] = useState("");
 
+  const cloneVegLeaveBehindResolverRef = useRef<
+    ((value: "leave_remainder" | "kill_and_finish" | null) => void) | null
+  >(null);
+  const [cloneVegLeaveBehindModal, setCloneVegLeaveBehindModal] = useState<null | {
+    moved: number;
+    remaining: number;
+    batchId: string;
+    strain: string;
+  }>(null);
+  /** After a partial Clone→Veg move, optionally complete the clone batch and discard remaining counts. */
+  const cloneVegFinishAfterPartialRef = useRef(false);
+
   /** Dismiss overlapping poll results so slower requests cannot repaint stale store rows. */
   const cultivationPollGenRef = useRef(0);
   /** When `loadSourceBatches` fails, keep filtering with the last good list (avoid empty → full flicker). */
@@ -1564,6 +1576,25 @@ export default function Cultivation() {
     setHarvestDisposeReasonDraft("");
     setHarvestDisposeReasonError("");
     fn?.(result);
+  }
+
+  function promptCloneVegLeaveBehind(params: {
+    moved: number;
+    remaining: number;
+    batchId: string;
+    strain: string;
+  }): Promise<"leave_remainder" | "kill_and_finish" | null> {
+    return new Promise((resolve) => {
+      cloneVegLeaveBehindResolverRef.current = resolve;
+      setCloneVegLeaveBehindModal(params);
+    });
+  }
+
+  function resolveCloneVegLeaveBehind(choice: "leave_remainder" | "kill_and_finish" | null) {
+    const fn = cloneVegLeaveBehindResolverRef.current;
+    cloneVegLeaveBehindResolverRef.current = null;
+    setCloneVegLeaveBehindModal(null);
+    fn?.(choice);
   }
 
   function confirmHarvestDisposeRemaining() {
@@ -2559,7 +2590,10 @@ export default function Cultivation() {
     });
   }
 
-  function moveBatchToCompleted(batch: any, opts?: { skipAutoLog?: boolean }) {
+  function moveBatchToCompleted(
+    batch: any,
+    opts?: { skipAutoLog?: boolean; skipAutoSelect?: boolean },
+  ) {
     batch.status = "Complete";
     batch.stage = "Complete";
     batch.completedAt = nowIsoForLog();
@@ -2584,12 +2618,14 @@ export default function Cultivation() {
       }));
     }
 
-    const nextActive = s.cultivationBatches.find(
-      (b: any) => b.status !== "Complete"
-    );
+    if (!opts?.skipAutoSelect) {
+      const nextActive = s.cultivationBatches.find(
+        (b: any) => b.status !== "Complete"
+      );
 
-    if (nextActive) {
-      selectBatch(nextActive);
+      if (nextActive) {
+        selectBatch(nextActive);
+      }
     }
   }
 
@@ -4226,6 +4262,8 @@ export default function Cultivation() {
     let remainderAfter = current - moved;
 
     let selectAfter: any = null;
+    /** When a partial Clone→Veg move finishes the clone line, selection should land on the veg batch (merge target or new batch). */
+    let vegPartialDestinationForSelect: any = null;
 
     const laborData = { ...lab.laborDetail, totalLaborMinutes: lab.totalLaborMinutes };
 
@@ -4353,6 +4391,7 @@ export default function Cultivation() {
           );
 
           selectAfter = remainderAfter > 0 ? source : target;
+          vegPartialDestinationForSelect = target;
           await saveRealCultivationBatch(source);
           await saveRealCultivationBatch(target);
         } else {
@@ -4384,6 +4423,7 @@ export default function Cultivation() {
 
           s.cultivationBatches.unshift(newBatch as any);
           createRealCultivationBatch(newBatch);
+          vegPartialDestinationForSelect = newBatch as any;
 
           const tagSpan = `${tags[0]} → ${tags[tags.length - 1]}`;
           const srcOutput = `${moved} plants moved to Veg (partial; ${remainderAfter} immature plants remain on Clone batch) | New veg batch ${newBatch.id} | Tags ${tagSpan} | ${layoutTail}`;
@@ -4512,6 +4552,7 @@ export default function Cultivation() {
           );
 
           selectAfter = remainderAfter > 0 ? source : target;
+          vegPartialDestinationForSelect = target;
           await saveRealCultivationBatch(source);
           await saveRealCultivationBatch(target);
         } else {
@@ -4543,6 +4584,7 @@ export default function Cultivation() {
 
           s.cultivationBatches.unshift(newBatch as any);
           createRealCultivationBatch(newBatch);
+          vegPartialDestinationForSelect = newBatch as any;
 
           const srcOutput = `${moved} plants moved to Veg (partial; ${remainderAfter} plants remain on Clone batch) | New veg batch ${newBatch.id} | ${layoutTail}`;
           s.logs.unshift(
@@ -4755,6 +4797,49 @@ export default function Cultivation() {
         }
       }
 
+      const vegPartialMove =
+        pending.taskKey === TASK_MOVE_TO_VEG_ASSIGN_TAGS || pending.taskKey === TASK_MOVE_TO_VEG;
+      if (cloneVegFinishAfterPartialRef.current && vegPartialMove) {
+        cloneVegFinishAfterPartialRef.current = false;
+        if (String(source.stage || "") === "Clone" && num(source.plants) > 0) {
+          const discarded = num(source.plants);
+          if (Array.isArray(source.immaturePlantBatches)) {
+            for (const row of source.immaturePlantBatches) {
+              if (!row) continue;
+              row.countAvailable = 0;
+              row.updatedAt = new Date().toISOString();
+            }
+          }
+          source.plants = 0;
+          syncClonePlantsFromImmature(source);
+          moveBatchToCompleted(source, { skipAutoLog: true, skipAutoSelect: true });
+          s.logs.unshift(
+            withLoggedBy({
+              area: "Cultivation",
+              batch: source.id,
+              task: "Clone batch completed",
+              people: "",
+              minutes: "",
+              output: `Remaining ${discarded} clone plant(s) were discarded after a partial move to Veg — clone batch ${source.id} finished.`,
+              time: nowIsoForLog(),
+              data: {
+                partialVegMoveDiscardRemainder: true,
+                discardedPlants: discarded,
+              },
+            }),
+          );
+          try {
+            await saveRealCultivationBatch(source);
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      }
+
+      if (String(source.status || "") === "Complete" && vegPartialDestinationForSelect) {
+        selectAfter = vegPartialDestinationForSelect;
+      }
+
       if (selectAfter && s.cultivationBatches.some((b: any) => b?.id === selectAfter.id)) {
         selectBatch(selectAfter);
       } else {
@@ -4786,6 +4871,7 @@ export default function Cultivation() {
 
   function cancelPartialSplitChoice() {
     pendingPartialSplitRef.current = null;
+    cloneVegFinishAfterPartialRef.current = false;
     setPartialSplitChoiceModal(null);
     setIsSavingTask(false);
   }
@@ -5200,13 +5286,43 @@ export default function Cultivation() {
   async function saveEditCloneBatchModal() {
     if (!editCloneModalBatch || !canManageCultivationBatchPlacement()) return;
 
-    const taskRequiredFields: { label: string; value: unknown; positive?: boolean }[] = [
+    const taskRequiredFields: { label: string; value: unknown; zeroOrPositive?: boolean }[] = [
       { label: "Strain", value: editCloneStrain.trim() },
       { label: "Strain acronym", value: editCloneAcronym.trim() },
-      { label: "Plants", value: editClonePlants, positive: true },
+      { label: "Plants", value: editClonePlants, zeroOrPositive: true },
     ];
 
     if (!requireFieldsStyled(taskRequiredFields)) return;
+
+    const plantsNum = Math.floor(Number(String(editClonePlants).trim()));
+    if (!Number.isFinite(plantsNum) || plantsNum < 0) {
+      showNotice("Invalid plant count", "Enter a valid plant count (0 or greater).");
+      return;
+    }
+
+    if (plantsNum === 0) {
+      showConfirm(
+        "Finish this clone batch?",
+        `You are saving plant count as 0 for batch ${editCloneModalBatch.id}. This will clear immature line counts, complete the batch, and move it to completed history.`,
+        () => {
+          void saveEditCloneBatchModalConfirmed();
+        },
+        "Press Cancel if you meant to keep clones on this batch.",
+      );
+      return;
+    }
+
+    await saveEditCloneBatchModalConfirmed();
+  }
+
+  async function saveEditCloneBatchModalConfirmed() {
+    if (!editCloneModalBatch || !canManageCultivationBatchPlacement()) return;
+
+    const plantsNum = Math.floor(Number(String(editClonePlants).trim()));
+    if (!Number.isFinite(plantsNum) || plantsNum < 0) {
+      showNotice("Invalid plant count", "Enter a valid plant count (0 or greater).");
+      return;
+    }
 
     setIsSavingEditCloneModal(true);
     const b = editCloneModalBatch;
@@ -5215,24 +5331,53 @@ export default function Cultivation() {
       acronym: b.acronym,
       cloneDate: b.cloneDate,
       plants: b.plants,
+      stage: String(b.stage || ""),
       batchNotes: b.batchNotes,
     };
 
     b.strain = editCloneStrain.trim();
     b.acronym = editCloneAcronym.trim().toUpperCase();
     b.cloneDate = editCloneDate.trim();
-    b.plants = num(editClonePlants);
     b.batchNotes = editCloneBatchNotes.trim();
+    b.plants = plantsNum;
+
+    if (plantsNum === 0) {
+      if (Array.isArray(b.immaturePlantBatches)) {
+        for (const row of b.immaturePlantBatches) {
+          if (!row) continue;
+          row.countAvailable = 0;
+          row.updatedAt = new Date().toISOString();
+        }
+      }
+      syncClonePlantsFromImmature(b);
+      moveBatchToCompleted(b, { skipAutoLog: true, skipAutoSelect: false });
+      s.logs.unshift(
+        withLoggedBy({
+          area: "Cultivation",
+          batch: b.id,
+          task: "Clone batch completed",
+          people: "",
+          minutes: "",
+          output: `Clone batch completed from batch edit — plant count set to zero (remaining clone counts cleared).`,
+          time: nowIsoForLog(),
+          data: { source: "clone_batch_edit", previousStage: before.stage },
+        }),
+      );
+    }
 
     const after = {
       strain: b.strain,
       acronym: b.acronym,
       cloneDate: b.cloneDate,
       plants: b.plants,
+      stage: String(b.stage || ""),
       batchNotes: b.batchNotes,
     };
 
-    const output = `Edited Clone batch (${b.id}) | Plants: ${after.plants} | Strain: ${after.strain}`;
+    const output =
+      plantsNum === 0
+        ? `Edited Clone batch (${b.id}) — completed with 0 plants | Strain: ${after.strain}`
+        : `Edited Clone batch (${b.id}) | Plants: ${after.plants} | Strain: ${after.strain}`;
     const loggedAtIso = new Date().toISOString();
     const auditBase = {
       area: "Audit",
@@ -6150,7 +6295,24 @@ export default function Cultivation() {
       growthDateYmd: moveDateCanonical,
     });
 
+    cloneVegFinishAfterPartialRef.current = false;
     if (isPartialScenario) {
+      syncClonePlantsFromImmature(batch);
+      const plantsRemainingAfterMove = Math.max(0, num(batch.plants) - moved);
+      if (plantsRemainingAfterMove > 0) {
+        const choice = await promptCloneVegLeaveBehind({
+          moved,
+          remaining: plantsRemainingAfterMove,
+          batchId: String(batch.id || ""),
+          strain: String(batch.strain || batch.id || ""),
+        });
+        if (choice === null) {
+          return;
+        }
+        if (choice === "kill_and_finish") {
+          cloneVegFinishAfterPartialRef.current = true;
+        }
+      }
       pendingPartialSplitRef.current = {
         lab,
         sourceBatchId: batch.id,
@@ -6393,7 +6555,23 @@ export default function Cultivation() {
       return;
     }
 
+    cloneVegFinishAfterPartialRef.current = false;
     if (movedPlants > 0 && movedPlants < currentPlants) {
+      const remaining = currentPlants - movedPlants;
+      if (remaining > 0) {
+        const choice = await promptCloneVegLeaveBehind({
+          moved: movedPlants,
+          remaining,
+          batchId: String(selectedBatch.id || ""),
+          strain: String(selectedBatch.strain || selectedBatch.id || ""),
+        });
+        if (choice === null) {
+          return;
+        }
+        if (choice === "kill_and_finish") {
+          cloneVegFinishAfterPartialRef.current = true;
+        }
+      }
       const candidates = findPartialStageMergeCandidates(selectedBatch.id, "Veg");
       pendingPartialSplitRef.current = {
         lab,
@@ -8120,7 +8298,7 @@ export default function Cultivation() {
 
             <div style={formStyle}>
               <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
-                Plants (clones remaining)
+                Plants (clones remaining, 0 finishes batch)
                 <input
                   style={inputStyle}
                   inputMode="numeric"
@@ -10601,6 +10779,53 @@ export default function Cultivation() {
           </div>
         </div>
       )}
+
+      {cloneVegLeaveBehindModal ? (
+        <div style={{ ...modalOverlayStyle, zIndex: 10003 }}>
+          <div style={{ ...modalStyle, maxWidth: 520 }}>
+            <h2 style={{ textAlign: "center", marginTop: 0, marginBottom: 10 }}>Clones left behind</h2>
+            <p style={{ color: "#cbd5e1", marginTop: 0, lineHeight: 1.55, textAlign: "center" }}>
+              You are moving <strong style={{ color: "#e2e8f0" }}>{cloneVegLeaveBehindModal.moved}</strong> plant
+              {cloneVegLeaveBehindModal.moved === 1 ? "" : "s"} to Veg.{" "}
+              <strong style={{ color: "#e2e8f0" }}>{cloneVegLeaveBehindModal.remaining}</strong> clone
+              {cloneVegLeaveBehindModal.remaining === 1 ? "" : "s"} would remain on batch{" "}
+              <strong style={{ color: "#a5f3fc" }}>{cloneVegLeaveBehindModal.batchId}</strong> (
+              {cloneVegLeaveBehindModal.strain}).
+            </p>
+            <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, lineHeight: 1.5, textAlign: "center" }}>
+              Keep the remainder on this clone batch, or discard the leftover counts and finish the clone batch now (the
+              veg move still proceeds).
+            </p>
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                justifyContent: "center",
+                flexWrap: "wrap",
+                marginTop: 22,
+              }}
+            >
+              <button type="button" style={buttonStyle} onClick={() => resolveCloneVegLeaveBehind(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                style={{ ...primaryButtonStyle, background: "#38bdf8", borderColor: "#38bdf8", color: "#0f172a" }}
+                onClick={() => resolveCloneVegLeaveBehind("leave_remainder")}
+              >
+                Keep remainder on clone batch
+              </button>
+              <button
+                type="button"
+                style={{ ...primaryButtonStyle, background: "#9a3412", borderColor: "#ea580c" }}
+                onClick={() => resolveCloneVegLeaveBehind("kill_and_finish")}
+              >
+                Kill remainder &amp; finish batch
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {partialSplitChoiceModal && (
         <div style={{ ...modalOverlayStyle, zIndex: 10002 }}>
