@@ -58,3 +58,11 @@ Same command as the **Custom release command** in Railway. Run locally with `DAT
 ## 5. If you exposed `DATABASE_URL` or passwords (e.g. in chat, logs)
 
 - Rotate the **Neon** user password, update `DATABASE_URL` in Railway, and re-deploy. Never commit real URLs with credentials to the repo.
+
+## 6. Railway Cron / `curl` hitting the API (timeouts, HTTP/2 resets)
+
+If a scheduled **`curlimages/curl`** job calls a long `POST` (for example **`POST /api/section-calendar/cultivation/sync-templates`** with a normal user `Authorization: Bearer …` token):
+
+- **Schedule cadence must exceed worst-case runtime**, plus slack. If the job often runs ~10–15 minutes, a **15-minute** cron can still overlap or hit a platform wall clock; prefer **20–30 minutes** or optimize the endpoint (template sync uses batched DB work on the server).
+- **`curl: (92) HTTP/2 stream … reset … INTERNAL_ERROR`** is often a proxy or server closing the stream mid-request. Try forcing HTTP/1.1: **`curl --http1.1`** (and keep **`--max-time`** comfortably above expected duration for clearer failures vs. hangs).
+- Point cron at the **same host as the API** (e.g. `*.up.railway.app` or your API custom domain). A domain that still resolves to Squarespace or another static host will never reach Node.

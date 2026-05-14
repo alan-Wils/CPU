@@ -141,6 +141,33 @@ export async function syncCultivationSectionCalendarFromTemplates(input: {
   const batchIdSet = new Set(batches.map((b) => b.id));
   let upserted = 0;
 
+  /** One query: avoid per-cell findFirst (was 2 round-trips × batches × templates). */
+  const existingRows = await prisma.sectionCalendarEvent.findMany({
+    where: {
+      companyId,
+      section: "cultivation",
+      templateDedupeKey: { startsWith: "cult:tpl:" },
+    },
+    select: { templateDedupeKey: true, templateManaged: true },
+  });
+  const existingByDedupe = new Map<string, { templateManaged: boolean }>();
+  for (const r of existingRows) {
+    const k = r.templateDedupeKey;
+    if (!k) continue;
+    existingByDedupe.set(k, { templateManaged: r.templateManaged });
+  }
+
+  type SyncCell = {
+    dedupe: string;
+    batchId: string;
+    dateYmd: string;
+    title: string;
+    notes: string | null;
+    /** Operator turned off template sync for this row — do not upsert. */
+    skip: boolean;
+  };
+  const cells: SyncCell[] = [];
+
   for (const row of batches) {
     const ui = asUiRecord(row.cultivationUiState);
     if (!batchEligible(ui)) continue;
@@ -151,43 +178,59 @@ export async function syncCultivationSectionCalendarFromTemplates(input: {
       const dateYmd = addDaysYmdApi(anchor, tpl.daysFromStageStart, tz);
       const dedupe = templateDedupeKey(tpl.id, row.id);
       const notes = tpl.defaultNotes ?? null;
-
-      const existing = await prisma.sectionCalendarEvent.findFirst({
-        where: { companyId, section: "cultivation", templateDedupeKey: dedupe },
+      const existing = existingByDedupe.get(dedupe);
+      const skip = existing != null && !existing.templateManaged;
+      cells.push({
+        dedupe,
+        batchId: row.id,
+        dateYmd,
+        title: tpl.title.slice(0, 500),
+        notes,
+        skip,
       });
-
-      if (existing) {
-        if (!existing.templateManaged) continue;
-        await prisma.sectionCalendarEvent.update({
-          where: { id: existing.id },
-          data: {
-            dateYmd,
-            title: tpl.title.slice(0, 500),
-            notes,
-            batchRef: row.id,
-            templateManaged: true,
-            templateDedupeKey: dedupe,
-          },
-        });
-        upserted++;
-      } else {
-        await prisma.sectionCalendarEvent.create({
-          data: {
-            companyId,
-            section: "cultivation",
-            dateYmd,
-            title: tpl.title.slice(0, 500),
-            notes,
-            batchRef: row.id,
-            createdByUserId: actorUserId,
-            templateDedupeKey: dedupe,
-            templateManaged: true,
-          },
-        });
-        upserted++;
-      }
     }
   }
+
+  /** Parallel upserts (distinct dedupe keys) — keep modest vs. Prisma/Neon pool defaults. */
+  const CONCURRENCY = 8;
+  let cellIndex = 0;
+  const runOneCell = async (): Promise<void> => {
+    for (;;) {
+      const i = cellIndex++;
+      if (i >= cells.length) return;
+      const cell = cells[i]!;
+      if (cell.skip) continue;
+      await prisma.sectionCalendarEvent.upsert({
+        where: {
+          companyId_section_templateDedupeKey: {
+            companyId,
+            section: "cultivation",
+            templateDedupeKey: cell.dedupe,
+          },
+        },
+        create: {
+          companyId,
+          section: "cultivation",
+          dateYmd: cell.dateYmd,
+          title: cell.title,
+          notes: cell.notes,
+          batchRef: cell.batchId,
+          createdByUserId: actorUserId,
+          templateDedupeKey: cell.dedupe,
+          templateManaged: true,
+        },
+        update: {
+          dateYmd: cell.dateYmd,
+          title: cell.title,
+          notes: cell.notes,
+          batchRef: cell.batchId,
+          templateManaged: true,
+        },
+      });
+      upserted++;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(1, cells.length)) }, () => runOneCell()));
 
   let deletedOrphans = 0;
   const managed = await prisma.sectionCalendarEvent.findMany({
