@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
+import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
 import CompanyTimezoneSync from "@/components/CompanyTimezoneSync";
 import { PeerNotificationsProvider } from "@/components/PeerNotificationsContext";
@@ -58,6 +59,7 @@ export default function RootLayout({
           {children}
           <GlobalDocumentFullscreenButton />
           <PlatformFooterSlogan />
+          <Analytics />
         </PeerNotificationsProvider>
       </body>
     </html>
