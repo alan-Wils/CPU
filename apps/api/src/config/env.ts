@@ -6,8 +6,12 @@ import { z } from "zod";
 /** `npm run dev` runs with cwd `apps/api`; load repo-root env like the legacy backend. */
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const monorepoRoot = path.resolve(__dirname, "../../../..");
+const apiPackageRoot = path.resolve(__dirname, "../..");
 config({ path: path.join(monorepoRoot, ".env") });
 config({ path: path.join(monorepoRoot, ".env.local"), override: true });
+/** Local `@cpu/api` secrets (DATABASE_URL, JWT_SECRET) when repo root `.env` is not used. */
+config({ path: path.join(apiPackageRoot, ".env") });
+config({ path: path.join(apiPackageRoot, ".env.local"), override: true });
 const envSchema = z
     .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),

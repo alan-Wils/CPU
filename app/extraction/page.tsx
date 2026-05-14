@@ -52,6 +52,11 @@ import {
   nowIsoForLog,
   syncCompanyTimezoneFromConfigPayload,
 } from "@/lib/companyTimezone";
+import {
+  buildExtractionBatchLabelFields,
+  ExtractionBatchLabelPreview,
+  openExtractionBatchLabelPrintWindow,
+} from "@/components/extraction/ExtractionBatchLabelPrint";
 
 const sourceMaterialTypes = {
   freshFrozen: [
@@ -72,6 +77,7 @@ const productTypes = [
 const extractionTasks = [
   "Pack Socks Start",
   "Pack Socks Stop",
+  "Print Batch Label",
   "Run Extraction",
   "Start Purge",
   "Whip",
@@ -903,6 +909,7 @@ export default function Extraction() {
   function getNextAllowedTask(batch: any) {
     if (!hasCompletedTask(batch, "Pack Socks Start")) return "Pack Socks Start";
     if (!hasCompletedTask(batch, "Pack Socks Stop")) return "Pack Socks Stop";
+    if (!hasCompletedTask(batch, "Print Batch Label")) return "Print Batch Label";
     if (!hasCompletedTask(batch, "Run Extraction")) return "Run Extraction";
     if (!hasCompletedTask(batch, "Start Purge")) return "Start Purge";
     if (!hasCompletedTask(batch, "End Purge")) return "End Purge";
@@ -925,7 +932,20 @@ export default function Extraction() {
 
     if (task === "Pack Socks Start") return !packSocksStarted;
     if (task === "Pack Socks Stop") return packSocksStarted && !packSocksStopped;
-    if (task === "Run Extraction") return packSocksStopped && !hasRun;
+    if (task === "Print Batch Label") {
+      return (
+        packSocksStopped &&
+        !hasCompletedTask(batch, "Print Batch Label") &&
+        !hasRun
+      );
+    }
+    if (task === "Run Extraction") {
+      return (
+        packSocksStopped &&
+        hasCompletedTask(batch, "Print Batch Label") &&
+        !hasRun
+      );
+    }
     if (task === "Start Purge") return hasRun && !purgeStarted;
 
     if (task === "Start Terp Separation") {
@@ -1645,6 +1665,10 @@ export default function Extraction() {
       return true;
     }
 
+    if (selectedTask === "Print Batch Label") {
+      return true;
+    }
+
     if (selectedTask === "Run Extraction") {
       if (
         !requireFields([
@@ -2033,6 +2057,15 @@ export default function Extraction() {
         totalPreparedGrams: +totalPreparedGrams.toFixed(2),
         totalPreparedLbs: +totalPreparedLbs.toFixed(2),
         prepDuration: startMs > 0 ? formatDuration(stopMs - startMs) : "—",
+      };
+    }
+
+    if (selectedTask === "Print Batch Label") {
+      const label = buildExtractionBatchLabelFields(selectedExt);
+      return {
+        label,
+        printerModel: "DYMO LabelWriter 450 Turbo",
+        labelStock: '1" × 1.5"',
       };
     }
 
@@ -2782,7 +2815,7 @@ export default function Extraction() {
             <div style={{ flex: "1 1 280px" }}>
               <h2 style={{ margin: 0 }}>Extraction Batches</h2>
               <p style={{ color: "#94a3b8", margin: "6px 0 0" }}>
-                {`Required path: Pack Socks Start → Pack Socks Stop → Run Extraction → Start Purge → End Purge → Testing Passed → Finish Batch. Optional tasks can be logged while purge is active.`}
+                {`Required path: Pack Socks Start → Pack Socks Stop → Print Batch Label → Run Extraction → Start Purge → End Purge → Testing Passed → Finish Batch. Optional tasks can be logged while purge is active.`}
               </p>
             </div>
 
@@ -3268,6 +3301,53 @@ export default function Extraction() {
                           : "—"
                       }
                     </p>
+                  </>
+                )}
+
+                {selectedTask === "Print Batch Label" && selectedExt && (
+                  <>
+                    <p style={{ color: "#94a3b8", margin: "0 0 8px" }}>
+                      Print batch info on a{" "}
+                      <strong style={{ color: "#e2e8f0" }}>DYMO LabelWriter 450 Turbo</strong>{" "}
+                      using <strong style={{ color: "#e2e8f0" }}>1&quot; × 1.5&quot;</strong> stock.
+                      Use <strong>Print label</strong> to open the system print dialog (choose your
+                      DYMO printer and label size), then log this task when the label is printed.
+                    </p>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
+                      <ExtractionBatchLabelPreview
+                        fields={buildExtractionBatchLabelFields(selectedExt)}
+                      />
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <button
+                          type="button"
+                          style={{
+                            ...inputStyle,
+                            cursor: "pointer",
+                            fontWeight: 600,
+                            background: "linear-gradient(135deg, #6366f1, #4f46e5)",
+                            border: "1px solid #818cf8",
+                            color: "#f8fafc",
+                          }}
+                          onClick={() => {
+                            const ok = openExtractionBatchLabelPrintWindow(
+                              buildExtractionBatchLabelFields(selectedExt),
+                            );
+                            if (!ok) {
+                              showNotice(
+                                "Pop-up blocked",
+                                "Allow pop-ups for this site to open the label print window.",
+                              );
+                            }
+                          }}
+                        >
+                          Print label (1&quot; × 1.5&quot;)
+                        </button>
+                        <p style={{ color: "#64748b", margin: 0, fontSize: 12, maxWidth: 280 }}>
+                          If nothing prints, check printer drivers and that the correct label roll is
+                          loaded.
+                        </p>
+                      </div>
+                    </div>
                   </>
                 )}
 
