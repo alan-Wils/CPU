@@ -190,52 +190,37 @@ const INVITE_ROLE_OPTIONS: {
   {
     value: "VIEW_ONLY",
     label: "View Only",
-    description: "Can view company data but cannot create or edit records.",
-  },
-  {
-    value: "ADMIN",
-    label: "Company Admin",
-    description: "Can manage users and permissions for this company.",
-  },
-  {
-    value: "OPERATIONS_MANAGER",
-    label: "Operations Manager",
-    description: "Operational oversight across workflows.",
+    description:
+      "Starts with Data Hub only. A Manager or Company Admin can add Inventory, Orders, Analytics, or floor pages after they join.",
   },
   {
     value: "CULTIVATION_SPECIALIST",
     label: "Cultivation",
-    description: "Cultivation areas and batches.",
+    description:
+      "Starts with Cultivation and Data Hub. Other areas (inventory, orders, etc.) can be granted by a Manager or Company Admin; Owners can adjust anyone.",
   },
   {
     value: "EXTRACTION_SPECIALIST",
     label: "Extraction",
-    description: "Extraction runs and inputs.",
+    description:
+      "Starts with Extraction and Data Hub. Other areas can be granted by a Manager or Company Admin; Owners can adjust anyone.",
   },
   {
     value: "PACKAGING_SPECIALIST",
     label: "Packaging",
-    description: "Packaging lots and outputs.",
+    description:
+      "Starts with Packaging and Data Hub. Other areas can be granted by a Manager or Company Admin; Owners can adjust anyone.",
   },
   {
-    value: "FINANCIAL_ANALYST",
-    label: "Financial Analyst",
-    description: "Financial views and reporting.",
+    value: "OPERATIONS_MANAGER",
+    label: "Manager",
+    description:
+      "Starts with full production-floor pages. Page access can be narrowed like any other employee. Only Company Admins / Owners send invites or change roles.",
   },
   {
-    value: "DATABASE_ARCHITECT",
-    label: "Database Architect",
-    description: "Data structures and integrations.",
-  },
-  {
-    value: "FULL_STACK_DEVELOPER",
-    label: "Full Stack Developer",
-    description: "Application development and fixes.",
-  },
-  {
-    value: "QA_TESTER",
-    label: "QA Tester",
-    description: "Quality assurance and test coverage.",
+    value: "ADMIN",
+    label: "Company Admin",
+    description: "Full workspace access and user management (cannot promote anyone to Application Owner).",
   },
 ];
 
@@ -285,6 +270,12 @@ function canCreateUsers(role: string) {
 }
 
 function canManageUsers(role: string) {
+  const r = normalizePlatformRole(role);
+  return r === "OWNER" || r === "ADMIN" || r === "OPERATIONS_MANAGER";
+}
+
+/** Invites, revoke, activate/deactivate, delete — company owner or company admin only (not floor managers). */
+function isCompanyOwnerOrAdminActor(role: string) {
   const r = normalizePlatformRole(role);
   return r === "OWNER" || r === "ADMIN";
 }
@@ -473,6 +464,15 @@ function canEditTargetUser(currentRole: string, targetRole: string) {
   const t = normalizePlatformRole(targetRole);
   if (c === "OWNER") return true;
   if (c === "ADMIN" && t !== "OWNER") return true;
+  if (c === "OPERATIONS_MANAGER") {
+    const floor = new Set([
+      "VIEW_ONLY",
+      "CULTIVATION_SPECIALIST",
+      "EXTRACTION_SPECIALIST",
+      "PACKAGING_SPECIALIST",
+    ]);
+    return floor.has(t);
+  }
   return false;
 }
 
@@ -1588,8 +1588,8 @@ export default function AdminPage() {
   function confirmRevokePendingInvite(inv: PendingInvite) {
     setError("");
     setSuccess("");
-    if (!canManageUsers(currentUser?.role || "")) {
-      setError("Only OWNER or ADMIN can revoke invites.");
+    if (!isCompanyOwnerOrAdminActor(currentUser?.role || "")) {
+      setError("Only company owners or company admins can revoke invites.");
       return;
     }
     showConfirm(
@@ -2001,7 +2001,7 @@ export default function AdminPage() {
     setSuccess("");
 
     if (!canManageUsers(currentUser?.role || "")) {
-      setError("Only OWNER or ADMIN users can edit users.");
+      setError("Only company owners, company admins, or managers can edit employees.");
       return;
     }
 
@@ -2010,45 +2010,56 @@ export default function AdminPage() {
       return;
     }
 
-    if (normalizePlatformRole(currentUser?.role) === "ADMIN" && normalizePlatformRole(editRole) === "OWNER") {
-      setError("Admins cannot make users application owners.");
-      return;
-    }
+    const actorIsManager = normalizePlatformRole(currentUser?.role || "") === "OPERATIONS_MANAGER";
 
-    if (!editUsername.trim()) {
-      setError("Username is required.");
-      return;
-    }
+    if (!actorIsManager) {
+      if (normalizePlatformRole(currentUser?.role) === "ADMIN" && normalizePlatformRole(editRole) === "OWNER") {
+        setError("Admins cannot make users application owners.");
+        return;
+      }
 
-    if (!editRole.trim()) {
-      setError("Role is required.");
-      return;
-    }
+      if (!editUsername.trim()) {
+        setError("Username is required.");
+        return;
+      }
 
-    if (currentUser?.id === user.id && editActive === false) {
-      setError("You cannot deactivate your own account while signed in.");
-      return;
+      if (!editRole.trim()) {
+        setError("Role is required.");
+        return;
+      }
+
+      if (currentUser?.id === user.id && editActive === false) {
+        setError("You cannot deactivate your own account while signed in.");
+        return;
+      }
     }
 
     setSavingUserId(user.id);
 
     try {
       const ownerOrAdminRole = isOwnerOrAdminRoleKey(editRole);
-      const body: Record<string, unknown> = {
-        email: editEmail.trim() || undefined,
-        role: editRole,
-        isActive: editActive,
-      };
-      // Application owners opt in/out only via Admin → Financial logs (digest modal), not this field.
-      if (normalizePlatformRole(user.role) !== "OWNER") {
-        body.cashLogEodEnabled = editCashLogEodEnabled;
+      const body: Record<string, unknown> = {};
+
+      if (actorIsManager) {
+        if (ownerOrAdminRole) {
+          setError("Managers cannot update this account type.");
+          setSavingUserId(null);
+          return;
+        }
+        body.appPermissions = editAppPermissions.length > 0 ? editAppPermissions : null;
+      } else {
+        body.email = editEmail.trim() || undefined;
+        body.role = editRole;
+        body.isActive = editActive;
+        // Application owners opt in/out only via Admin → Financial logs (digest modal), not this field.
+        if (normalizePlatformRole(user.role) !== "OWNER") {
+          body.cashLogEodEnabled = editCashLogEodEnabled;
+        }
+        body.rewardsEnrolled = editRewardsEnrolled;
+        body.cultivationAlertsEnabled = editCultivationAlertsEnabled;
+        if (ownerOrAdminRole) body.appPermissions = null;
+        else body.appPermissions = editAppPermissions.length > 0 ? editAppPermissions : null;
       }
-      body.rewardsEnrolled = editRewardsEnrolled;
-      body.cultivationAlertsEnabled = editCultivationAlertsEnabled;
-      if (ownerOrAdminRole)
-        body.appPermissions = null;
-      else
-        body.appPermissions = editAppPermissions;
 
       const updatedUser = await apiRequest<AdminUser>(`/api/admin/users/${user.id}`, {
         method: "PATCH",
@@ -2073,7 +2084,7 @@ export default function AdminPage() {
     setSuccess("");
     if (!editingTargetUser) return;
     if (!canManageUsers(currentUser?.role || "")) {
-      setError("Only OWNER or ADMIN users can send password resets.");
+      setError("Only company owners, company admins, or managers can send password resets.");
       return;
     }
     if (!canEditTargetUser(currentUser?.role || "", editingTargetUser.role)) {
@@ -2153,8 +2164,8 @@ export default function AdminPage() {
     setError("");
     setSuccess("");
 
-    if (!canManageUsers(currentUser?.role || "")) {
-      setError("Only OWNER or ADMIN users can activate or deactivate users.");
+    if (!isCompanyOwnerOrAdminActor(currentUser?.role || "")) {
+      setError("Only company owners or company admins can activate or deactivate users.");
       return;
     }
 
@@ -2201,8 +2212,8 @@ export default function AdminPage() {
     setError("");
     setSuccess("");
 
-    if (!canManageUsers(currentUser?.role || "")) {
-      setError("Only OWNER or ADMIN users can delete users.");
+    if (!isCompanyOwnerOrAdminActor(currentUser?.role || "")) {
+      setError("Only company owners or company admins can delete users.");
       return;
     }
 
@@ -2225,9 +2236,11 @@ export default function AdminPage() {
   }
 
   const allowedRoleOptions = getAllowedRoleOptions(currentUser?.role || "");
+  const managerEditingEmployees =
+    normalizePlatformRole(currentUser?.role || "") === "OPERATIONS_MANAGER";
 
   return (
-    <PageAccessGate allowedRoles={["ADMIN", "OWNER"]}>
+    <PageAccessGate allowedRoles={["ADMIN", "OWNER", "OPERATIONS_MANAGER"]}>
       <main
         style={{
           minHeight: "100vh",
@@ -2298,8 +2311,20 @@ export default function AdminPage() {
                     marginBottom: 0,
                   }}
                 >
-                  Invite people to your company workspace, assign permissions,
-                  edit users, deactivate access, or delete accounts.
+                  {managerEditingEmployees ? (
+                    <>
+                      As a <strong style={{ color: "#bae6fd" }}>Manager</strong>, you can open employees and adjust{" "}
+                      <strong style={{ color: "#bae6fd" }}>page access</strong> for View Only and floor specialists.
+                      Invites, role changes, account status, and deleting users are handled by a{" "}
+                      <strong style={{ color: "#bae6fd" }}>Company Admin</strong> or{" "}
+                      <strong style={{ color: "#bae6fd" }}>Company Owner</strong>.
+                    </>
+                  ) : (
+                    <>
+                      Invite people to your company workspace, assign permissions, edit users, deactivate access, or
+                      delete accounts.
+                    </>
+                  )}
                 </p>
 
                 <p
@@ -2446,8 +2471,9 @@ export default function AdminPage() {
                           lineHeight: 1.45,
                         }}
                       >
-                        Your role can view this page, but only OWNER or ADMIN users
-                        can invite new users.
+                        Your role can open this page, but only a <strong>Company Owner</strong> or{" "}
+                        <strong>Company Admin</strong> can send invites. Managers adjust page access after someone
+                        joins.
                       </div>
                     )}
 
@@ -2594,7 +2620,7 @@ export default function AdminPage() {
                             Expires:{" "}
                             {formatCompanyTimestamp(inv.expiresAt)}
                           </div>
-                          {canManageUsers(currentUser?.role || "") && (
+                          {isCompanyOwnerOrAdminActor(currentUser?.role || "") && (
                             <div style={{ marginTop: 8 }}>
                               <button
                                 type="button"
@@ -2691,6 +2717,9 @@ export default function AdminPage() {
                           !inviteGridRow &&
                           canManageUsers(currentUser?.role || "") &&
                           canEditTargetUser(currentUser?.role || "", user.role);
+                        const canLifecycleThisUser =
+                          canManageThisUser &&
+                          isCompanyOwnerOrAdminActor(currentUser?.role || "");
 
                         return (
                           <div
@@ -2775,7 +2804,7 @@ export default function AdminPage() {
                                   }}
                                 >
                                   {inviteGridRow &&
-                                  canManageUsers(currentUser?.role || "") ? (
+                                  isCompanyOwnerOrAdminActor(currentUser?.role || "") ? (
                                     <button
                                       type="button"
                                       disabled={
@@ -2828,7 +2857,7 @@ export default function AdminPage() {
                                       <button
                                         type="button"
                                         disabled={
-                                          !canManageThisUser ||
+                                          !canLifecycleThisUser ||
                                           savingUserId === user.id ||
                                           inviteGridRow
                                         }
@@ -2842,7 +2871,7 @@ export default function AdminPage() {
                                             ? "1px solid rgba(245, 158, 11, 0.42)"
                                             : "1px solid rgba(34, 197, 94, 0.42)",
                                           color: user.active ? "#fde68a" : "#bbf7d0",
-                                          cursor: canManageThisUser ? "pointer" : "not-allowed",
+                                          cursor: canLifecycleThisUser ? "pointer" : "not-allowed",
                                         }}
                                       >
                                         {user.active ? "Deactivate" : "Reactivate"}
@@ -2851,7 +2880,7 @@ export default function AdminPage() {
                                       <button
                                         type="button"
                                         disabled={
-                                          !canManageThisUser ||
+                                          !canLifecycleThisUser ||
                                           savingUserId === user.id ||
                                           inviteGridRow
                                         }
@@ -2861,7 +2890,7 @@ export default function AdminPage() {
                                           background: "rgba(127, 29, 29, 0.38)",
                                           border: "1px solid rgba(248, 113, 113, 0.46)",
                                           color: "#fecaca",
-                                          cursor: canManageThisUser ? "pointer" : "not-allowed",
+                                          cursor: canLifecycleThisUser ? "pointer" : "not-allowed",
                                         }}
                                       >
                                         Delete
@@ -4575,6 +4604,24 @@ export default function AdminPage() {
                   {editingTargetUser.email ? ` · ${editingTargetUser.email}` : ""}
                 </p>
 
+                {managerEditingEmployees ? (
+                  <div
+                    style={{
+                      marginBottom: 16,
+                      padding: 12,
+                      borderRadius: 12,
+                      background: "rgba(8, 47, 73, 0.45)",
+                      border: "1px solid rgba(56, 189, 248, 0.35)",
+                      color: "#bae6fd",
+                      fontSize: 13,
+                      lineHeight: 1.55,
+                    }}
+                  >
+                    You are signed in as a <strong>Manager</strong>. You may update <strong>page access only</strong>.
+                    Username, email, role, and account options are managed by a Company Owner or Company Admin.
+                  </div>
+                ) : null}
+
                 <div
                   style={{
                     padding: 14,
@@ -4717,6 +4764,7 @@ export default function AdminPage() {
                     <input
                       value={editUsername}
                       onChange={(e) => setEditUsername(e.target.value)}
+                      disabled={managerEditingEmployees}
                       style={inputStyle}
                     />
                   </label>
@@ -4726,6 +4774,7 @@ export default function AdminPage() {
                     <input
                       value={editEmail}
                       onChange={(e) => setEditEmail(e.target.value)}
+                      disabled={managerEditingEmployees}
                       style={inputStyle}
                     />
                   </label>
@@ -4741,6 +4790,7 @@ export default function AdminPage() {
                         if (isOwnerOrAdminRoleKey(nk)) setEditAppPermissions(fullAccessPermissionIds());
                         else setEditAppPermissions(defaultPagePermissionsForRole(nk));
                       }}
+                      disabled={managerEditingEmployees}
                       style={inputStyle}
                     >
                       {allowedRoleOptions.map((option) => (
@@ -4756,6 +4806,7 @@ export default function AdminPage() {
                     <select
                       value={editActive ? "ACTIVE" : "INACTIVE"}
                       onChange={(e) => setEditActive(e.target.value === "ACTIVE")}
+                      disabled={managerEditingEmployees}
                       style={inputStyle}
                     >
                       <option value="ACTIVE">Active</option>
@@ -4764,7 +4815,9 @@ export default function AdminPage() {
                   </label>
                 </div>
 
-                {normalizePlatformRole(editingTargetUser.role) === "OWNER" ? (
+                {!managerEditingEmployees ? (
+                  <>
+                    {normalizePlatformRole(editingTargetUser.role) === "OWNER" ? (
                   <div
                     style={{
                       marginBottom: 14,
@@ -4897,6 +4950,8 @@ export default function AdminPage() {
                     </span>
                   </label>
                 </div>
+                  </>
+                ) : null}
 
                 <div
                   style={{

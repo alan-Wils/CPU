@@ -119,11 +119,18 @@ export function computeEffectiveAppPermissions(role: string, storedMembershipJso
   if (r === "OPERATIONS_MANAGER") {
     if (storedMembershipJson === null || storedMembershipJson === undefined)
       return [...PAGE_SET_OPERATIONS_MANAGER];
-    return normalizeAppPermissionList(storedMembershipJson);
+    const listOm = normalizeAppPermissionList(storedMembershipJson);
+    /** Empty array (or all-invalid entries) stored in DB — treat as "no override" so JWT/nav are not blank. */
+    if (listOm.length === 0)
+      return [...PAGE_SET_OPERATIONS_MANAGER];
+    return listOm;
   }
   if (storedMembershipJson === null || storedMembershipJson === undefined)
     return defaultPagePermissionsForRole(r);
-  return normalizeAppPermissionList(storedMembershipJson);
+  const list = normalizeAppPermissionList(storedMembershipJson);
+  if (list.length === 0)
+    return defaultPagePermissionsForRole(r);
+  return list;
 }
 
 export function appPermissionSetsEqual(a: string[] | undefined, b: string[] | undefined): boolean {

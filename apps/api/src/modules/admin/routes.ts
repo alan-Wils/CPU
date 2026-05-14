@@ -44,7 +44,7 @@ adminRouter.get(
         res.json(out);
     }),
 );
-adminRouter.get("/users", requireRole(["OWNER", "ADMIN"]), asyncHandler(async (req, res) => {
+adminRouter.get("/users", requireRole(["OWNER", "ADMIN", "OPERATIONS_MANAGER"]), asyncHandler(async (req, res) => {
     const users = await adminService.listUsers({ companyId: getScopedCompanyId(req) });
     res.json({ users });
 }));
@@ -58,7 +58,7 @@ adminRouter.post("/users/:userId/status", requireRole(["OWNER", "ADMIN"]), valid
     });
     res.json(result);
 }));
-adminRouter.patch("/users/:userId", requireRole(["OWNER", "ADMIN"]), validate({ body: adminUserUpdateSchema }), asyncHandler(async (req, res) => {
+adminRouter.patch("/users/:userId", requireRole(["OWNER", "ADMIN", "OPERATIONS_MANAGER"]), validate({ body: adminUserUpdateSchema }), asyncHandler(async (req, res) => {
     const payload = req.body;
     const updated = await adminService.updateUser({
         companyId: getScopedCompanyId(req),
@@ -84,7 +84,7 @@ adminRouter.delete("/users/:userId", requireRole(["OWNER", "ADMIN"]), asyncHandl
     });
     res.json(out);
 }));
-adminRouter.post("/users/:userId/password-reset-email", requireRole(["OWNER", "ADMIN"]), validate({ params: adminUserIdParam }), asyncHandler(async (req, res) => {
+adminRouter.post("/users/:userId/password-reset-email", requireRole(["OWNER", "ADMIN", "OPERATIONS_MANAGER"]), validate({ params: adminUserIdParam }), asyncHandler(async (req, res) => {
     const out = await adminService.sendUserPasswordResetEmail({
         companyId: getScopedCompanyId(req),
         actorUserId: req.auth.userId,

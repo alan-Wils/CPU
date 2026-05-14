@@ -157,6 +157,39 @@ export class AdminService {
             select: { appPermissions: true, cashLogEodPrefs: true },
         });
 
+        const actorR = String(input.actorRole || "").trim().toUpperCase();
+        const targetR = String(target.role || "").trim().toUpperCase();
+        const floorStaffRoles = new Set([
+            "VIEW_ONLY",
+            "CULTIVATION_SPECIALIST",
+            "EXTRACTION_SPECIALIST",
+            "PACKAGING_SPECIALIST",
+        ]);
+        if (actorR === "OPERATIONS_MANAGER") {
+            if (!floorStaffRoles.has(targetR)) {
+                throw new AppError(
+                    "Managers may only adjust page access for floor staff (View-only, Cultivation, Extraction, Packaging). Ask a company admin for other roles.",
+                    403,
+                );
+            }
+            const triedNonPermissionFields =
+                input.email !== undefined ||
+                input.role !== undefined ||
+                input.isActive !== undefined ||
+                input.cashLogEodEnabled !== undefined ||
+                input.rewardsEnrolled !== undefined ||
+                input.cultivationAlertsEnabled !== undefined;
+            if (triedNonPermissionFields) {
+                throw new AppError(
+                    "Managers may only change which pages floor staff can open. Company admins handle email, role, status, and other settings.",
+                    403,
+                );
+            }
+            if (input.appPermissions === undefined) {
+                throw new AppError("No permission changes to save.", 400);
+            }
+        }
+
         if (input.actorRole === "ADMIN" && target.role === "OWNER") {
             const profileDirty =
                 (input.email !== undefined &&
@@ -275,6 +308,20 @@ export class AdminService {
         const target = await this.repo.findUserById(input.companyId, input.targetUserId);
         if (!target)
             throw new AppError("Target user not found", 404);
+        const actorR = String(input.actorRole || "").trim().toUpperCase();
+        const targetR = String(target.role || "").trim().toUpperCase();
+        const floorStaffRoles = new Set([
+            "VIEW_ONLY",
+            "CULTIVATION_SPECIALIST",
+            "EXTRACTION_SPECIALIST",
+            "PACKAGING_SPECIALIST",
+        ]);
+        if (actorR === "OPERATIONS_MANAGER" && !floorStaffRoles.has(targetR)) {
+            throw new AppError(
+                "Managers may only send password resets for floor staff (View-only, Cultivation, Extraction, Packaging).",
+                403,
+            );
+        }
         if (target.role === "OWNER" && input.actorRole !== "OWNER") {
             throw new AppError("Only an owner can send a password reset for the owner account", 403);
         }
