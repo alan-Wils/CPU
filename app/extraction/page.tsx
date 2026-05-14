@@ -2053,7 +2053,7 @@ export default function Extraction() {
       return {
         label,
         printerModel: "DYMO LabelWriter 450 Turbo",
-        labelStock: '1" × 1.5"',
+        labelStock: '1.5" × 1" horizontal',
       };
     }
 
@@ -3298,49 +3298,76 @@ export default function Extraction() {
 
                 {selectedTask === "Print Batch Label" && selectedExt && (
                   <>
-                    <p style={{ color: "#94a3b8", margin: "0 0 8px" }}>
+                    <p
+                      style={{
+                        color: "#94a3b8",
+                        margin: "0 auto 16px",
+                        maxWidth: 560,
+                        textAlign: "center",
+                        lineHeight: 1.45,
+                      }}
+                    >
                       This task is <strong style={{ color: "#e2e8f0" }}>always available</strong> at
                       any workflow stage (including after the batch is finished) so you can reprint
-                      labels whenever needed. Print batch info on a{" "}
-                      <strong style={{ color: "#e2e8f0" }}>DYMO LabelWriter 450 Turbo</strong>{" "}
-                      using <strong style={{ color: "#e2e8f0" }}>1&quot; × 1.5&quot;</strong> stock.
-                      Use <strong>Print label</strong> to open the system print dialog, then save to
-                      log each print.
+                      labels whenever needed. Layout is <strong style={{ color: "#e2e8f0" }}>horizontal</strong>{" "}
+                      (1.5&quot; × 1&quot;) for <strong style={{ color: "#e2e8f0" }}>DYMO LabelWriter 450 Turbo</strong>.
+                      Use <strong>Print label</strong> to open your browser's print dialog{" "}
+                      <strong style={{ color: "#e2e8f0" }}> without a new tab</strong> (label is rendered
+                      in a hidden frame). Then save to log each print.
                     </p>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: 20,
+                        width: "100%",
+                      }}
+                    >
                       <ExtractionBatchLabelPreview
                         fields={buildExtractionBatchLabelFields(selectedExt)}
                       />
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        <button
-                          type="button"
-                          style={{
-                            ...inputStyle,
-                            cursor: "pointer",
-                            fontWeight: 600,
-                            background: "linear-gradient(135deg, #6366f1, #4f46e5)",
-                            border: "1px solid #818cf8",
-                            color: "#f8fafc",
-                          }}
-                          onClick={() => {
-                            const ok = openExtractionBatchLabelPrintWindow(
-                              buildExtractionBatchLabelFields(selectedExt),
+                      <button
+                        type="button"
+                        style={{
+                          ...inputStyle,
+                          cursor: "pointer",
+                          fontWeight: 600,
+                          minWidth: "min(320px, 100%)",
+                          maxWidth: 400,
+                          width: "100%",
+                          padding: "12px 20px",
+                          background: "linear-gradient(135deg, #6366f1, #4f46e5)",
+                          border: "1px solid #818cf8",
+                          color: "#f8fafc",
+                        }}
+                        onClick={() => {
+                          const ok = openExtractionBatchLabelPrintWindow(
+                            buildExtractionBatchLabelFields(selectedExt),
+                          );
+                          if (!ok) {
+                            showNotice(
+                              "Print could not start",
+                              "Your browser blocked the print frame. Try again or use a different browser.",
                             );
-                            if (!ok) {
-                              showNotice(
-                                "Pop-up blocked",
-                                "Allow pop-ups for this site to open the label print window.",
-                              );
-                            }
-                          }}
-                        >
-                          Print label (1&quot; × 1.5&quot;)
-                        </button>
-                        <p style={{ color: "#64748b", margin: 0, fontSize: 12, maxWidth: 280 }}>
-                          If nothing prints, check printer drivers and that the correct label roll is
-                          loaded.
-                        </p>
-                      </div>
+                          }
+                        }}
+                      >
+                        Print label (1.5&quot; × 1&quot; horizontal)
+                      </button>
+                      <p
+                        style={{
+                          color: "#64748b",
+                          margin: 0,
+                          fontSize: 12,
+                          maxWidth: 480,
+                          textAlign: "center",
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        If nothing prints, confirm the printer has a matching horizontal label roll and
+                        drivers are installed.
+                      </p>
                     </div>
                   </>
                 )}
