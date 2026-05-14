@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Nav from "@/components/Nav";
 import { CollapsibleConfigSection } from "@/components/admin/CollapsibleConfigSection";
+import { CollapsibleConfigSubsection } from "@/components/admin/CollapsibleConfigSubsection";
 import { LeafLinkConfigCard } from "@/components/admin/LeafLinkConfigCard";
 import { MarketplaceLeafLinkSyncCard } from "@/components/admin/MarketplaceLeafLinkSyncCard";
 import {
@@ -551,6 +552,236 @@ function extractionAiNamingStatusLine(extraction: AppConfig["extraction"]): stri
     return "Simple: custom wording on top of built-in naming rules (Save Config to persist).";
   }
   return "Using the built-in server naming prompt.";
+}
+
+function CultivationScheduleTemplatesCard({
+  config,
+  setConfig,
+}: {
+  config: AppConfig;
+  setConfig: Dispatch<SetStateAction<AppConfig>>;
+}) {
+  return (
+    <div
+      id="cultivation-scheduled-calendar"
+      style={{
+        ...styles.configSubCard,
+        marginTop: 16,
+        marginBottom: 16,
+        border: "1px solid rgba(6, 182, 212, 0.45)",
+        boxShadow: "0 0 0 1px rgba(6, 182, 212, 0.12)",
+      }}
+    >
+      <h3 style={{ ...styles.subTitle, marginTop: 0, color: "#a5f3fc" }}>
+        Scheduled cultivation calendar (per batch)
+      </h3>
+      <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+        Add one row per task you want on the <b>Cultivation → Schedule</b> calendar. For each <b>active batch</b>, the app
+        creates an event automatically: pick <b>Clone</b> (anchor = clone date), <b>Veg</b> (anchor = first move-to-veg
+        date in logs), or <b>Flower</b> (anchor = first move-to-flower date), then how many <b>days after</b> that anchor
+        the task falls. Task names match the built-in Cultivation lists plus any <b>extra cultivation tasks</b> you define{" "}
+        <b>above</b> when their stages match. <b>Save Company Config</b> (or save a batch on Cultivation) refreshes dates.
+        Editing a generated event on the calendar stops auto-updates for that row.
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {(config.cultivation.scheduleTemplates || []).map((row, idx) => {
+          const metOn = config.company.metrc?.integrationEnabled !== false;
+          const taskOptions = listStaticCultivationTasksForSchedulePicker(
+            row.stage,
+            metOn,
+            config.cultivation.customTasks,
+          );
+          const selectVal = scheduleTemplateTitleSelectValue(row.title, taskOptions);
+          const showCustomTitle = selectVal === SCHEDULE_TEMPLATE_TASK_CUSTOM;
+          return (
+            <div
+              key={row.id || `cult-st-${idx}`}
+              style={{
+                ...styles.grid,
+                border: "1px solid #334155",
+                borderRadius: 10,
+                padding: 10,
+                alignItems: "center",
+              }}
+            >
+              <label style={{ ...styles.label, margin: 0 }}>
+                Stage
+                <select
+                  style={styles.input}
+                  value={row.stage}
+                  onChange={(e) => {
+                    const v = e.target.value as "clone" | "veg" | "flower";
+                    setConfig((prev) => {
+                      const list = [...(prev.cultivation.scheduleTemplates || [])];
+                      const met = prev.company.metrc?.integrationEnabled !== false;
+                      const nextOpts = listStaticCultivationTasksForSchedulePicker(
+                        v,
+                        met,
+                        prev.cultivation.customTasks,
+                      );
+                      const curTitle = String(list[idx].title || "").trim();
+                      const nextTitle = nextOpts.includes(curTitle) ? curTitle : (nextOpts[0] || "");
+                      list[idx] = { ...list[idx], stage: v, title: nextTitle };
+                      return {
+                        ...prev,
+                        cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                      };
+                    });
+                  }}
+                >
+                  <option value="clone">Clone (from clone date)</option>
+                  <option value="veg">Veg (from first veg move date)</option>
+                  <option value="flower">Flower (from first flower move date)</option>
+                </select>
+              </label>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+                <span style={{ color: "#94a3b8", fontSize: 12 }}>Task (calendar title)</span>
+                <select
+                  style={styles.input}
+                  value={selectVal}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setConfig((prev) => {
+                      const list = [...(prev.cultivation.scheduleTemplates || [])];
+                      if (v === SCHEDULE_TEMPLATE_TASK_CUSTOM) {
+                        const cur = String(list[idx].title || "").trim();
+                        const met = prev.company.metrc?.integrationEnabled !== false;
+                        const o = listStaticCultivationTasksForSchedulePicker(
+                          list[idx].stage,
+                          met,
+                          prev.cultivation.customTasks,
+                        );
+                        list[idx] = {
+                          ...list[idx],
+                          title: o.includes(cur) ? "" : cur,
+                        };
+                      } else {
+                        list[idx] = { ...list[idx], title: v };
+                      }
+                      return {
+                        ...prev,
+                        cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                      };
+                    });
+                  }}
+                >
+                  {taskOptions.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                  <option value={SCHEDULE_TEMPLATE_TASK_CUSTOM}>Custom title…</option>
+                </select>
+                {showCustomTitle ? (
+                  <input
+                    style={styles.input}
+                    placeholder="Type calendar task title"
+                    value={row.title}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setConfig((prev) => {
+                        const list = [...(prev.cultivation.scheduleTemplates || [])];
+                        list[idx] = { ...list[idx], title: v };
+                        return {
+                          ...prev,
+                          cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                        };
+                      });
+                    }}
+                  />
+                ) : null}
+              </div>
+              <label style={styles.label}>
+                Days after stage start
+                <input
+                  style={styles.input}
+                  type="number"
+                  step={1}
+                  value={Number.isFinite(row.daysFromStageStart) ? row.daysFromStageStart : 0}
+                  onChange={(e) => {
+                    const v = Math.trunc(Number(e.target.value));
+                    setConfig((prev) => {
+                      const list = [...(prev.cultivation.scheduleTemplates || [])];
+                      list[idx] = {
+                        ...list[idx],
+                        daysFromStageStart: Number.isFinite(v) ? v : 0,
+                      };
+                      return {
+                        ...prev,
+                        cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                      };
+                    });
+                  }}
+                />
+              </label>
+              <input
+                style={styles.input}
+                placeholder="Default notes (optional)"
+                value={row.defaultNotes ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setConfig((prev) => {
+                    const list = [...(prev.cultivation.scheduleTemplates || [])];
+                    list[idx] = { ...list[idx], defaultNotes: v || undefined };
+                    return {
+                      ...prev,
+                      cultivation: { ...prev.cultivation, scheduleTemplates: list },
+                    };
+                  });
+                }}
+              />
+              <button
+                type="button"
+                style={{ ...styles.deleteButton, justifySelf: "end" }}
+                onClick={() => {
+                  setConfig((prev) => ({
+                    ...prev,
+                    cultivation: {
+                      ...prev.cultivation,
+                      scheduleTemplates: (prev.cultivation.scheduleTemplates || []).filter((_, i) => i !== idx),
+                    },
+                  }));
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          );
+        })}
+        <button
+          type="button"
+          style={{ ...styles.addButton, alignSelf: "start" }}
+          onClick={() => {
+            setConfig((prev) => {
+              const met = prev.company.metrc?.integrationEnabled !== false;
+              const pick = listStaticCultivationTasksForSchedulePicker(
+                "clone",
+                met,
+                prev.cultivation.customTasks,
+              );
+              return {
+                ...prev,
+                cultivation: {
+                  ...prev.cultivation,
+                  scheduleTemplates: [
+                    ...(prev.cultivation.scheduleTemplates || []),
+                    {
+                      id: makeId("cult-stpl"),
+                      stage: "clone",
+                      title: pick[0] || "Maintenance",
+                      daysFromStageStart: 0,
+                    },
+                  ],
+                },
+              };
+            });
+          }}
+        >
+          Add scheduled calendar task
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function ConfigPage() {
@@ -1815,7 +2046,18 @@ export default function ConfigPage() {
           </>
         }
       >
-        <div style={styles.configSubCard}>
+        <CollapsibleConfigSubsection
+          title="Facility &amp; METRC — time zone &amp; connection status"
+          summaryCollapsed={
+            <>
+              Time zone:{" "}
+              <b style={{ color: "#e2e8f0" }}>
+                {(config.company.settings.displayTimezone || "").trim() || "Browser default"}
+              </b>
+              {" · "}METRC: <b style={{ color: "#e2e8f0" }}>{metrcConnectionBadge.label}</b>
+            </>
+          }
+        >
         <div style={{ ...styles.inline, alignItems: "center", marginBottom: 4 }}>
           <h2 style={{ ...styles.sectionTitle, marginBottom: 0 }}>Facility &amp; METRC</h2>
           <button
@@ -2126,9 +2368,19 @@ export default function ConfigPage() {
             </>
           )}
         </div>
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={styles.configSubCard}>
+        <CollapsibleConfigSubsection
+          title="METRC API keys, license &amp; company notes"
+          summaryCollapsed={
+            <span>
+              Integration{" "}
+              <b style={{ color: "#e2e8f0" }}>{config.company.metrc.integrationEnabled ? "on" : "off"}</b>
+              {" · "}
+              State <b style={{ color: "#e2e8f0" }}>{config.company.metrc.stateCode || "—"}</b>
+            </span>
+          }
+        >
         <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 12, lineHeight: 1.55 }}>
           Credentials are saved per company in the database and used only by your server (e.g. Railway). They are not
           exposed to browsers except on this admin screen. Confirm API host patterns with your state&apos;s METRC
@@ -2442,9 +2694,9 @@ export default function ConfigPage() {
             }
           />
         </label>
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={styles.configSubCard}>
+        <CollapsibleConfigSubsection title="Live task &amp; order banners">
         <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Live task and order banners</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
           Quick pop-ups when a logged task completes (green) or a new LeafLink order appears in your stored orders (orange).
@@ -2488,9 +2740,9 @@ export default function ConfigPage() {
           />
           Show live order banners (customer name and order total)
         </label>
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={styles.configSubCard}>
+        <CollapsibleConfigSubsection title="Inventory, Orders &amp; Analytics visibility">
           <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Which employees see Inventory, Orders, and Analytics</h3>
           <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 0, lineHeight: 1.5 }}>
             Per-person page access is not stored here. Open{" "}
@@ -2501,9 +2753,21 @@ export default function ConfigPage() {
             <b style={{ color: "#e2e8f0" }}>Inventory, orders, and analytics</b>{" "}
             uncheck Inventory, Orders, or Analytics for that employee. That hides the nav links and home shortcuts for everyone except Owners and Company Admins.
           </p>
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={styles.configSubCard}>
+        <CollapsibleConfigSubsection
+          title="Staff rewards program"
+          summaryCollapsed={
+            <span>
+              Program <b style={{ color: "#e2e8f0" }}>{config.company.settings.rewards?.enabled ? "on" : "off"}</b>
+              {" · "}
+              Task challenge{" "}
+              <b style={{ color: "#e2e8f0" }}>
+                {config.company.settings.rewards?.taskChallenge?.enabled ? "on" : "off"}
+              </b>
+            </span>
+          }
+        >
         <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Staff rewards</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
           Points are derived from task logs and batch data (informational). Turn off to hide Rewards everywhere.
@@ -3013,9 +3277,19 @@ export default function ConfigPage() {
             </label>
           </div>
         ))}
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={styles.configSubCard}>
+        <CollapsibleConfigSubsection
+          title="Workflow — extra tasks, calendar &amp; labor"
+          summaryCollapsed={
+            <span>
+              {(config.cultivation.customTasks || []).length} extra cultivation tasks ·{" "}
+              {(config.cultivation.scheduleTemplates || []).length} scheduled calendar rows ·{" "}
+              {(config.company.settings.laborBreaks || []).length} labor break row
+              {(config.company.settings.laborBreaks || []).length === 1 ? "" : "s"}
+            </span>
+          }
+        >
         <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Workflow — extra tasks & rewards</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
           Add facility-specific tasks; they appear alongside built-in tasks in Cultivation, Extraction, and Packaging. For each
@@ -3026,8 +3300,8 @@ export default function ConfigPage() {
 
         <h4 style={{ ...styles.subTitle, fontSize: 16, marginBottom: 8 }}>Cultivation (Clone / Veg / Flower)</h4>
         <p style={{ color: "#64748b", fontSize: 12, marginTop: -4, marginBottom: 10, lineHeight: 1.45 }}>
-          Task names here also appear in the <b>Cultivation</b> section (below) when you configure{" "}
-          <b>Scheduled cultivation calendar (per batch)</b>.
+          Task names here also appear in the <b>scheduled cultivation calendar</b> task picker below when their stages
+          match.
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
           {(config.cultivation.customTasks || []).map((row, idx) => (
@@ -3168,6 +3442,8 @@ export default function ConfigPage() {
             Add cultivation task
           </button>
         </div>
+
+        <CultivationScheduleTemplatesCard config={config} setConfig={setConfig} />
 
         <h4 style={{ ...styles.subTitle, fontSize: 16, marginBottom: 8 }}>Extraction</h4>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
@@ -3388,9 +3664,9 @@ export default function ConfigPage() {
             Add packaging task
           </button>
         </div>
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={styles.configSubCardLast}>
+        <CollapsibleConfigSubsection title="Labor breaks &amp; LeafLink shortcuts" last>
         <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Labor — breaks & lunch (facility clock)</h3>
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
           When operators log cultivation tasks using <b>start / end time</b>, overlaps with these windows are subtracted
@@ -3516,7 +3792,7 @@ export default function ConfigPage() {
         </div>
         <LeafLinkConfigCard />
         <MarketplaceLeafLinkSyncCard />
-        </div>
+        </CollapsibleConfigSubsection>
       </CollapsibleConfigSection>
 
       <CollapsibleConfigSection
@@ -3544,7 +3820,14 @@ export default function ConfigPage() {
           </>
         }
       >
-        <div style={styles.configSubCard}>
+        <CollapsibleConfigSubsection
+          title="Sales, contact &amp; print branding"
+          summaryCollapsed={
+            <>
+              LeafLink labels: <b style={{ color: "#e2e8f0" }}>{config.sales.leafLinkCategoryLabels.length}</b>
+            </>
+          }
+        >
           <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14, lineHeight: 1.55 }}>
             Wholesale and order reference for your team. This does not change LeafLink — it is stored in NexBatch
             company config for internal use.
@@ -3944,7 +4227,7 @@ export default function ConfigPage() {
               + Add LeafLink category mapping
             </button>
           </div>
-        </div>
+        </CollapsibleConfigSubsection>
       </CollapsibleConfigSection>
 
       <CollapsibleConfigSection
@@ -3960,7 +4243,7 @@ export default function ConfigPage() {
           </>
         }
       >
-        <div style={styles.configSubCard}>
+        <CollapsibleConfigSubsection title="Product &amp; merchandising notes">
           <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14, lineHeight: 1.55 }}>
             Internal notes for SKUs, naming, or merchandising. LeafLink category display names are configured under{" "}
             <b style={{ color: "#cbd5e1" }}>Sales</b>.
@@ -3979,7 +4262,7 @@ export default function ConfigPage() {
               }
             />
           </label>
-        </div>
+        </CollapsibleConfigSubsection>
       </CollapsibleConfigSection>
 
       <CollapsibleConfigSection
@@ -3998,8 +4281,23 @@ export default function ConfigPage() {
           </>
         }
       >
-        <div style={styles.configSubCard}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Autogrow (MultiGrow)</h3>
+        <CollapsibleConfigSubsection
+          title="Autogrow (MultiGrow)"
+          summaryCollapsed={
+            <>
+              {config.company.climateControl.autogrow.integrationEnabled ? (
+                <span>
+                  Reads <b style={{ color: "#86efac" }}>on</b>
+                  {config.company.climateControl.autogrow.deviceUuid.trim()
+                    ? ` · UUID …${config.company.climateControl.autogrow.deviceUuid.trim().slice(-8)}`
+                    : ""}
+                </span>
+              ) : (
+                <span>Integration off</span>
+              )}
+            </>
+          }
+        >
         <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14, lineHeight: 1.55 }}>
           API key from{" "}
           <a href="https://my.autogrow.com/" target="_blank" rel="noopener noreferrer" style={{ color: "#93c5fd" }}>
@@ -4134,10 +4432,14 @@ export default function ConfigPage() {
             }
           />
         </label>
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={styles.configSubCard}>
-        <h4 style={{ ...styles.subTitle, fontSize: 16, marginTop: 0 }}>Zone labels (`comps` index)</h4>
+        <CollapsibleConfigSubsection
+          title="Zone labels (comps index)"
+          summaryCollapsed={`${(config.company.climateControl.autogrow.compLabels || []).length} zone row${
+            (config.company.climateControl.autogrow.compLabels || []).length === 1 ? "" : "s"
+          }`}
+        >
         <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 0, marginBottom: 10 }}>
           Optional friendly names per compartment index for the Room stats pages.
         </p>
@@ -4247,10 +4549,22 @@ export default function ConfigPage() {
             + Add zone label
           </button>
         </div>
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={styles.configSubCard}>
-          <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Climate alerts (temperature &amp; humidity)</h3>
+        <CollapsibleConfigSubsection
+          title="Climate alerts (temperature & humidity)"
+          summaryCollapsed={
+            (config.cultivation.climateAlerts ?? defaultCultivationClimateAlerts).enabled ? (
+              <>
+                {(config.cultivation.climateAlerts ?? defaultCultivationClimateAlerts).zones.length} zone
+                {(config.cultivation.climateAlerts ?? defaultCultivationClimateAlerts).zones.length === 1 ? "" : "s"} ·{" "}
+                <b style={{ color: "#86efac" }}>alerts on</b>
+              </>
+            ) : (
+              <span>Alerts disabled</span>
+            )
+          }
+        >
           <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14, lineHeight: 1.5 }}>
             Uses live readings from <b style={{ color: "#e2e8f0" }}>Autogrow</b> (configured above). Each row targets the same{" "}
             <b style={{ color: "#e2e8f0" }}>comp #</b> as <b style={{ color: "#e2e8f0" }}>Zone labels</b>{" "}
@@ -4582,14 +4896,17 @@ export default function ConfigPage() {
               + Add zone row
             </button>
           </div>
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={styles.configSubCardLast}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0, opacity: 0.85 }}>More climate systems</h3>
+        <CollapsibleConfigSubsection
+          title="More climate systems"
+          last
+          summaryCollapsed="Reserved for future integrations"
+        >
         <p style={{ color: "#64748b", fontSize: 13, marginBottom: 0 }}>
           Additional vendor integrations will appear here beside Autogrow.
         </p>
-        </div>
+        </CollapsibleConfigSubsection>
       </CollapsibleConfigSection>
 
       <CollapsibleConfigSection
@@ -4609,234 +4926,24 @@ export default function ConfigPage() {
               ? ` · FF ${config.cultivation.freshFrozenGramsPerBundle} g/bundle`
               : ""}
             <span style={{ display: "block", marginTop: 6, color: "#64748b", fontSize: 12 }}>
-              If this section is collapsed, click <b>5. Cultivation</b> — the cyan block is at the top with{" "}
-              <b>Add scheduled calendar task</b>.
+              Scheduled calendar templates are under <b>1. Company</b> → Workflow (cyan block after cultivation extra
+              tasks). This section covers strains, rooms, supplies, climate alerts, and fresh frozen.
             </span>
           </>
         }
       >
-        <div
-          id="cultivation-scheduled-calendar"
-          style={{
-            ...styles.configSubCard,
-            marginBottom: 16,
-            border: "1px solid rgba(6, 182, 212, 0.45)",
-            boxShadow: "0 0 0 1px rgba(6, 182, 212, 0.12)",
-          }}
+        <CollapsibleConfigSubsection
+          title="Fresh Frozen harvest"
+          summaryCollapsed={
+            (config.cultivation.freshFrozenGramsPerBundle ?? 0) > 0 ? (
+              <span>
+                <b style={{ color: "#e2e8f0" }}>{config.cultivation.freshFrozenGramsPerBundle ?? 0} g</b> per bundle
+              </span>
+            ) : (
+              <span>Off (manual bundle entry)</span>
+            )
+          }
         >
-          <h3 style={{ ...styles.subTitle, marginTop: 0, color: "#a5f3fc" }}>
-            Scheduled cultivation calendar (per batch)
-          </h3>
-          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
-            Add one row per task you want on the <b>Cultivation → Schedule</b> calendar. For each <b>active batch</b>, the
-            app creates an event automatically: pick <b>Clone</b> (anchor = clone date), <b>Veg</b> (anchor = first
-            move-to-veg date in logs), or <b>Flower</b> (anchor = first move-to-flower date), then how many{" "}
-            <b>days after</b> that anchor the task falls. Task names match the built-in Cultivation lists plus any{" "}
-            <b>extra cultivation tasks</b> you define under <b>Workflow → Cultivation (Clone / Veg / Flower)</b> when
-            their stages match. Save Company Config (or save a batch on Cultivation) refreshes dates. Editing a
-            generated event on the calendar stops auto-updates for that row.
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {(config.cultivation.scheduleTemplates || []).map((row, idx) => {
-              const metOn = config.company.metrc?.integrationEnabled !== false;
-              const taskOptions = listStaticCultivationTasksForSchedulePicker(
-                row.stage,
-                metOn,
-                config.cultivation.customTasks,
-              );
-              const selectVal = scheduleTemplateTitleSelectValue(row.title, taskOptions);
-              const showCustomTitle = selectVal === SCHEDULE_TEMPLATE_TASK_CUSTOM;
-              return (
-                <div
-                  key={row.id || `cult-st-${idx}`}
-                  style={{
-                    ...styles.grid,
-                    border: "1px solid #334155",
-                    borderRadius: 10,
-                    padding: 10,
-                    alignItems: "center",
-                  }}
-                >
-                  <label style={{ ...styles.label, margin: 0 }}>
-                    Stage
-                    <select
-                      style={styles.input}
-                      value={row.stage}
-                      onChange={(e) => {
-                        const v = e.target.value as "clone" | "veg" | "flower";
-                        setConfig((prev) => {
-                          const list = [...(prev.cultivation.scheduleTemplates || [])];
-                          const met = prev.company.metrc?.integrationEnabled !== false;
-                          const nextOpts = listStaticCultivationTasksForSchedulePicker(
-                            v,
-                            met,
-                            prev.cultivation.customTasks,
-                          );
-                          const curTitle = String(list[idx].title || "").trim();
-                          const nextTitle = nextOpts.includes(curTitle) ? curTitle : (nextOpts[0] || "");
-                          list[idx] = { ...list[idx], stage: v, title: nextTitle };
-                          return {
-                            ...prev,
-                            cultivation: { ...prev.cultivation, scheduleTemplates: list },
-                          };
-                        });
-                      }}
-                    >
-                      <option value="clone">Clone (from clone date)</option>
-                      <option value="veg">Veg (from first veg move date)</option>
-                      <option value="flower">Flower (from first flower move date)</option>
-                    </select>
-                  </label>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
-                    <span style={{ color: "#94a3b8", fontSize: 12 }}>Task (calendar title)</span>
-                    <select
-                      style={styles.input}
-                      value={selectVal}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setConfig((prev) => {
-                          const list = [...(prev.cultivation.scheduleTemplates || [])];
-                          if (v === SCHEDULE_TEMPLATE_TASK_CUSTOM) {
-                            const cur = String(list[idx].title || "").trim();
-                            const met = prev.company.metrc?.integrationEnabled !== false;
-                            const o = listStaticCultivationTasksForSchedulePicker(
-                              list[idx].stage,
-                              met,
-                              prev.cultivation.customTasks,
-                            );
-                            list[idx] = {
-                              ...list[idx],
-                              title: o.includes(cur) ? "" : cur,
-                            };
-                          } else {
-                            list[idx] = { ...list[idx], title: v };
-                          }
-                          return {
-                            ...prev,
-                            cultivation: { ...prev.cultivation, scheduleTemplates: list },
-                          };
-                        });
-                      }}
-                    >
-                      {taskOptions.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                      <option value={SCHEDULE_TEMPLATE_TASK_CUSTOM}>Custom title…</option>
-                    </select>
-                    {showCustomTitle ? (
-                      <input
-                        style={styles.input}
-                        placeholder="Type calendar task title"
-                        value={row.title}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setConfig((prev) => {
-                            const list = [...(prev.cultivation.scheduleTemplates || [])];
-                            list[idx] = { ...list[idx], title: v };
-                            return {
-                              ...prev,
-                              cultivation: { ...prev.cultivation, scheduleTemplates: list },
-                            };
-                          });
-                        }}
-                      />
-                    ) : null}
-                  </div>
-                  <label style={styles.label}>
-                    Days after stage start
-                    <input
-                      style={styles.input}
-                      type="number"
-                      step={1}
-                      value={Number.isFinite(row.daysFromStageStart) ? row.daysFromStageStart : 0}
-                      onChange={(e) => {
-                        const v = Math.trunc(Number(e.target.value));
-                        setConfig((prev) => {
-                          const list = [...(prev.cultivation.scheduleTemplates || [])];
-                          list[idx] = {
-                            ...list[idx],
-                            daysFromStageStart: Number.isFinite(v) ? v : 0,
-                          };
-                          return {
-                            ...prev,
-                            cultivation: { ...prev.cultivation, scheduleTemplates: list },
-                          };
-                        });
-                      }}
-                    />
-                  </label>
-                  <input
-                    style={styles.input}
-                    placeholder="Default notes (optional)"
-                    value={row.defaultNotes ?? ""}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setConfig((prev) => {
-                        const list = [...(prev.cultivation.scheduleTemplates || [])];
-                        list[idx] = { ...list[idx], defaultNotes: v || undefined };
-                        return {
-                          ...prev,
-                          cultivation: { ...prev.cultivation, scheduleTemplates: list },
-                        };
-                      });
-                    }}
-                  />
-                  <button
-                    type="button"
-                    style={{ ...styles.deleteButton, justifySelf: "end" }}
-                    onClick={() => {
-                      setConfig((prev) => ({
-                        ...prev,
-                        cultivation: {
-                          ...prev.cultivation,
-                          scheduleTemplates: (prev.cultivation.scheduleTemplates || []).filter((_, i) => i !== idx),
-                        },
-                      }));
-                    }}
-                  >
-                    Remove
-                  </button>
-                </div>
-              );
-            })}
-            <button
-              type="button"
-              style={{ ...styles.addButton, alignSelf: "start" }}
-              onClick={() => {
-                setConfig((prev) => {
-                  const met = prev.company.metrc?.integrationEnabled !== false;
-                  const pick = listStaticCultivationTasksForSchedulePicker(
-                    "clone",
-                    met,
-                    prev.cultivation.customTasks,
-                  );
-                  return {
-                    ...prev,
-                    cultivation: {
-                      ...prev.cultivation,
-                      scheduleTemplates: [
-                        ...(prev.cultivation.scheduleTemplates || []),
-                        {
-                          id: makeId("cult-stpl"),
-                          stage: "clone",
-                          title: pick[0] || "Maintenance",
-                          daysFromStageStart: 0,
-                        },
-                      ],
-                    },
-                  };
-                });
-              }}
-            >
-              Add scheduled calendar task
-            </button>
-          </div>
-        </div>
-
-        <div style={{ ...styles.configSubCard, marginBottom: 16 }}>
-          <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Fresh Frozen harvest</h3>
           <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
             Set the standard <b>grams per bundle</b> for Fresh Frozen. When greater than zero, the Cultivation harvest form
             auto-calculates bundle count from total grams (whole bundles only; operators can override). Extraction shows
@@ -4859,7 +4966,7 @@ export default function ConfigPage() {
               }}
             />
           </label>
-        </div>
+        </CollapsibleConfigSubsection>
 
         <details style={styles.cultivationStrainsOuter}>
           <summary style={styles.cultivationStrainsSummary}>
@@ -5019,9 +5126,12 @@ export default function ConfigPage() {
           </div>
         </details>
 
-        <div style={styles.configSubCard}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Cultivation Supplies & Cost</h3>
-
+        <CollapsibleConfigSubsection
+          title="Cultivation supplies & cost"
+          summaryCollapsed={`${(config.cultivation.supplies || []).length} supply row${
+            (config.cultivation.supplies || []).length === 1 ? "" : "s"
+          }`}
+        >
         <SupplyForm
           form={cultivationSupplyForm}
           setForm={setCultivationSupplyForm}
@@ -5032,10 +5142,15 @@ export default function ConfigPage() {
           supplies={config.cultivation.supplies}
           onRemove={(id) => removeSupply("cultivation", id)}
         />
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={{ ...styles.configSubCard, padding: "12px 14px" }}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0, fontSize: 16 }}>Veg Rooms / Bays / Tables</h3>
+        <CollapsibleConfigSubsection
+          title="Veg rooms / bays / tables"
+          bodyPadding="12px 18px 16px"
+          summaryCollapsed={`${config.cultivation.rooms.vegRooms.length} room${
+            config.cultivation.rooms.vegRooms.length === 1 ? "" : "s"
+          }`}
+        >
 
         <details style={{ marginBottom: 8, color: "#94a3b8", fontSize: 12 }}>
           <summary style={{ cursor: "pointer", color: "#cbd5e1", fontWeight: 600 }}>
@@ -5099,10 +5214,16 @@ export default function ConfigPage() {
           onRemoveTable={(roomId, bayId, tableId) => removeTable("vegRooms", roomId, bayId, tableId)}
           onRoomTargetPlantCountChange={setCultivationRoomTargetPlantCount}
         />
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={{ ...styles.configSubCardLast, padding: "12px 14px" }}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0, fontSize: 16 }}>Flower Rooms / Bays / Tables</h3>
+        <CollapsibleConfigSubsection
+          title="Flower rooms / bays / tables"
+          last
+          bodyPadding="12px 18px 16px"
+          summaryCollapsed={`${config.cultivation.rooms.flowerRooms.length} room${
+            config.cultivation.rooms.flowerRooms.length === 1 ? "" : "s"
+          }`}
+        >
 
         <details style={{ marginBottom: 8, color: "#94a3b8", fontSize: 12 }}>
           <summary style={{ cursor: "pointer", color: "#cbd5e1", fontWeight: 600 }}>
@@ -5168,7 +5289,7 @@ export default function ConfigPage() {
           }
           onRoomTargetPlantCountChange={setCultivationRoomTargetPlantCount}
         />
-        </div>
+        </CollapsibleConfigSubsection>
       </CollapsibleConfigSection>
 
       <CollapsibleConfigSection
@@ -5183,7 +5304,12 @@ export default function ConfigPage() {
           </>
         }
       >
-        <div style={styles.configSubCard}>
+        <CollapsibleConfigSubsection
+          title="AI extract naming"
+          summaryCollapsed={
+            <span style={{ color: "#94a3b8" }}>{extractionAiNamingStatusLine(config.extraction)}</span>
+          }
+        >
         <div style={styles.inline}>
           <button type="button" style={styles.secondaryButton} onClick={() => void openAiPromptModal()}>
             Configure AI naming
@@ -5192,10 +5318,14 @@ export default function ConfigPage() {
             {extractionAiNamingStatusLine(config.extraction)}
           </span>
         </div>
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={styles.configSubCard}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Product Name Database</h3>
+        <CollapsibleConfigSubsection
+          title="Product name database"
+          summaryCollapsed={`${config.extraction.productNames.length} saved name${
+            config.extraction.productNames.length === 1 ? "" : "s"
+          }`}
+        >
 
         <div style={styles.grid}>
           <input
@@ -5242,10 +5372,14 @@ export default function ConfigPage() {
             </div>
           ))}
         </div>
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={styles.configSubCard}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Previously Used Blend Names</h3>
+        <CollapsibleConfigSubsection
+          title="Previously used blend names"
+          summaryCollapsed={`${config.extraction.blendNameHistory.length} history row${
+            config.extraction.blendNameHistory.length === 1 ? "" : "s"
+          }`}
+        >
 
         <div style={styles.list}>
           {config.extraction.blendNameHistory.length === 0 ? (
@@ -5287,10 +5421,15 @@ export default function ConfigPage() {
             ))
           )}
         </div>
-        </div>
+        </CollapsibleConfigSubsection>
 
-        <div style={styles.configSubCardLast}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Extraction Supplies & Cost</h3>
+        <CollapsibleConfigSubsection
+          title="Extraction supplies & cost"
+          last
+          summaryCollapsed={`${(config.extraction.supplies || []).length} supply row${
+            (config.extraction.supplies || []).length === 1 ? "" : "s"
+          }`}
+        >
 
         <SupplyForm
           form={extractionSupplyForm}
@@ -5302,7 +5441,7 @@ export default function ConfigPage() {
           supplies={config.extraction.supplies}
           onRemove={(id) => removeSupply("extraction", id)}
         />
-        </div>
+        </CollapsibleConfigSubsection>
       </CollapsibleConfigSection>
 
       <CollapsibleConfigSection
@@ -5315,9 +5454,13 @@ export default function ConfigPage() {
           </>
         }
       >
-        <div style={styles.configSubCardLast}>
-        <h3 style={{ ...styles.subTitle, marginTop: 0 }}>Packaging Supplies & Cost</h3>
-
+        <CollapsibleConfigSubsection
+          title="Packaging supplies & cost"
+          last
+          summaryCollapsed={`${(config.packaging.supplies || []).length} supply row${
+            (config.packaging.supplies || []).length === 1 ? "" : "s"
+          }`}
+        >
         <SupplyForm
           form={packagingSupplyForm}
           setForm={setPackagingSupplyForm}
@@ -5328,7 +5471,7 @@ export default function ConfigPage() {
           supplies={config.packaging.supplies}
           onRemove={(id) => removeSupply("packaging", id)}
         />
-        </div>
+        </CollapsibleConfigSubsection>
       </CollapsibleConfigSection>
 
       {cultivationFieldModal.kind !== "closed" ? (
