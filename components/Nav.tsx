@@ -308,6 +308,15 @@ export default function Nav() {
             Home
           </Link>
 
+          {canNavToPage("page.facilities-maintenance") && (
+            <Link
+              href="/facilities-maintenance"
+              style={navButtonStyle(pathname === "/facilities-maintenance")}
+            >
+              Facilities Maintenance
+            </Link>
+          )}
+
           {canNavToPage("page.cultivation") && (
             <Link
               href="/cultivation"

@@ -12,6 +12,7 @@ const LEGACY_TO_COMPANY: Record<UserRole, NexBatchCompanyRole> = {
     FULL_STACK_DEVELOPER: "lead_staff",
     QA_TESTER: "lead_staff",
     VIEW_ONLY: "grow_staff",
+    FACILITY_MAINTENANCE_SPECIALIST: "lead_staff",
 };
 
 const COMPANY_TO_LEGACY: Record<NexBatchCompanyRole, UserRole> = {

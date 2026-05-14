@@ -212,6 +212,12 @@ const INVITE_ROLE_OPTIONS: {
       "Starts with Packaging and Data Hub. Other areas can be granted by a Manager or Company Admin; Owners can adjust anyone.",
   },
   {
+    value: "FACILITY_MAINTENANCE_SPECIALIST",
+    label: "Facility Maintenance Specialist",
+    description:
+      "Starts with Facilities Maintenance and Data Hub. Other areas can be granted by a Manager or Company Admin; Owners can adjust anyone.",
+  },
+  {
     value: "OPERATIONS_MANAGER",
     label: "Manager",
     description:
@@ -257,6 +263,8 @@ function getRoleColor(role: string) {
     return "#14b8a6";
   if (role === "PACKAGING" || role === "PACKAGING_SPECIALIST")
     return "#ec4899";
+  if (role === "FACILITY_MAINTENANCE_SPECIALIST")
+    return "#06b6d4";
   if (role === "FINANCIAL_ANALYST") return "#eab308";
   if (role === "DATABASE_ARCHITECT") return "#6366f1";
   if (role === "FULL_STACK_DEVELOPER") return "#06b6d4";
@@ -470,6 +478,7 @@ function canEditTargetUser(currentRole: string, targetRole: string) {
       "CULTIVATION_SPECIALIST",
       "EXTRACTION_SPECIALIST",
       "PACKAGING_SPECIALIST",
+      "FACILITY_MAINTENANCE_SPECIALIST",
     ]);
     return floor.has(t);
   }

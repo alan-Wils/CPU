@@ -21,6 +21,7 @@ enum UserRole {
   FULL_STACK_DEVELOPER
   QA_TESTER
   VIEW_ONLY
+  FACILITY_MAINTENANCE_SPECIALIST
 }
 
 /// Workflow / org role inside a company (NexBatch portal + company login).
@@ -179,8 +180,175 @@ model Company {
   conversationParticipants ConversationParticipant[]
   conversationMessagesSent ConversationMessage[] @relation("ConversationMessageSenderCompany")
 
+  facilityProfile                   FacilityProfile?
+  facilityWorkOrders                FacilityWorkOrder[]
+  facilityAlerts                    FacilityAlert[]
+  facilitySystemStatuses            FacilitySystemStatus[]
+  facilityEnvironmentalReadings     FacilityEnvironmentalReading[]
+  facilityCalendarEvents            FacilityCalendarEvent[]
+  facilityPreventiveMaintenanceTasks FacilityPreventiveMaintenanceTask[]
+  facilityAssets                    FacilityAsset[]
+  facilityPartRequests                FacilityPartRequest[]
+  facilityLocations                 FacilityLocation[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// One row per company after baseline facilities seed (Green Valley mock profile + related rows).
+model FacilityProfile {
+  id               String  @id @default(cuid())
+  companyId        String  @unique
+  company          Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  facilityName     String
+  addressLine1     String
+  cityStateZip     String
+  licenseNumber    String
+  facilitySizeSqFt Int
+  builtYear        Int
+  roomCountsJson   Json
+  mtdTotalCost     Float
+  mtdCostSeriesJson Json
+  /// Frozen mockup KPI/chart numbers (prompt); total WO card adds (dbCount - seededTableRows).
+  kpiSnapshotJson  Json
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model FacilityWorkOrder {
+  id           String   @id @default(cuid())
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  externalId   String
+  title        String
+  location     String
+  category     String
+  priority     String
+  status       String
+  assignedTo   String
+  dueDate      DateTime
+  dueMeta      String?
+  description  String?
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([companyId, externalId])
+  @@index([companyId, status])
+}
+
+model FacilityAlert {
+  id            String   @id @default(cuid())
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  title         String
+  locationLabel String
+  valueLabel    String?
+  statusLabel   String?
+  timeLabel     String
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  @@index([companyId, sortOrder])
+}
+
+model FacilitySystemStatus {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name      String
+  status    String
+  sortOrder Int      @default(0)
+
+  @@index([companyId, sortOrder])
+}
+
+model FacilityEnvironmentalReading {
+  id                 String   @id @default(cuid())
+  companyId          String
+  company            Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  metricKey          String
+  label              String
+  valueDisplay       String
+  idealRangeDisplay  String
+  sparklineJson      Json
+  statusLabel        String
+  sortOrder          Int      @default(0)
+
+  @@index([companyId, sortOrder])
+}
+
+model FacilityCalendarEvent {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  yearMonth String
+  day       Int
+  kind      String
+  createdAt DateTime @default(now())
+
+  @@index([companyId, yearMonth])
+}
+
+model FacilityPreventiveMaintenanceTask {
+  id           String    @id @default(cuid())
+  companyId    String
+  company      Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  taskName     String
+  assetSystem  String
+  frequency    String
+  assignedTo   String
+  nextDueDate  DateTime
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([companyId])
+}
+
+model FacilityAsset {
+  id           String   @id @default(cuid())
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  assetName    String
+  category     String
+  location     String
+  serialNumber String
+  installDate  DateTime
+  status       String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([companyId])
+}
+
+model FacilityPartRequest {
+  id         String   @id @default(cuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  partName   String
+  quantity   Int
+  neededFor  String
+  priority   String
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  @@index([companyId])
+}
+
+model FacilityLocation {
+  id           String   @id @default(cuid())
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  locationName String
+  locationType String
+  parentArea   String
+  sqFt         Int?
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([companyId])
 }
 
 /// Per-company feature flags (NexBatch portal + Sales Platform).

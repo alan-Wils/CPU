@@ -12,6 +12,7 @@ export const APP_PAGE_PERMISSION_IDS = [
   "page.data-hub",
   "page.analytics",
   "page.rewards",
+  "page.facilities-maintenance",
   "page.sales-seller",
   "page.sales-marketplace",
 ] as const;
@@ -37,6 +38,7 @@ export const APP_PERMISSION_LABELS: Record<AppPermissionId, string> = {
   "page.data-hub": "Data Hub",
   "page.analytics": "Analytics",
   "page.rewards": "Rewards",
+  "page.facilities-maintenance": "Facilities Maintenance",
   "page.sales-seller": "Seller Platform",
   "page.sales-marketplace": "Marketplace",
   "workflow.delete": "Delete workflow records (batches, runs, lots, source packages)",
@@ -51,6 +53,7 @@ const PAGE_SET_ALL: AppPagePermissionId[] = [
   "page.data-hub",
   "page.analytics",
   "page.rewards",
+  "page.facilities-maintenance",
   "page.sales-seller",
   "page.sales-marketplace",
 ];
@@ -86,6 +89,8 @@ export function defaultPagePermissionsForRole(role: string): AppPermissionId[] {
     return ["page.extraction", "page.data-hub"];
   if (r === "PACKAGING_SPECIALIST" || r === "PACKAGING")
     return ["page.packaging", "page.data-hub"];
+  if (r === "FACILITY_MAINTENANCE_SPECIALIST")
+    return ["page.facilities-maintenance", "page.data-hub"];
   if (r === "VIEW_ONLY")
     return ["page.data-hub"];
   if (r === "FINANCIAL_ANALYST") {

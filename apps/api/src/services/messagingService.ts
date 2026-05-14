@@ -101,8 +101,8 @@ export class MessagingService {
         const q = String(opts.q || "").trim();
         if (q) {
             where.OR = [
-                { name: { contains: q, mode: "insensitive" } },
-                { slug: { contains: q, mode: "insensitive" } },
+                { name: { contains: q } },
+                { slug: { contains: q } },
             ];
         }
         const companies = await prisma.company.findMany({

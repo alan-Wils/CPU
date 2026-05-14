@@ -11,6 +11,7 @@ export const ALL_APP_PERMISSION_IDS = [
   "page.data-hub",
   "page.analytics",
   "page.rewards",
+  "page.facilities-maintenance",
   "workflow.delete",
 ] as const;
 
@@ -25,6 +26,7 @@ export const APP_PERMISSION_LABELS: Record<AdminUiPermissionId, string> = {
   "page.data-hub": "Data Hub",
   "page.analytics": "Analytics",
   "page.rewards": "Rewards",
+  "page.facilities-maintenance": "Facilities Maintenance",
   "workflow.delete": "Delete workflow records (batches, runs, lots, source packages)",
 };
 
@@ -49,6 +51,10 @@ export const ADMIN_PERMISSION_SECTIONS: ReadonlyArray<{
     ids: ["page.data-hub", "page.rewards"],
   },
   {
+    title: "Facilities",
+    ids: ["page.facilities-maintenance"],
+  },
+  {
     title: "Dangerous actions",
     ids: ["workflow.delete"],
   },
@@ -63,6 +69,7 @@ const PAGE_SET_ALL: AdminUiPermissionId[] = [
   "page.data-hub",
   "page.analytics",
   "page.rewards",
+  "page.facilities-maintenance",
 ];
 
 export function defaultPagePermissionsForRole(role: string): AdminUiPermissionId[] {
@@ -77,6 +84,8 @@ export function defaultPagePermissionsForRole(role: string): AdminUiPermissionId
     return ["page.extraction", "page.data-hub"];
   if (r === "PACKAGING_SPECIALIST" || r === "PACKAGING")
     return ["page.packaging", "page.data-hub"];
+  if (r === "FACILITY_MAINTENANCE_SPECIALIST")
+    return ["page.facilities-maintenance", "page.data-hub"];
   if (r === "VIEW_ONLY")
     return ["page.data-hub"];
   if (
