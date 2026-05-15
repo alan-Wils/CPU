@@ -56,6 +56,18 @@ const STAGE_LABELS: Record<string, string> = {
 
 const PRODUCT_TYPES = ["Gummies", "Chocolates", "Syrups", "Capsules", "Tinctures"] as const;
 
+/** Melt-to-Make workbook Part B — citric as % of total formula (not editable in UI). */
+const WORKBOOK_CITRIC_PCT = 1.4 as const;
+const WORKBOOK_CITRIC_MASS_FRAC = WORKBOOK_CITRIC_PCT / 100;
+
+/** Line loss on nominal piece count — workbook default 5%. */
+const WORKBOOK_LINE_WASTE_FRAC = 0.05 as const;
+
+function pctOfFormula(frac: number): string {
+  if (!Number.isFinite(frac)) return "—";
+  return `${(frac * 100).toFixed(2)}%`;
+}
+
 const KITCHEN_PREP_TASKS = [
   "Ingredient Staging",
   "Oil Prep",
@@ -233,9 +245,6 @@ export default function EdiblesClient() {
   const [pectinBatchG, setPectinBatchG] = useState(10_000);
   const [pectinPotencySingle, setPectinPotencySingle] = useState(0.7933);
   const [pectinGPerPc, setPectinGPerPc] = useState(3.5);
-  /** Citric as % of total formula (workbook shows 1.40% — enter 1.4, not 0.014). */
-  const [pectinCitricPct, setPectinCitricPct] = useState(1.4);
-  const [pectinLineWasteFrac, setPectinLineWasteFrac] = useState(0.05);
   const [pectinMoldMl, setPectinMoldMl] = useState("");
   const [pectinExtraCsv, setPectinExtraCsv] = useState("");
   const [pectinMultiRows, setPectinMultiRows] = useState<PectinMultiRow[]>([
@@ -374,17 +383,7 @@ export default function EdiblesClient() {
       if (pectinGPerPc <= 0 || !Number.isFinite(pectinGPerPc)) {
         return { ok: false as const, error: "Piece weight (grams) must be positive.", mode: pectinMode };
       }
-      if (!Number.isFinite(pectinCitricPct) || pectinCitricPct <= 0 || pectinCitricPct > 20) {
-        return {
-          ok: false as const,
-          error: "Citric (% of formula) must be between 0 and 20. Workbook Part B default is 1.4%.",
-          mode: pectinMode,
-        };
-      }
-      const citricMassFraction = pectinCitricPct / 100;
-      if (pectinLineWasteFrac < 0 || pectinLineWasteFrac >= 1) {
-        return { ok: false as const, error: "Line waste fraction must be in [0, 1).", mode: pectinMode };
-      }
+      const citricMassFraction = WORKBOOK_CITRIC_MASS_FRAC;
       if (pectinMode === "single") {
         if (cMg <= 0) {
           return { ok: false as const, error: "Target MG / piece must be positive for the pectin plan.", mode: "single" as const };
@@ -398,12 +397,13 @@ export default function EdiblesClient() {
           targetMgPerPiece: cMg,
           gramsPerPiece: pectinGPerPc,
           citricMassFraction,
-          lineWasteFraction: pectinLineWasteFrac,
+          lineWasteFraction: WORKBOOK_LINE_WASTE_FRAC,
         });
         if (singlePlan.partAPectinMassFraction <= 0) {
           return {
             ok: false as const,
-            error: "Pectin plan is infeasible (Part A ≤ 0). Reduce citric %, mg target, or adjust inputs.",
+            error:
+              "Pectin plan is infeasible (Part A ≤ 0). Lower target mg/piece, raise additive potency, increase piece weight, or reduce batch size.",
             mode: "single" as const,
           };
         }
@@ -428,12 +428,13 @@ export default function EdiblesClient() {
         additives: pectinMultiAdditivesForPlan,
         citricMassFraction,
         extraMassFractions: extras.length ? extras : undefined,
-        lineWasteFraction: pectinLineWasteFrac,
+        lineWasteFraction: WORKBOOK_LINE_WASTE_FRAC,
       });
       if (multiPlan.partAPectinMassFraction <= 0) {
         return {
           ok: false as const,
-          error: "Pectin plan is infeasible (Part A ≤ 0). Reduce additives, extras, or citric %.",
+          error:
+            "Pectin plan is infeasible (Part A ≤ 0). Reduce additive goals or extra mass fractions, or adjust piece weight / batch size.",
           mode: "multi" as const,
         };
       }
@@ -447,8 +448,6 @@ export default function EdiblesClient() {
     pectinMode,
     pectinBatchG,
     pectinGPerPc,
-    pectinCitricPct,
-    pectinLineWasteFrac,
     pectinPotencySingle,
     cMg,
     pectinMultiAdditivesForPlan,
@@ -517,13 +516,13 @@ export default function EdiblesClient() {
             potencyFraction: pectinPotencySingle,
             targetMgPerPiece: cMg,
             gramsPerPiece: pectinGPerPc,
-            citricMassFraction: pectinCitricPct / 100,
-            lineWasteFraction: pectinLineWasteFrac,
+            citricMassFraction: WORKBOOK_CITRIC_MASS_FRAC,
+            lineWasteFraction: WORKBOOK_LINE_WASTE_FRAC,
           },
           plan: pectinPreview.singlePlan,
           oilInputGrams: oilG,
           targetPieces: targetPiecesInt,
-          lineWasteFraction: pectinLineWasteFrac,
+          lineWasteFraction: WORKBOOK_LINE_WASTE_FRAC,
         });
       } else if (pectinPreview.mode === "multi" && "multiPlan" in pectinPreview && pectinPreview.multiPlan) {
         let extras: number[] = [];
@@ -536,8 +535,8 @@ export default function EdiblesClient() {
         pectinSnapshot = buildSnapshotFromMulti({
           batchSizeGrams: pectinBatchG,
           gramsPerPiece: pectinGPerPc,
-          citricMassFraction: pectinCitricPct / 100,
-          lineWasteFraction: pectinLineWasteFrac,
+          citricMassFraction: WORKBOOK_CITRIC_MASS_FRAC,
+          lineWasteFraction: WORKBOOK_LINE_WASTE_FRAC,
           plan: pectinPreview.multiPlan,
           inputAdditives: pectinMultiAdditivesForPlan,
           extraMassFractions: extras,
@@ -1012,8 +1011,10 @@ export default function EdiblesClient() {
               >
                 <div style={{ fontWeight: 900, marginBottom: 6, color: "#fdba74" }}>Pectin (Melt-to-Make) formula</div>
                 <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 10px", lineHeight: 1.45 }}>
-                  Uses the same calculator as the Melt-to-Make workbook. The saved plan is appended to batch notes (with
-                  JSON), then Part A, oil allocation, citric, and any extra masses are posted as ingredient lines.
+                  Uses the same calculator as the Melt-to-Make workbook. Part B citric ({WORKBOOK_CITRIC_PCT}% of formula) and
+                  line-loss on piece count ({(WORKBOOK_LINE_WASTE_FRAC * 100).toFixed(0)}%) match the sheet defaults and are
+                  not editable here. The percent split for Part A vs additive updates from your batch inputs. The saved plan
+                  is appended to batch notes (with JSON); Part A, oil, citric, and extras post as ingredient lines.
                 </p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
                   <button
@@ -1099,34 +1100,198 @@ export default function EdiblesClient() {
                     Apply mL → g
                   </button>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-                  <label style={{ fontSize: 13 }}>
-                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Citric (% of formula)</div>
-                    <input
-                      type="number"
-                      min={0.01}
-                      max={20}
-                      step={0.01}
-                      value={pectinCitricPct}
-                      onChange={(e) => setPectinCitricPct(Number(e.target.value))}
-                      style={inputFull}
-                    />
-                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
-                      Same as workbook Part B (default 1.4 = 1.4% of batch).
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "#64748b",
+                    marginBottom: 10,
+                    lineHeight: 1.45,
+                    borderLeft: "3px solid rgba(52, 211, 153, 0.45)",
+                    paddingLeft: 10,
+                  }}
+                >
+                  Locked workbook defaults: Part B citric = {WORKBOOK_CITRIC_PCT}% of total formula · line loss on nominal
+                  pieces = {(WORKBOOK_LINE_WASTE_FRAC * 100).toFixed(0)}%.
+                </div>
+                <div
+                  style={{
+                    border: "1px solid rgba(52, 211, 153, 0.35)",
+                    borderRadius: 10,
+                    padding: 10,
+                    marginBottom: 12,
+                    background: "rgba(6, 78, 59, 0.12)",
+                  }}
+                >
+                  <div style={{ fontWeight: 800, marginBottom: 8, color: "#6ee7b7", fontSize: 13 }}>
+                    Percent of formula (read-only, updates from inputs)
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 72px 88px",
+                      gap: 6,
+                      fontSize: 11,
+                      color: "#64748b",
+                      marginBottom: 4,
+                    }}
+                  >
+                    <div>Ingredient</div>
+                    <div style={{ textAlign: "right" }}>% of formula</div>
+                    <div style={{ textAlign: "right" }}>Grams</div>
+                  </div>
+                  {pectinPreview.ok && "singlePlan" in pectinPreview && pectinPreview.singlePlan ? (
+                    <>
+                      {(
+                        [
+                          {
+                            label: "Melt-to-Make™ Pectin Base (Part A)",
+                            frac: pectinPreview.singlePlan.partAPectinMassFraction,
+                            g: pectinPreview.singlePlan.gramsPartAPectin,
+                          },
+                          {
+                            label: "Additive",
+                            frac: pectinPreview.singlePlan.additiveMassFraction,
+                            g: pectinPreview.singlePlan.gramsAdditive,
+                          },
+                          {
+                            label: "Citric acid solution (Part B)",
+                            frac: pectinPreview.singlePlan.citricMassFraction,
+                            g: pectinPreview.singlePlan.gramsCitricSolution,
+                          },
+                        ] as const
+                      ).map((r) => (
+                        <div
+                          key={r.label}
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 72px 88px",
+                            gap: 6,
+                            fontSize: 12,
+                            color: "#e2e8f0",
+                            padding: "4px 0",
+                            borderBottom: "1px solid rgba(51,65,85,0.6)",
+                          }}
+                        >
+                          <div>{r.label}</div>
+                          <div style={{ textAlign: "right", fontWeight: 700 }}>{pctOfFormula(r.frac)}</div>
+                          <div style={{ textAlign: "right" }}>{r.g.toFixed(2)}</div>
+                        </div>
+                      ))}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 72px 88px",
+                          gap: 6,
+                          fontSize: 12,
+                          color: "#a7f3d0",
+                          paddingTop: 6,
+                          fontWeight: 800,
+                        }}
+                      >
+                        <div>Totals</div>
+                        <div style={{ textAlign: "right" }}>100.00%</div>
+                        <div style={{ textAlign: "right" }}>{pectinPreview.singlePlan.gramsTotalCheck.toFixed(2)}</div>
+                      </div>
+                    </>
+                  ) : pectinPreview.ok && "multiPlan" in pectinPreview && pectinPreview.multiPlan ? (
+                    <>
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 72px 88px",
+                          gap: 6,
+                          fontSize: 12,
+                          color: "#e2e8f0",
+                          padding: "4px 0",
+                          borderBottom: "1px solid rgba(51,65,85,0.6)",
+                        }}
+                      >
+                        <div>Melt-to-Make™ Pectin Base (Part A)</div>
+                        <div style={{ textAlign: "right", fontWeight: 700 }}>
+                          {pctOfFormula(pectinPreview.multiPlan.partAPectinMassFraction)}
+                        </div>
+                        <div style={{ textAlign: "right" }}>{pectinPreview.multiPlan.gramsByLine.partAPectin.toFixed(2)}</div>
+                      </div>
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 72px 88px",
+                          gap: 6,
+                          fontSize: 12,
+                          color: "#e2e8f0",
+                          padding: "4px 0",
+                          borderBottom: "1px solid rgba(51,65,85,0.6)",
+                        }}
+                      >
+                        <div>Additives (combined)</div>
+                        <div style={{ textAlign: "right", fontWeight: 700 }}>
+                          {pctOfFormula(
+                            pectinPreview.multiPlan.additiveMassFractions.reduce((a, b) => a + b, 0),
+                          )}
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          {pectinPreview.multiPlan.gramsByLine.additives.reduce((a, b) => a + b, 0).toFixed(2)}
+                        </div>
+                      </div>
+                      {pectinPreview.multiPlan.extraMassFraction > 1e-9 ? (
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 72px 88px",
+                            gap: 6,
+                            fontSize: 12,
+                            color: "#e2e8f0",
+                            padding: "4px 0",
+                            borderBottom: "1px solid rgba(51,65,85,0.6)",
+                          }}
+                        >
+                          <div>Extras (flavor / MCT / etc.)</div>
+                          <div style={{ textAlign: "right", fontWeight: 700 }}>
+                            {pctOfFormula(pectinPreview.multiPlan.extraMassFraction)}
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            {pectinPreview.multiPlan.gramsByLine.extras.reduce((a, b) => a + b, 0).toFixed(2)}
+                          </div>
+                        </div>
+                      ) : null}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 72px 88px",
+                          gap: 6,
+                          fontSize: 12,
+                          color: "#e2e8f0",
+                          padding: "4px 0",
+                          borderBottom: "1px solid rgba(51,65,85,0.6)",
+                        }}
+                      >
+                        <div>Citric acid solution (Part B)</div>
+                        <div style={{ textAlign: "right", fontWeight: 700 }}>
+                          {pctOfFormula(pectinPreview.multiPlan.citricMassFraction)}
+                        </div>
+                        <div style={{ textAlign: "right" }}>{pectinPreview.multiPlan.gramsByLine.citric.toFixed(2)}</div>
+                      </div>
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 72px 88px",
+                          gap: 6,
+                          fontSize: 12,
+                          color: "#a7f3d0",
+                          paddingTop: 6,
+                          fontWeight: 800,
+                        }}
+                      >
+                        <div>Totals</div>
+                        <div style={{ textAlign: "right" }}>100.00%</div>
+                        <div style={{ textAlign: "right" }}>{pectinPreview.multiPlan.gramsByLine.total.toFixed(2)}</div>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                      Enter batch size, piece weight, and mg targets to populate the workbook-style split.
                     </div>
-                  </label>
-                  <label style={{ fontSize: 13 }}>
-                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Line waste fraction</div>
-                    <input
-                      type="number"
-                      min={0}
-                      max={0.49}
-                      step={0.01}
-                      value={pectinLineWasteFrac}
-                      onChange={(e) => setPectinLineWasteFrac(Number(e.target.value))}
-                      style={inputFull}
-                    />
-                  </label>
+                  )}
                 </div>
                 {pectinMode === "single" ? (
                   <label style={{ display: "block", marginBottom: 10, fontSize: 13 }}>
