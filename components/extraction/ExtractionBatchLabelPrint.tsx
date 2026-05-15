@@ -2,6 +2,14 @@
 
 import type { CSSProperties } from "react";
 
+/**
+ * Printed page size — must match the label selected in the OS/DYMO dialog (width × height).
+ * Portrait matches common die-cut strips fed with the long edge along the roll; landscape
+ * (e.g. 1.5in × 1in) often rotates or mis-registers across the gap sensor between labels.
+ */
+const LABEL_PRINT_W = "1in";
+const LABEL_PRINT_H = "1.5in";
+
 export type ExtractionBatchLabelFields = {
   batchId: string;
   marketCode: string;
@@ -56,13 +64,13 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
 <style>
   /* Exactly one physical label; zero margins avoids Chrome counting a 2nd sheet */
   @page {
-    size: 1.5in 1in;
+    size: ${LABEL_PRINT_W} ${LABEL_PRINT_H};
     margin: 0;
   }
   * { box-sizing: border-box; }
   html {
-    width: 1.5in;
-    height: 1in;
+    width: ${LABEL_PRINT_W};
+    height: ${LABEL_PRINT_H};
     margin: 0;
     padding: 0;
     overflow: hidden;
@@ -70,10 +78,10 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
   body {
     margin: 0;
     padding: 0;
-    width: 1.5in;
-    height: 1in;
-    max-width: 1.5in;
-    max-height: 1in;
+    width: ${LABEL_PRINT_W};
+    height: ${LABEL_PRINT_H};
+    max-width: ${LABEL_PRINT_W};
+    max-height: ${LABEL_PRINT_H};
     overflow: hidden;
     font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif;
     background: #fff;
@@ -81,12 +89,12 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
     break-after: avoid;
   }
   .sheet {
-    width: 1.5in;
-    height: 1in;
-    max-width: 1.5in;
-    max-height: 1in;
+    width: ${LABEL_PRINT_W};
+    height: ${LABEL_PRINT_H};
+    max-width: ${LABEL_PRINT_W};
+    max-height: ${LABEL_PRINT_H};
     margin: 0;
-    padding: 0.07in 0.08in;
+    padding: 0.06in 0.06in;
     background: #fff;
     display: flex;
     align-items: center;
@@ -97,10 +105,11 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
     height: 100%;
     display: flex;
     flex-direction: row;
-    align-items: center;
+    align-items: stretch;
     justify-content: center;
-    gap: 0.06in;
+    gap: 0.05in;
     text-align: center;
+    min-height: 0;
   }
   .col {
     display: flex;
@@ -119,32 +128,32 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
     padding-left: 0.04in;
   }
   .code {
-    font-size: 11pt;
+    font-size: 9.5pt;
     font-weight: 700;
-    letter-spacing: 0.03em;
-    line-height: 1.08;
+    letter-spacing: 0.02em;
+    line-height: 1.07;
     max-width: 100%;
     word-break: break-word;
   }
   .id {
-    font-size: 6.5pt;
+    font-size: 6pt;
     color: #333;
-    line-height: 1.12;
-    margin-top: 0.05in;
+    line-height: 1.1;
+    margin-top: 0.04in;
     max-width: 100%;
     word-break: break-all;
   }
   .ptype {
-    font-size: 8.5pt;
+    font-size: 7.25pt;
     font-weight: 600;
-    line-height: 1.12;
+    line-height: 1.1;
     max-width: 100%;
     word-break: break-word;
   }
   .src {
-    font-size: 6.5pt;
-    margin-top: 0.05in;
-    line-height: 1.12;
+    font-size: 6pt;
+    margin-top: 0.04in;
+    line-height: 1.1;
     color: #222;
     max-width: 100%;
     word-break: break-word;
@@ -168,7 +177,7 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
 
 /**
  * Opens the system print dialog from NexBatch (no new tab — uses a hidden iframe).
- * One horizontal sheet 1.5in × 1in; user picks DYMO + stock in the OS dialog.
+ * Portrait sheet matching LABEL_PRINT_W × LABEL_PRINT_H; pick the same stock in the OS/DYMO dialog.
  */
 export function openExtractionBatchLabelPrintWindow(f: ExtractionBatchLabelFields): boolean {
   if (typeof document === "undefined") return false;
@@ -179,14 +188,14 @@ export function openExtractionBatchLabelPrintWindow(f: ExtractionBatchLabelField
   /**
    * Must NOT use 0×0 viewport: Chrome lays out @page / inch-sized body incorrectly and the job
    * often lands in the gap between die-cut labels or misaligned on DYMO stock.
-   * Match @page size (1.5in × 1in) off-screen so layout matches physical label registration.
+   * Match @page size off-screen so layout matches physical label registration.
    */
   iframe.style.cssText = [
     "position:fixed",
     "left:-9999px",
     "top:0",
-    "width:1.5in",
-    "height:1in",
+    `width:${LABEL_PRINT_W}`,
+    `height:${LABEL_PRINT_H}`,
     "margin:0",
     "padding:0",
     "border:0",
@@ -239,7 +248,7 @@ type PreviewProps = {
   style?: CSSProperties;
 };
 
-/** Large on-screen preview (horizontal strip), centered — matches print iframe layout. */
+/** Large on-screen preview — aspect ratio matches print iframe / @page. */
 export function ExtractionBatchLabelPreview({ fields, style }: PreviewProps) {
   const col: CSSProperties = {
     display: "flex",
@@ -255,9 +264,9 @@ export function ExtractionBatchLabelPreview({ fields, style }: PreviewProps) {
   return (
     <div
       style={{
-        width: "min(560px, 92vw)",
+        width: "min(420px, 92vw)",
         maxWidth: "100%",
-        aspectRatio: "3 / 2",
+        aspectRatio: "2 / 3",
         padding: "clamp(12px, 2.5vw, 20px) clamp(14px, 3vw, 24px)",
         border: "1px solid rgba(148, 163, 184, 0.55)",
         borderRadius: 12,
