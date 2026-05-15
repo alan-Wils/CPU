@@ -103,7 +103,9 @@ export function DymoLabelCalibrationPanel({
           Top/start offset
         </strong>{" "}
         dial-in and use <strong style={{ color: "#e2e8f0" }}>Test print</strong>; in the system dialog choose{" "}
-        matching DYMO stock and <strong style={{ color: "#e2e8f0" }}>100% scale</strong>.
+        matching DYMO stock and <strong style={{ color: "#e2e8f0" }}>100% scale</strong>.{" "}
+        <strong style={{ color: "#e2e8f0" }}>Whole label X</strong> positive nudges ink right; layouts no longer
+        pre-clip mid-page, but the physical die-cut/sticker edge still limits how far you can shift.
       </p>
 
       <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>

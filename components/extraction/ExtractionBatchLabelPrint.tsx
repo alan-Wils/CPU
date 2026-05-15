@@ -127,7 +127,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
 <html lang="en" class="dymo-label-print-root"><head><meta charset="utf-8"/><meta name="viewport" content="width=${viewportW}, initial-scale=1"/>
 <title>Extraction batch label</title>
 <style>
-  /* --- DYMO print: (0,0) = page top-left; job moves entire sheet + template; content shifts/scales inside frame --- */
+  /* --- DYMO print: (0,0) = page top-left; job moves entire sheet + template; content shifts/scales inside frame. Keep overflow visible so translateX can reach the sticker edge without ancestor clipping. --- */
   @page {
     size: ${s.labelWidth} ${s.labelHeight};
     margin: 0;
@@ -145,7 +145,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     height: var(--label-height);
     margin: 0;
     padding: 0;
-    overflow: hidden;
+    overflow: visible;
   }
   body {
     position: relative;
@@ -155,7 +155,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     height: var(--label-height);
     max-width: var(--label-width);
     max-height: var(--label-height);
-    overflow: hidden;
+    overflow: visible;
     font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif;
     background: #fff;
     page-break-after: avoid;
@@ -179,7 +179,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     height: var(--label-height);
     margin: 0;
     padding: 0;
-    overflow: hidden;
+    overflow: visible;
     background: #fff;
     display: block;
   }
@@ -188,7 +188,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     inset: 0;
     margin: 0;
     padding: 0;
-    overflow: hidden;
+    overflow: visible;
     display: block;
   }
   .dymo-label-origin-marker {
@@ -308,6 +308,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
       margin: 0 !important;
       padding: 0 !important;
       background: #fff !important;
+      overflow: visible !important;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
@@ -320,6 +321,11 @@ export function buildDymoExtractionBatchLabelPrintHtml(
       break-inside: avoid;
       page-break-after: avoid;
       break-after: avoid;
+      /* Whole-label / inner translateX spills past nominal box — let @page trim, don't pre-clip here. */
+      overflow: visible !important;
+    }
+    .dymo-label-printable-area {
+      overflow: visible !important;
     }
   }
 </style></head><body>${inner}</body></html>`;
@@ -365,7 +371,7 @@ export function openExtractionBatchLabelPrintWindow(
     "opacity:0",
     "pointer-events:none",
     "z-index:-1",
-    "overflow:hidden",
+    "overflow:visible",
   ].join(";");
 
   document.body.appendChild(iframe);
@@ -476,8 +482,8 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             maxWidth: 420,
           }}
         >
-          Outer box = physical label viewport ({s.labelWidth} × {s.labelHeight}). White card = printable
-          sheet; red/orange = clip planes.{" "}
+          Outer box = physical label reference ({s.labelWidth} × {s.labelHeight}); grey border is not a hard
+          software clip — transformed ink can extend to the printer/@page edge.{" "}
           <strong style={{ color: "#2dd4bf" }}>Teal</strong> = print job (whole-label offsets + rotation +
           start). <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame at (0,0) in sheet.{" "}
           <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content (fine shift + scale).
@@ -489,7 +495,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
           width: s.labelWidth,
           height: s.labelHeight,
           margin: "0 auto",
-          overflow: "hidden",
+          overflow: "visible",
           boxSizing: "border-box",
           background: "rgba(15, 23, 42, 0.4)",
         }}
@@ -518,7 +524,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
               height: s.labelHeight,
               margin: 0,
               padding: 0,
-              overflow: "hidden",
+              overflow: "visible",
               background: "#fff",
               display: "block",
               boxSizing: "border-box",
@@ -532,7 +538,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                 inset: 0,
                 margin: 0,
                 padding: 0,
-                overflow: "hidden",
+                overflow: "visible",
                 display: "block",
                 boxSizing: "border-box",
                 ...(dbg ? { boxShadow: "inset 0 0 0 2px #ea580c" } : {}),

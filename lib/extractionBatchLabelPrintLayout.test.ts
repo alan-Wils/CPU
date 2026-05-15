@@ -59,4 +59,13 @@ describe("DYMO extraction batch label print layout", () => {
     expect(html).not.toMatch(/viewport[^>]+device-width/i);
     expect(html).toContain('meta name="viewport" content="width=144');
   });
+
+  it("@media print allows overflow visible so horizontal offsets are not clipped by sheet layers", () => {
+    const html = buildDymoExtractionBatchLabelPrintHtml(fields);
+    const printBlock =
+      html.split("@media print")[1]?.split("</style>")[0] ?? "";
+    expect(printBlock.length).toBeGreaterThan(20);
+    expect(printBlock).toContain("overflow: visible !important");
+    expect(printBlock).toContain(".dymo-label-printable-area");
+  });
 });
