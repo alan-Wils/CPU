@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { CSSProperties } from "react";
 import type { DymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration";
 
@@ -57,6 +58,7 @@ export function DymoLabelCalibrationPanel({
   inputStyle,
 }: DymoLabelCalibrationPanelProps) {
   const inp = { ...defaultInput, ...inputStyle };
+  const [calibrationOptionsOpen, setCalibrationOptionsOpen] = useState(false);
 
   function patch(p: Partial<DymoLabelCalibrationSettings>) {
     onDraftChange({ ...draft, ...p });
@@ -132,112 +134,140 @@ export function DymoLabelCalibrationPanel({
         <code style={{ color: "#a5b4fc" }}>1.5in</code>, width = narrow side).
       </p>
 
-      <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>
-        <div style={labelStyle()}>Whole label X offset</div>
-        <input
-          style={inp}
-          value={draft.labelFrameOffsetX}
-          onChange={(e) => patch({ labelFrameOffsetX: e.target.value })}
-          aria-label="Whole label X offset"
-        />
-        <div style={labelStyle()}>Whole label Y offset</div>
-        <input
-          style={inp}
-          value={draft.labelFrameOffsetY}
-          onChange={(e) => patch({ labelFrameOffsetY: e.target.value })}
-          aria-label="Whole label Y offset"
-        />
-      </div>
+      <button
+        type="button"
+        aria-expanded={calibrationOptionsOpen}
+        aria-controls="dymo-calibration-options"
+        onClick={() => setCalibrationOptionsOpen((o) => !o)}
+        style={{
+          ...inp,
+          display: "flex",
+          width: "100%",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 8,
+          cursor: "pointer",
+          fontWeight: 600,
+          borderColor: "rgba(99, 102, 241, 0.5)",
+          background: "rgba(99, 102, 241, 0.12)",
+          color: "#c7d2fe",
+          marginBottom: calibrationOptionsOpen ? 12 : 0,
+        }}
+      >
+        <span aria-hidden="true">{calibrationOptionsOpen ? "▼" : "▶"}</span>
+        <span>{calibrationOptionsOpen ? "Hide calibration options" : "Calibration options"}</span>
+      </button>
 
-      <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>
-        <div style={labelStyle()}>Inner content X offset</div>
-        <input
-          style={inp}
-          value={draft.contentOffsetX}
-          onChange={(e) => patch({ contentOffsetX: e.target.value })}
-          aria-label="Inner content X offset"
-        />
-        <div style={labelStyle()}>Inner content Y offset</div>
-        <input
-          style={inp}
-          value={draft.contentOffsetY}
-          onChange={(e) => patch({ contentOffsetY: e.target.value })}
-          aria-label="Inner content Y offset"
-        />
-      </div>
+      {calibrationOptionsOpen ? (
+        <div id="dymo-calibration-options" style={{ marginBottom: 4 }}>
+          <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>
+            <div style={labelStyle()}>Whole label X offset</div>
+            <input
+              style={inp}
+              value={draft.labelFrameOffsetX}
+              onChange={(e) => patch({ labelFrameOffsetX: e.target.value })}
+              aria-label="Whole label X offset"
+            />
+            <div style={labelStyle()}>Whole label Y offset</div>
+            <input
+              style={inp}
+              value={draft.labelFrameOffsetY}
+              onChange={(e) => patch({ labelFrameOffsetY: e.target.value })}
+              aria-label="Whole label Y offset"
+            />
+          </div>
 
-      <div style={fieldRowStyle()}>
-        <div style={labelStyle()}>Top/start offset</div>
-        <input
-          style={inp}
-          value={draft.startOffsetY}
-          onChange={(e) => patch({ startOffsetY: e.target.value })}
-          aria-label="Top start offset along feed"
-        />
-      </div>
+          <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>
+            <div style={labelStyle()}>Inner content X offset</div>
+            <input
+              style={inp}
+              value={draft.contentOffsetX}
+              onChange={(e) => patch({ contentOffsetX: e.target.value })}
+              aria-label="Inner content X offset"
+            />
+            <div style={labelStyle()}>Inner content Y offset</div>
+            <input
+              style={inp}
+              value={draft.contentOffsetY}
+              onChange={(e) => patch({ contentOffsetY: e.target.value })}
+              aria-label="Inner content Y offset"
+            />
+          </div>
 
-      <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>
-        <div style={labelStyle()}>Rotation (deg)</div>
-        <input
-          style={inp}
-          type="number"
-          step={1}
-          value={draft.rotationDeg}
-          onChange={(e) => {
-            const n = Number(e.target.value);
-            patch({ rotationDeg: Number.isFinite(n) ? n : draft.rotationDeg });
-          }}
-          aria-label="Rotation degrees"
-        />
-        <div style={labelStyle()}>Font size (×)</div>
-        <input
-          style={inp}
-          type="number"
-          step={0.05}
-          min={0.25}
-          max={4}
-          value={draft.fontSizeMultiplier}
-          onChange={(e) => {
-            const n = Number(e.target.value);
-            patch({ fontSizeMultiplier: Number.isFinite(n) ? n : draft.fontSizeMultiplier });
-          }}
-          aria-label="Font size multiplier"
-        />
-      </div>
+          <div style={fieldRowStyle()}>
+            <div style={labelStyle()}>Top/start offset</div>
+            <input
+              style={inp}
+              value={draft.startOffsetY}
+              onChange={(e) => patch({ startOffsetY: e.target.value })}
+              aria-label="Top start offset along feed"
+            />
+          </div>
 
-      <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>
-        <div style={labelStyle()}>Left/right padding</div>
-        <input
-          style={inp}
-          value={draft.paddingLeftRight}
-          onChange={(e) => patch({ paddingLeftRight: e.target.value })}
-          aria-label="Left right padding"
-        />
-        <div style={labelStyle()}>Line gap</div>
-        <input
-          style={inp}
-          value={draft.textSpacing}
-          onChange={(e) => patch({ textSpacing: e.target.value })}
-          aria-label="Gap between stacked label lines"
-        />
-      </div>
+          <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>
+            <div style={labelStyle()}>Rotation (deg)</div>
+            <input
+              style={inp}
+              type="number"
+              step={1}
+              value={draft.rotationDeg}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                patch({ rotationDeg: Number.isFinite(n) ? n : draft.rotationDeg });
+              }}
+              aria-label="Rotation degrees"
+            />
+            <div style={labelStyle()}>Font size (×)</div>
+            <input
+              style={inp}
+              type="number"
+              step={0.05}
+              min={0.25}
+              max={4}
+              value={draft.fontSizeMultiplier}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                patch({ fontSizeMultiplier: Number.isFinite(n) ? n : draft.fontSizeMultiplier });
+              }}
+              aria-label="Font size multiplier"
+            />
+          </div>
 
-      <div style={fieldRowStyle()}>
-        <div style={labelStyle()}>Print scale</div>
-        <input
-          style={inp}
-          type="number"
-          step={0.05}
-          min={0.25}
-          max={4}
-          value={draft.printScale}
-          onChange={(e) => {
-            const n = Number(e.target.value);
-            patch({ printScale: Number.isFinite(n) ? n : draft.printScale });
-          }}
-          aria-label="Print scale"
-        />
-      </div>
+          <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>
+            <div style={labelStyle()}>Left/right padding</div>
+            <input
+              style={inp}
+              value={draft.paddingLeftRight}
+              onChange={(e) => patch({ paddingLeftRight: e.target.value })}
+              aria-label="Left right padding"
+            />
+            <div style={labelStyle()}>Line gap</div>
+            <input
+              style={inp}
+              value={draft.textSpacing}
+              onChange={(e) => patch({ textSpacing: e.target.value })}
+              aria-label="Gap between stacked label lines"
+            />
+          </div>
+
+          <div style={fieldRowStyle()}>
+            <div style={labelStyle()}>Print scale</div>
+            <input
+              style={inp}
+              type="number"
+              step={0.05}
+              min={0.25}
+              max={4}
+              value={draft.printScale}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                patch({ printScale: Number.isFinite(n) ? n : draft.printScale });
+              }}
+              aria-label="Print scale"
+            />
+          </div>
+        </div>
+      ) : null}
 
       {saveError ? (
         <p style={{ color: "#fca5a5", fontSize: 12, margin: "8px 0 0" }}>{saveError}</p>
