@@ -15,6 +15,7 @@ import {
   postEdibleQaManagerReview,
   postEdibleTaskLog,
   postEdibleTransferPackaging,
+  type EdibleBatchCreated,
   type EdibleDashboardBatch,
   type EdibleDashboardJson,
   type EdibleOilOption,
@@ -22,6 +23,7 @@ import {
 import {
   buildSnapshotFromMulti,
   buildSnapshotFromSingle,
+  formatPectinReadableHeader,
   mergeUserNotesAndPectinPlan,
   postPectinKitchenIngredients,
   type PectinMeltFormulaSnapshot,
@@ -107,6 +109,24 @@ const CALENDAR_TASK_SUGGESTIONS = [
 ];
 
 type PectinMultiRow = { goalMg: number; potencyFrac: number };
+
+type EdibleCreatePrintSummary = {
+  created: EdibleBatchCreated;
+  sku: string;
+  flavor: string;
+  productType: string;
+  targetMgPerPiece: number;
+  targetPieces: number;
+  oilInputGrams: number;
+  potencyMgPerGram: number | null;
+  extractionRunLabel: string | null;
+  projectedTotalMg: number;
+  projectedEstPieces: number;
+  pectinMode: "single" | "multi" | null;
+  pectinSnapshot: PectinMeltFormulaSnapshot | null;
+  ingredientNotes: string;
+  productionNotes: string;
+};
 
 function parseExtraMassFractionsCsv(raw: string): number[] {
   if (!raw.trim()) return [];
@@ -242,7 +262,7 @@ export default function EdiblesClient() {
   const [cNotes, setCNotes] = useState("");
 
   const [pectinMode, setPectinMode] = useState<"single" | "multi">("single");
-  const [pectinBatchG, setPectinBatchG] = useState(10_000);
+  const [createPrintSummary, setCreatePrintSummary] = useState<EdibleCreatePrintSummary | null>(null);
   const [pectinPotencySingle, setPectinPotencySingle] = useState(0.7933);
   const [pectinGPerPc, setPectinGPerPc] = useState(3.5);
   const [pectinMoldMl, setPectinMoldMl] = useState("");
@@ -358,6 +378,14 @@ export default function EdiblesClient() {
 
   const selectedOil = useMemo(() => oilOptions.find((o) => o.extractionRunId === cRunId), [oilOptions, cRunId]);
 
+  /** Total formula mass for the Melt-to-Make sheet — same as pieces × nominal piece weight (no duplicate field). */
+  const derivedPectinBatchG = useMemo(() => {
+    const pcs = Number(cPieces);
+    const g = Number(pectinGPerPc);
+    if (!Number.isFinite(pcs) || !Number.isFinite(g) || pcs <= 0 || g <= 0) return 0;
+    return pcs * g;
+  }, [cPieces, pectinGPerPc]);
+
   const pectinMultiAdditivesForPlan = useMemo(
     () =>
       pectinMultiRows
@@ -377,8 +405,12 @@ export default function EdiblesClient() {
       return { ok: true as const, error: null as string | null, mode: "single" as const };
     }
     try {
-      if (pectinBatchG <= 0 || !Number.isFinite(pectinBatchG)) {
-        return { ok: false as const, error: "Pectin batch size (grams) must be a positive number.", mode: pectinMode };
+      if (derivedPectinBatchG <= 0 || !Number.isFinite(derivedPectinBatchG)) {
+        return {
+          ok: false as const,
+          error: "Formula batch size must be positive — check gummies per batch and piece weight (grams).",
+          mode: pectinMode,
+        };
       }
       if (pectinGPerPc <= 0 || !Number.isFinite(pectinGPerPc)) {
         return { ok: false as const, error: "Piece weight (grams) must be positive.", mode: pectinMode };
@@ -392,7 +424,7 @@ export default function EdiblesClient() {
           return { ok: false as const, error: "Additive potency fraction must be in (0, 1].", mode: "single" as const };
         }
         const singlePlan = planPectinSingleAdditiveBatch({
-          batchSizeGrams: pectinBatchG,
+          batchSizeGrams: derivedPectinBatchG,
           potencyFraction: pectinPotencySingle,
           targetMgPerPiece: cMg,
           gramsPerPiece: pectinGPerPc,
@@ -423,7 +455,7 @@ export default function EdiblesClient() {
         }
       }
       const multiPlan = planPectinMultiAdditiveBatch({
-        batchSizeGrams: pectinBatchG,
+        batchSizeGrams: derivedPectinBatchG,
         gramsPerPiece: pectinGPerPc,
         additives: pectinMultiAdditivesForPlan,
         citricMassFraction,
@@ -446,7 +478,7 @@ export default function EdiblesClient() {
   }, [
     cProduct,
     pectinMode,
-    pectinBatchG,
+    derivedPectinBatchG,
     pectinGPerPc,
     pectinPotencySingle,
     cMg,
@@ -498,7 +530,11 @@ export default function EdiblesClient() {
     }
     const targetMgForApi = cProduct === "Gummies" && pectinMode === "multi" ? effectiveTargetMgForBatch : cMg;
     if (!Number.isFinite(targetMgForApi) || targetMgForApi <= 0) {
-      setError("Target MG / piece must be positive.");
+      setError(
+        cProduct === "Gummies" && pectinMode === "multi"
+          ? "Combined additive goals (mg/pc) must sum to a positive number."
+          : "Target MG / piece must be positive.",
+      );
       return;
     }
 
@@ -512,7 +548,7 @@ export default function EdiblesClient() {
       if (pectinPreview.mode === "single" && "singlePlan" in pectinPreview && pectinPreview.singlePlan) {
         pectinSnapshot = buildSnapshotFromSingle({
           input: {
-            batchSizeGrams: pectinBatchG,
+            batchSizeGrams: derivedPectinBatchG,
             potencyFraction: pectinPotencySingle,
             targetMgPerPiece: cMg,
             gramsPerPiece: pectinGPerPc,
@@ -533,7 +569,7 @@ export default function EdiblesClient() {
           return;
         }
         pectinSnapshot = buildSnapshotFromMulti({
-          batchSizeGrams: pectinBatchG,
+          batchSizeGrams: derivedPectinBatchG,
           gramsPerPiece: pectinGPerPc,
           citricMassFraction: WORKBOOK_CITRIC_MASS_FRAC,
           lineWasteFraction: WORKBOOK_LINE_WASTE_FRAC,
@@ -578,11 +614,31 @@ export default function EdiblesClient() {
             }`,
           );
           setCreateOpen(false);
+          setCreatePrintSummary(null);
           await refresh();
           return;
         }
       }
-      setCreateOpen(false);
+      const runLabel = selectedOil
+        ? `${selectedOil.strainLabel} — ${selectedOil.availableGrams.toFixed(2)} g avail · ${selectedOil.productType}`
+        : null;
+      setCreatePrintSummary({
+        created,
+        sku: cSku,
+        flavor: cFlavor,
+        productType: cProduct,
+        targetMgPerPiece: targetMgForApi,
+        targetPieces: targetPiecesInt,
+        oilInputGrams: oilG,
+        potencyMgPerGram: cPotency === "" ? null : Number(cPotency),
+        extractionRunLabel: runLabel,
+        projectedTotalMg: projected.totalMg,
+        projectedEstPieces: projected.estPieces,
+        pectinMode: cProduct === "Gummies" ? pectinMode : null,
+        pectinSnapshot,
+        ingredientNotes: cIngredientNotes.trim(),
+        productionNotes: cNotes.trim(),
+      });
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create edible batch.");
@@ -707,7 +763,14 @@ export default function EdiblesClient() {
           <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
             <h2 style={{ margin: 0 }}>Workflow stage</h2>
             {write && (
-              <button type="button" style={primaryBtn} onClick={() => setCreateOpen(true)}>
+              <button
+                type="button"
+                style={primaryBtn}
+                onClick={() => {
+                  setCreatePrintSummary(null);
+                  setCreateOpen(true);
+                }}
+              >
                 Create Edible Batch
               </button>
             )}
@@ -901,7 +964,223 @@ export default function EdiblesClient() {
             padding: 16,
           }}
         >
-          <form onSubmit={onCreateSubmit} style={{ ...cardStyle, maxWidth: 640, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+          {createPrintSummary ? (
+            <>
+              <style>{`@media print {
+                body * { visibility: hidden !important; }
+                #edible-batch-print-root,
+                #edible-batch-print-root * { visibility: visible !important; }
+                #edible-batch-print-root {
+                  position: absolute !important;
+                  left: 0 !important;
+                  top: 0 !important;
+                  width: 100% !important;
+                  box-sizing: border-box !important;
+                  padding: 20px !important;
+                  background: #fff !important;
+                  color: #0f172a !important;
+                  font-family: system-ui, -apple-system, Segoe UI, sans-serif !important;
+                }
+                #edible-batch-print-root .print-muted { color: #475569 !important; }
+                #edible-batch-print-root table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+                #edible-batch-print-root th,
+                #edible-batch-print-root td {
+                  border: 1px solid #cbd5e1 !important;
+                  padding: 6px 8px !important;
+                  font-size: 12px !important;
+                  color: #0f172a !important;
+                  vertical-align: top;
+                }
+              }`}</style>
+              <div
+                style={{
+                  ...cardStyle,
+                  maxWidth: 720,
+                  width: "100%",
+                  maxHeight: "90vh",
+                  overflowY: "auto",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    style={ghostBtn}
+                    onClick={() => {
+                      setCreateOpen(false);
+                      setCreatePrintSummary(null);
+                    }}
+                  >
+                    Close
+                  </button>
+                  <button type="button" style={primaryBtn} onClick={() => window.print()}>
+                    Print summary
+                  </button>
+                </div>
+                <div
+                  id="edible-batch-print-root"
+                  style={{
+                    border: "1px solid #334155",
+                    borderRadius: 12,
+                    padding: 16,
+                    background: "#0f172a",
+                    color: "#f8fafc",
+                    flex: 1,
+                    overflow: "auto",
+                  }}
+                >
+                  <h2 style={{ marginTop: 0, fontSize: 22, fontWeight: 900 }}>Edible batch summary</h2>
+                  <p className="print-muted" style={{ color: "#94a3b8", fontSize: 13, marginTop: 0 }}>
+                    Printable sheet (system print dialog). Content stays in this overlay — not a separate browser tab.
+                  </p>
+                  <table>
+                    <tbody>
+                      <tr>
+                        <th>Batch #</th>
+                        <td>{createPrintSummary.created.batchNumber ?? "—"}</td>
+                      </tr>
+                      <tr>
+                        <th>Batch id</th>
+                        <td style={{ wordBreak: "break-all" }}>{createPrintSummary.created.id}</td>
+                      </tr>
+                      <tr>
+                        <th>SKU</th>
+                        <td>{createPrintSummary.sku}</td>
+                      </tr>
+                      <tr>
+                        <th>Flavor</th>
+                        <td>{createPrintSummary.flavor}</td>
+                      </tr>
+                      <tr>
+                        <th>Product</th>
+                        <td>{createPrintSummary.productType}</td>
+                      </tr>
+                      <tr>
+                        <th>Target MG / piece (saved)</th>
+                        <td>{createPrintSummary.targetMgPerPiece}</td>
+                      </tr>
+                      <tr>
+                        <th>Target pieces</th>
+                        <td>{createPrintSummary.targetPieces}</td>
+                      </tr>
+                      <tr>
+                        <th>Oil allocated</th>
+                        <td>{createPrintSummary.oilInputGrams.toFixed(4)} g</td>
+                      </tr>
+                      <tr>
+                        <th>Potency</th>
+                        <td>
+                          {createPrintSummary.potencyMgPerGram != null && Number.isFinite(createPrintSummary.potencyMgPerGram)
+                            ? `${createPrintSummary.potencyMgPerGram} mg/g`
+                            : "—"}
+                        </td>
+                      </tr>
+                      <tr>
+                        <th>Oil source</th>
+                        <td>{createPrintSummary.extractionRunLabel ?? "—"}</td>
+                      </tr>
+                      <tr>
+                        <th>Projected total MG</th>
+                        <td>{Math.round(createPrintSummary.projectedTotalMg)}</td>
+                      </tr>
+                      <tr>
+                        <th>Est. pieces @ target MG</th>
+                        <td>{createPrintSummary.projectedEstPieces}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  {createPrintSummary.pectinSnapshot ? (
+                    <>
+                      <h3 style={{ marginTop: 18, fontSize: 16, fontWeight: 800 }}>Pectin (Melt-to-Make)</h3>
+                      <p className="print-muted" style={{ color: "#94a3b8", fontSize: 12, whiteSpace: "pre-wrap", marginTop: 0 }}>
+                        {formatPectinReadableHeader(createPrintSummary.pectinSnapshot)}
+                      </p>
+                      <p className="print-muted" style={{ color: "#94a3b8", fontSize: 12, marginTop: 0 }}>
+                        Workbook defaults: Part B citric {WORKBOOK_CITRIC_PCT}% of formula · line loss on nominal pieces{" "}
+                        {(WORKBOOK_LINE_WASTE_FRAC * 100).toFixed(0)}%.
+                      </p>
+                      <table>
+                        <tbody>
+                          <tr>
+                            <th>Formula batch size</th>
+                            <td>{createPrintSummary.pectinSnapshot.batchSizeGrams.toFixed(2)} g</td>
+                          </tr>
+                          <tr>
+                            <th>Piece weight</th>
+                            <td>{createPrintSummary.pectinSnapshot.gramsPerPiece} g</td>
+                          </tr>
+                          <tr>
+                            <th>Mode</th>
+                            <td>{createPrintSummary.pectinMode}</td>
+                          </tr>
+                          <tr>
+                            <th>Part A (pectin base)</th>
+                            <td>{createPrintSummary.pectinSnapshot.gramsPartA.toFixed(2)} g</td>
+                          </tr>
+                          <tr>
+                            <th>Additive mass (calc)</th>
+                            <td>{createPrintSummary.pectinSnapshot.gramsAdditive.toFixed(2)} g</td>
+                          </tr>
+                          <tr>
+                            <th>Citric solution (Part B)</th>
+                            <td>{createPrintSummary.pectinSnapshot.gramsCitric.toFixed(2)} g</td>
+                          </tr>
+                          <tr>
+                            <th>Pieces after line loss</th>
+                            <td>{createPrintSummary.pectinSnapshot.piecesAfterLineWaste.toFixed(1)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      {createPrintSummary.pectinSnapshot.kind === "multi" &&
+                      createPrintSummary.pectinSnapshot.additivesLines?.length ? (
+                        <table style={{ marginTop: 10 }}>
+                          <thead>
+                            <tr>
+                              <th>#</th>
+                              <th>Goal mg/pc</th>
+                              <th>Potency frac</th>
+                              <th>Grams</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {createPrintSummary.pectinSnapshot.additivesLines.map((row) => (
+                              <tr key={row.index}>
+                                <td>{row.index}</td>
+                                <td>{row.goalMgPerPiece}</td>
+                                <td>{row.potencyFraction}</td>
+                                <td>{row.grams.toFixed(2)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {(createPrintSummary.ingredientNotes || createPrintSummary.productionNotes) && (
+                    <>
+                      <h3 style={{ marginTop: 18, fontSize: 16, fontWeight: 800 }}>Notes (entered)</h3>
+                      {createPrintSummary.ingredientNotes ? (
+                        <p style={{ fontSize: 12, whiteSpace: "pre-wrap", margin: "4px 0" }}>
+                          <strong>Ingredient notes:</strong> {createPrintSummary.ingredientNotes}
+                        </p>
+                      ) : null}
+                      {createPrintSummary.productionNotes ? (
+                        <p style={{ fontSize: 12, whiteSpace: "pre-wrap", margin: "4px 0" }}>
+                          <strong>Production notes:</strong> {createPrintSummary.productionNotes}
+                        </p>
+                      ) : null}
+                    </>
+                  )}
+                  <p className="print-muted" style={{ color: "#64748b", fontSize: 11, marginTop: 16 }}>
+                    Full calculator JSON and readable plan are also stored on the batch production notes in the system.
+                  </p>
+                </div>
+              </div>
+            </>
+          ) : (
+          <form onSubmit={onCreateSubmit} style={{ ...cardStyle, maxWidth: 880, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
             <h3 style={{ marginTop: 0 }}>Create Edible Batch</h3>
             <label style={{ display: "block", marginBottom: 10, fontSize: 13 }}>
               <div style={{ color: "#94a3b8", marginBottom: 4 }}>SKU</div>
@@ -921,31 +1200,127 @@ export default function EdiblesClient() {
                 ))}
               </select>
             </label>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <label style={{ fontSize: 13 }}>
-                <div style={{ color: "#94a3b8", marginBottom: 4 }}>Target MG / piece</div>
-                <input
-                  type="number"
-                  required
-                  min={0.1}
-                  step={0.1}
-                  value={cMg}
-                  onChange={(e) => setCMg(Number(e.target.value))}
-                  style={inputFull}
-                />
-              </label>
-              <label style={{ fontSize: 13 }}>
-                <div style={{ color: "#94a3b8", marginBottom: 4 }}>Gummies per batch (target)</div>
-                <input
-                  type="number"
-                  required
-                  min={1}
-                  value={cPieces}
-                  onChange={(e) => setCPieces(Number(e.target.value))}
-                  style={inputFull}
-                />
-              </label>
-            </div>
+            {cProduct === "Gummies" ? (
+              <div
+                style={{
+                  border: "1px solid rgba(59, 130, 246, 0.35)",
+                  borderRadius: 12,
+                  padding: 12,
+                  marginBottom: 12,
+                  background: "rgba(15, 23, 42, 0.65)",
+                }}
+              >
+                <div style={{ fontWeight: 800, marginBottom: 8, color: "#93c5fd", fontSize: 13 }}>Gummy batch size</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+                  {pectinMode === "single" ? (
+                    <label style={{ fontSize: 13 }}>
+                      <div style={{ color: "#94a3b8", marginBottom: 4 }}>Target MG / piece</div>
+                      <input
+                        type="number"
+                        required
+                        min={0.1}
+                        step={0.1}
+                        value={cMg}
+                        onChange={(e) => setCMg(Number(e.target.value))}
+                        style={inputFull}
+                      />
+                    </label>
+                  ) : (
+                    <div style={{ fontSize: 13, padding: "8px 0", color: "#fdba74" }}>
+                      <div style={{ color: "#94a3b8", marginBottom: 4 }}>Combined target MG / piece</div>
+                      <div style={{ fontWeight: 800 }}>{effectiveTargetMgForBatch.toFixed(2)} mg</div>
+                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>Sum of additive goals below.</div>
+                    </div>
+                  )}
+                  <label style={{ fontSize: 13 }}>
+                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Gummies per batch (target)</div>
+                    <input
+                      type="number"
+                      required
+                      min={1}
+                      value={cPieces}
+                      onChange={(e) => setCPieces(Number(e.target.value))}
+                      style={inputFull}
+                    />
+                  </label>
+                  <label style={{ fontSize: 13 }}>
+                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Piece weight (g)</div>
+                    <input
+                      type="number"
+                      required
+                      min={0.01}
+                      step={0.01}
+                      value={pectinGPerPc}
+                      onChange={(e) => setPectinGPerPc(Number(e.target.value))}
+                      style={inputFull}
+                    />
+                  </label>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end", marginTop: 10 }}>
+                  <label style={{ fontSize: 13, flex: "1 1 140px" }}>
+                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Mold cavity (mL)</div>
+                    <input
+                      type="number"
+                      min={0.1}
+                      step={0.1}
+                      value={pectinMoldMl}
+                      onChange={(e) => setPectinMoldMl(e.target.value)}
+                      style={inputFull}
+                      placeholder="Optional"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    style={ghostBtn}
+                    onClick={() => {
+                      const v = Number(pectinMoldMl);
+                      if (!Number.isFinite(v) || v <= 0) {
+                        setError("Enter a valid mold cavity volume in mL to apply piece weight.");
+                        return;
+                      }
+                      try {
+                        setPectinGPerPc(estimatedGummyWeightGramsFromMoldMl(v));
+                        setError(null);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "Could not estimate piece weight.");
+                      }
+                    }}
+                  >
+                    Apply mL → g
+                  </button>
+                </div>
+                <div style={{ fontSize: 12, color: "#fdba74", marginTop: 10 }}>
+                  Melt-to-Make formula batch size: <strong>{derivedPectinBatchG.toFixed(2)} g</strong> (= pieces × piece
+                  weight)
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                <label style={{ fontSize: 13 }}>
+                  <div style={{ color: "#94a3b8", marginBottom: 4 }}>Target MG / piece</div>
+                  <input
+                    type="number"
+                    required
+                    min={0.1}
+                    step={0.1}
+                    value={cMg}
+                    onChange={(e) => setCMg(Number(e.target.value))}
+                    style={inputFull}
+                  />
+                </label>
+                <label style={{ fontSize: 13 }}>
+                  <div style={{ color: "#94a3b8", marginBottom: 4 }}>Gummies per batch (target)</div>
+                  <input
+                    type="number"
+                    required
+                    min={1}
+                    value={cPieces}
+                    onChange={(e) => setCPieces(Number(e.target.value))}
+                    style={inputFull}
+                  />
+                </label>
+              </div>
+            )}
             <label style={{ display: "block", marginBottom: 10, fontSize: 13 }}>
               <div style={{ color: "#94a3b8", marginBottom: 4 }}>Oil source (completed extraction)</div>
               <select required value={cRunId} onChange={(e) => setCRunId(e.target.value)} style={inputFull}>
@@ -1011,10 +1386,12 @@ export default function EdiblesClient() {
               >
                 <div style={{ fontWeight: 900, marginBottom: 6, color: "#fdba74" }}>Pectin (Melt-to-Make) formula</div>
                 <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 10px", lineHeight: 1.45 }}>
-                  Uses the same calculator as the Melt-to-Make workbook. Part B citric ({WORKBOOK_CITRIC_PCT}% of formula) and
-                  line-loss on piece count ({(WORKBOOK_LINE_WASTE_FRAC * 100).toFixed(0)}%) match the sheet defaults and are
-                  not editable here. The percent split for Part A vs additive updates from your batch inputs. The saved plan
-                  is appended to batch notes (with JSON); Part A, oil, citric, and extras post as ingredient lines.
+                  Uses the same calculator as the Melt-to-Make workbook. Total formula mass comes from{" "}
+                  <strong style={{ color: "#e2e8f0" }}>Gummy batch size</strong> above (pieces × piece weight). Part B
+                  citric ({WORKBOOK_CITRIC_PCT}% of formula) and line-loss on piece count (
+                  {(WORKBOOK_LINE_WASTE_FRAC * 100).toFixed(0)}%) match the sheet defaults and are not editable here. The
+                  saved plan is appended to batch notes (with JSON); Part A, oil, citric, and extras post as ingredient
+                  lines.
                 </p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
                   <button
@@ -1025,7 +1402,13 @@ export default function EdiblesClient() {
                         pectinMode === "single" ? "1px solid rgba(251, 146, 60, 0.75)" : ghostBtn.border,
                       boxShadow: pectinMode === "single" ? "0 0 14px rgba(251,146,60,0.2)" : "none",
                     }}
-                    onClick={() => setPectinMode("single")}
+                    onClick={() => {
+                      if (pectinMode !== "single") {
+                        const sum = pectinMultiRows.reduce((acc, r) => acc + (r.goalMg > 0 ? r.goalMg : 0), 0);
+                        if (sum > 0) setCMg(sum);
+                      }
+                      setPectinMode("single");
+                    }}
                   >
                     Single additive
                   </button>
@@ -1036,68 +1419,18 @@ export default function EdiblesClient() {
                       border: pectinMode === "multi" ? "1px solid rgba(251, 146, 60, 0.75)" : ghostBtn.border,
                       boxShadow: pectinMode === "multi" ? "0 0 14px rgba(251,146,60,0.2)" : "none",
                     }}
-                    onClick={() => setPectinMode("multi")}
-                  >
-                    Multi additive
-                  </button>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-                  <label style={{ fontSize: 13 }}>
-                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Batch size (g)</div>
-                    <input
-                      type="number"
-                      required
-                      min={1}
-                      step={1}
-                      value={pectinBatchG}
-                      onChange={(e) => setPectinBatchG(Number(e.target.value))}
-                      style={inputFull}
-                    />
-                  </label>
-                  <label style={{ fontSize: 13 }}>
-                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Piece weight (g)</div>
-                    <input
-                      type="number"
-                      required
-                      min={0.01}
-                      step={0.01}
-                      value={pectinGPerPc}
-                      onChange={(e) => setPectinGPerPc(Number(e.target.value))}
-                      style={inputFull}
-                    />
-                  </label>
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end", marginBottom: 10 }}>
-                  <label style={{ fontSize: 13, flex: "1 1 120px" }}>
-                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Mold cavity (mL)</div>
-                    <input
-                      type="number"
-                      min={0.1}
-                      step={0.1}
-                      value={pectinMoldMl}
-                      onChange={(e) => setPectinMoldMl(e.target.value)}
-                      style={inputFull}
-                      placeholder="Optional"
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    style={ghostBtn}
                     onClick={() => {
-                      const v = Number(pectinMoldMl);
-                      if (!Number.isFinite(v) || v <= 0) {
-                        setError("Enter a valid mold cavity volume in mL to apply piece weight.");
-                        return;
+                      if (pectinMode !== "multi") {
+                        setPectinMultiRows((rows) => {
+                          const next = rows.map((r) => ({ ...r }));
+                          next[0] = { ...next[0]!, goalMg: cMg };
+                          return next;
+                        });
                       }
-                      try {
-                        setPectinGPerPc(estimatedGummyWeightGramsFromMoldMl(v));
-                        setError(null);
-                      } catch (err) {
-                        setError(err instanceof Error ? err.message : "Could not estimate piece weight.");
-                      }
+                      setPectinMode("multi");
                     }}
                   >
-                    Apply mL → g
+                    Multi additive
                   </button>
                 </div>
                 <div
@@ -1289,7 +1622,7 @@ export default function EdiblesClient() {
                     </>
                   ) : (
                     <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                      Enter batch size, piece weight, and mg targets to populate the workbook-style split.
+                      Enter gummy batch size, piece weight, and mg targets to populate the workbook-style split.
                     </div>
                   )}
                 </div>
@@ -1312,15 +1645,9 @@ export default function EdiblesClient() {
                 ) : (
                   <>
                     <div style={{ fontSize: 12, color: "#fdba74", marginBottom: 6 }}>
-                      Multi mode: batch <span style={{ fontWeight: 800 }}>target MG / piece</span> sent to the API is the
-                      sum of additive goals ({effectiveTargetMgForBatch.toFixed(2)} mg).
+                      Multi mode: the batch target MG / piece is the sum of additive goals (
+                      {effectiveTargetMgForBatch.toFixed(2)} mg), shown under Gummy batch size above.
                     </div>
-                    {Math.abs(cMg - effectiveTargetMgForBatch) > 0.001 && (
-                      <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 8 }}>
-                        Note: the Target MG / piece field above ({cMg}) does not match the pectin row sum — creation uses
-                        the row sum for compliance with the calculator.
-                      </div>
-                    )}
                     {[0, 1, 2, 3].map((idx) => (
                       <div
                         key={idx}
@@ -1404,7 +1731,15 @@ export default function EdiblesClient() {
               <textarea value={cNotes} onChange={(e) => setCNotes(e.target.value)} rows={3} style={inputFull} />
             </label>
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button type="button" style={ghostBtn} onClick={() => setCreateOpen(false)} disabled={createBusy}>
+              <button
+                type="button"
+                style={ghostBtn}
+                onClick={() => {
+                  setCreateOpen(false);
+                  setCreatePrintSummary(null);
+                }}
+                disabled={createBusy}
+              >
                 Cancel
               </button>
               <button type="submit" style={primaryBtn} disabled={createBusy}>
@@ -1412,6 +1747,7 @@ export default function EdiblesClient() {
               </button>
             </div>
           </form>
+          )}
         </div>
       )}
 
