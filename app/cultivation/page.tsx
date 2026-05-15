@@ -104,6 +104,30 @@ import {
   TASK_MOVE_TO_VEG_ASSIGN_TAGS,
 } from "@/lib/cultivationMetrcWorkflow";
 
+/** `PREFIX-scopeId-1`, `-2`, … smallest positive integer not already used on any scanned row. */
+function nextSeriesBatchId(
+  prefix: string,
+  scopeId: string,
+  rowLists: Array<Iterable<{ id?: unknown }> | null | undefined>,
+): string {
+  const head = `${prefix}-${scopeId}-`;
+  const used = new Set<number>();
+  for (const rows of rowLists) {
+    if (!rows) continue;
+    for (const row of rows) {
+      const id = String((row as { id?: unknown })?.id || "");
+      if (!id.startsWith(head)) continue;
+      const tail = id.slice(head.length);
+      if (!/^\d+$/.test(tail)) continue;
+      const n = parseInt(tail, 10);
+      if (Number.isFinite(n) && n > 0) used.add(n);
+    }
+  }
+  let n = 1;
+  while (used.has(n)) n += 1;
+  return `${head}${n}`;
+}
+
 type ConfigStrain = {
   id?: string;
   name?: string;
@@ -2821,7 +2845,11 @@ export default function Cultivation() {
       recomputeDryCanopyForCultivationBatch(selectedBatch, cultivationRooms);
 
       const dryBatch = {
-        id: `DRY-${selectedBatch.id}-${Date.now().toString().slice(-4)}`,
+        id: nextSeriesBatchId("DRY", selectedBatch.id, [
+          s.dryFlowerBatches,
+          s.productionBatches,
+          s.sourceBatches,
+        ]),
         name: `${selectedBatch.strain} A Grade Flower`,
         type: "A Grade Flower",
         source: selectedBatch.id,
@@ -2893,7 +2921,7 @@ export default function Cultivation() {
           : null;
       const weightLbs = +(gramsParsed / 453.592).toFixed(4);
       const freshFrozenBatch = {
-        id: `FF-${selectedBatch.id}-${Date.now().toString().slice(-4)}`,
+        id: nextSeriesBatchId("FF", selectedBatch.id, [s.sourceBatches, s.productionBatches]),
         name: `${selectedBatch.strain} Fresh Frozen`,
         type: "Fresh Frozen",
         amount: `${freshFrozenBundles || 0} bundles / ${gramsParsed} grams`,
@@ -3360,9 +3388,10 @@ export default function Cultivation() {
 
       if (totalTrimForExtraction > 0) {
         const trimBatch = {
-          id: `TRIM-${selectedDryFlowerBatch.id}-${Date.now()
-            .toString()
-            .slice(-4)}`,
+          id: nextSeriesBatchId("TRIM", selectedDryFlowerBatch.id, [
+            s.sourceBatches,
+            s.productionBatches,
+          ]),
           name: `${selectedDryFlowerBatch.name} Trim`,
           type: "Dry Trim",
           amount: `${totalTrimForExtraction} lbs`,
