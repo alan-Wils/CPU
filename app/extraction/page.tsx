@@ -24,6 +24,9 @@ import { getSourceAvailable, isCompletedSourceBatch } from "@/lib/sourceBatchAct
 import {
   freshFrozenAvailableLine,
   freshFrozenPackageDisplay,
+  GRAMS_PER_LB,
+  sourceRowBundles,
+  sourceRowTotalLbs,
 } from "@/lib/freshFrozenPackageDisplay";
 import {
   loadExtractionBatches,
@@ -2824,6 +2827,25 @@ export default function Extraction() {
     (b: any) => getSourceAvailable(b) > 0 && b.status !== "Used in Extraction"
   );
 
+  let availableSourcesTotalLbs = 0;
+  let availableSourcesTotalBundles = 0;
+  let availableSourcesHasFreshFrozen = false;
+  for (const b of availableSources) {
+    const avail = getSourceAvailable(b);
+    availableSourcesTotalLbs += avail;
+    if (getSourceMaterialType(b) === "freshFrozen") {
+      availableSourcesHasFreshFrozen = true;
+      const origLbs = sourceRowTotalLbs(b);
+      const bundles = sourceRowBundles(b);
+      if (origLbs > 0 && bundles > 0) {
+        availableSourcesTotalBundles += Math.floor((avail / origLbs) * bundles + 1e-9);
+      } else if (bundles > 0 && avail > 0) {
+        availableSourcesTotalBundles += bundles;
+      }
+    }
+  }
+  const availableSourcesTotalGrams = Math.round(availableSourcesTotalLbs * GRAMS_PER_LB);
+
   const allowedCreateProducts = getAllowedCreateProducts();
   const allowedRunProducts = getAllowedRunProducts();
 
@@ -2879,8 +2901,44 @@ export default function Extraction() {
 
         <div style={cardStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-            <div>
-              <h2 style={{ margin: 0 }}>Available Source Material</h2>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "baseline",
+                  gap: "10px 14px",
+                }}
+              >
+                <h2 style={{ margin: 0 }}>Available Source Material</h2>
+                {availableSources.length > 0 ? (
+                  <span
+                    style={{
+                      color: "#cbd5e1",
+                      fontWeight: 700,
+                      fontSize: 15,
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    Total available:{" "}
+                    <span style={{ color: "#f8fafc" }}>
+                      {+availableSourcesTotalLbs.toFixed(2)} lbs
+                    </span>
+                    {" · "}
+                    <span style={{ color: "#f8fafc" }}>
+                      {availableSourcesTotalGrams.toLocaleString()} g
+                    </span>
+                    {" · "}
+                    <span style={{ color: "#f8fafc" }}>
+                      {availableSourcesHasFreshFrozen
+                        ? `${availableSourcesTotalBundles} bundle${
+                            availableSourcesTotalBundles === 1 ? "" : "s"
+                          }`
+                        : "—"}
+                    </span>
+                  </span>
+                ) : null}
+              </div>
               <p style={{ color: "#94a3b8", margin: "6px 0 0" }}>
                 Fresh Frozen can only make live resin products. Dry Trim can only make cured wax.
               </p>
