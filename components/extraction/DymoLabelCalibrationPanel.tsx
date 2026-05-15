@@ -98,9 +98,9 @@ export function DymoLabelCalibrationPanel({
         DYMO label calibration
       </h3>
       <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-        Layout is <strong style={{ color: "#e2e8f0" }}>pinned to the top</strong> of the sticker. Four lines read{" "}
-        <strong style={{ color: "#e2e8f0" }}>top → bottom</strong>: market code, batch ID, product type, then source —
-        same words as before, one column instead of side-by-side; <strong style={{ color: "#e2e8f0" }}>rotation</strong> still turns the{" "}
+        Layout is <strong style={{ color: "#e2e8f0" }}>pinned to the top</strong> of the sticker. Three lines read{" "}
+        <strong style={{ color: "#e2e8f0" }}>top → bottom</strong>: new extraction number (market code), strain blend, then product —
+        all bold; <strong style={{ color: "#e2e8f0" }}>rotation</strong> still turns the{" "}
         <em>whole</em> label if your driver/die needs it. Vertical centering tends to print across two roll stickers —
         stay top-pinned. Adjust{" "}
         <strong style={{ color: "#e2e8f0" }}>Whole label</strong> X/Y,{" "}

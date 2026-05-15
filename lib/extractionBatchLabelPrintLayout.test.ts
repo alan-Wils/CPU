@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { buildDymoExtractionBatchLabelPrintHtml } from "@/components/extraction/ExtractionBatchLabelPrint";
+import {
+  buildDymoExtractionBatchLabelPrintHtml,
+  buildExtractionBatchLabelFields,
+} from "@/components/extraction/ExtractionBatchLabelPrint";
 import { defaultDymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration";
 
 describe("DYMO extraction batch label print layout", () => {
   const fields = {
-    batchId: "B1",
-    marketCode: "M",
-    productType: "P",
-    sourcesLine: "S",
+    newExtractionNumber: "N",
+    strain: "T",
+    product: "P",
   };
 
   it("wraps sheet in job so whole-label calibration moves sheet + template together", () => {
@@ -67,16 +69,50 @@ describe("DYMO extraction batch label print layout", () => {
     expect(printBlock).toContain(".dymo-label-printable-area");
   });
 
-  it("lays out four lines top to bottom: market, batch, product, source", () => {
+  it("lays out three lines top to bottom: extraction #, strain, product", () => {
     const html = buildDymoExtractionBatchLabelPrintHtml(fields);
-    const iCode = html.indexOf('<div class="code">');
-    const iId = html.indexOf('<div class="id">');
-    const iPtype = html.indexOf('<div class="ptype">');
-    const iSrc = html.indexOf('<div class="src">');
-    expect(iCode).toBeGreaterThan(0);
-    expect(iCode).toBeLessThan(iId);
-    expect(iId).toBeLessThan(iPtype);
-    expect(iPtype).toBeLessThan(iSrc);
+    const iNex = html.indexOf('<div class="lbl-nex">');
+    const iStrain = html.indexOf('<div class="lbl-strain">');
+    const iProduct = html.indexOf('<div class="lbl-product">');
+    expect(iNex).toBeGreaterThan(0);
+    expect(iNex).toBeLessThan(iStrain);
+    expect(iStrain).toBeLessThan(iProduct);
+  });
+
+  it("buildExtractionBatchLabelFields maps extraction #, strain from sources, product", () => {
+    expect(
+      buildExtractionBatchLabelFields({
+        id: "EXT-1",
+        marketBatchCode: "ABCD.010126",
+        productType: "Live Resin",
+        sources: [{ name: "blue dream" }, { name: "gelato" }],
+      }),
+    ).toEqual({
+      newExtractionNumber: "ABCD.010126",
+      strain: "Blue Dream · Gelato",
+      product: "Live Resin",
+    });
+  });
+
+  it("buildExtractionBatchLabelFields falls back strain to blend line and number to id", () => {
+    expect(
+      buildExtractionBatchLabelFields({
+        id: "EXT-99",
+        productType: "Badder",
+        sourceBlendLabel: "Blend A",
+      }),
+    ).toEqual({
+      newExtractionNumber: "EXT-99",
+      strain: "Blend A",
+      product: "Badder",
+    });
+  });
+
+  it("all three label line classes use bold weight in print CSS", () => {
+    const html = buildDymoExtractionBatchLabelPrintHtml(fields);
+    expect(html).toMatch(/\.lbl-nex\s*\{[^}]*font-weight:\s*700/s);
+    expect(html).toMatch(/\.lbl-strain\s*\{[^}]*font-weight:\s*700/s);
+    expect(html).toMatch(/\.lbl-product\s*\{[^}]*font-weight:\s*700/s);
   });
 
   it("uses full sticker width with inner column and line gap", () => {

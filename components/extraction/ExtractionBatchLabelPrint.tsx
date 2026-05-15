@@ -21,11 +21,24 @@ export { defaultDymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration"
 export const DYMO_LABEL_LAYOUT_DEBUG = false;
 
 export type ExtractionBatchLabelFields = {
-  batchId: string;
-  marketCode: string;
-  productType: string;
-  sourcesLine: string;
+  /** Public extraction / market batch code (e.g. ABCD.MMDDYY), else internal batch id. */
+  newExtractionNumber: string;
+  /** Strain names from extraction source rows (deduped, first-seen order), else saved blend/source line. */
+  strain: string;
+  product: string;
 };
+
+function collectStrainNamesFromSources(sources: Array<{ name?: string }>): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const row of sources) {
+    const n = String(row?.name || "").trim();
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
 
 export function buildExtractionBatchLabelFields(batch: {
   id?: string;
@@ -34,13 +47,26 @@ export function buildExtractionBatchLabelFields(batch: {
   name?: string;
   sourceBlendLabel?: string;
   source?: string;
+  sources?: Array<{ name?: string }>;
 }): ExtractionBatchLabelFields {
   const batchId = String(batch?.id || "").trim() || "—";
-  const productType = String(batch?.productType || batch?.name || "").trim() || "—";
-  const marketCode = String(batch?.marketBatchCode || "").trim() || batchId;
-  const sourcesLine =
-    String(batch?.sourceBlendLabel || batch?.source || "").trim() || "—";
-  return { batchId, marketCode, productType, sourcesLine };
+  const product = String(batch?.productType || batch?.name || "").trim() || "—";
+  const newExtractionNumber =
+    String(batch?.marketBatchCode || "").trim() || batchId;
+  let strain = "—";
+  if (Array.isArray(batch?.sources) && batch.sources.length > 0) {
+    const names = collectStrainNamesFromSources(batch.sources);
+    if (names.length > 0) {
+      strain = names
+        .map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase()))
+        .join(" · ");
+    }
+  }
+  if (strain === "—") {
+    strain =
+      String(batch?.sourceBlendLabel || batch?.source || "").trim() || "—";
+  }
+  return { newExtractionNumber, strain, product };
 }
 
 function escapeHtml(s: string) {
@@ -94,7 +120,7 @@ function buildDymoLabelContentTransform(s: DymoLabelCalibrationSettings): string
 
 /**
  * Full HTML document for a hidden iframe (no inline script — parent calls print()).
- * Label copy is a single column: market → batch → product → source (see `.dymo-label-inner`).
+ * Label copy is a single column: new extraction number → strain → product (see `.dymo-label-inner`), all bold.
  * @param copies Number of identical labels (each on its own @page); clamped {@link clampDymoLabelPrintCopies}.
  */
 export function buildDymoExtractionBatchLabelPrintHtml(
@@ -116,10 +142,9 @@ export function buildDymoExtractionBatchLabelPrintHtml(
       <div class="dymo-label-frame${dbg}">
         <div class="dymo-label-content${dbg}">
         <div class="dymo-label-inner">
-          <div class="code">${escapeHtml(f.marketCode)}</div>
-          <div class="id">${escapeHtml(f.batchId)}</div>
-          <div class="ptype">${escapeHtml(f.productType)}</div>
-          <div class="src">${escapeHtml(f.sourcesLine)}</div>
+          <div class="lbl-nex">${escapeHtml(f.newExtractionNumber)}</div>
+          <div class="lbl-strain">${escapeHtml(f.strain)}</div>
+          <div class="lbl-product">${escapeHtml(f.product)}</div>
         </div>
         </div>
       </div>
@@ -303,32 +328,28 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   .dymo-label-debug.dymo-label-content {
     box-shadow: inset 0 0 0 2px #7c3aed;
   }
-  .code {
+  .lbl-nex {
     font-size: calc(10.5pt * var(--dymo-font-mul));
     font-weight: 700;
     letter-spacing: 0.02em;
     line-height: 1.07;
+    color: #0f172a;
     max-width: 100%;
     word-break: break-word;
   }
-  .id {
-    font-size: calc(6.25pt * var(--dymo-font-mul));
-    color: #333;
+  .lbl-strain {
+    font-size: calc(7.25pt * var(--dymo-font-mul));
+    font-weight: 700;
     line-height: 1.1;
-    max-width: 100%;
-    word-break: break-all;
-  }
-  .ptype {
-    font-size: calc(8pt * var(--dymo-font-mul));
-    font-weight: 600;
-    line-height: 1.1;
+    color: #0f172a;
     max-width: 100%;
     word-break: break-word;
   }
-  .src {
-    font-size: calc(6.25pt * var(--dymo-font-mul));
+  .lbl-product {
+    font-size: calc(8.25pt * var(--dymo-font-mul));
+    font-weight: 700;
     line-height: 1.1;
-    color: #222;
+    color: #0f172a;
     max-width: 100%;
     word-break: break-word;
   }
@@ -545,7 +566,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
           }}
         >
           Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}). Lines top → bottom:{" "}
-          <strong style={{ color: "#e2e8f0" }}>market → batch → product → source</strong>.{" "}
+          <strong style={{ color: "#e2e8f0" }}>extraction # → strain → product</strong> (all bold).{" "}
           <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job ·{" "}
           <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame ·{" "}
           <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content.
@@ -679,41 +700,31 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                         color: "#0f172a",
                       }}
                     >
-                      {fields.marketCode}
+                      {fields.newExtractionNumber}
                     </div>
                     <div
                       style={{
-                        fontSize: `calc(6.25pt * ${fmul})`,
-                        color: "#334155",
-                        wordBreak: "break-all",
-                        lineHeight: 1.1,
-                        maxWidth: "100%",
-                      }}
-                    >
-                      {fields.batchId}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: `calc(8pt * ${fmul})`,
-                        fontWeight: 600,
+                        fontSize: `calc(7.25pt * ${fmul})`,
+                        fontWeight: 700,
                         lineHeight: 1.1,
                         maxWidth: "100%",
                         wordBreak: "break-word",
                         color: "#0f172a",
                       }}
                     >
-                      {fields.productType}
+                      {fields.strain}
                     </div>
                     <div
                       style={{
-                        fontSize: `calc(6.25pt * ${fmul})`,
+                        fontSize: `calc(8.25pt * ${fmul})`,
+                        fontWeight: 700,
                         lineHeight: 1.1,
-                        color: "#222",
                         maxWidth: "100%",
                         wordBreak: "break-word",
+                        color: "#0f172a",
                       }}
                     >
-                      {fields.sourcesLine}
+                      {fields.product}
                     </div>
                   </div>
                 </div>
