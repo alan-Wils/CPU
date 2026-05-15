@@ -67,23 +67,19 @@ describe("DYMO extraction batch label print layout", () => {
     expect(printBlock).toContain(".dymo-label-printable-area");
   });
 
-  it("at ~90° rotation uses CSS row prep on the inner wrapper so stacks stay vertical on the die", () => {
-    const html = buildDymoExtractionBatchLabelPrintHtml(fields, {
-      ...defaultDymoLabelCalibrationSettings,
-      rotationDeg: 90,
-    });
-    expect(html).toMatch(/<div class="dymo-label-inner dymo-label-inner--rot90-prep">/);
-    const prep = html.match(/\.dymo-label-inner--rot90-prep\s*\{[^}]*\}/s)?.[0] ?? "";
-    expect(prep).toContain("flex-direction: row");
+  it("lays out four lines top to bottom: market, batch, product, source", () => {
+    const html = buildDymoExtractionBatchLabelPrintHtml(fields);
+    const iCode = html.indexOf('<div class="code">');
+    const iId = html.indexOf('<div class="id">');
+    const iPtype = html.indexOf('<div class="ptype">');
+    const iSrc = html.indexOf('<div class="src">');
+    expect(iCode).toBeGreaterThan(0);
+    expect(iCode).toBeLessThan(iId);
+    expect(iId).toBeLessThan(iPtype);
+    expect(iPtype).toBeLessThan(iSrc);
   });
 
-  it("at 0° rotation inner wrapper is plain column layout (no rot90-prep class on markup)", () => {
-    const html = buildDymoExtractionBatchLabelPrintHtml(fields, defaultDymoLabelCalibrationSettings);
-    expect(html).not.toMatch(/<div class="dymo-label-inner dymo-label-inner--rot90-prep">/);
-    expect(html).toMatch(/<div class="dymo-label-inner">\s*\n\s*<div class="dymo-label-blk">/);
-  });
-
-  it("uses full sticker width with inner blocks stacked top-to-bottom", () => {
+  it("uses full sticker width with inner column and line gap", () => {
     const html = buildDymoExtractionBatchLabelPrintHtml(fields);
     const pa = html.match(/\.dymo-label-printable-area\s*\{[^}]*\}/s)?.[0] ?? "";
     expect(pa).toContain("display: flex");
@@ -91,6 +87,7 @@ describe("DYMO extraction batch label print layout", () => {
     expect(pa).toContain("align-items: stretch");
     const inner = html.match(/\.dymo-label-inner\s*\{[^}]*\}/s)?.[0] ?? "";
     expect(inner).toContain("flex-direction: column");
+    expect(inner).toContain("gap: var(--dymo-gap)");
     const frame = html.match(/\.dymo-label-frame\s*\{[^}]*\}/s)?.[0] ?? "";
     expect(frame).toContain("position: relative");
     expect(frame).not.toContain("left: 0");

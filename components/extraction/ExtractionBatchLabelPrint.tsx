@@ -71,19 +71,6 @@ function resolveCalibration(
  */
 const DYMO_JOB_ROTATION_OFFSET_DEG = 0;
 
-/**
- * When the job uses `rotate(≈90° or ≈270°)`, a CSS **column** flex reads as left/right on the physical sticker.
- * Lay out the two blocks **in a row** in CSS so that, after the same rotation, market/batch stays **above** product/source.
- */
-function dymoLabelInnerUsesRowBeforeJobRotation(totalRotationDeg: number): boolean {
-  const r = ((totalRotationDeg % 360) + 360) % 360;
-  const distTo = (target: number) => {
-    const d = Math.abs(r - target);
-    return Math.min(d, 360 - d);
-  };
-  return distTo(90) < 46 || distTo(270) < 46;
-}
-
 /** Print job: whole sheet + template position, rotation, and feed-axis Y (including {@link DymoLabelCalibrationSettings.startOffsetY}). */
 function buildDymoLabelJobTransform(s: DymoLabelCalibrationSettings): string {
   const ty = `calc(${s.labelFrameOffsetY} + ${s.startOffsetY})`;
@@ -106,7 +93,7 @@ function buildDymoLabelContentTransform(s: DymoLabelCalibrationSettings): string
 
 /**
  * Full HTML document for a hidden iframe (no inline script — parent calls print()).
- * Dedicated DYMO print layout: `@page` matches saved label size; transforms from calibration only.
+ * Label copy is a single column: market → batch → product → source (see `.dymo-label-inner`).
  */
 export function buildDymoExtractionBatchLabelPrintHtml(
   f: ExtractionBatchLabelFields,
@@ -117,10 +104,6 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   const originMarker = DYMO_LABEL_LAYOUT_DEBUG
     ? '<div class="dymo-label-origin-marker" aria-hidden="true"></div>'
     : "";
-  const innerRotPrep = dymoLabelInnerUsesRowBeforeJobRotation(
-    s.rotationDeg + DYMO_JOB_ROTATION_OFFSET_DEG,
-  );
-  const innerClass = innerRotPrep ? "dymo-label-inner dymo-label-inner--rot90-prep" : "dymo-label-inner";
   const inner = `
 <div class="dymo-label-job${dbg}">
   <div class="dymo-label-sheet${dbg}">
@@ -128,15 +111,11 @@ export function buildDymoExtractionBatchLabelPrintHtml(
       ${originMarker}
       <div class="dymo-label-frame${dbg}">
         <div class="dymo-label-content${dbg}">
-        <div class="${innerClass}">
-        <div class="dymo-label-blk">
+        <div class="dymo-label-inner">
           <div class="code">${escapeHtml(f.marketCode)}</div>
           <div class="id">${escapeHtml(f.batchId)}</div>
-        </div>
-        <div class="dymo-label-blk">
           <div class="ptype">${escapeHtml(f.productType)}</div>
           <div class="src">${escapeHtml(f.sourcesLine)}</div>
-        </div>
         </div>
         </div>
       </div>
@@ -278,46 +257,12 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     width: 100%;
     min-width: 0;
     min-height: 0;
-    gap: 0;
+    gap: var(--dymo-gap);
     text-align: left;
     padding-left: var(--dymo-pad-x);
     padding-right: var(--dymo-pad-x);
     margin: 0;
     box-sizing: border-box;
-  }
-  .dymo-label-blk {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: flex-start;
-    min-width: 0;
-    width: 100%;
-    flex: 0 1 auto;
-    align-self: stretch;
-    box-sizing: border-box;
-  }
-  .dymo-label-blk + .dymo-label-blk {
-    margin-top: var(--dymo-gap);
-    padding-top: var(--dymo-gap);
-    border-top: 0.5pt solid #bbb;
-  }
-  .dymo-label-inner--rot90-prep {
-    flex-direction: row;
-    align-items: stretch;
-  }
-  .dymo-label-inner--rot90-prep .dymo-label-blk {
-    flex: 1 1 0;
-    min-width: 0;
-    width: auto;
-    align-self: stretch;
-  }
-  .dymo-label-inner--rot90-prep .dymo-label-blk + .dymo-label-blk {
-    margin-top: 0;
-    padding-top: 0;
-    border-top: none;
-    margin-left: var(--dymo-gap);
-    padding-left: var(--dymo-gap);
-    border-left: 0.5pt solid #bbb;
   }
   .dymo-label-debug.dymo-label-job {
     box-shadow: inset 0 0 0 2px #14b8a6;
@@ -346,7 +291,6 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     font-size: calc(6.25pt * var(--dymo-font-mul));
     color: #333;
     line-height: 1.1;
-    margin-top: 0.04in;
     max-width: 100%;
     word-break: break-all;
   }
@@ -359,7 +303,6 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   }
   .src {
     font-size: calc(6.25pt * var(--dymo-font-mul));
-    margin-top: 0.04in;
     line-height: 1.1;
     color: #222;
     max-width: 100%;
@@ -528,21 +471,6 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
   const jobTransform = buildDymoLabelJobTransform(s);
   const contentTransform = buildDymoLabelContentTransform(s);
   const fmul = s.fontSizeMultiplier;
-  const innerRotPrep = dymoLabelInnerUsesRowBeforeJobRotation(
-    s.rotationDeg + DYMO_JOB_ROTATION_OFFSET_DEG,
-  );
-
-  const blk: CSSProperties = {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-start",
-    justifyContent: "flex-start",
-    textAlign: "left",
-    minWidth: 0,
-    width: innerRotPrep ? undefined : "100%",
-    flex: innerRotPrep ? "1 1 0%" : "0 1 auto",
-    boxSizing: "border-box",
-  };
 
   const originMarker: CSSProperties = {
     position: "absolute",
@@ -589,8 +517,8 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             maxWidth: 420,
           }}
         >
-          Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}).{" "}
-          <strong style={{ color: "#e2e8f0" }}>Market + batch</strong> above <strong style={{ color: "#e2e8f0" }}>product + source</strong> on the sticker. At ~90°/270° job rotation the template uses a row so that pair stays stacked after the turn.{" "}
+          Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}). Lines top → bottom:{" "}
+          <strong style={{ color: "#e2e8f0" }}>market → batch → product → source</strong>.{" "}
           <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job ·{" "}
           <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame ·{" "}
           <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content.
@@ -694,17 +622,13 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                   }}
                 >
                   <div
-                    className={
-                      innerRotPrep
-                        ? "dymo-label-inner dymo-label-inner--rot90-prep"
-                        : "dymo-label-inner"
-                    }
+                    className="dymo-label-inner"
                     style={{
                       display: "flex",
-                      flexDirection: innerRotPrep ? "row" : "column",
+                      flexDirection: "column",
                       alignItems: "stretch",
                       justifyContent: "flex-start",
-                      gap: 0,
+                      gap: s.textSpacing,
                       textAlign: "left",
                       flex: "1 1 auto",
                       width: "100%",
@@ -717,79 +641,52 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                       fontFamily: 'system-ui, "Segoe UI", Roboto, Arial, sans-serif',
                     }}
                   >
-                    <div style={{ ...blk, alignSelf: "stretch" }}>
-                      <div
-                        style={{
-                          fontSize: `calc(10.5pt * ${fmul})`,
-                          fontWeight: 700,
-                          lineHeight: 1.07,
-                          letterSpacing: "0.02em",
-                          maxWidth: "100%",
-                          wordBreak: "break-word",
-                          color: "#0f172a",
-                        }}
-                      >
-                        {fields.marketCode}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: `calc(6.25pt * ${fmul})`,
-                          color: "#334155",
-                          wordBreak: "break-all",
-                          marginTop: "0.04in",
-                          lineHeight: 1.1,
-                          maxWidth: "100%",
-                        }}
-                      >
-                        {fields.batchId}
-                      </div>
+                    <div
+                      style={{
+                        fontSize: `calc(10.5pt * ${fmul})`,
+                        fontWeight: 700,
+                        lineHeight: 1.07,
+                        letterSpacing: "0.02em",
+                        maxWidth: "100%",
+                        wordBreak: "break-word",
+                        color: "#0f172a",
+                      }}
+                    >
+                      {fields.marketCode}
                     </div>
                     <div
-                      style={
-                        innerRotPrep
-                          ? {
-                              ...blk,
-                              alignSelf: "stretch",
-                              marginLeft: s.textSpacing,
-                              paddingLeft: s.textSpacing,
-                              borderLeft: "1px solid rgba(148, 163, 184, 0.35)",
-                              marginTop: 0,
-                              paddingTop: 0,
-                              borderTop: "none",
-                            }
-                          : {
-                              ...blk,
-                              alignSelf: "stretch",
-                              marginTop: s.textSpacing,
-                              paddingTop: s.textSpacing,
-                              borderTop: "1px solid rgba(148, 163, 184, 0.35)",
-                            }
-                      }
+                      style={{
+                        fontSize: `calc(6.25pt * ${fmul})`,
+                        color: "#334155",
+                        wordBreak: "break-all",
+                        lineHeight: 1.1,
+                        maxWidth: "100%",
+                      }}
                     >
-                      <div
-                        style={{
-                          fontSize: `calc(8pt * ${fmul})`,
-                          fontWeight: 600,
-                          lineHeight: 1.1,
-                          maxWidth: "100%",
-                          wordBreak: "break-word",
-                          color: "#0f172a",
-                        }}
-                      >
-                        {fields.productType}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: `calc(6.25pt * ${fmul})`,
-                          marginTop: "0.04in",
-                          lineHeight: 1.1,
-                          color: "#222",
-                          maxWidth: "100%",
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        {fields.sourcesLine}
-                      </div>
+                      {fields.batchId}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: `calc(8pt * ${fmul})`,
+                        fontWeight: 600,
+                        lineHeight: 1.1,
+                        maxWidth: "100%",
+                        wordBreak: "break-word",
+                        color: "#0f172a",
+                      }}
+                    >
+                      {fields.productType}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: `calc(6.25pt * ${fmul})`,
+                        lineHeight: 1.1,
+                        color: "#222",
+                        maxWidth: "100%",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {fields.sourcesLine}
                     </div>
                   </div>
                 </div>

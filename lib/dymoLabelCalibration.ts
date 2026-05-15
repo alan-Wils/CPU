@@ -10,7 +10,7 @@ export type DymoLabelCalibrationSettings = {
   /** Physical label height (CSS length). */
   labelHeight: string;
   /**
-   * Moves the **entire print job** horizontally: white sheet, frame, border, stacked blocks, and text together (print origin on X).
+   * Moves the **entire print job** horizontally: white sheet, frame, border, and text lines together (print origin on X).
    */
   labelFrameOffsetX: string;
   /**
@@ -39,7 +39,7 @@ export type DymoLabelCalibrationSettings = {
   startOffsetY: string;
   /** Horizontal padding inside the label text blocks (CSS length). */
   paddingLeftRight: string;
-  /** Vertical gap between stacked blocks and internal rhythm (CSS length). */
+  /** Vertical gap between the four stacked label lines (CSS length). */
   textSpacing: string;
   /** Uniform scale applied on `.dymo-label-content` only (inner content). */
   printScale: number;

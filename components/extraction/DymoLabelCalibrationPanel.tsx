@@ -87,12 +87,11 @@ export function DymoLabelCalibrationPanel({
         DYMO label calibration
       </h3>
       <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-        Layout is <strong style={{ color: "#e2e8f0" }}>pinned to the top</strong> of the sticker:{" "}
-        <strong style={{ color: "#e2e8f0" }}>market code + batch ID</strong>, a rule, then{" "}
-        <strong style={{ color: "#e2e8f0" }}>product type + source line</strong>, all top → bottom on the sticker. At ~90° or ~270°{" "}
-        <strong style={{ color: "#e2e8f0" }}>rotation</strong> the markup uses a short side-by-side row in CSS so that pair still stacks over/under after the turn — not left/right columns on the finished label. Preview matches{" "}
-        print rotation by default; use <strong style={{ color: "#e2e8f0" }}>Rotation (deg)</strong> if the die still
-        feeds turned. Vertical centering tends to print across two roll stickers — stay top-pinned. Adjust{" "}
+        Layout is <strong style={{ color: "#e2e8f0" }}>pinned to the top</strong> of the sticker. Four lines read{" "}
+        <strong style={{ color: "#e2e8f0" }}>top → bottom</strong>: market code, batch ID, product type, then source —
+        same words as before, one column instead of side-by-side; <strong style={{ color: "#e2e8f0" }}>rotation</strong> still turns the{" "}
+        <em>whole</em> label if your driver/die needs it. Vertical centering tends to print across two roll stickers —
+        stay top-pinned. Adjust{" "}
         <strong style={{ color: "#e2e8f0" }}>Whole label</strong> X/Y,{" "}
         <strong style={{ color: "#e2e8f0" }}>Top/start offset</strong>, rotation, and inner nudges only when your{" "}
         <em>printer or driver</em> is consistently shifted. Lengths:{" "}
@@ -214,12 +213,12 @@ export function DymoLabelCalibrationPanel({
           onChange={(e) => patch({ paddingLeftRight: e.target.value })}
           aria-label="Left right padding"
         />
-        <div style={labelStyle()}>Section gap</div>
+        <div style={labelStyle()}>Line gap</div>
         <input
           style={inp}
           value={draft.textSpacing}
           onChange={(e) => patch({ textSpacing: e.target.value })}
-          aria-label="Section and text spacing gap"
+          aria-label="Gap between stacked label lines"
         />
       </div>
 
