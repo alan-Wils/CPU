@@ -88,7 +88,7 @@ describe("DYMO extraction batch label print layout", () => {
         sources: [{ name: "blue dream" }, { name: "gelato" }],
       }),
     ).toEqual({
-      newExtractionNumber: "ABCD.010126",
+      newExtractionNumber: "EXT-1",
       strain: "Blue Dream · Gelato",
       product: "Live Resin",
     });
@@ -113,6 +113,26 @@ describe("DYMO extraction batch label print layout", () => {
     expect(html).toMatch(/\.lbl-nex\s*\{[^}]*font-weight:\s*700/s);
     expect(html).toMatch(/\.lbl-strain\s*\{[^}]*font-weight:\s*700/s);
     expect(html).toMatch(/\.lbl-product\s*\{[^}]*font-weight:\s*700/s);
+  });
+
+  it("buildExtractionBatchLabelFields uses batch id as extraction number even when market code is shared", () => {
+    const shared = "GMO0.051226";
+    expect(
+      buildExtractionBatchLabelFields({
+        id: "EXT-GMO0-051226",
+        marketBatchCode: shared,
+        productType: "Live Resin Oil",
+        sources: [{ name: "G.M.O" }],
+      }).newExtractionNumber,
+    ).toBe("EXT-GMO0-051226");
+    expect(
+      buildExtractionBatchLabelFields({
+        id: "EXT-GMO0-051226-2",
+        marketBatchCode: shared,
+        productType: "Live Resin Oil",
+        sources: [{ name: "G.M.O" }],
+      }).newExtractionNumber,
+    ).toBe("EXT-GMO0-051226-2");
   });
 
   it("uses full sticker width with inner column and line gap", () => {

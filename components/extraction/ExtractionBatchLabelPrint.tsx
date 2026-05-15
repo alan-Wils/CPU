@@ -21,7 +21,7 @@ export { defaultDymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration"
 export const DYMO_LABEL_LAYOUT_DEBUG = false;
 
 export type ExtractionBatchLabelFields = {
-  /** Public extraction / market batch code (e.g. ABCD.MMDDYY), else internal batch id. */
+  /** Unique extraction batch id (e.g. EXT-GMO0-051226-2), not the shared market/lot code. */
   newExtractionNumber: string;
   /** Strain names from extraction source rows (deduped, first-seen order), else saved blend/source line. */
   strain: string;
@@ -51,8 +51,7 @@ export function buildExtractionBatchLabelFields(batch: {
 }): ExtractionBatchLabelFields {
   const batchId = String(batch?.id || "").trim() || "—";
   const product = String(batch?.productType || batch?.name || "").trim() || "—";
-  const newExtractionNumber =
-    String(batch?.marketBatchCode || "").trim() || batchId;
+  const newExtractionNumber = batchId;
   let strain = "—";
   if (Array.isArray(batch?.sources) && batch.sources.length > 0) {
     const names = collectStrainNamesFromSources(batch.sources);
