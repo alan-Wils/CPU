@@ -106,6 +106,7 @@ export class AuthService {
         activeCompany: Company | null,
         permissions: string[],
         rewardsEnrolled = false,
+        companyMembershipRole: string | null = null,
     ) {
         const email = String(user.email ?? "").trim().toLowerCase();
         const username = email.includes("@")
@@ -123,6 +124,7 @@ export class AuthService {
             platformRole,
             permissions,
             rewardsEnrolled,
+            companyMembershipRole,
         };
     }
 
@@ -153,9 +155,11 @@ export class AuthService {
         const activeCo = this.resolveActiveCompany(user, jwtCompanyId);
         const scopedId = String(jwtCompanyId ?? "").trim();
         let effectiveRole = String(user.role);
+        let companyMembershipRole: string | null = null;
         if (scopedId) {
             const m = user.memberships?.find((x) => x.companyId === scopedId);
             if (m) {
+                companyMembershipRole = String(m.role);
                 effectiveRole = companyRoleToLegacyRbac(m.role as never);
                 if (isPlatformOperator(user.platformRole))
                     effectiveRole = platformRoleToLegacyRbac(user.platformRole);
@@ -168,7 +172,7 @@ export class AuthService {
         const permissions = this.jwtPermissionsForCompany(user, effectiveRole, companyKey);
         const rewardsEnrolled = this.rewardsEnrolledForScopedCompany(user, companyKey);
         return {
-            user: this.sessionUserFields(user, effectiveRole, activeCo, permissions, rewardsEnrolled),
+            user: this.sessionUserFields(user, effectiveRole, activeCo, permissions, rewardsEnrolled, companyMembershipRole),
             company: activeCo ? this.companyPayload(activeCo) : null,
             companies: (user.memberships ?? []).map((m) => this.companyPayload(m.company)),
             sessionKind: (jwtSessionKind === "portal" || isPlatformOperator(user.platformRole)) ? "portal" : "company",
@@ -232,7 +236,14 @@ export class AuthService {
             const rewardsEnrolled = Boolean(membership.rewardsEnrolled);
             return {
                 token,
-                user: this.sessionUserFields(user, legacyRole, company, permissions, rewardsEnrolled),
+                user: this.sessionUserFields(
+                    user,
+                    legacyRole,
+                    company,
+                    permissions,
+                    rewardsEnrolled,
+                    String(membership.role),
+                ),
                 company: this.companyPayload(company),
             };
         }
@@ -262,7 +273,7 @@ export class AuthService {
             const token = this.issueToken(jwtPayloadNoCompany, remember);
             return {
                 token,
-                user: this.sessionUserFields(user, portalRole, null, permissions, false),
+                user: this.sessionUserFields(user, portalRole, null, permissions, false, null),
                 company: null,
                 needsCompanySelection: true,
                 companies: accessible.map((c) =>
@@ -294,9 +305,17 @@ export class AuthService {
         };
         const token = this.issueToken(jwtPayload, remember);
         const portalRe = this.rewardsEnrolledForScopedCompany(user, co.id);
+        const mem0 = user.memberships?.find((x) => x.companyId === co.id);
         return {
             token,
-            user: this.sessionUserFields(user, mergedRole, co, permissions, portalRe),
+            user: this.sessionUserFields(
+                user,
+                mergedRole,
+                co,
+                permissions,
+                portalRe,
+                mem0 ? String(mem0.role) : null,
+            ),
             company: this.companyPayload(co),
             needsCompanySelection: false,
         };
@@ -338,6 +357,7 @@ export class AuthService {
                 membership.company,
                 permissions,
                 Boolean(membership.rewardsEnrolled),
+                String(membership.role),
             ),
             company: this.companyPayload(membership.company),
         };
@@ -464,7 +484,7 @@ export class AuthService {
         const inviteRe = this.rewardsEnrolledForScopedCompany(u, co.id);
         return {
             token: authToken,
-            user: this.sessionUserFields(u, legacyRole, co, permissions, inviteRe),
+            user: this.sessionUserFields(u, legacyRole, co, permissions, inviteRe, String(nexRole)),
             company: this.companyPayload(co)
         };
     }
@@ -525,7 +545,7 @@ export class AuthService {
             const token = this.issueToken(jwtPayloadNoCompany, remember);
             return {
                 token,
-                user: this.sessionUserFields(u, portalRole, null, permissions, false),
+                user: this.sessionUserFields(u, portalRole, null, permissions, false, null),
                 company: null,
                 needsCompanySelection: true,
                 companies: accessible.map((c) =>
@@ -556,9 +576,10 @@ export class AuthService {
         };
         const token = this.issueToken(jwtPayload, remember);
         const staffRe = this.rewardsEnrolledForScopedCompany(u, co.id);
+        const memStaff = u.memberships?.find((x) => x.companyId === co.id);
         return {
             token,
-            user: this.sessionUserFields(u, mergedRole, co, permissions, staffRe),
+            user: this.sessionUserFields(u, mergedRole, co, permissions, staffRe, memStaff ? String(memStaff.role) : null),
             company: this.companyPayload(co),
             needsCompanySelection: false,
         };

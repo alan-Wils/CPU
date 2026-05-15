@@ -140,6 +140,37 @@ enum UsageProvider {
   ai
 }
 
+/// Colorado MED employee R&D sample / designated sampling employee records (company-scoped).
+enum EmployeeSampleLicenseType {
+  MEDICAL
+  RETAIL
+}
+
+enum EmployeeSampleSourceType {
+  CULTIVATION
+  MANUFACTURING
+  PACKAGING
+  OTHER
+}
+
+enum EmployeeSampleProductCategory {
+  FLOWER
+  CONCENTRATE
+  EDIBLE
+  NON_EDIBLE_PRODUCT
+}
+
+enum EmployeeSampleUnit {
+  GRAMS
+  SERVINGS
+  EACH
+}
+
+enum EmployeeSamplePurpose {
+  QUALITY_CONTROL
+  PRODUCT_DEVELOPMENT
+}
+
 model Company {
   id                String @id @default(cuid())
   name              String
@@ -197,6 +228,8 @@ model Company {
 
   edibleBatches      EdibleBatch[]
   edibleTaskLogs     EdibleTaskLog[]
+
+  employeeSamples EmployeeSample[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -549,7 +582,51 @@ model User {
   edibleBatchesCreated EdibleBatch[] @relation("EdibleBatchCreatedBy")
   edibleTaskLogsCreated EdibleTaskLog[] @relation("EdibleTaskLogCreatedBy")
 
+  employeeSamplesReceived EmployeeSample[] @relation("EmployeeSampleEmployee")
+  employeeSamplesCreated  EmployeeSample[] @relation("EmployeeSampleCreatedBy")
+
   @@index([companyId])
+}
+
+model EmployeeSample {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  employeeId String
+  employee   User   @relation("EmployeeSampleEmployee", fields: [employeeId], references: [id], onDelete: Restrict)
+
+  employeeNameSnapshot           String
+  employeeIdentifierSnapshot     String?
+  licenseType                    EmployeeSampleLicenseType
+  sourceType                     EmployeeSampleSourceType
+  productCategory                EmployeeSampleProductCategory
+  productName                    String
+  batchNumber                    String
+  metrcPackageTag                String
+  quantity                       Float
+  unit                           EmployeeSampleUnit
+  thcMgPerServing                Float?
+  transferDate                   DateTime
+  calendarMonth                  String
+  purpose                        EmployeeSamplePurpose
+  sopAcknowledged                Boolean
+  employeeConfirmedMonthlyLimit  Boolean
+  notCompensationAcknowledged    Boolean
+  noOnPremConsumptionAcknowledged Boolean
+  noResaleOrTransferAcknowledged Boolean
+  createdByUserId                String
+  createdBy                      User   @relation("EmployeeSampleCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  notes                          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId, calendarMonth])
+  @@index([companyId, employeeId, calendarMonth])
+  @@index([companyId, transferDate])
+  @@index([companyId, batchNumber])
+  @@index([companyId, metrcPackageTag])
 }
 
 model CompanyMembership {
@@ -575,6 +652,8 @@ model CompanyMembership {
   peerNotificationInbox PeerNotificationInbox?
   /// Receive cultivation climate (temp/RH) threshold alerts for this company workspace.
   cultivationAlertsEnabled Boolean @default(false)
+  /// Colorado MED: Designated R-and-D Sampling Employee (Metrc role effective 2026-01-05).
+  designatedRnDSamplingEmployee Boolean @default(false)
 
   createdAt DateTime            @default(now())
   updatedAt DateTime            @updatedAt

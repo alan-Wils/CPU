@@ -452,8 +452,10 @@ export const adminUserUpdateSchema = z.preprocess(preprocessBodyNormalizeUserRol
     rewardsEnrolled: z.boolean().optional(),
     /** Cultivation climate (Autogrow temp/RH) threshold alerts for this workspace. */
     cultivationAlertsEnabled: z.boolean().optional(),
+    /** Colorado MED — Designated R-and-D Sampling Employee (Metrc). */
+    designatedRnDSamplingEmployee: z.boolean().optional(),
 }).superRefine((val, ctx) => {
-    const n = [val.email, val.role, val.isActive, val.appPermissions, val.cashLogEodEnabled, val.rewardsEnrolled, val.cultivationAlertsEnabled].filter((x) => x !== undefined).length;
+    const n = [val.email, val.role, val.isActive, val.appPermissions, val.cashLogEodEnabled, val.rewardsEnrolled, val.cultivationAlertsEnabled, val.designatedRnDSamplingEmployee].filter((x) => x !== undefined).length;
     if (n === 0) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -482,6 +484,73 @@ export const inviteCreateSchema = z.preprocess(preprocessBodyNormalizeUserRole, 
     email: z.string().email(),
     role: inviteCreateRoleEnum
 }));
+
+const employeeSampleLicenseEnum = z.enum(["MEDICAL", "RETAIL"]);
+const employeeSampleSourceEnum = z.enum(["CULTIVATION", "MANUFACTURING", "PACKAGING", "OTHER"]);
+const employeeSampleCategoryEnum = z.enum(["FLOWER", "CONCENTRATE", "EDIBLE", "NON_EDIBLE_PRODUCT"]);
+const employeeSampleUnitEnum = z.enum(["GRAMS", "SERVINGS", "EACH"]);
+const employeeSamplePurposeEnum = z.enum(["QUALITY_CONTROL", "PRODUCT_DEVELOPMENT"]);
+
+export const employeeSampleCreateSchema = z.object({
+    employeeId: z.string().min(1).max(80),
+    employeeIdentifierSnapshot: z.string().max(200).nullable().optional(),
+    licenseType: employeeSampleLicenseEnum,
+    sourceType: employeeSampleSourceEnum,
+    productCategory: employeeSampleCategoryEnum,
+    productName: z.string().min(1).max(500),
+    batchNumber: z.string().min(1).max(200),
+    metrcPackageTag: z.string().min(1).max(200),
+    quantity: z.number().positive(),
+    unit: employeeSampleUnitEnum,
+    thcMgPerServing: z.number().nonnegative().nullable().optional(),
+    transferDate: z.union([z.string().datetime({ offset: true }), z.string().regex(/^\d{4}-\d{2}-\d{2}$/)]),
+    purpose: employeeSamplePurposeEnum,
+    notes: z.string().max(8000).nullable().optional(),
+    sopAcknowledged: z.literal(true),
+    employeeConfirmedMonthlyLimit: z.literal(true),
+    notCompensationAcknowledged: z.literal(true),
+    noOnPremConsumptionAcknowledged: z.literal(true),
+    noResaleOrTransferAcknowledged: z.literal(true),
+});
+
+export const employeeSampleListQuerySchema = z.object({
+    employeeId: z.string().max(80).optional(),
+    month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+    dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    productCategory: employeeSampleCategoryEnum.optional(),
+    batchNumber: z.string().max(200).optional(),
+    metrcTag: z.string().max(200).optional(),
+    take: z.coerce.number().int().min(1).max(2000).optional(),
+});
+
+export const employeeSampleMonthlyUsageQuerySchema = z.object({
+    employeeId: z.string().min(1).max(80),
+    month: z.string().regex(/^\d{4}-\d{2}$/),
+    licenseType: employeeSampleLicenseEnum,
+    previewProductCategory: employeeSampleCategoryEnum.optional(),
+    previewUnit: employeeSampleUnitEnum.optional(),
+    previewQuantity: z.coerce.number().positive().optional(),
+}).superRefine((v, ctx) => {
+    const hasAny =
+        v.previewProductCategory !== undefined ||
+        v.previewUnit !== undefined ||
+        v.previewQuantity !== undefined;
+    if (hasAny) {
+        if (!v.previewProductCategory || !v.previewUnit || v.previewQuantity === undefined) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Provide previewProductCategory, previewUnit, and previewQuantity together for preview.",
+                path: ["previewQuantity"],
+            });
+        }
+    }
+});
+
+export const employeeSampleIdParam = z.object({
+    id: z.string().min(1).max(80),
+});
+
 export const configUpsertSchema = z.object({
     key: z.string().min(2).max(100),
     value: z.union([z.record(z.string(), z.unknown()), z.array(z.unknown())])

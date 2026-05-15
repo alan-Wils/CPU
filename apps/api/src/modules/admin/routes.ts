@@ -1,20 +1,46 @@
 import { Router } from "express";
+import type { z } from "zod";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
-import { adminUserIdParam, adminUserStatusSchema, adminUserUpdateSchema, inviteCreateSchema, inviteIdParam } from "../../validation/schemas.js";
+import {
+    adminUserIdParam,
+    adminUserStatusSchema,
+    adminUserUpdateSchema,
+    employeeSampleCreateSchema,
+    employeeSampleIdParam,
+    employeeSampleListQuerySchema,
+    employeeSampleMonthlyUsageQuerySchema,
+    inviteCreateSchema,
+    inviteIdParam,
+} from "../../validation/schemas.js";
 import { AdminService } from "../../services/adminService.js";
 import { requirePlatformRoles, requireRole } from "../../middleware/rbac.js";
 import { UsageCostService } from "../../services/usageCostService.js";
 import { VendorBillingSyncService } from "../../services/vendorBillingSyncService.js";
 import { NexbatchCompanyUsageLogService } from "../../services/nexbatchCompanyUsageLogService.js";
+import { requireEmployeeSampleAccess } from "../../middleware/employeeSampleAccess.js";
+import { EmployeeSampleService } from "../../services/employeeSampleService.js";
+import { AppError } from "../../errors/AppError.js";
 
 export const adminRouter = Router();
 const adminService = new AdminService();
 const usageCostService = new UsageCostService();
 const vendorBillingSyncService = new VendorBillingSyncService();
 const nexbatchCompanyUsageLogService = new NexbatchCompanyUsageLogService();
+const employeeSampleService = new EmployeeSampleService();
 
+function parseEmployeeSampleTransferDate(raw: string): Date {
+    const s = String(raw || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+        return new Date(`${s}T12:00:00.000-07:00`);
+    }
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) {
+        throw new AppError("Invalid transfer date", 400);
+    }
+    return d;
+}
 adminRouter.get(
     "/companies/:companyId/usage-costs",
     requirePlatformRoles(["nexbatch_admin", "owner"]),
@@ -72,6 +98,7 @@ adminRouter.patch("/users/:userId", requireRole(["OWNER", "ADMIN", "OPERATIONS_M
         cashLogEodEnabled: payload.cashLogEodEnabled,
         rewardsEnrolled: payload.rewardsEnrolled,
         cultivationAlertsEnabled: payload.cultivationAlertsEnabled,
+        designatedRnDSamplingEmployee: payload.designatedRnDSamplingEmployee,
     });
     res.json(updated);
 }));
@@ -115,3 +142,109 @@ adminRouter.delete("/invites/:inviteId", requireRole(["OWNER", "ADMIN"]), valida
     });
     res.json(out);
 }));
+
+adminRouter.get(
+    "/employee-samples/eligible-employees",
+    asyncHandler(requireEmployeeSampleAccess),
+    asyncHandler(async (req, res) => {
+        const rows = await employeeSampleService.listEligibleEmployees(getScopedCompanyId(req));
+        res.json({ employees: rows });
+    }),
+);
+
+adminRouter.get(
+    "/employee-samples/monthly-usage",
+    asyncHandler(requireEmployeeSampleAccess),
+    validate({ query: employeeSampleMonthlyUsageQuerySchema }),
+    asyncHandler(async (req, res) => {
+        const q = req.query as z.infer<typeof employeeSampleMonthlyUsageQuerySchema>;
+        const companyId = getScopedCompanyId(req);
+        if (q.previewQuantity !== undefined && q.previewProductCategory && q.previewUnit) {
+            const out = await employeeSampleService.previewAfterTransfer({
+                companyId,
+                employeeId: q.employeeId,
+                month: q.month,
+                licenseType: q.licenseType,
+                productCategory: q.previewProductCategory,
+                unit: q.previewUnit,
+                quantity: q.previewQuantity,
+            });
+            res.json(out);
+            return;
+        }
+        const out = await employeeSampleService.monthlyUsage({
+            companyId,
+            employeeId: q.employeeId,
+            month: q.month,
+            licenseType: q.licenseType,
+        });
+        res.json(out);
+    }),
+);
+
+adminRouter.post(
+    "/employee-samples",
+    asyncHandler(requireEmployeeSampleAccess),
+    validate({ body: employeeSampleCreateSchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const b = req.body as z.infer<typeof employeeSampleCreateSchema>;
+        const transferDate = parseEmployeeSampleTransferDate(b.transferDate);
+        const created = await employeeSampleService.create({
+            companyId,
+            actorUserId: req.auth.userId,
+            employeeId: b.employeeId,
+            employeeIdentifierSnapshot: b.employeeIdentifierSnapshot ?? null,
+            licenseType: b.licenseType,
+            sourceType: b.sourceType,
+            productCategory: b.productCategory,
+            productName: b.productName,
+            batchNumber: b.batchNumber,
+            metrcPackageTag: b.metrcPackageTag,
+            quantity: b.quantity,
+            unit: b.unit,
+            thcMgPerServing: b.thcMgPerServing ?? null,
+            transferDate,
+            purpose: b.purpose,
+            notes: b.notes ?? null,
+            sopAcknowledged: b.sopAcknowledged,
+            employeeConfirmedMonthlyLimit: b.employeeConfirmedMonthlyLimit,
+            notCompensationAcknowledged: b.notCompensationAcknowledged,
+            noOnPremConsumptionAcknowledged: b.noOnPremConsumptionAcknowledged,
+            noResaleOrTransferAcknowledged: b.noResaleOrTransferAcknowledged,
+        });
+        res.status(201).json(created);
+    }),
+);
+
+adminRouter.get(
+    "/employee-samples",
+    asyncHandler(requireEmployeeSampleAccess),
+    validate({ query: employeeSampleListQuerySchema }),
+    asyncHandler(async (req, res) => {
+        const q = req.query as z.infer<typeof employeeSampleListQuerySchema>;
+        const take = q.take ?? 500;
+        const rows = await employeeSampleService.list({
+            companyId: getScopedCompanyId(req),
+            take,
+            employeeId: q.employeeId || null,
+            calendarMonth: q.month || null,
+            dateFrom: q.dateFrom || null,
+            dateTo: q.dateTo || null,
+            productCategory: q.productCategory || null,
+            batchNumber: q.batchNumber || null,
+            metrcTag: q.metrcTag || null,
+        });
+        res.json({ samples: rows });
+    }),
+);
+
+adminRouter.get(
+    "/employee-samples/:id",
+    asyncHandler(requireEmployeeSampleAccess),
+    validate({ params: employeeSampleIdParam }),
+    asyncHandler(async (req, res) => {
+        const row = await employeeSampleService.getById(getScopedCompanyId(req), String(req.params.id));
+        res.json(row);
+    }),
+);

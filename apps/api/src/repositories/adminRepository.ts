@@ -23,6 +23,7 @@ export class AdminRepository extends TenantRepository {
             cashLogEodEnabled: mergeCashLogEodPrefs(r.cashLogEodPrefs).enabled,
             rewardsEnrolled: Boolean(r.rewardsEnrolled),
             cultivationAlertsEnabled: Boolean(r.cultivationAlertsEnabled),
+            designatedRnDSamplingEmployee: Boolean(r.designatedRnDSamplingEmployee),
         }));
     }
     async updateUserStatus(companyId, userId, isActive) {
@@ -60,6 +61,9 @@ export class AdminRepository extends TenantRepository {
         }
         if (Object.prototype.hasOwnProperty.call(data, "cultivationAlertsEnabled")) {
             membershipData.cultivationAlertsEnabled = Boolean(data.cultivationAlertsEnabled);
+        }
+        if (Object.prototype.hasOwnProperty.call(data, "designatedRnDSamplingEmployee")) {
+            membershipData.designatedRnDSamplingEmployee = Boolean(data.designatedRnDSamplingEmployee);
         }
         if (data.cashLogEodEnabled !== undefined) {
             let mergedPrefs = mergeCashLogEodPrefs(m.cashLogEodPrefs);

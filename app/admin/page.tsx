@@ -11,6 +11,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Nav from "@/components/Nav";
+import EmployeeSamplesAdmin from "@/components/admin/EmployeeSamplesAdmin";
 import PageAccessGate from "@/components/PageAccessGate";
 import {
   API_BASE_URL,
@@ -46,6 +47,8 @@ type AdminUser = {
   rewardsEnrolled?: boolean;
   /** Cultivation climate (Autogrow) threshold alerts for this workspace. */
   cultivationAlertsEnabled?: boolean;
+  /** Colorado MED — Designated R-and-D Sampling Employee (company membership). */
+  designatedRnDSamplingEmployee?: boolean;
 };
 
 type CompanyItem = {
@@ -326,6 +329,17 @@ function canAccessFinancialAdminTools(role: string) {
   );
 }
 
+/** Owner, Company Admin, workspace Management, or NexBatch Admin — employee R&D sample tools. */
+function canAccessEmployeeSamples(actor: { role?: string; platformRole?: string | null; companyMembershipRole?: string | null } | null | undefined) {
+  if (!actor) return false;
+  const pr = String(actor.platformRole || "").trim();
+  if (pr === "nexbatch_admin") return true;
+  const r = normalizePlatformRole(actor.role || "");
+  if (r === "OWNER" || r === "ADMIN") return true;
+  if (r === "OPERATIONS_MANAGER" && String(actor.companyMembershipRole || "").trim() === "management") return true;
+  return false;
+}
+
 type CheckMime = "image/jpeg" | "image/jpg" | "image/png" | "image/webp";
 
 /** Matches API `LeafLinkInvoiceLineStatusDto` on check/cash list rows. */
@@ -537,6 +551,7 @@ export default function AdminPage() {
   const [editCashLogEodEnabled, setEditCashLogEodEnabled] = useState(false);
   const [editRewardsEnrolled, setEditRewardsEnrolled] = useState(false);
   const [editCultivationAlertsEnabled, setEditCultivationAlertsEnabled] = useState(false);
+  const [editDesignatedRnDSamplingEmployee, setEditDesignatedRnDSamplingEmployee] = useState(false);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [sendingResetUserId, setSendingResetUserId] = useState<string | null>(null);
   const [savingInviteId, setSavingInviteId] = useState<string | null>(null);
@@ -1995,6 +2010,7 @@ export default function AdminPage() {
     );
     setEditRewardsEnrolled(Boolean(user.rewardsEnrolled));
     setEditCultivationAlertsEnabled(Boolean(user.cultivationAlertsEnabled));
+    setEditDesignatedRnDSamplingEmployee(Boolean(user.designatedRnDSamplingEmployee));
     const roleU = String(user.role || "VIEW_ONLY").trim().toUpperCase();
     if (isOwnerOrAdminRoleKey(roleU)) {
       setEditAppPermissions(fullAccessPermissionIds());
@@ -2019,6 +2035,7 @@ export default function AdminPage() {
     setEditCashLogEodEnabled(false);
     setEditRewardsEnrolled(false);
     setEditCultivationAlertsEnabled(false);
+    setEditDesignatedRnDSamplingEmployee(false);
   }
 
   function toggleEditPermission(id: string) {
@@ -2090,6 +2107,9 @@ export default function AdminPage() {
         }
         body.rewardsEnrolled = editRewardsEnrolled;
         body.cultivationAlertsEnabled = editCultivationAlertsEnabled;
+        if (isCompanyOwnerOrAdminActor(currentUser?.role || "")) {
+          body.designatedRnDSamplingEmployee = editDesignatedRnDSamplingEmployee;
+        }
         if (ownerOrAdminRole) body.appPermissions = null;
         else body.appPermissions = editAppPermissions.length > 0 ? editAppPermissions : null;
       }
@@ -2975,6 +2995,20 @@ export default function AdminPage() {
                   </div>
                 </section>
               </section>
+
+              {canAccessEmployeeSamples(currentUser) ? (
+                <EmployeeSamplesAdmin
+                  enabled
+                  companyId={String(selectedCompanyId || company?.id || getSelectedCompanyId() || "").trim()}
+                  panelStyle={panelStyle}
+                  sectionTitleStyle={sectionTitleStyle}
+                  labelStyle={labelStyle}
+                  inputStyle={inputStyle}
+                  smallButtonStyle={smallButtonStyle}
+                  modalOverlayStyle={modalOverlayStyle}
+                  modalStyle={modalStyle}
+                />
+              ) : null}
 
               {canAccessFinancialAdminTools(currentUser?.role || "") ? (
                 <section style={{ ...panelStyle, marginTop: 22 }}>
@@ -4983,6 +5017,46 @@ export default function AdminPage() {
                     </span>
                   </label>
                 </div>
+                {isCompanyOwnerOrAdminActor(currentUser?.role || "") ? (
+                  <div
+                    style={{
+                      marginBottom: 14,
+                      borderRadius: 12,
+                      border: "1px solid rgba(148, 163, 184, 0.22)",
+                      background: "rgba(2, 6, 23, 0.42)",
+                      padding: 12,
+                      textAlign: "left",
+                    }}
+                  >
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 10,
+                        cursor: "pointer",
+                        color: "#e2e8f0",
+                        fontSize: 14,
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={editDesignatedRnDSamplingEmployee}
+                        onChange={(e) => setEditDesignatedRnDSamplingEmployee(e.target.checked)}
+                        style={{ marginTop: 3 }}
+                      />
+                      <span>
+                        <b>Designated R-and-D Sampling Employee</b>
+                        <br />
+                        <span style={{ color: "#94a3b8" }}>
+                          Colorado MED / Metrc (effective Jan. 5, 2026). When checked, this active employee may appear on
+                          Employee Sample transfers for this workspace. Only company owners or company admins can change
+                          this flag.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                ) : null}
                   </>
                 ) : null}
 

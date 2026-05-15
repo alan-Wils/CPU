@@ -9,6 +9,8 @@ export type CpuUser = {
   platformRole?: string | null;
   companyId?: string;
   companyCode?: string;
+  /** NexBatch `CompanyMembership.role` for the active workspace (e.g. `management`). */
+  companyMembershipRole?: string | null;
   /** Company membership: enrolled in staff rewards (when returned by API). */
   rewardsEnrolled?: boolean;
 };

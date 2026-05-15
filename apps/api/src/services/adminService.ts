@@ -133,7 +133,7 @@ export class AdminService {
     async listUsers(input) {
         const rows = await this.repo.listUsers(input.companyId);
         return rows.map(
-            ({ user: u, appPermissions, cashLogEodEnabled, rewardsEnrolled, cultivationAlertsEnabled }) => ({
+            ({ user: u, appPermissions, cashLogEodEnabled, rewardsEnrolled, cultivationAlertsEnabled, designatedRnDSamplingEmployee }) => ({
                 id: u.id,
                 username: u.email.split("@")[0],
                 email: u.email,
@@ -145,6 +145,7 @@ export class AdminService {
                 cashLogEodEnabled: Boolean(cashLogEodEnabled),
                 rewardsEnrolled: Boolean(rewardsEnrolled),
                 cultivationAlertsEnabled: Boolean(cultivationAlertsEnabled),
+                designatedRnDSamplingEmployee: Boolean(designatedRnDSamplingEmployee),
             }),
         );
     }
@@ -154,7 +155,7 @@ export class AdminService {
             throw new AppError("Target user not found", 404);
         const membershipBefore = await this.repo.db.companyMembership.findFirst({
             where: { companyId: input.companyId, userId: input.targetUserId },
-            select: { appPermissions: true, cashLogEodPrefs: true },
+            select: { appPermissions: true, cashLogEodPrefs: true, designatedRnDSamplingEmployee: true },
         });
 
         const actorR = String(input.actorRole || "").trim().toUpperCase();
@@ -182,7 +183,8 @@ export class AdminService {
                 input.isActive !== undefined ||
                 input.cashLogEodEnabled !== undefined ||
                 input.rewardsEnrolled !== undefined ||
-                input.cultivationAlertsEnabled !== undefined;
+                input.cultivationAlertsEnabled !== undefined ||
+                input.designatedRnDSamplingEmployee !== undefined;
             if (triedNonPermissionFields) {
                 throw new AppError(
                     "Managers may only change which pages floor staff can open. Company admins handle email, role, status, and other settings.",
@@ -202,7 +204,10 @@ export class AdminService {
                     (input.isActive !== undefined && input.isActive !== target.isActive) ||
                     (input.appPermissions !== undefined &&
                         JSON.stringify(input.appPermissions ?? null) !==
-                            JSON.stringify(membershipBefore?.appPermissions ?? null));
+                            JSON.stringify(membershipBefore?.appPermissions ?? null)) ||
+                    (input.designatedRnDSamplingEmployee !== undefined &&
+                        Boolean(input.designatedRnDSamplingEmployee) !==
+                            Boolean(membershipBefore?.designatedRnDSamplingEmployee));
             if (profileDirty) {
                 throw new AppError(
                     'Admins may only change "Receive EOD financial digest emails" for the application owner. Revert role, email, status, or permission changes—or have an owner edit those fields.',
@@ -223,7 +228,11 @@ export class AdminService {
                 input.appPermissions !== undefined &&
                 JSON.stringify(input.appPermissions ?? null) !==
                     JSON.stringify(membershipBefore?.appPermissions ?? null);
-            if (emailViolates || roleViolates || activeViolates || appPermsViolates) {
+            const designatedViolates =
+                input.designatedRnDSamplingEmployee !== undefined &&
+                Boolean(input.designatedRnDSamplingEmployee) !==
+                    Boolean(membershipBefore?.designatedRnDSamplingEmployee);
+            if (emailViolates || roleViolates || activeViolates || appPermsViolates || designatedViolates) {
                 throw new AppError(
                     "You can only change \"Receive EOD financial digest emails\" on your own account here. Ask another OWNER/ADMIN to change your email, role, status, or app access.",
                     400,
@@ -251,6 +260,15 @@ export class AdminService {
                 "OWNER_DIGEST_SELF_ENABLE_ONLY",
             );
         }
+        if (input.designatedRnDSamplingEmployee !== undefined) {
+            const actorRUpper = String(input.actorRole || "").trim().toUpperCase();
+            if (actorRUpper !== "OWNER" && actorRUpper !== "ADMIN") {
+                throw new AppError(
+                    "Only company owners or company admins can update the designated R&D sampling employee flag.",
+                    403,
+                );
+            }
+        }
         const changed = await this.repo.updateUser(input.companyId, input.targetUserId, {
             email: input.email,
             role: input.role,
@@ -259,6 +277,7 @@ export class AdminService {
             cashLogEodEnabled: input.cashLogEodEnabled,
             rewardsEnrolled: input.rewardsEnrolled,
             cultivationAlertsEnabled: input.cultivationAlertsEnabled,
+            designatedRnDSamplingEmployee: input.designatedRnDSamplingEmployee,
         });
         if (changed.count === 0)
             throw new AppError("No user changes persisted", 400);
@@ -272,6 +291,7 @@ export class AdminService {
                 cashLogEodPrefs: true,
                 rewardsEnrolled: true,
                 cultivationAlertsEnabled: true,
+                designatedRnDSamplingEmployee: true,
             },
         });
         const cashLogEodEnabled = mergeCashLogEodPrefs(membershipAfter?.cashLogEodPrefs ?? null).enabled;
@@ -288,6 +308,7 @@ export class AdminService {
                 appPermissions: membershipAfter?.appPermissions ?? null,
                 cashLogEodEnabled,
                 cultivationAlertsEnabled: Boolean(membershipAfter?.cultivationAlertsEnabled),
+                designatedRnDSamplingEmployee: Boolean(membershipAfter?.designatedRnDSamplingEmployee),
             },
         });
         return {
@@ -301,6 +322,7 @@ export class AdminService {
             cashLogEodEnabled,
             rewardsEnrolled: Boolean(membershipAfter?.rewardsEnrolled),
             cultivationAlertsEnabled: Boolean(membershipAfter?.cultivationAlertsEnabled),
+            designatedRnDSamplingEmployee: Boolean(membershipAfter?.designatedRnDSamplingEmployee),
         };
     }
     async sendUserPasswordResetEmail(input: {

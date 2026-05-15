@@ -1,0 +1,7 @@
+/**
+ * Colorado MED employee R&D sample caps (UI display). Authoritative validation lives in `@cpu/api`.
+ */
+export const COLORADO_EMPLOYEE_SAMPLE_MEDICAL_CONCENTRATE_GRAMS_PER_MONTH = 15;
+export const COLORADO_EMPLOYEE_SAMPLE_RETAIL_CONCENTRATE_GRAMS_PER_MONTH = 8;
+export const COLORADO_EMPLOYEE_SAMPLE_SERVINGS_OR_PRODUCTS_PER_MONTH = 14;
+export const DEFAULT_FLOWER_GRAMS_MONTHLY_LIMIT = 28;
