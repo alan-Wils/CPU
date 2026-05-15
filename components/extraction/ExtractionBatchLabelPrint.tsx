@@ -127,7 +127,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
 <html lang="en" class="dymo-label-print-root"><head><meta charset="utf-8"/><meta name="viewport" content="width=${viewportW}, initial-scale=1"/>
 <title>Extraction batch label</title>
 <style>
-  /* --- DYMO print: calibrated page size + whole-job transform + inner scale. Content is centered in the sticker box via flex on .dymo-label-printable-area; Whole label offsets nudge vs printer hardware. Overflow visible avoids transform clipping before @page edge. --- */
+  /* --- DYMO die-cut: one sticker = @page size. Flex pins template to sticker TOP (avoid vertical center → gap between labels); JUSTIFY centers columns horizontally. Whole-label offsets = printer/driver skew. Overflow visible avoids pre-clip. --- */
   @page {
     size: ${s.labelWidth} ${s.labelHeight};
     margin: 0;
@@ -169,7 +169,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     height: var(--label-height);
     margin: 0;
     padding: 0;
-    transform-origin: center center;
+    transform-origin: top left;
     transform: ${jobTransform};
     display: block;
   }
@@ -191,7 +191,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     overflow: visible;
     display: flex;
     justify-content: center;
-    align-items: center;
+    align-items: flex-start;
   }
   .dymo-label-origin-marker {
     position: absolute;
@@ -222,7 +222,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     position: relative;
     margin: 0;
     padding: 0;
-    transform-origin: center center;
+    transform-origin: top left;
     transform: ${contentTransform};
     display: block;
     width: max-content;
@@ -329,7 +329,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
       overflow: visible !important;
       display: flex !important;
       justify-content: center !important;
-      align-items: center !important;
+      align-items: flex-start !important;
     }
   }
 </style></head><body>${inner}</body></html>`;
@@ -486,11 +486,12 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             maxWidth: 420,
           }}
         >
-          Outer box = physical label reference ({s.labelWidth} × {s.labelHeight}); the layout is{" "}
-          <strong style={{ color: "#e2e8f0" }}>centered</strong> in that box automatically. Grey border does not clip
-          before the printer/@page boundary.{" "}
+          Outer box = one physical sticker ({s.labelWidth} × {s.labelHeight}). Copy is pinned to the{" "}
+          <strong style={{ color: "#e2e8f0" }}>top</strong> edge and{" "}
+          <strong style={{ color: "#e2e8f0" }}>centered left–right</strong> so it stays on a single die-cut (not
+          straddling the gap between two). Grey border does not clip before the printer/@page boundary.{" "}
           <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job (offsets + rotation + start).{" "}
-          <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame (centered sheet content).{" "}
+          <strong style={{ color: "#93c5fd" }}>Blue</strong> = template frame.{" "}
           <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content (fine shift + scale).
         </p>
       ) : null}
@@ -515,7 +516,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             height: s.labelHeight,
             margin: 0,
             padding: 0,
-            transformOrigin: "center center",
+            transformOrigin: "top left",
             transform: jobTransform,
             display: "block",
             ...(dbg ? { boxShadow: "inset 0 0 0 2px #14b8a6" } : {}),
@@ -546,7 +547,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                 overflow: "visible",
                 display: "flex",
                 justifyContent: "center",
-                alignItems: "center",
+                alignItems: "flex-start",
                 boxSizing: "border-box",
                 ...(dbg ? { boxShadow: "inset 0 0 0 2px #ea580c" } : {}),
               }}
@@ -573,7 +574,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                     position: "relative",
                     margin: 0,
                     padding: 0,
-                    transformOrigin: "center center",
+                    transformOrigin: "top left",
                     transform: contentTransform,
                     display: "block",
                     width: "max-content",

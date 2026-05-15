@@ -87,11 +87,12 @@ export function DymoLabelCalibrationPanel({
         DYMO label calibration
       </h3>
       <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-        Extraction labels are <strong style={{ color: "#e2e8f0" }}>centered</strong> horizontally and vertically
-        inside the size you set below — you should not need to dial in margins manually for a typical run. Use{" "}
+        Layout is <strong style={{ color: "#e2e8f0" }}>pinned to the top</strong> of the sticker and{" "}
+        <strong style={{ color: "#e2e8f0" }}>centered horizontally</strong> inside the width/height below so it stays
+        on one die-cut roll label (vertical centering tends to print across the gap between two stickers). Use{" "}
         <strong style={{ color: "#e2e8f0" }}>Whole label</strong> X/Y,{" "}
         <strong style={{ color: "#e2e8f0" }}>Top/start offset</strong>, rotation, and inner nudges only when your{" "}
-        <em>printer or driver</em> is consistently shifted from the die-cut. Lengths:{" "}
+        <em>printer or driver</em> is consistently shifted. Lengths:{" "}
         <code style={{ color: "#a5b4fc" }}>1in</code>,{" "}
         <code style={{ color: "#a5b4fc" }}>-18px</code>, or plain{" "}
         <code style={{ color: "#a5b4fc" }}>-18</code>
@@ -101,7 +102,7 @@ export function DymoLabelCalibrationPanel({
         If ink still bridges between stickers or Chrome rescales oddly, tweak{" "}
         <strong style={{ color: "#e2e8f0" }}>Top/start offset</strong> with{" "}
         <strong style={{ color: "#e2e8f0" }}>Test print</strong>. Pick the matching DYMO stock in the system dialog
-        and use <strong style={{ color: "#e2e8f0" }}>100% scale</strong> so the centered layout stays true.
+        and use <strong style={{ color: "#e2e8f0" }}>100% scale</strong> so the geometry stays predictable.
       </p>
 
       <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>

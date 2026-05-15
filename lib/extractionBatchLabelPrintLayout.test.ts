@@ -66,12 +66,12 @@ describe("DYMO extraction batch label print layout", () => {
     expect(printBlock).toContain(".dymo-label-printable-area");
   });
 
-  it("centers the frame stack inside printable area with flex alignment", () => {
+  it("anchors frame to top center of printable flex (avoid straddling two labels vertically)", () => {
     const html = buildDymoExtractionBatchLabelPrintHtml(fields);
     const pa = html.match(/\.dymo-label-printable-area\s*\{[^}]*\}/s)?.[0] ?? "";
     expect(pa).toContain("display: flex");
     expect(pa).toContain("justify-content: center");
-    expect(pa).toContain("align-items: center");
+    expect(pa).toContain("align-items: flex-start");
     const frame = html.match(/\.dymo-label-frame\s*\{[^}]*\}/s)?.[0] ?? "";
     expect(frame).toContain("position: relative");
     expect(frame).not.toContain("left: 0");

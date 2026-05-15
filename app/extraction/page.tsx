@@ -3383,7 +3383,8 @@ export default function Extraction() {
                       }}
                     >
                       This task is <strong style={{ color: "#e2e8f0" }}>always available</strong> at
-                      any workflow stage so you can reprint labels.                       Layout is <strong style={{ color: "#e2e8f0" }}>auto-centered</strong> on the label and sized from{" "}
+                      any workflow stage so you can reprint labels.                       Layout is anchored to the <strong style={{ color: "#e2e8f0" }}>top</strong> of one sticker with
+                      horizontal centering — sized from{" "}
                       <strong style={{ color: "#e2e8f0" }}>DYMO calibration</strong> below.{" "}
                       <strong style={{ color: "#e2e8f0" }}>Print label</strong> uses{" "}
                       <strong style={{ color: "#e2e8f0" }}>saved</strong> settings; use{" "}

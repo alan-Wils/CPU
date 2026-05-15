@@ -48,8 +48,8 @@ export type DymoLabelCalibrationSettings = {
 export const DYMO_CALIBRATION_CONFIG_KEY = "dymoLabelCalibration" as const;
 
 /**
- * Defaults for common 1″×1½″ die-cut extraction labels. Frame offsets stay neutral — print CSS auto-centers
- * the two-column template within the calibrated label width and height.
+ * Defaults for common 1″×1½″ die-cut extraction labels. Offsets stay neutral; print layout pins copy to the sticker
+ * top and centers horizontally within width/height (avoids vertical center splitting across gaps between dies).
  */
 export const defaultDymoLabelCalibrationSettings: DymoLabelCalibrationSettings = {
   labelWidth: "1in",
