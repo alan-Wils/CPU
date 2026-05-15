@@ -50,11 +50,11 @@ describe("DYMO extraction batch label print layout", () => {
     expect(contentCss).toContain("scale(0.9)");
   });
 
-  it("sizes viewport meta from labelWidth (defaults use 1in → ~96 logical px)", () => {
+  it("sizes viewport meta from wider label axis (defaults use max(1in, 1.5in) → 144 css px)", () => {
     const html = buildDymoExtractionBatchLabelPrintHtml(fields, defaultDymoLabelCalibrationSettings);
 
     expect(html).not.toMatch(/viewport[^>]+device-width/i);
-    expect(html).toContain('meta name="viewport" content="width=96');
+    expect(html).toContain('meta name="viewport" content="width=144');
     expect(html).toContain("size: 25.4mm 38.1mm");
   });
 
@@ -78,18 +78,23 @@ describe("DYMO extraction batch label print layout", () => {
     expect(frame).not.toContain("left: 0");
     expect(frame).toContain("width: 100%");
     expect(frame).toContain("flex: 1 1 auto");
+    expect(frame).toContain("flex-direction: column");
     const innerContent = html.match(/\.dymo-label-content\s*\{[^}]*\}/s)?.[0] ?? "";
     expect(innerContent).toContain("width: 100%");
+    expect(innerContent).toContain("flex-direction: column");
   });
 
-  it("@media print pins job with fixed top-left vs Chrome vertical centering on tall paper selections", () => {
+  it("@media print anchors job absolutely to @page-sized body (not fixed viewport centering)", () => {
     const html = buildDymoExtractionBatchLabelPrintHtml(fields);
     const printBlock =
       html.split("@media print")[1]?.split("</style>")[0] ?? "";
     expect(printBlock).toContain(".dymo-label-job");
-    expect(printBlock).toContain("position: fixed !important");
+    expect(printBlock).toContain("position: absolute !important");
     expect(printBlock).toContain("top: 0 !important");
     expect(printBlock).toContain("left: 0 !important");
+    expect(printBlock).toContain("right: 0 !important");
+    expect(printBlock).toContain("bottom: 0 !important");
+    expect(printBlock).toContain("width: 100% !important");
   });
 
   it("repeats @page size inside @media print (Chromium print stack)", () => {

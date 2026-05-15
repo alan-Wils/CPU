@@ -17,7 +17,7 @@ export { defaultDymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration"
  * Debug outlines: sheet (red), printable (orange), **job** (teal whole-label transform), **frame** (blue template border), **content** (violet inner).
  * Set to false once alignment is dialed in.
  */
-export const DYMO_LABEL_LAYOUT_DEBUG = true;
+export const DYMO_LABEL_LAYOUT_DEBUG = false;
 
 export type ExtractionBatchLabelFields = {
   batchId: string;
@@ -123,7 +123,10 @@ export function buildDymoExtractionBatchLabelPrintHtml(
 
   const jobTransform = buildDymoLabelJobTransform(s);
   const contentTransform = buildDymoLabelContentTransform(s);
-  const viewportW = approximateCssLengthToViewportPx(s.labelWidth);
+  const vw = approximateCssLengthToViewportPx(s.labelWidth);
+  const vhPx = approximateCssLengthToViewportPx(s.labelHeight);
+  /* Wider viewport than narrow edge reduces Chromium shrinking the print layout toward the middle of a wrong-sized canvas */
+  const viewportW = Math.max(vw, vhPx, 144);
   const pageSizeDecl = pageSizeCssForDymoAtPage(s.labelWidth, s.labelHeight);
 
   return `<!DOCTYPE html>
@@ -178,8 +181,9 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   }
   .dymo-label-sheet {
     position: relative;
-    width: var(--label-width);
-    height: var(--label-height);
+    width: 100%;
+    height: 100%;
+    min-height: 100%;
     margin: 0;
     padding: 0;
     overflow: visible;
@@ -218,10 +222,12 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     padding: 0;
     flex: 1 1 auto;
     display: flex;
+    flex-direction: column;
     box-sizing: border-box;
     width: 100%;
+    height: 100%;
+    min-height: 0;
     min-width: 0;
-    max-width: 100%;
     align-self: stretch;
   }
   .dymo-label-content {
@@ -230,21 +236,24 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     padding: 0;
     transform-origin: top left;
     transform: ${contentTransform};
-    display: block;
     flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
     box-sizing: border-box;
     width: 100%;
+    min-height: 0;
     min-width: 0;
     max-width: 100%;
   }
   .dymo-label-inner {
     display: flex;
     flex-direction: row;
-    align-items: flex-start;
+    align-items: stretch;
     justify-content: flex-start;
     flex: 1 1 auto;
     width: 100%;
     min-width: 0;
+    min-height: 0;
     gap: var(--dymo-gap);
     text-align: left;
     padding-left: var(--dymo-pad-x);
@@ -259,6 +268,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     justify-content: flex-start;
     min-width: 0;
     flex: 1 1 0;
+    align-self: stretch;
   }
   .left {
     border-right: 0.5pt solid #bbb;
@@ -332,17 +342,17 @@ export function buildDymoExtractionBatchLabelPrintHtml(
       print-color-adjust: exact;
     }
     /*
-     * Chrome/Edge print preview often vertically centers absolutely positioned content when the user's
-     * paper profile is taller than @page — fixed top-left ties the sheet to the real page/sticker origin.
+     * position:fixed in Chromium print often centers or shrinks vs the chosen paper size; anchor the job to the
+     * @page-sized body with absolute inset 0 instead.
      */
     .dymo-label-job {
-      position: fixed !important;
+      position: absolute !important;
       top: 0 !important;
       left: 0 !important;
-      right: auto !important;
-      bottom: auto !important;
-      width: var(--label-width) !important;
-      height: var(--label-height) !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
       margin: 0 !important;
       padding: 0 !important;
     }
@@ -351,6 +361,8 @@ export function buildDymoExtractionBatchLabelPrintHtml(
       print-color-adjust: exact;
     }
     .dymo-label-sheet {
+      width: 100% !important;
+      height: 100% !important;
       page-break-inside: avoid;
       break-inside: avoid;
       page-break-after: avoid;
@@ -568,8 +580,9 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             className="dymo-label-sheet"
             style={{
               position: "relative",
-              width: s.labelWidth,
-              height: s.labelHeight,
+              width: "100%",
+              height: "100%",
+              minHeight: "100%",
               margin: 0,
               padding: 0,
               overflow: "visible",
@@ -604,9 +617,11 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                   flex: "1 1 auto",
                   alignSelf: "stretch",
                   display: "flex",
+                  flexDirection: "column",
                   width: "100%",
+                  height: "100%",
                   minWidth: 0,
-                  maxWidth: "100%",
+                  minHeight: 0,
                   boxSizing: "border-box",
                   pointerEvents: "none",
                   ...(dbg ? { boxShadow: "inset 0 0 0 2px #2563eb" } : {}),
@@ -620,10 +635,12 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                     padding: 0,
                     transformOrigin: "top left",
                     transform: contentTransform,
-                    display: "block",
+                    display: "flex",
+                    flexDirection: "column",
                     flex: "1 1 auto",
                     width: "100%",
                     minWidth: 0,
+                    minHeight: 0,
                     maxWidth: "100%",
                     boxSizing: "border-box",
                     ...(dbg ? { boxShadow: "inset 0 0 0 2px #7c3aed" } : {}),
@@ -634,13 +651,14 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                     style={{
                       display: "flex",
                       flexDirection: "row",
-                      alignItems: "flex-start",
+                      alignItems: "stretch",
                       justifyContent: "flex-start",
                       gap: s.textSpacing,
                       textAlign: "left",
                       flex: "1 1 auto",
                       width: "100%",
                       minWidth: 0,
+                      minHeight: 0,
                       boxSizing: "border-box",
                       paddingLeft: s.paddingLeftRight,
                       paddingRight: s.paddingLeftRight,
@@ -651,6 +669,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                     <div
                       style={{
                         ...col,
+                        alignSelf: "stretch",
                         borderRight: "1px solid rgba(148, 163, 184, 0.35)",
                         paddingRight: s.textSpacing,
                       }}
@@ -681,7 +700,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                         {fields.batchId}
                       </div>
                     </div>
-                    <div style={{ ...col }}>
+                    <div style={{ ...col, alignSelf: "stretch" }}>
                       <div
                         style={{
                           fontSize: `calc(8pt * ${fmul})`,
