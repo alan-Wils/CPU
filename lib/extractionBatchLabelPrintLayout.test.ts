@@ -76,6 +76,9 @@ describe("DYMO extraction batch label print layout", () => {
     const frame = html.match(/\.dymo-label-frame\s*\{[^}]*\}/s)?.[0] ?? "";
     expect(frame).toContain("position: relative");
     expect(frame).not.toContain("left: 0");
+    expect(frame).toContain("max-width: none");
+    const innerContent = html.match(/\.dymo-label-content\s*\{[^}]*\}/s)?.[0] ?? "";
+    expect(innerContent).toContain("max-width: none");
   });
 
   it("@media print pins job with fixed top-left vs Chrome vertical centering on tall paper selections", () => {

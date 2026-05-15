@@ -340,6 +340,39 @@ export function approximateCssLengthToViewportPx(raw: string): number {
   return Math.round(Math.max(32, px));
 }
 
+/** Margin beyond label box for print iframe/popup so calibrated transforms do not hit viewport clipping. */
+export const DYMO_PRINT_HOST_MARGIN_PX = 280;
+
+/**
+ * Sizes iframe and popup viewports for print: label dimensions plus bleed for translates/rotation;
+ * caps to available {@link screen} space in the browser.
+ */
+export function approximateDymoPrintHostSurfacePx(
+  labelWidth: string,
+  labelHeight: string,
+): { popupW: number; popupH: number; iframeWpx: number; iframeHpx: number } {
+  const vw = approximateCssLengthToViewportPx(labelWidth);
+  const vh = approximateCssLengthToViewportPx(labelHeight);
+  const bleed = DYMO_PRINT_HOST_MARGIN_PX * 2;
+
+  let capW = 1280;
+  let capH = 1000;
+  if (typeof screen !== "undefined") {
+    capW = Math.max(560, Math.min(screen.availWidth - 40, capW));
+    capH = Math.max(460, Math.min(screen.availHeight - 72, capH));
+  }
+
+  const iframeWpx = Math.min(capW, Math.max(vw + bleed, Math.round(vw * 2.4)));
+  const iframeHpx = Math.min(capH, Math.max(vh + bleed, Math.round(vh * 2.4)));
+
+  return {
+    iframeWpx,
+    iframeHpx,
+    popupW: iframeWpx,
+    popupH: iframeHpx,
+  };
+}
+
 const INCH_PAGE_DIM_RE = /^((?:\d*\.\d+|\d+))\s*in$/i;
 
 /**

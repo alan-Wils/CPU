@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import type { DymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration";
 import {
   approximateCssLengthToViewportPx,
+  approximateDymoPrintHostSurfacePx,
   defaultDymoLabelCalibrationSettings,
   pageSizeCssForDymoAtPage,
   validateDymoLabelCalibrationSettings,
@@ -218,7 +219,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     flex: 0 0 auto;
     display: inline-block;
     width: max-content;
-    max-width: var(--label-width);
+    max-width: none;
   }
   .dymo-label-content {
     position: relative;
@@ -228,7 +229,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     transform: ${contentTransform};
     display: block;
     width: max-content;
-    max-width: var(--label-width);
+    max-width: none;
   }
   .dymo-label-inner {
     display: flex;
@@ -377,12 +378,14 @@ function openDymoLabelPrintViaHiddenIframe(
 
   const iframe = document.createElement("iframe");
   iframe.setAttribute("title", "DYMO extraction batch label print");
+  const host = approximateDymoPrintHostSurfacePx(calibration.labelWidth, calibration.labelHeight);
+
   iframe.style.cssText = [
     "position:fixed",
     "left:-9999px",
     "top:0",
-    `width:${calibration.labelWidth}`,
-    `height:${calibration.labelHeight}`,
+    `width:${host.iframeWpx}px`,
+    `height:${host.iframeHpx}px`,
     "margin:0",
     "padding:0",
     "border:0",
@@ -445,10 +448,9 @@ export function openExtractionBatchLabelPrintWindow(
   );
   const html = buildDymoExtractionBatchLabelPrintHtml(f, calibration);
 
-  const vw = approximateCssLengthToViewportPx(calibration.labelWidth);
-  const vh = approximateCssLengthToViewportPx(calibration.labelHeight);
-  const outerW = Math.min(Math.round(vw + 120), 720);
-  const outerH = Math.min(Math.round(vh + 220), 900);
+  const host = approximateDymoPrintHostSurfacePx(calibration.labelWidth, calibration.labelHeight);
+  const outerW = host.popupW;
+  const outerH = host.popupH;
   const left =
     typeof screen !== "undefined"
       ? Math.max(0, Math.round((screen.availWidth - outerW) / 2))
@@ -562,7 +564,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
     <div
       style={{
         width: "fit-content",
-        maxWidth: "min(560px, 96vw)",
+        maxWidth: "min(720px, calc(96vw + 96px))",
         margin: "0 auto",
         padding: "clamp(10px, 2vw, 18px)",
         border: "1px solid rgba(148, 163, 184, 0.55)",
@@ -587,15 +589,23 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             maxWidth: 420,
           }}
         >
-          Outer box = one physical sticker ({s.labelWidth} × {s.labelHeight}). Copy is pinned to the{" "}
-          <strong style={{ color: "#e2e8f0" }}>top</strong> edge and{" "}
-          <strong style={{ color: "#e2e8f0" }}>centered left–right</strong> so it stays on a single die-cut (not
-          straddling the gap between two). Grey border does not clip before the printer/@page boundary.{" "}
+          White box with dark edge = physical sticker ({s.labelWidth} × {s.labelHeight}). Layout is pinned to the{" "}
+          <strong style={{ color: "#e2e8f0" }}>top</strong> and horizontally centered unless you shift with offsets —
+          calibrated <strong style={{ color: "#e2e8f0" }}>negative X</strong> intentionally bleeds{" "}
+          <em>outside</em> that box in this preview; transforms are never clipped until the sticker edge on paper.{" "}
           <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job (offsets + rotation + start).{" "}
           <strong style={{ color: "#93c5fd" }}>Blue</strong> = template frame.{" "}
           <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content (fine shift + scale).
         </p>
       ) : null}
+      <div
+        style={{
+          padding: "clamp(36px, 6vw, 56px)",
+          overflow: "visible",
+          margin: "0 auto",
+          boxSizing: "border-box",
+        }}
+      >
       <div
         style={{
           position: "relative",
@@ -663,7 +673,6 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                   flex: "0 0 auto",
                   display: "inline-block",
                   width: "max-content",
-                  maxWidth: s.labelWidth,
                   boxSizing: "border-box",
                   pointerEvents: "none",
                   ...(dbg ? { boxShadow: "inset 0 0 0 2px #2563eb" } : {}),
@@ -679,7 +688,6 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                     transform: contentTransform,
                     display: "block",
                     width: "max-content",
-                    maxWidth: s.labelWidth,
                     boxSizing: "border-box",
                     ...(dbg ? { boxShadow: "inset 0 0 0 2px #7c3aed" } : {}),
                   }}
@@ -764,6 +772,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             </div>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

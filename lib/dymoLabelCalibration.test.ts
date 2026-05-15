@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   approximateCssLengthToViewportPx,
+  approximateDymoPrintHostSurfacePx,
   coerceLegacyDymoCalibrationInput,
   defaultDymoLabelCalibrationSettings,
   mergeDymoLabelCalibration,
@@ -115,5 +116,15 @@ describe("approximateCssLengthToViewportPx", () => {
 
   it("normalizes bare numbers as px via calibration rules", () => {
     expect(approximateCssLengthToViewportPx("100")).toBe(100);
+  });
+});
+
+describe("approximateDymoPrintHostSurfacePx", () => {
+  it("pads iframe/popup beyond label intrinsic px for transform bleed", () => {
+    const h = approximateDymoPrintHostSurfacePx("1in", "1.5in");
+    expect(h.iframeWpx).toBeGreaterThanOrEqual(96 + 280 * 2);
+    expect(h.iframeHpx).toBeGreaterThanOrEqual(144 + 280 * 2);
+    expect(h.popupW).toBe(h.iframeWpx);
+    expect(h.popupH).toBe(h.iframeHpx);
   });
 });

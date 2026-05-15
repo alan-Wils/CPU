@@ -3258,7 +3258,18 @@ export default function Extraction() {
 
         {showTaskModal && selectedExt && (
           <div style={modalBackStyle}>
-            <div style={modalStyle}>
+            <div
+              style={{
+                ...modalStyle,
+                ...(selectedTask === "Print Batch Label"
+                  ? {
+                      maxHeight: "none",
+                      overflow: "visible",
+                      maxWidth: "min(780px, calc(100vw - 20px))",
+                    }
+                  : {}),
+              }}
+            >
               <h2 style={{ marginTop: 0 }}>Log Extraction Task</h2>
 
               <div style={{ display: "grid", gap: 10 }}>
