@@ -155,6 +155,13 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
+    /* Single label only — avoid extra page / bleed into inter-label gap */
+    .sheet {
+      page-break-inside: avoid;
+      break-inside: avoid;
+      page-break-after: avoid;
+      break-after: avoid;
+    }
   }
 </style></head><body>${inner}</body></html>`;
 }
@@ -169,15 +176,25 @@ export function openExtractionBatchLabelPrintWindow(f: ExtractionBatchLabelField
   const html = buildLabelPrintDocumentHtml(f);
   const iframe = document.createElement("iframe");
   iframe.setAttribute("title", "Extraction batch label print");
-  iframe.style.position = "fixed";
-  iframe.style.right = "0";
-  iframe.style.bottom = "0";
-  iframe.style.width = "0";
-  iframe.style.height = "0";
-  iframe.style.border = "0";
-  iframe.style.opacity = "0";
-  iframe.style.visibility = "hidden";
-  iframe.style.pointerEvents = "none";
+  /**
+   * Must NOT use 0×0 viewport: Chrome lays out @page / inch-sized body incorrectly and the job
+   * often lands in the gap between die-cut labels or misaligned on DYMO stock.
+   * Match @page size (1.5in × 1in) off-screen so layout matches physical label registration.
+   */
+  iframe.style.cssText = [
+    "position:fixed",
+    "left:-9999px",
+    "top:0",
+    "width:1.5in",
+    "height:1in",
+    "margin:0",
+    "padding:0",
+    "border:0",
+    "opacity:0",
+    "pointer-events:none",
+    "z-index:-1",
+    "overflow:hidden",
+  ].join(";");
 
   document.body.appendChild(iframe);
 
