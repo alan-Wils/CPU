@@ -49,4 +49,14 @@ describe("DYMO extraction batch label print layout", () => {
     expect(contentCss).toContain("translateY(5px)");
     expect(contentCss).toContain("scale(0.9)");
   });
+
+  it("does not use device-width viewport (prevents Chromium shrink-fit centering on tiny @page)", () => {
+    const html = buildDymoExtractionBatchLabelPrintHtml(fields, {
+      ...defaultDymoLabelCalibrationSettings,
+      labelWidth: "1.5in",
+    });
+
+    expect(html).not.toMatch(/viewport[^>]+device-width/i);
+    expect(html).toContain('meta name="viewport" content="width=144');
+  });
 });

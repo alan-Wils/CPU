@@ -3,6 +3,7 @@
 import type { CSSProperties } from "react";
 import type { DymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration";
 import {
+  approximateCssLengthToViewportPx,
   defaultDymoLabelCalibrationSettings,
   validateDymoLabelCalibrationSettings,
 } from "@/lib/dymoLabelCalibration";
@@ -120,9 +121,10 @@ export function buildDymoExtractionBatchLabelPrintHtml(
 
   const jobTransform = buildDymoLabelJobTransform(s);
   const contentTransform = buildDymoLabelContentTransform(s);
+  const viewportW = approximateCssLengthToViewportPx(s.labelWidth);
 
   return `<!DOCTYPE html>
-<html lang="en" class="dymo-label-print-root"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<html lang="en" class="dymo-label-print-root"><head><meta charset="utf-8"/><meta name="viewport" content="width=${viewportW}, initial-scale=1"/>
 <title>Extraction batch label</title>
 <style>
   /* --- DYMO print: (0,0) = page top-left; job moves entire sheet + template; content shifts/scales inside frame --- */
@@ -163,6 +165,8 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     position: absolute;
     left: 0;
     top: 0;
+    width: var(--label-width);
+    height: var(--label-height);
     margin: 0;
     padding: 0;
     transform-origin: top left;
@@ -296,7 +300,13 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     word-break: break-word;
   }
   @media print {
-    html, body {
+    html.dymo-label-print-root, body {
+      width: var(--label-width) !important;
+      height: var(--label-height) !important;
+      max-width: var(--label-width) !important;
+      max-height: var(--label-height) !important;
+      margin: 0 !important;
+      padding: 0 !important;
       background: #fff !important;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
@@ -490,6 +500,8 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             position: "absolute",
             left: 0,
             top: 0,
+            width: s.labelWidth,
+            height: s.labelHeight,
             margin: 0,
             padding: 0,
             transformOrigin: "top left",

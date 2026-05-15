@@ -92,18 +92,18 @@ export function DymoLabelCalibrationPanel({
         together (not just content inside the sheet). <strong style={{ color: "#e2e8f0" }}>Inner content</strong>{" "}
         X/Y offsets only nudge text inside the frame border. <strong style={{ color: "#e2e8f0" }}>Top/start
         offset</strong> adds feed-axis correction combined into whole-label Y. Lengths:{" "}
-        <code style={{ color: "#a5b4fc" }}>1in</code>,{" "}
+        <code style={{ color: "#a5b4fc" }}>2in</code>,{" "}
         <code style={{ color: "#a5b4fc" }}>-18px</code>, or plain{" "}
         <code style={{ color: "#a5b4fc" }}>-18</code>
         {" "}→ <code style={{ color: "#a5b4fc" }}>-18px</code>.
       </p>
       <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-        <strong style={{ color: "#e2e8f0" }}>Label width / height</strong> must match the{" "}
-        <em>physical</em> sticker (narrow × long on the roll), e.g.{" "}
-        <code style={{ color: "#a5b4fc" }}>1in</code> ×{" "}
-        <code style={{ color: "#a5b4fc" }}>1.5in</code>. Swapping them or using the old{" "}
-        <code style={{ color: "#a5b4fc" }}>2in</code>-wide default makes the print page wider than each
-        die-cut; the driver then centers it and artwork can split across two labels.
+        If the ink sits between stickers or Chrome shows a huge white strip with tiny copy centered,
+        keep <strong style={{ color: "#e2e8f0" }}>Whole label</strong>/<strong style={{ color: "#e2e8f0" }}>
+          Top/start offset
+        </strong>{" "}
+        dial-in and use <strong style={{ color: "#e2e8f0" }}>Test print</strong>; in the system dialog choose{" "}
+        matching DYMO stock and <strong style={{ color: "#e2e8f0" }}>100% scale</strong>.
       </p>
 
       <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>

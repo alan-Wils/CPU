@@ -5,7 +5,7 @@
  */
 
 export type DymoLabelCalibrationSettings = {
-  /** Physical label width for `@page` size and print iframe (CSS length, e.g. `1in`). */
+  /** Physical label width for `@page` size and print iframe (CSS length, e.g. `2in`). */
   labelWidth: string;
   /** Physical label height (CSS length). */
   labelHeight: string;
@@ -47,21 +47,17 @@ export type DymoLabelCalibrationSettings = {
 
 export const DYMO_CALIBRATION_CONFIG_KEY = "dymoLabelCalibration" as const;
 
-/**
- * Defaults for common DYMO die-cut stock **1in wide × 1.5in tall** (portrait on the roll).
- * Wrong width/height (e.g. 1.5×1 or 2×1) makes `@page` wider than the physical label; the driver
- * often centers that page and the print lands between two stickers.
- */
+/** Defaults tuned for small horizontal tag-style stock and earlier vertical placement on the roll. */
 export const defaultDymoLabelCalibrationSettings: DymoLabelCalibrationSettings = {
-  labelWidth: "1in",
-  labelHeight: "1.5in",
+  labelWidth: "2in",
+  labelHeight: "1in",
   labelFrameOffsetX: "0in",
-  labelFrameOffsetY: "0in",
+  labelFrameOffsetY: "-0.05in",
   contentOffsetX: "0px",
   contentOffsetY: "0px",
   rotationDeg: 0,
   fontSizeMultiplier: 1,
-  startOffsetY: "0in",
+  startOffsetY: "-0.18in",
   paddingLeftRight: "0.06in",
   textSpacing: "0.05in",
   printScale: 1,
@@ -301,11 +297,50 @@ export function parseCssLengthNumber(length: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+const CSS_LEN_WITH_UNIT_RE =
+  /^([-+]?(?:\d*\.\d+|\d+))(in|cm|mm|pt|px)$/;
+
+/**
+ * Pixel width for the print document's `<meta name="viewport" content="width=…">`.
+ * `width=device-width` uses the full screen inside a tiny print iframe; Chromium then
+ * shrink-to-fits the real `@page` label and the job looks centered on a wide white sheet
+ * and can land between die-cuts. ~96 CSS px per inch.
+ */
+export function approximateCssLengthToViewportPx(raw: string): number {
+  const s = normalizeDymoCalibrationCssLength(raw).trim();
+  const m = s.match(CSS_LEN_WITH_UNIT_RE);
+  const fallback = 512;
+  if (!m) return fallback;
+  const n = Math.abs(Number(m[1]));
+  const u = m[2];
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  let px: number;
+  switch (u) {
+    case "px":
+      px = n;
+      break;
+    case "in":
+      px = n * 96;
+      break;
+    case "cm":
+      px = (n * 96) / 2.54;
+      break;
+    case "mm":
+      px = (n * 96) / 25.4;
+      break;
+    case "pt":
+      px = (n * 96) / 72;
+      break;
+    default:
+      return fallback;
+  }
+  return Math.round(Math.max(32, px));
+}
+
 /** Aspect ratio width/height for preview when both dimensions share the same unit kind. */
 export function previewAspectRatioFromSettings(s: DymoLabelCalibrationSettings): number {
   const uw = parseCssLengthNumber(s.labelWidth);
   const uh = parseCssLengthNumber(s.labelHeight);
   if (uw != null && uh != null && uh > 0) return uw / uh;
-  /** Fallback matches {@link defaultDymoLabelCalibrationSettings} 1in × 1.5in */
-  return 2 / 3;
+  return 2;
 }
