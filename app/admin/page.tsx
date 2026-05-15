@@ -230,6 +230,12 @@ const INVITE_ROLE_OPTIONS: {
       "Starts with Facilities Maintenance and Data Hub. Other areas can be granted by a Manager or Company Admin; Owners can adjust anyone.",
   },
   {
+    value: "SALES_SPECIALIST",
+    label: "Sales Specialist",
+    description:
+      "Starts with Seller Platform, Marketplace, Orders, and Data Hub. Other areas can be granted by a Manager or Company Admin; Owners can adjust anyone.",
+  },
+  {
     value: "OPERATIONS_MANAGER",
     label: "Manager",
     description:
@@ -279,6 +285,7 @@ function getRoleColor(role: string) {
   if (role === "EDIBLES_MANAGER") return "#f97316";
   if (role === "FACILITY_MAINTENANCE_SPECIALIST")
     return "#06b6d4";
+  if (role === "SALES_SPECIALIST") return "#22d3ee";
   if (role === "FINANCIAL_ANALYST") return "#eab308";
   if (role === "DATABASE_ARCHITECT") return "#6366f1";
   if (role === "FULL_STACK_DEVELOPER") return "#06b6d4";
@@ -495,6 +502,7 @@ function canEditTargetUser(currentRole: string, targetRole: string) {
       "EDIBLES",
       "EDIBLES_MANAGER",
       "FACILITY_MAINTENANCE_SPECIALIST",
+      "SALES_SPECIALIST",
     ]);
     return floor.has(t);
   }

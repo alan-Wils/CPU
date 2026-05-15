@@ -167,11 +167,12 @@ export class AdminService {
             "EDIBLES",
             "EDIBLES_MANAGER",
             "FACILITY_MAINTENANCE_SPECIALIST",
+            "SALES_SPECIALIST",
         ]);
         if (actorR === "OPERATIONS_MANAGER") {
             if (!floorStaffRoles.has(targetR)) {
                 throw new AppError(
-                    "Managers may only adjust page access for floor staff (View-only, Cultivation, Extraction, Packaging, Facility Maintenance). Ask a company admin for other roles.",
+                    "Managers may only adjust page access for floor staff (View-only, Cultivation, Extraction, Packaging, Edibles, Facility Maintenance, Sales). Ask a company admin for other roles.",
                     403,
                 );
             }
@@ -321,10 +322,11 @@ export class AdminService {
             "EDIBLES",
             "EDIBLES_MANAGER",
             "FACILITY_MAINTENANCE_SPECIALIST",
+            "SALES_SPECIALIST",
         ]);
         if (actorR === "OPERATIONS_MANAGER" && !floorStaffRoles.has(targetR)) {
             throw new AppError(
-                "Managers may only send password resets for floor staff (View-only, Cultivation, Extraction, Packaging, Facility Maintenance).",
+                "Managers may only send password resets for floor staff (View-only, Cultivation, Extraction, Packaging, Edibles, Facility Maintenance, Sales).",
                 403,
             );
         }

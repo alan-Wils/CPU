@@ -103,6 +103,8 @@ export function defaultPagePermissionsForRole(role: string): AppPermissionId[] {
     return ["page.edibles", "page.data-hub", "page.analytics"];
   if (r === "FACILITY_MAINTENANCE_SPECIALIST")
     return ["page.facilities-maintenance", "page.data-hub"];
+  if (r === "SALES_SPECIALIST")
+    return ["page.sales-seller", "page.sales-marketplace", "page.orders", "page.data-hub"];
   if (r === "VIEW_ONLY")
     return ["page.data-hub"];
   if (r === "FINANCIAL_ANALYST") {

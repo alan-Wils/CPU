@@ -13,6 +13,8 @@ export const ALL_APP_PERMISSION_IDS = [
   "page.analytics",
   "page.rewards",
   "page.facilities-maintenance",
+  "page.sales-seller",
+  "page.sales-marketplace",
   "workflow.delete",
 ] as const;
 
@@ -29,6 +31,8 @@ export const APP_PERMISSION_LABELS: Record<AdminUiPermissionId, string> = {
   "page.analytics": "Analytics",
   "page.rewards": "Rewards",
   "page.facilities-maintenance": "Facilities Maintenance",
+  "page.sales-seller": "Seller Platform",
+  "page.sales-marketplace": "Marketplace",
   "workflow.delete": "Delete workflow records (batches, runs, lots, source packages)",
 };
 
@@ -47,6 +51,10 @@ export const ADMIN_PERMISSION_SECTIONS: ReadonlyArray<{
     subtitle:
       "Uncheck to hide these pages from the navigation bar and home dashboard for this employee.",
     ids: ["page.inventory", "page.orders", "page.analytics"],
+  },
+  {
+    title: "Wholesale & marketplace",
+    ids: ["page.sales-seller", "page.sales-marketplace"],
   },
   {
     title: "Data and rewards",
@@ -73,6 +81,8 @@ const PAGE_SET_ALL: AdminUiPermissionId[] = [
   "page.analytics",
   "page.rewards",
   "page.facilities-maintenance",
+  "page.sales-seller",
+  "page.sales-marketplace",
 ];
 
 export function defaultPagePermissionsForRole(role: string): AdminUiPermissionId[] {
@@ -92,6 +102,8 @@ export function defaultPagePermissionsForRole(role: string): AdminUiPermissionId
     return ["page.edibles", "page.data-hub", "page.analytics"];
   if (r === "FACILITY_MAINTENANCE_SPECIALIST")
     return ["page.facilities-maintenance", "page.data-hub"];
+  if (r === "SALES_SPECIALIST")
+    return ["page.sales-seller", "page.sales-marketplace", "page.orders", "page.data-hub"];
   if (r === "VIEW_ONLY")
     return ["page.data-hub"];
   if (
