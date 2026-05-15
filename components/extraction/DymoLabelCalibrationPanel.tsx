@@ -88,9 +88,12 @@ export function DymoLabelCalibrationPanel({
       </h3>
       <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
         Layout uses a <strong style={{ color: "#e2e8f0" }}>printer-style origin</strong>: the top-left corner of
-        the sticker is (0,0). <strong style={{ color: "#e2e8f0" }}>X / Y offset</strong> move from that corner;
-        <strong style={{ color: "#e2e8f0" }}> Top/start offset</strong> adds feed-axis correction when the job is
-        early or late on die-cut rolls (often negative to pull earlier).
+        the sticker is (0,0). <strong style={{ color: "#e2e8f0" }}>X / Y offset</strong> move from that corner;{" "}
+        <strong style={{ color: "#e2e8f0" }}>translateY</strong> combines Y + top/start offset in one step (matches
+        print/preview). Lengths: use units (<code style={{ color: "#a5b4fc" }}>2in</code>,{" "}
+        <code style={{ color: "#a5b4fc" }}>-12px</code>) or plain numbers (
+        <code style={{ color: "#a5b4fc" }}>-18</code>
+        {" "}→ <code style={{ color: "#a5b4fc" }}>-18px</code> on save/load).
       </p>
 
       <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>

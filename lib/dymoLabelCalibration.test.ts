@@ -8,16 +8,31 @@ import {
 } from "./dymoLabelCalibration";
 
 describe("validateDymoLabelCalibrationSettings", () => {
+  it("normalizes bare numeric offsets to px", () => {
+    const r = validateDymoLabelCalibrationSettings({
+      ...defaultDymoLabelCalibrationSettings,
+      offsetX: "-18",
+      offsetY: "-37",
+      startOffsetY: "0",
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.offsetX).toBe("-18px");
+      expect(r.value.offsetY).toBe("-37px");
+      expect(r.value.startOffsetY).toBe("0px");
+    }
+  });
+
   it("accepts defaults", () => {
     const r = validateDymoLabelCalibrationSettings(defaultDymoLabelCalibrationSettings);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.value.labelWidth).toBe("2in");
   });
 
-  it("rejects bad lengths", () => {
+  it("rejects invalid length strings", () => {
     const r = validateDymoLabelCalibrationSettings({
       ...defaultDymoLabelCalibrationSettings,
-      labelWidth: "2",
+      labelWidth: "abc",
     });
     expect(r.ok).toBe(false);
   });

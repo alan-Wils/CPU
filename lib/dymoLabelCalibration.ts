@@ -57,9 +57,36 @@ export const defaultDymoLabelCalibrationSettings: DymoLabelCalibrationSettings =
 const CSS_LENGTH_RE =
   /^[-+]?(?:\d*\.\d+|\d+)(?:in|cm|mm|pt|px)$/;
 
+/** Plain signed number without unit → pixels (matches browser transform math when users enter `-18`). */
+const BARE_NUMBER_LENGTH_RE = /^[-+]?(?:\d*\.\d+|\d+)$/;
+
 function isValidCssLength(s: string): boolean {
   const t = String(s || "").trim();
   return t.length > 0 && CSS_LENGTH_RE.test(t);
+}
+
+/** Normalize calibration length fields for CSS (append `px` to bare numbers). */
+export function normalizeDymoCalibrationCssLength(raw: string): string {
+  const t = String(raw ?? "").trim();
+  if (!t) return t;
+  if (CSS_LENGTH_RE.test(t)) return t;
+  if (BARE_NUMBER_LENGTH_RE.test(t)) return `${t}px`;
+  return t;
+}
+
+export function normalizeDymoLabelCalibrationSettings(
+  s: DymoLabelCalibrationSettings,
+): DymoLabelCalibrationSettings {
+  return {
+    ...s,
+    labelWidth: normalizeDymoCalibrationCssLength(s.labelWidth),
+    labelHeight: normalizeDymoCalibrationCssLength(s.labelHeight),
+    offsetX: normalizeDymoCalibrationCssLength(s.offsetX),
+    offsetY: normalizeDymoCalibrationCssLength(s.offsetY),
+    startOffsetY: normalizeDymoCalibrationCssLength(s.startOffsetY),
+    paddingLeftRight: normalizeDymoCalibrationCssLength(s.paddingLeftRight),
+    textSpacing: normalizeDymoCalibrationCssLength(s.textSpacing),
+  };
 }
 
 export function mergeDymoLabelCalibration(
@@ -120,6 +147,7 @@ export function validateDymoLabelCalibrationSettings(
   input: Partial<DymoLabelCalibrationSettings> | DymoLabelCalibrationSettings,
 ): DymoCalibrationValidationResult {
   const merged = mergeDymoLabelCalibration(defaultDymoLabelCalibrationSettings, input);
+  const normalized = normalizeDymoLabelCalibrationSettings(merged);
   const errors: string[] = [];
 
   for (const key of [
@@ -131,25 +159,27 @@ export function validateDymoLabelCalibrationSettings(
     "paddingLeftRight",
     "textSpacing",
   ] as const) {
-    if (!isValidCssLength(merged[key])) {
-      errors.push(`${key} must be a CSS length like 1in, 2mm, or -0.12in`);
+    if (!isValidCssLength(normalized[key])) {
+      errors.push(
+        `${key} must be a CSS length (e.g. 1in, -12px, 3mm). Plain numbers like -18 are treated as px.`,
+      );
     }
   }
 
-  if (!(merged.fontSizeMultiplier > 0 && merged.fontSizeMultiplier <= 4)) {
+  if (!(normalized.fontSizeMultiplier > 0 && normalized.fontSizeMultiplier <= 4)) {
     errors.push("fontSizeMultiplier must be greater than 0 and at most 4");
   }
 
-  if (!(merged.printScale > 0 && merged.printScale <= 4)) {
+  if (!(normalized.printScale > 0 && normalized.printScale <= 4)) {
     errors.push("printScale must be greater than 0 and at most 4");
   }
 
-  if (!(Number.isFinite(merged.rotationDeg) && Math.abs(merged.rotationDeg) <= 360)) {
+  if (!(Number.isFinite(normalized.rotationDeg) && Math.abs(normalized.rotationDeg) <= 360)) {
     errors.push("rotationDeg must be a finite number between -360 and 360");
   }
 
   if (errors.length) return { ok: false, errors };
-  return { ok: true, value: merged };
+  return { ok: true, value: normalized };
 }
 
 export function localStorageKeyForDymoCalibration(companyId: string): string {
