@@ -233,7 +233,8 @@ export default function EdiblesClient() {
   const [pectinBatchG, setPectinBatchG] = useState(10_000);
   const [pectinPotencySingle, setPectinPotencySingle] = useState(0.7933);
   const [pectinGPerPc, setPectinGPerPc] = useState(3.5);
-  const [pectinCitricFrac, setPectinCitricFrac] = useState(0.014);
+  /** Citric as % of total formula (workbook shows 1.40% — enter 1.4, not 0.014). */
+  const [pectinCitricPct, setPectinCitricPct] = useState(1.4);
   const [pectinLineWasteFrac, setPectinLineWasteFrac] = useState(0.05);
   const [pectinMoldMl, setPectinMoldMl] = useState("");
   const [pectinExtraCsv, setPectinExtraCsv] = useState("");
@@ -373,9 +374,14 @@ export default function EdiblesClient() {
       if (pectinGPerPc <= 0 || !Number.isFinite(pectinGPerPc)) {
         return { ok: false as const, error: "Piece weight (grams) must be positive.", mode: pectinMode };
       }
-      if (pectinCitricFrac <= 0 || pectinCitricFrac > 0.2) {
-        return { ok: false as const, error: "Citric mass fraction must be between 0 and 0.2.", mode: pectinMode };
+      if (!Number.isFinite(pectinCitricPct) || pectinCitricPct <= 0 || pectinCitricPct > 20) {
+        return {
+          ok: false as const,
+          error: "Citric (% of formula) must be between 0 and 20. Workbook Part B default is 1.4%.",
+          mode: pectinMode,
+        };
       }
+      const citricMassFraction = pectinCitricPct / 100;
       if (pectinLineWasteFrac < 0 || pectinLineWasteFrac >= 1) {
         return { ok: false as const, error: "Line waste fraction must be in [0, 1).", mode: pectinMode };
       }
@@ -391,7 +397,7 @@ export default function EdiblesClient() {
           potencyFraction: pectinPotencySingle,
           targetMgPerPiece: cMg,
           gramsPerPiece: pectinGPerPc,
-          citricMassFraction: pectinCitricFrac,
+          citricMassFraction,
           lineWasteFraction: pectinLineWasteFrac,
         });
         if (singlePlan.partAPectinMassFraction <= 0) {
@@ -420,7 +426,7 @@ export default function EdiblesClient() {
         batchSizeGrams: pectinBatchG,
         gramsPerPiece: pectinGPerPc,
         additives: pectinMultiAdditivesForPlan,
-        citricMassFraction: pectinCitricFrac,
+        citricMassFraction,
         extraMassFractions: extras.length ? extras : undefined,
         lineWasteFraction: pectinLineWasteFrac,
       });
@@ -441,7 +447,7 @@ export default function EdiblesClient() {
     pectinMode,
     pectinBatchG,
     pectinGPerPc,
-    pectinCitricFrac,
+    pectinCitricPct,
     pectinLineWasteFrac,
     pectinPotencySingle,
     cMg,
@@ -511,7 +517,7 @@ export default function EdiblesClient() {
             potencyFraction: pectinPotencySingle,
             targetMgPerPiece: cMg,
             gramsPerPiece: pectinGPerPc,
-            citricMassFraction: pectinCitricFrac,
+            citricMassFraction: pectinCitricPct / 100,
             lineWasteFraction: pectinLineWasteFrac,
           },
           plan: pectinPreview.singlePlan,
@@ -530,7 +536,7 @@ export default function EdiblesClient() {
         pectinSnapshot = buildSnapshotFromMulti({
           batchSizeGrams: pectinBatchG,
           gramsPerPiece: pectinGPerPc,
-          citricMassFraction: pectinCitricFrac,
+          citricMassFraction: pectinCitricPct / 100,
           lineWasteFraction: pectinLineWasteFrac,
           plan: pectinPreview.multiPlan,
           inputAdditives: pectinMultiAdditivesForPlan,
@@ -1095,16 +1101,19 @@ export default function EdiblesClient() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
                   <label style={{ fontSize: 13 }}>
-                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Citric mass fraction</div>
+                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Citric (% of formula)</div>
                     <input
                       type="number"
-                      min={0.001}
-                      max={0.2}
-                      step={0.001}
-                      value={pectinCitricFrac}
-                      onChange={(e) => setPectinCitricFrac(Number(e.target.value))}
+                      min={0.01}
+                      max={20}
+                      step={0.01}
+                      value={pectinCitricPct}
+                      onChange={(e) => setPectinCitricPct(Number(e.target.value))}
                       style={inputFull}
                     />
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                      Same as workbook Part B (default 1.4 = 1.4% of batch).
+                    </div>
                   </label>
                   <label style={{ fontSize: 13 }}>
                     <div style={{ color: "#94a3b8", marginBottom: 4 }}>Line waste fraction</div>
