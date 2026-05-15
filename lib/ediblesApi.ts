@@ -68,6 +68,12 @@ export async function fetchEdiblesAnalytics(): Promise<Record<string, unknown>> 
   return apiRequest<Record<string, unknown>>("/api/edibles/analytics");
 }
 
+export type EdibleBatchCreated = {
+  id: string;
+  batchNumber?: string;
+  [k: string]: unknown;
+};
+
 export async function createEdibleBatch(body: {
   sku: string;
   flavor: string;
@@ -79,8 +85,8 @@ export async function createEdibleBatch(body: {
   potencyMgPerGram?: number | null;
   notes?: string | null;
   expectedYield?: number | null;
-}) {
-  return apiRequest("/api/edibles/batches", { method: "POST", body });
+}): Promise<EdibleBatchCreated> {
+  return apiRequest<EdibleBatchCreated>("/api/edibles/batches", { method: "POST", body });
 }
 
 export async function patchEdibleBatch(

@@ -19,6 +19,18 @@ import {
   type EdibleDashboardJson,
   type EdibleOilOption,
 } from "@/lib/ediblesApi";
+import {
+  buildSnapshotFromMulti,
+  buildSnapshotFromSingle,
+  mergeUserNotesAndPectinPlan,
+  postPectinKitchenIngredients,
+  type PectinMeltFormulaSnapshot,
+} from "@/lib/ediblesPectinBatchNotes";
+import {
+  estimatedGummyWeightGramsFromMoldMl,
+  planPectinMultiAdditiveBatch,
+  planPectinSingleAdditiveBatch,
+} from "@/lib/ediblesPectinFormula";
 
 const EDIBLE_STAGES = [
   "OIL_INTAKE",
@@ -81,6 +93,22 @@ const CALENDAR_TASK_SUGGESTIONS = [
   ...QA_TASKS,
   ...PACK_TRANSFER_TASKS,
 ];
+
+type PectinMultiRow = { goalMg: number; potencyFrac: number };
+
+function parseExtraMassFractionsCsv(raw: string): number[] {
+  if (!raw.trim()) return [];
+  const parts = raw.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+  const out: number[] = [];
+  for (const p of parts) {
+    const v = Number(p);
+    if (!Number.isFinite(v) || v < 0 || v > 0.5) {
+      throw new Error(`Extra mass fraction must be between 0 and 0.5 (invalid token: "${p}")`);
+    }
+    out.push(v);
+  }
+  return out;
+}
 
 const cardStyle: React.CSSProperties = {
   background: "linear-gradient(145deg, rgba(15,23,42,0.92), rgba(2,6,23,0.96))",
@@ -200,6 +228,22 @@ export default function EdiblesClient() {
   const [cOilG, setCOilG] = useState(100);
   const [cPotency, setCPotency] = useState<number | "">(85);
   const [cNotes, setCNotes] = useState("");
+
+  const [pectinMode, setPectinMode] = useState<"single" | "multi">("single");
+  const [pectinBatchG, setPectinBatchG] = useState(10_000);
+  const [pectinPotencySingle, setPectinPotencySingle] = useState(0.7933);
+  const [pectinGPerPc, setPectinGPerPc] = useState(3.5);
+  const [pectinCitricFrac, setPectinCitricFrac] = useState(0.014);
+  const [pectinLineWasteFrac, setPectinLineWasteFrac] = useState(0.05);
+  const [pectinMoldMl, setPectinMoldMl] = useState("");
+  const [pectinExtraCsv, setPectinExtraCsv] = useState("");
+  const [pectinMultiRows, setPectinMultiRows] = useState<PectinMultiRow[]>([
+    { goalMg: 10, potencyFrac: 0.7933 },
+    { goalMg: 0, potencyFrac: 1 },
+    { goalMg: 0, potencyFrac: 1 },
+    { goalMg: 0, potencyFrac: 1 },
+  ]);
+  const [createBusy, setCreateBusy] = useState(false);
   const [cIngredientNotes, setCIngredientNotes] = useState("");
 
   const [taskModal, setTaskModal] = useState<EdibleDashboardBatch | null>(null);
@@ -304,36 +348,242 @@ export default function EdiblesClient() {
 
   const selectedOil = useMemo(() => oilOptions.find((o) => o.extractionRunId === cRunId), [oilOptions, cRunId]);
 
+  const pectinMultiAdditivesForPlan = useMemo(
+    () =>
+      pectinMultiRows
+        .map((r) => ({ goalMgPerPiece: r.goalMg, potencyFraction: r.potencyFrac }))
+        .filter((r) => r.goalMgPerPiece > 0),
+    [pectinMultiRows],
+  );
+
+  const effectiveTargetMgForBatch = useMemo(() => {
+    if (cProduct !== "Gummies" || pectinMode !== "multi") return cMg;
+    const sum = pectinMultiAdditivesForPlan.reduce((s, r) => s + r.goalMgPerPiece, 0);
+    return sum > 0 ? sum : cMg;
+  }, [cProduct, pectinMode, pectinMultiAdditivesForPlan, cMg]);
+
+  const pectinPreview = useMemo(() => {
+    if (cProduct !== "Gummies") {
+      return { ok: true as const, error: null as string | null, mode: "single" as const };
+    }
+    try {
+      if (pectinBatchG <= 0 || !Number.isFinite(pectinBatchG)) {
+        return { ok: false as const, error: "Pectin batch size (grams) must be a positive number.", mode: pectinMode };
+      }
+      if (pectinGPerPc <= 0 || !Number.isFinite(pectinGPerPc)) {
+        return { ok: false as const, error: "Piece weight (grams) must be positive.", mode: pectinMode };
+      }
+      if (pectinCitricFrac <= 0 || pectinCitricFrac > 0.2) {
+        return { ok: false as const, error: "Citric mass fraction must be between 0 and 0.2.", mode: pectinMode };
+      }
+      if (pectinLineWasteFrac < 0 || pectinLineWasteFrac >= 1) {
+        return { ok: false as const, error: "Line waste fraction must be in [0, 1).", mode: pectinMode };
+      }
+      if (pectinMode === "single") {
+        if (cMg <= 0) {
+          return { ok: false as const, error: "Target MG / piece must be positive for the pectin plan.", mode: "single" as const };
+        }
+        if (pectinPotencySingle <= 0 || pectinPotencySingle > 1) {
+          return { ok: false as const, error: "Additive potency fraction must be in (0, 1].", mode: "single" as const };
+        }
+        const singlePlan = planPectinSingleAdditiveBatch({
+          batchSizeGrams: pectinBatchG,
+          potencyFraction: pectinPotencySingle,
+          targetMgPerPiece: cMg,
+          gramsPerPiece: pectinGPerPc,
+          citricMassFraction: pectinCitricFrac,
+          lineWasteFraction: pectinLineWasteFrac,
+        });
+        if (singlePlan.partAPectinMassFraction <= 0) {
+          return {
+            ok: false as const,
+            error: "Pectin plan is infeasible (Part A ≤ 0). Reduce citric %, mg target, or adjust inputs.",
+            mode: "single" as const,
+          };
+        }
+        return { ok: true as const, error: null as string | null, singlePlan, mode: "single" as const };
+      }
+      const extras = parseExtraMassFractionsCsv(pectinExtraCsv);
+      if (pectinMultiAdditivesForPlan.length === 0) {
+        return {
+          ok: false as const,
+          error: "Multi-additive mode requires at least one additive row with goal mg > 0.",
+          mode: "multi" as const,
+        };
+      }
+      for (const row of pectinMultiAdditivesForPlan) {
+        if (row.potencyFraction <= 0 || row.potencyFraction > 1) {
+          return { ok: false as const, error: "Each additive potency fraction must be in (0, 1].", mode: "multi" as const };
+        }
+      }
+      const multiPlan = planPectinMultiAdditiveBatch({
+        batchSizeGrams: pectinBatchG,
+        gramsPerPiece: pectinGPerPc,
+        additives: pectinMultiAdditivesForPlan,
+        citricMassFraction: pectinCitricFrac,
+        extraMassFractions: extras.length ? extras : undefined,
+        lineWasteFraction: pectinLineWasteFrac,
+      });
+      if (multiPlan.partAPectinMassFraction <= 0) {
+        return {
+          ok: false as const,
+          error: "Pectin plan is infeasible (Part A ≤ 0). Reduce additives, extras, or citric %.",
+          mode: "multi" as const,
+        };
+      }
+      return { ok: true as const, error: null as string | null, multiPlan, mode: "multi" as const };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Invalid pectin calculator inputs.";
+      return { ok: false as const, error: msg, mode: pectinMode };
+    }
+  }, [
+    cProduct,
+    pectinMode,
+    pectinBatchG,
+    pectinGPerPc,
+    pectinCitricFrac,
+    pectinLineWasteFrac,
+    pectinPotencySingle,
+    cMg,
+    pectinMultiAdditivesForPlan,
+    pectinExtraCsv,
+  ]);
+
   const projected = useMemo(() => {
     const potencyNum = cPotency === "" ? 0 : Number(cPotency);
     const mg = Number.isFinite(potencyNum) && potencyNum > 0 ? cOilG * potencyNum : 0;
-    const per = cMg > 0 ? mg / cMg : 0;
+    const perPieceMg =
+      cProduct === "Gummies" && pectinMode === "multi" ? effectiveTargetMgForBatch : cMg;
+    const per = perPieceMg > 0 ? mg / perPieceMg : 0;
     return { totalMg: mg, estPieces: per > 0 ? Math.floor(per) : 0 };
-  }, [cOilG, cPotency, cMg]);
+  }, [cOilG, cPotency, cMg, cProduct, pectinMode, effectiveTargetMgForBatch]);
 
   async function onCreateSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
     if (!cRunId.trim()) {
       setError("Select an extraction oil source.");
       return;
     }
-    await createEdibleBatch({
-      sku: cSku,
-      flavor: cFlavor,
-      productType: cProduct,
-      targetMgPerPiece: cMg,
-      targetPieces: Math.floor(cPieces),
-      extractionRunId: cRunId,
-      oilInputGrams: cOilG,
-      potencyMgPerGram: cPotency === "" ? null : Number(cPotency),
-      notes:
-        [cNotes.trim(), cIngredientNotes.trim() ? `Ingredients: ${cIngredientNotes.trim()}` : ""]
-          .filter(Boolean)
-          .join("\n\n") || null,
-      expectedYield: projected.estPieces > 0 ? projected.estPieces : null,
-    });
-    setCreateOpen(false);
-    await refresh();
+    if (!cSku.trim() || !cFlavor.trim()) {
+      setError("SKU and flavor are required.");
+      return;
+    }
+    if (cProduct === "Gummies") {
+      if (!pectinPreview.ok) {
+        setError(pectinPreview.error || "Complete the pectin formula calculator before creating a gummy batch.");
+        return;
+      }
+    }
+    const oilG = Number(cOilG);
+    if (!Number.isFinite(oilG) || oilG <= 0) {
+      setError("Oil allocated (grams) must be a positive number.");
+      return;
+    }
+    if (selectedOil && oilG > selectedOil.availableGrams + 1e-6) {
+      setError(
+        `Oil grams (${oilG.toFixed(4)} g) cannot exceed available on this run (${selectedOil.availableGrams.toFixed(4)} g).`,
+      );
+      return;
+    }
+    const targetPiecesInt = Math.floor(Number(cPieces));
+    if (!Number.isFinite(targetPiecesInt) || targetPiecesInt < 1) {
+      setError("Gummies per batch (target pieces) must be an integer ≥ 1.");
+      return;
+    }
+    const targetMgForApi = cProduct === "Gummies" && pectinMode === "multi" ? effectiveTargetMgForBatch : cMg;
+    if (!Number.isFinite(targetMgForApi) || targetMgForApi <= 0) {
+      setError("Target MG / piece must be positive.");
+      return;
+    }
+
+    const userKitchenNotes = [cNotes.trim(), cIngredientNotes.trim() ? `Ingredients: ${cIngredientNotes.trim()}` : ""]
+      .filter(Boolean)
+      .join("\n\n");
+
+    let notesPayload: string | null = userKitchenNotes || null;
+    let pectinSnapshot: PectinMeltFormulaSnapshot | null = null;
+    if (cProduct === "Gummies" && pectinPreview.ok) {
+      if (pectinPreview.mode === "single" && "singlePlan" in pectinPreview && pectinPreview.singlePlan) {
+        pectinSnapshot = buildSnapshotFromSingle({
+          input: {
+            batchSizeGrams: pectinBatchG,
+            potencyFraction: pectinPotencySingle,
+            targetMgPerPiece: cMg,
+            gramsPerPiece: pectinGPerPc,
+            citricMassFraction: pectinCitricFrac,
+            lineWasteFraction: pectinLineWasteFrac,
+          },
+          plan: pectinPreview.singlePlan,
+          oilInputGrams: oilG,
+          targetPieces: targetPiecesInt,
+          lineWasteFraction: pectinLineWasteFrac,
+        });
+      } else if (pectinPreview.mode === "multi" && "multiPlan" in pectinPreview && pectinPreview.multiPlan) {
+        let extras: number[] = [];
+        try {
+          extras = parseExtraMassFractionsCsv(pectinExtraCsv);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Invalid extra mass fractions.");
+          return;
+        }
+        pectinSnapshot = buildSnapshotFromMulti({
+          batchSizeGrams: pectinBatchG,
+          gramsPerPiece: pectinGPerPc,
+          citricMassFraction: pectinCitricFrac,
+          lineWasteFraction: pectinLineWasteFrac,
+          plan: pectinPreview.multiPlan,
+          inputAdditives: pectinMultiAdditivesForPlan,
+          extraMassFractions: extras,
+          oilInputGrams: oilG,
+          targetPieces: targetPiecesInt,
+        });
+      }
+      if (pectinSnapshot) {
+        try {
+          notesPayload = mergeUserNotesAndPectinPlan(userKitchenNotes, pectinSnapshot);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Could not build batch notes.");
+          return;
+        }
+      }
+    }
+
+    setCreateBusy(true);
+    try {
+      const created = await createEdibleBatch({
+        sku: cSku,
+        flavor: cFlavor,
+        productType: cProduct,
+        targetMgPerPiece: targetMgForApi,
+        targetPieces: targetPiecesInt,
+        extractionRunId: cRunId,
+        oilInputGrams: oilG,
+        potencyMgPerGram: cPotency === "" ? null : Number(cPotency),
+        notes: notesPayload,
+        expectedYield: projected.estPieces > 0 ? projected.estPieces : null,
+      });
+      if (pectinSnapshot && created?.id) {
+        try {
+          await postPectinKitchenIngredients(created.id, pectinSnapshot);
+        } catch (ingErr) {
+          setError(
+            `Batch ${created.batchNumber ?? created.id} was created, but ingredient lines failed: ${
+              ingErr instanceof Error ? ingErr.message : String(ingErr)
+            }`,
+          );
+          setCreateOpen(false);
+          await refresh();
+          return;
+        }
+      }
+      setCreateOpen(false);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create edible batch.");
+    } finally {
+      setCreateBusy(false);
+    }
   }
 
   async function onLogTask(e: React.FormEvent) {
@@ -646,7 +896,7 @@ export default function EdiblesClient() {
             padding: 16,
           }}
         >
-          <form onSubmit={onCreateSubmit} style={{ ...cardStyle, maxWidth: 560, width: "100%" }}>
+          <form onSubmit={onCreateSubmit} style={{ ...cardStyle, maxWidth: 640, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
             <h3 style={{ marginTop: 0 }}>Create Edible Batch</h3>
             <label style={{ display: "block", marginBottom: 10, fontSize: 13 }}>
               <div style={{ color: "#94a3b8", marginBottom: 4 }}>SKU</div>
@@ -743,6 +993,229 @@ export default function EdiblesClient() {
             <div style={{ fontSize: 12, color: "#fdba74", marginBottom: 10 }}>
               Projected total MG: {Math.round(projected.totalMg)} · Estimated pieces @ target MG: {projected.estPieces}
             </div>
+            {cProduct === "Gummies" && (
+              <div
+                style={{
+                  border: "1px solid rgba(251, 146, 60, 0.45)",
+                  borderRadius: 14,
+                  padding: 14,
+                  marginBottom: 12,
+                  background: "linear-gradient(160deg, rgba(30,20,10,0.5), rgba(15,23,42,0.88))",
+                  boxShadow: "0 0 22px rgba(251, 146, 60, 0.12)",
+                }}
+              >
+                <div style={{ fontWeight: 900, marginBottom: 6, color: "#fdba74" }}>Pectin (Melt-to-Make) formula</div>
+                <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 10px", lineHeight: 1.45 }}>
+                  Uses the same calculator as the Melt-to-Make workbook. The saved plan is appended to batch notes (with
+                  JSON), then Part A, oil allocation, citric, and any extra masses are posted as ingredient lines.
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                  <button
+                    type="button"
+                    style={{
+                      ...ghostBtn,
+                      border:
+                        pectinMode === "single" ? "1px solid rgba(251, 146, 60, 0.75)" : ghostBtn.border,
+                      boxShadow: pectinMode === "single" ? "0 0 14px rgba(251,146,60,0.2)" : "none",
+                    }}
+                    onClick={() => setPectinMode("single")}
+                  >
+                    Single additive
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      ...ghostBtn,
+                      border: pectinMode === "multi" ? "1px solid rgba(251, 146, 60, 0.75)" : ghostBtn.border,
+                      boxShadow: pectinMode === "multi" ? "0 0 14px rgba(251,146,60,0.2)" : "none",
+                    }}
+                    onClick={() => setPectinMode("multi")}
+                  >
+                    Multi additive
+                  </button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                  <label style={{ fontSize: 13 }}>
+                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Batch size (g)</div>
+                    <input
+                      type="number"
+                      required
+                      min={1}
+                      step={1}
+                      value={pectinBatchG}
+                      onChange={(e) => setPectinBatchG(Number(e.target.value))}
+                      style={inputFull}
+                    />
+                  </label>
+                  <label style={{ fontSize: 13 }}>
+                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Piece weight (g)</div>
+                    <input
+                      type="number"
+                      required
+                      min={0.01}
+                      step={0.01}
+                      value={pectinGPerPc}
+                      onChange={(e) => setPectinGPerPc(Number(e.target.value))}
+                      style={inputFull}
+                    />
+                  </label>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end", marginBottom: 10 }}>
+                  <label style={{ fontSize: 13, flex: "1 1 120px" }}>
+                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Mold cavity (mL)</div>
+                    <input
+                      type="number"
+                      min={0.1}
+                      step={0.1}
+                      value={pectinMoldMl}
+                      onChange={(e) => setPectinMoldMl(e.target.value)}
+                      style={inputFull}
+                      placeholder="Optional"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    style={ghostBtn}
+                    onClick={() => {
+                      const v = Number(pectinMoldMl);
+                      if (!Number.isFinite(v) || v <= 0) {
+                        setError("Enter a valid mold cavity volume in mL to apply piece weight.");
+                        return;
+                      }
+                      try {
+                        setPectinGPerPc(estimatedGummyWeightGramsFromMoldMl(v));
+                        setError(null);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "Could not estimate piece weight.");
+                      }
+                    }}
+                  >
+                    Apply mL → g
+                  </button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                  <label style={{ fontSize: 13 }}>
+                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Citric mass fraction</div>
+                    <input
+                      type="number"
+                      min={0.001}
+                      max={0.2}
+                      step={0.001}
+                      value={pectinCitricFrac}
+                      onChange={(e) => setPectinCitricFrac(Number(e.target.value))}
+                      style={inputFull}
+                    />
+                  </label>
+                  <label style={{ fontSize: 13 }}>
+                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Line waste fraction</div>
+                    <input
+                      type="number"
+                      min={0}
+                      max={0.49}
+                      step={0.01}
+                      value={pectinLineWasteFrac}
+                      onChange={(e) => setPectinLineWasteFrac(Number(e.target.value))}
+                      style={inputFull}
+                    />
+                  </label>
+                </div>
+                {pectinMode === "single" ? (
+                  <label style={{ display: "block", marginBottom: 10, fontSize: 13 }}>
+                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>
+                      Additive potency (0–1 fraction, e.g. COA 79.33% → 0.7933)
+                    </div>
+                    <input
+                      type="number"
+                      required
+                      min={0.0001}
+                      max={1}
+                      step={0.0001}
+                      value={pectinPotencySingle}
+                      onChange={(e) => setPectinPotencySingle(Number(e.target.value))}
+                      style={inputFull}
+                    />
+                  </label>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 12, color: "#fdba74", marginBottom: 6 }}>
+                      Multi mode: batch <span style={{ fontWeight: 800 }}>target MG / piece</span> sent to the API is the
+                      sum of additive goals ({effectiveTargetMgForBatch.toFixed(2)} mg).
+                    </div>
+                    {Math.abs(cMg - effectiveTargetMgForBatch) > 0.001 && (
+                      <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 8 }}>
+                        Note: the Target MG / piece field above ({cMg}) does not match the pectin row sum — creation uses
+                        the row sum for compliance with the calculator.
+                      </div>
+                    )}
+                    {[0, 1, 2, 3].map((idx) => (
+                      <div
+                        key={idx}
+                        style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 8 }}
+                      >
+                        <label style={{ fontSize: 12 }}>
+                          <div style={{ color: "#94a3b8", marginBottom: 4 }}>Additive #{idx + 1} goal (mg/pc)</div>
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.1}
+                            value={pectinMultiRows[idx]!.goalMg}
+                            onChange={(e) => {
+                              const next = [...pectinMultiRows];
+                              next[idx] = { ...next[idx]!, goalMg: Number(e.target.value) };
+                              setPectinMultiRows(next);
+                            }}
+                            style={inputFull}
+                          />
+                        </label>
+                        <label style={{ fontSize: 12 }}>
+                          <div style={{ color: "#94a3b8", marginBottom: 4 }}>Potency fraction (0–1)</div>
+                          <input
+                            type="number"
+                            min={0.0001}
+                            max={1}
+                            step={0.0001}
+                            value={pectinMultiRows[idx]!.potencyFrac}
+                            onChange={(e) => {
+                              const next = [...pectinMultiRows];
+                              next[idx] = { ...next[idx]!, potencyFrac: Number(e.target.value) };
+                              setPectinMultiRows(next);
+                            }}
+                            style={inputFull}
+                          />
+                        </label>
+                      </div>
+                    ))}
+                    <label style={{ display: "block", marginBottom: 10, fontSize: 13 }}>
+                      <div style={{ color: "#94a3b8", marginBottom: 4 }}>
+                        Extra mass fractions (optional, comma-separated, e.g. 0.02,0.01)
+                      </div>
+                      <input value={pectinExtraCsv} onChange={(e) => setPectinExtraCsv(e.target.value)} style={inputFull} />
+                    </label>
+                  </>
+                )}
+                {pectinPreview.ok && "singlePlan" in pectinPreview && pectinPreview.singlePlan && (
+                  <div style={{ fontSize: 12, color: "#86efac", marginBottom: 8, lineHeight: 1.5 }}>
+                    Preview — Part A: {pectinPreview.singlePlan.gramsPartAPectin.toFixed(2)} g · Additive (calc):{" "}
+                    {pectinPreview.singlePlan.gramsAdditive.toFixed(2)} g · Citric:{" "}
+                    {pectinPreview.singlePlan.gramsCitricSolution.toFixed(2)} g · Pieces after waste:{" "}
+                    {pectinPreview.singlePlan.piecesAfterLineWaste.toFixed(1)}
+                  </div>
+                )}
+                {pectinPreview.ok && "multiPlan" in pectinPreview && pectinPreview.multiPlan && (
+                  <div style={{ fontSize: 12, color: "#86efac", marginBottom: 8, lineHeight: 1.5 }}>
+                    Preview — Part A: {pectinPreview.multiPlan.gramsByLine.partAPectin.toFixed(2)} g · Additives (calc):{" "}
+                    {pectinPreview.multiPlan.gramsByLine.additives
+                      .map((x) => x.toFixed(2))
+                      .join(", ")}{" "}
+                    g · Citric: {pectinPreview.multiPlan.gramsByLine.citric.toFixed(2)} g · Pieces after waste:{" "}
+                    {pectinPreview.multiPlan.piecesAfterLineWaste.toFixed(1)}
+                  </div>
+                )}
+                {cProduct === "Gummies" && !pectinPreview.ok && pectinPreview.error && (
+                  <div style={{ fontSize: 12, color: "#fecaca", marginTop: 4 }}>{pectinPreview.error}</div>
+                )}
+              </div>
+            )}
             <label style={{ display: "block", marginBottom: 10, fontSize: 13 }}>
               <div style={{ color: "#94a3b8", marginBottom: 4 }}>Ingredient notes</div>
               <textarea
@@ -757,11 +1230,11 @@ export default function EdiblesClient() {
               <textarea value={cNotes} onChange={(e) => setCNotes(e.target.value)} rows={3} style={inputFull} />
             </label>
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button type="button" style={ghostBtn} onClick={() => setCreateOpen(false)}>
+              <button type="button" style={ghostBtn} onClick={() => setCreateOpen(false)} disabled={createBusy}>
                 Cancel
               </button>
-              <button type="submit" style={primaryBtn}>
-                Create
+              <button type="submit" style={primaryBtn} disabled={createBusy}>
+                {createBusy ? "Creating…" : "Create"}
               </button>
             </div>
           </form>
