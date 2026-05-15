@@ -10,7 +10,7 @@ export type DymoLabelCalibrationSettings = {
   /** Physical label height (CSS length). */
   labelHeight: string;
   /**
-   * Moves the **entire print job** horizontally: white sheet, frame, border, columns, and text together (print origin on X).
+   * Moves the **entire print job** horizontally: white sheet, frame, border, stacked blocks, and text together (print origin on X).
    */
   labelFrameOffsetX: string;
   /**
@@ -37,9 +37,9 @@ export type DymoLabelCalibrationSettings = {
    * Use negative values when the driver prints “too late” and content straddles the gap between die-cut labels.
    */
   startOffsetY: string;
-  /** Horizontal padding inside the text columns (CSS length). */
+  /** Horizontal padding inside the label text blocks (CSS length). */
   paddingLeftRight: string;
-  /** Gap between the two columns / perceived text looseness (CSS length). */
+  /** Vertical gap between stacked blocks and internal rhythm (CSS length). */
   textSpacing: string;
   /** Uniform scale applied on `.dymo-label-content` only (inner content). */
   printScale: number;

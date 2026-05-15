@@ -66,10 +66,23 @@ function resolveCalibration(
 }
 
 /**
- * Rotation added to calibration {@link DymoLabelCalibrationSettings.rotationDeg} for every job transform.
- * Matches common DYMO die orientation vs browser print coordinates; negate or set to 0 if your stack differs.
+ * Extra rotation (deg) added to calibration {@link DymoLabelCalibrationSettings.rotationDeg} on the job transform.
+ * Default 0 keeps CSS layout aligned with what you see in preview/print; use the calibration **Rotation** field for your die/stock.
  */
-const DYMO_JOB_ROTATION_OFFSET_DEG = 90;
+const DYMO_JOB_ROTATION_OFFSET_DEG = 0;
+
+/**
+ * When the job uses `rotate(≈90° or ≈270°)`, a CSS **column** flex reads as left/right on the physical sticker.
+ * Lay out the two blocks **in a row** in CSS so that, after the same rotation, market/batch stays **above** product/source.
+ */
+function dymoLabelInnerUsesRowBeforeJobRotation(totalRotationDeg: number): boolean {
+  const r = ((totalRotationDeg % 360) + 360) % 360;
+  const distTo = (target: number) => {
+    const d = Math.abs(r - target);
+    return Math.min(d, 360 - d);
+  };
+  return distTo(90) < 46 || distTo(270) < 46;
+}
 
 /** Print job: whole sheet + template position, rotation, and feed-axis Y (including {@link DymoLabelCalibrationSettings.startOffsetY}). */
 function buildDymoLabelJobTransform(s: DymoLabelCalibrationSettings): string {
@@ -104,6 +117,10 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   const originMarker = DYMO_LABEL_LAYOUT_DEBUG
     ? '<div class="dymo-label-origin-marker" aria-hidden="true"></div>'
     : "";
+  const innerRotPrep = dymoLabelInnerUsesRowBeforeJobRotation(
+    s.rotationDeg + DYMO_JOB_ROTATION_OFFSET_DEG,
+  );
+  const innerClass = innerRotPrep ? "dymo-label-inner dymo-label-inner--rot90-prep" : "dymo-label-inner";
   const inner = `
 <div class="dymo-label-job${dbg}">
   <div class="dymo-label-sheet${dbg}">
@@ -111,12 +128,12 @@ export function buildDymoExtractionBatchLabelPrintHtml(
       ${originMarker}
       <div class="dymo-label-frame${dbg}">
         <div class="dymo-label-content${dbg}">
-        <div class="dymo-label-inner">
-        <div class="col left">
+        <div class="${innerClass}">
+        <div class="dymo-label-blk">
           <div class="code">${escapeHtml(f.marketCode)}</div>
           <div class="id">${escapeHtml(f.batchId)}</div>
         </div>
-        <div class="col right">
+        <div class="dymo-label-blk">
           <div class="ptype">${escapeHtml(f.productType)}</div>
           <div class="src">${escapeHtml(f.sourcesLine)}</div>
         </div>
@@ -254,35 +271,53 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   }
   .dymo-label-inner {
     display: flex;
-    flex-direction: row;
+    flex-direction: column;
     align-items: stretch;
     justify-content: flex-start;
     flex: 1 1 auto;
     width: 100%;
     min-width: 0;
     min-height: 0;
-    gap: var(--dymo-gap);
+    gap: 0;
     text-align: left;
     padding-left: var(--dymo-pad-x);
     padding-right: var(--dymo-pad-x);
     margin: 0;
     box-sizing: border-box;
   }
-  .col {
+  .dymo-label-blk {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     justify-content: flex-start;
     min-width: 0;
+    width: 100%;
+    flex: 0 1 auto;
+    align-self: stretch;
+    box-sizing: border-box;
+  }
+  .dymo-label-blk + .dymo-label-blk {
+    margin-top: var(--dymo-gap);
+    padding-top: var(--dymo-gap);
+    border-top: 0.5pt solid #bbb;
+  }
+  .dymo-label-inner--rot90-prep {
+    flex-direction: row;
+    align-items: stretch;
+  }
+  .dymo-label-inner--rot90-prep .dymo-label-blk {
     flex: 1 1 0;
+    min-width: 0;
+    width: auto;
     align-self: stretch;
   }
-  .left {
-    border-right: 0.5pt solid #bbb;
-    padding-right: var(--dymo-gap);
-  }
-  .right {
-    padding-left: 0;
+  .dymo-label-inner--rot90-prep .dymo-label-blk + .dymo-label-blk {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+    margin-left: var(--dymo-gap);
+    padding-left: var(--dymo-gap);
+    border-left: 0.5pt solid #bbb;
   }
   .dymo-label-debug.dymo-label-job {
     box-shadow: inset 0 0 0 2px #14b8a6;
@@ -493,15 +528,20 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
   const jobTransform = buildDymoLabelJobTransform(s);
   const contentTransform = buildDymoLabelContentTransform(s);
   const fmul = s.fontSizeMultiplier;
+  const innerRotPrep = dymoLabelInnerUsesRowBeforeJobRotation(
+    s.rotationDeg + DYMO_JOB_ROTATION_OFFSET_DEG,
+  );
 
-  const col: CSSProperties = {
+  const blk: CSSProperties = {
     display: "flex",
     flexDirection: "column",
     alignItems: "flex-start",
     justifyContent: "flex-start",
     textAlign: "left",
     minWidth: 0,
-    flex: "1 1 0",
+    width: innerRotPrep ? undefined : "100%",
+    flex: innerRotPrep ? "1 1 0%" : "0 1 auto",
+    boxSizing: "border-box",
   };
 
   const originMarker: CSSProperties = {
@@ -549,10 +589,10 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             maxWidth: 420,
           }}
         >
-          Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}). Columns use the{" "}
-          <strong style={{ color: "#e2e8f0" }}>full width</strong> of that box (top-aligned) so lines wrap less on wide
-          stock. Use offsets only when your printer/driver is shifted. <strong style={{ color: "#2dd4bf" }}>Teal</strong>{" "}
-          = whole job · <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame ·{" "}
+          Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}).{" "}
+          <strong style={{ color: "#e2e8f0" }}>Market + batch</strong> above <strong style={{ color: "#e2e8f0" }}>product + source</strong> on the sticker. At ~90°/270° job rotation the template uses a row so that pair stays stacked after the turn.{" "}
+          <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job ·{" "}
+          <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame ·{" "}
           <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content.
         </p>
       ) : null}
@@ -654,13 +694,17 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                   }}
                 >
                   <div
-                    className="dymo-label-inner"
+                    className={
+                      innerRotPrep
+                        ? "dymo-label-inner dymo-label-inner--rot90-prep"
+                        : "dymo-label-inner"
+                    }
                     style={{
                       display: "flex",
-                      flexDirection: "row",
+                      flexDirection: innerRotPrep ? "row" : "column",
                       alignItems: "stretch",
                       justifyContent: "flex-start",
-                      gap: s.textSpacing,
+                      gap: 0,
                       textAlign: "left",
                       flex: "1 1 auto",
                       width: "100%",
@@ -673,14 +717,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                       fontFamily: 'system-ui, "Segoe UI", Roboto, Arial, sans-serif',
                     }}
                   >
-                    <div
-                      style={{
-                        ...col,
-                        alignSelf: "stretch",
-                        borderRight: "1px solid rgba(148, 163, 184, 0.35)",
-                        paddingRight: s.textSpacing,
-                      }}
-                    >
+                    <div style={{ ...blk, alignSelf: "stretch" }}>
                       <div
                         style={{
                           fontSize: `calc(10.5pt * ${fmul})`,
@@ -707,7 +744,28 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                         {fields.batchId}
                       </div>
                     </div>
-                    <div style={{ ...col, alignSelf: "stretch" }}>
+                    <div
+                      style={
+                        innerRotPrep
+                          ? {
+                              ...blk,
+                              alignSelf: "stretch",
+                              marginLeft: s.textSpacing,
+                              paddingLeft: s.textSpacing,
+                              borderLeft: "1px solid rgba(148, 163, 184, 0.35)",
+                              marginTop: 0,
+                              paddingTop: 0,
+                              borderTop: "none",
+                            }
+                          : {
+                              ...blk,
+                              alignSelf: "stretch",
+                              marginTop: s.textSpacing,
+                              paddingTop: s.textSpacing,
+                              borderTop: "1px solid rgba(148, 163, 184, 0.35)",
+                            }
+                      }
+                    >
                       <div
                         style={{
                           fontSize: `calc(8pt * ${fmul})`,
