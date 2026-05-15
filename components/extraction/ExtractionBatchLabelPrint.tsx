@@ -37,60 +37,124 @@ function escapeHtml(s: string) {
 function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
   const inner = `
 <div class="sheet">
-  <div class="col left">
-    <div class="code">${escapeHtml(f.marketCode)}</div>
-    <div class="id">${escapeHtml(f.batchId)}</div>
-  </div>
-  <div class="col right">
-    <div class="ptype">${escapeHtml(f.productType)}</div>
-    <div class="src">${escapeHtml(f.sourcesLine)}</div>
+  <div class="inner">
+    <div class="col left">
+      <div class="code">${escapeHtml(f.marketCode)}</div>
+      <div class="id">${escapeHtml(f.batchId)}</div>
+    </div>
+    <div class="col right">
+      <div class="ptype">${escapeHtml(f.productType)}</div>
+      <div class="src">${escapeHtml(f.sourcesLine)}</div>
+    </div>
   </div>
 </div>
-<p class="screenOnly">Choose <strong>DYMO LabelWriter 450 Turbo</strong> and a <strong>1.5&quot; × 1&quot;</strong> (horizontal) label, then print or cancel.</p>
 `;
 
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Extraction batch label</title>
 <style>
-  @page { size: 1.5in 1in; margin: 0.04in; }
+  /* Exactly one physical label; zero margins avoids Chrome counting a 2nd sheet */
+  @page {
+    size: 1.5in 1in;
+    margin: 0;
+  }
   * { box-sizing: border-box; }
-  html, body {
+  html {
+    width: 1.5in;
+    height: 1in;
     margin: 0;
     padding: 0;
-    min-height: 100vh;
+    overflow: hidden;
+  }
+  body {
+    margin: 0;
+    padding: 0;
+    width: 1.5in;
+    height: 1in;
+    max-width: 1.5in;
+    max-height: 1in;
+    overflow: hidden;
     font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif;
-    background: #e8e8ea;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    background: #fff;
+    page-break-after: avoid;
+    break-after: avoid;
   }
   .sheet {
     width: 1.5in;
     height: 1in;
-    padding: 4px 6px;
+    max-width: 1.5in;
+    max-height: 1in;
+    margin: 0;
+    padding: 0.07in 0.08in;
     background: #fff;
-    border: 1px solid #bbb;
-    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .inner {
+    width: 100%;
+    height: 100%;
     display: flex;
     flex-direction: row;
-    align-items: stretch;
-    gap: 6px;
-    margin: 16px auto;
+    align-items: center;
+    justify-content: center;
+    gap: 0.06in;
+    text-align: center;
   }
-  .col { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
-  .left { flex: 0 0 38%; border-right: 1px solid #ddd; padding-right: 6px; }
-  .right { flex: 1; padding-left: 2px; }
-  .code { font-size: 10pt; font-weight: 700; letter-spacing: 0.02em; line-height: 1.05; }
-  .id { font-size: 5.5pt; color: #444; word-break: break-all; margin-top: 3px; line-height: 1.1; }
-  .ptype { font-size: 7.5pt; font-weight: 600; line-height: 1.1; }
-  .src { font-size: 5.5pt; margin-top: 3px; line-height: 1.12; color: #222; }
-  .screenOnly { text-align: center; font-size: 12px; color: #333; padding: 0 20px 24px; max-width: 420px; margin: 0 auto; }
+  .col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    flex: 1 1 0;
+    height: 100%;
+  }
+  .left {
+    border-right: 0.5pt solid #bbb;
+    padding-right: 0.06in;
+  }
+  .right {
+    padding-left: 0.04in;
+  }
+  .code {
+    font-size: 11pt;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    line-height: 1.08;
+    max-width: 100%;
+    word-break: break-word;
+  }
+  .id {
+    font-size: 6.5pt;
+    color: #333;
+    line-height: 1.12;
+    margin-top: 0.05in;
+    max-width: 100%;
+    word-break: break-all;
+  }
+  .ptype {
+    font-size: 8.5pt;
+    font-weight: 600;
+    line-height: 1.12;
+    max-width: 100%;
+    word-break: break-word;
+  }
+  .src {
+    font-size: 6.5pt;
+    margin-top: 0.05in;
+    line-height: 1.12;
+    color: #222;
+    max-width: 100%;
+    word-break: break-word;
+  }
   @media print {
-    html, body { background: #fff; display: block; min-height: 0; }
-    .screenOnly { display: none; }
-    .sheet { margin: 0; border: none; border-radius: 0; }
+    html, body {
+      background: #fff !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
   }
 </style></head><body>${inner}</body></html>`;
 }
@@ -158,8 +222,19 @@ type PreviewProps = {
   style?: CSSProperties;
 };
 
-/** Large on-screen preview (horizontal strip), centered by parent. */
+/** Large on-screen preview (horizontal strip), centered — matches print iframe layout. */
 export function ExtractionBatchLabelPreview({ fields, style }: PreviewProps) {
+  const col: CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    textAlign: "center",
+    minWidth: 0,
+    flex: "1 1 0",
+    height: "100%",
+  };
+
   return (
     <div
       style={{
@@ -174,73 +249,80 @@ export function ExtractionBatchLabelPreview({ fields, style }: PreviewProps) {
         fontFamily: "system-ui, Segoe UI, Roboto, Arial, sans-serif",
         overflow: "hidden",
         display: "flex",
-        flexDirection: "row",
-        alignItems: "stretch",
-        gap: "clamp(10px, 2vw, 18px)",
+        alignItems: "center",
+        justifyContent: "center",
         boxShadow: "0 12px 40px rgba(0,0,0,0.35)",
         ...style,
       }}
     >
       <div
         style={{
-          flex: "0 0 38%",
           display: "flex",
-          flexDirection: "column",
+          flexDirection: "row",
+          alignItems: "center",
           justifyContent: "center",
-          borderRight: "1px solid rgba(148, 163, 184, 0.35)",
-          paddingRight: "clamp(8px, 1.5vw, 14px)",
-          minWidth: 0,
+          gap: "clamp(10px, 2vw, 18px)",
+          width: "100%",
+          height: "100%",
+          textAlign: "center",
         }}
       >
         <div
           style={{
-            fontSize: "clamp(1.15rem, 3.2vw, 1.65rem)",
-            fontWeight: 700,
-            lineHeight: 1.05,
-            letterSpacing: "0.02em",
+            ...col,
+            borderRight: "1px solid rgba(148, 163, 184, 0.35)",
+            paddingRight: "clamp(8px, 1.5vw, 14px)",
           }}
         >
-          {fields.marketCode}
+          <div
+            style={{
+              fontSize: "clamp(1.15rem, 3.2vw, 1.65rem)",
+              fontWeight: 700,
+              lineHeight: 1.08,
+              letterSpacing: "0.03em",
+              maxWidth: "100%",
+              wordBreak: "break-word",
+            }}
+          >
+            {fields.marketCode}
+          </div>
+          <div
+            style={{
+              fontSize: "clamp(0.65rem, 1.6vw, 0.8rem)",
+              color: "#94a3b8",
+              wordBreak: "break-all",
+              marginTop: 8,
+              lineHeight: 1.12,
+              maxWidth: "100%",
+            }}
+          >
+            {fields.batchId}
+          </div>
         </div>
-        <div
-          style={{
-            fontSize: "clamp(0.65rem, 1.6vw, 0.8rem)",
-            color: "#94a3b8",
-            wordBreak: "break-all",
-            marginTop: 8,
-            lineHeight: 1.15,
-          }}
-        >
-          {fields.batchId}
-        </div>
-      </div>
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          minWidth: 0,
-        }}
-      >
-        <div
-          style={{
-            fontSize: "clamp(0.85rem, 2.2vw, 1.05rem)",
-            fontWeight: 600,
-            lineHeight: 1.15,
-          }}
-        >
-          {fields.productType}
-        </div>
-        <div
-          style={{
-            fontSize: "clamp(0.7rem, 1.7vw, 0.85rem)",
-            marginTop: 10,
-            lineHeight: 1.2,
-            color: "#cbd5e1",
-          }}
-        >
-          {fields.sourcesLine}
+        <div style={{ ...col, paddingLeft: "clamp(4px, 1vw, 8px)" }}>
+          <div
+            style={{
+              fontSize: "clamp(0.9rem, 2.4vw, 1.1rem)",
+              fontWeight: 600,
+              lineHeight: 1.12,
+              maxWidth: "100%",
+              wordBreak: "break-word",
+            }}
+          >
+            {fields.productType}
+          </div>
+          <div
+            style={{
+              fontSize: "clamp(0.72rem, 1.8vw, 0.88rem)",
+              marginTop: 10,
+              lineHeight: 1.15,
+              color: "#cbd5e1",
+              maxWidth: "100%",
+              wordBreak: "break-word",
+            }}
+          >
+            {fields.sourcesLine}
+          </div>
         </div>
       </div>
     </div>

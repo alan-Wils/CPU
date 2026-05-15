@@ -3366,7 +3366,9 @@ export default function Extraction() {
                         }}
                       >
                         If nothing prints, confirm the printer has a matching horizontal label roll and
-                        drivers are installed.
+                        drivers are installed. If the preview shows <strong>2 sheets</strong>, open{" "}
+                        <strong>More settings</strong> and set paper / scale to a single label (1.5&quot; ×
+                        1&quot;) or choose <strong>Fit to page</strong> where available.
                       </p>
                     </div>
                   </>
