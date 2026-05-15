@@ -65,13 +65,20 @@ function resolveCalibration(
   return v.ok ? v.value : defaultDymoLabelCalibrationSettings;
 }
 
+/**
+ * Rotation added to calibration {@link DymoLabelCalibrationSettings.rotationDeg} for every job transform.
+ * Matches common DYMO die orientation vs browser print coordinates; negate or set to 0 if your stack differs.
+ */
+const DYMO_JOB_ROTATION_OFFSET_DEG = 90;
+
 /** Print job: whole sheet + template position, rotation, and feed-axis Y (including {@link DymoLabelCalibrationSettings.startOffsetY}). */
 function buildDymoLabelJobTransform(s: DymoLabelCalibrationSettings): string {
   const ty = `calc(${s.labelFrameOffsetY} + ${s.startOffsetY})`;
+  const r = s.rotationDeg + DYMO_JOB_ROTATION_OFFSET_DEG;
   return [
     `translateX(${s.labelFrameOffsetX})`,
     `translateY(${ty})`,
-    `rotate(${cssNum(s.rotationDeg)}deg)`,
+    `rotate(${cssNum(r)}deg)`,
   ].join(" ");
 }
 

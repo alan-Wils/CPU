@@ -35,7 +35,7 @@ describe("DYMO extraction batch label print layout", () => {
     );
 
     expect(html).toContain(
-      "transform: translateX(4px) translateY(calc(2px + 1px)) rotate(7deg);",
+      "transform: translateX(4px) translateY(calc(2px + 1px)) rotate(97deg);",
     );
 
     expect(html).toContain(".dymo-label-frame");
