@@ -2,14 +2,27 @@ import { describe, expect, it } from "vitest";
 import {
   approximateCssLengthToViewportPx,
   approximateDymoPrintHostSurfacePx,
+  clampDymoLabelPrintCopies,
   coerceLegacyDymoCalibrationInput,
   defaultDymoLabelCalibrationSettings,
+  DYMO_LABEL_PRINT_COPIES_MAX,
   mergeDymoLabelCalibration,
   pageSizeCssForDymoAtPage,
   parseCssLengthNumber,
   previewAspectRatioFromSettings,
   validateDymoLabelCalibrationSettings,
 } from "./dymoLabelCalibration";
+
+describe("clampDymoLabelPrintCopies", () => {
+  it("clamps to 1–50", () => {
+    expect(clampDymoLabelPrintCopies(0)).toBe(1);
+    expect(clampDymoLabelPrintCopies(-3)).toBe(1);
+    expect(clampDymoLabelPrintCopies(3.7)).toBe(3);
+    expect(clampDymoLabelPrintCopies(999)).toBe(DYMO_LABEL_PRINT_COPIES_MAX);
+    expect(clampDymoLabelPrintCopies("12")).toBe(12);
+    expect(clampDymoLabelPrintCopies("nope")).toBe(1);
+  });
+});
 
 describe("validateDymoLabelCalibrationSettings", () => {
   it("normalizes bare numeric frame offsets to px", () => {

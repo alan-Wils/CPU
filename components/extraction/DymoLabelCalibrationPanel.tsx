@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import type { CSSProperties } from "react";
-import type { DymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration";
+import {
+  clampDymoLabelPrintCopies,
+  DYMO_LABEL_PRINT_COPIES_MAX,
+  type DymoLabelCalibrationSettings,
+} from "@/lib/dymoLabelCalibration";
 
 export type DymoLabelCalibrationPanelProps = {
   draft: DymoLabelCalibrationSettings;
@@ -10,6 +14,9 @@ export type DymoLabelCalibrationPanelProps = {
   onSave: () => void | Promise<void>;
   onReset: () => void;
   onTestPrint: () => void;
+  /** How many identical labels one print job should include (1–50). */
+  printCopies: number;
+  onPrintCopiesChange: (next: number) => void;
   saveBusy?: boolean;
   saveError?: string | null;
   inputStyle?: CSSProperties;
@@ -53,6 +60,8 @@ export function DymoLabelCalibrationPanel({
   onSave,
   onReset,
   onTestPrint,
+  printCopies,
+  onPrintCopiesChange,
   saveBusy,
   saveError,
   inputStyle,
@@ -132,6 +141,28 @@ export function DymoLabelCalibrationPanel({
         <strong style={{ color: "#cbd5e1" }}>100% scale</strong>, minimum margins where possible; use Label width /
         height for the <em>narrow × long</em> edge (often <code style={{ color: "#a5b4fc" }}>1in</code> ×{" "}
         <code style={{ color: "#a5b4fc" }}>1.5in</code>, width = narrow side).
+      </p>
+
+      <div style={{ ...fieldRowStyle(), marginBottom: 4 }}>
+        <div style={labelStyle()}>Labels to print</div>
+        <input
+          style={inp}
+          type="number"
+          min={1}
+          max={DYMO_LABEL_PRINT_COPIES_MAX}
+          step={1}
+          value={clampDymoLabelPrintCopies(printCopies)}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            onPrintCopiesChange(Number.isFinite(n) ? n : 1);
+          }}
+          aria-label="Number of identical labels to print in one job"
+        />
+      </div>
+      <p style={{ margin: "0 0 12px", fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+        Each count is one sticker per printed page. In Chrome/Edge, set the system print dialog{" "}
+        <strong style={{ color: "#cbd5e1" }}>Copies</strong> to <strong style={{ color: "#cbd5e1" }}>1</strong> so you do
+        not double this whole job.
       </p>
 
       <button

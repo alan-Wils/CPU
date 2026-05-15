@@ -8,6 +8,7 @@ import {
   defaultDymoLabelCalibrationSettings,
   pageSizeCssForDymoAtPage,
   validateDymoLabelCalibrationSettings,
+  clampDymoLabelPrintCopies,
 } from "@/lib/dymoLabelCalibration";
 
 export type { DymoLabelCalibrationSettings };
@@ -94,17 +95,20 @@ function buildDymoLabelContentTransform(s: DymoLabelCalibrationSettings): string
 /**
  * Full HTML document for a hidden iframe (no inline script — parent calls print()).
  * Label copy is a single column: market → batch → product → source (see `.dymo-label-inner`).
+ * @param copies Number of identical labels (each on its own @page); clamped {@link clampDymoLabelPrintCopies}.
  */
 export function buildDymoExtractionBatchLabelPrintHtml(
   f: ExtractionBatchLabelFields,
   calibration?: DymoLabelCalibrationSettings,
+  copies: number = 1,
 ): string {
   const s = resolveCalibration(calibration ?? defaultDymoLabelCalibrationSettings);
+  const n = clampDymoLabelPrintCopies(copies);
   const dbg = DYMO_LABEL_LAYOUT_DEBUG ? " dymo-label-debug" : "";
   const originMarker = DYMO_LABEL_LAYOUT_DEBUG
     ? '<div class="dymo-label-origin-marker" aria-hidden="true"></div>'
     : "";
-  const inner = `
+  const labelInner = `
 <div class="dymo-label-job${dbg}">
   <div class="dymo-label-sheet${dbg}">
     <div class="dymo-label-printable-area${dbg}">
@@ -123,6 +127,10 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   </div>
 </div>
 `;
+  const bodyPages = Array.from(
+    { length: n },
+    () => `<div class="dymo-label-page">${labelInner}</div>`,
+  ).join("\n");
 
   const jobTransform = buildDymoLabelJobTransform(s);
   const contentTransform = buildDymoLabelContentTransform(s);
@@ -151,7 +159,8 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   * { box-sizing: border-box; }
   html.dymo-label-print-root {
     width: var(--label-width);
-    height: var(--label-height);
+    height: auto;
+    min-height: var(--label-height);
     margin: 0;
     padding: 0;
     overflow: visible;
@@ -161,14 +170,29 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     margin: 0;
     padding: 0;
     width: var(--label-width);
-    height: var(--label-height);
+    min-height: var(--label-height);
+    height: auto;
     max-width: var(--label-width);
-    max-height: var(--label-height);
     overflow: visible;
     font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif;
     background: #fff;
     page-break-after: avoid;
     break-after: avoid;
+  }
+  .dymo-label-page {
+    position: relative;
+    width: var(--label-width);
+    height: var(--label-height);
+    min-height: var(--label-height);
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    page-break-after: always;
+    break-after: page;
+  }
+  .dymo-label-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
   }
   .dymo-label-job {
     position: absolute;
@@ -316,9 +340,10 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     }
     html.dymo-label-print-root, body {
       width: var(--label-width) !important;
-      height: var(--label-height) !important;
+      height: auto !important;
+      min-height: var(--label-height) !important;
       max-width: var(--label-width) !important;
-      max-height: var(--label-height) !important;
+      max-height: none !important;
       margin: 0 !important;
       padding: 0 !important;
       background: #fff !important;
@@ -350,8 +375,6 @@ export function buildDymoExtractionBatchLabelPrintHtml(
       height: 100% !important;
       page-break-inside: avoid;
       break-inside: avoid;
-      page-break-after: avoid;
-      break-after: avoid;
       /* Whole-label / inner translateX spills past nominal box — let @page trim, don't pre-clip here. */
       overflow: visible !important;
     }
@@ -362,19 +385,22 @@ export function buildDymoExtractionBatchLabelPrintHtml(
       align-items: stretch !important;
     }
   }
-</style></head><body>${inner}</body></html>`;
+</style></head><body>${bodyPages}</body></html>`;
 }
 
 /** @deprecated Use {@link buildDymoExtractionBatchLabelPrintHtml} — alias keeps older imports working */
 export function buildLabelPrintDocumentHtml(
   f: ExtractionBatchLabelFields,
   calibration?: DymoLabelCalibrationSettings,
+  copies?: number,
 ): string {
-  return buildDymoExtractionBatchLabelPrintHtml(f, calibration);
+  return buildDymoExtractionBatchLabelPrintHtml(f, calibration, copies);
 }
 
 export type OpenExtractionBatchLabelPrintOptions = {
   calibration: DymoLabelCalibrationSettings;
+  /** Identical labels in one print job (one @page each); default 1. */
+  copies?: number;
 };
 
 function openDymoLabelPrintViaHiddenIframe(
@@ -453,7 +479,8 @@ export function openExtractionBatchLabelPrintWindow(
   const calibration = resolveCalibration(
     options?.calibration ?? defaultDymoLabelCalibrationSettings,
   );
-  const html = buildDymoExtractionBatchLabelPrintHtml(f, calibration);
+  const copies = clampDymoLabelPrintCopies(options?.copies);
+  const html = buildDymoExtractionBatchLabelPrintHtml(f, calibration, copies);
   return openDymoLabelPrintViaHiddenIframe(html, calibration);
 }
 

@@ -120,4 +120,14 @@ describe("DYMO extraction batch label print layout", () => {
     expect(printBlock).toContain("size: 25.4mm 38.1mm");
     expect(printBlock).toContain("margin: 0");
   });
+
+  it("emits one .dymo-label-page per copy", () => {
+    const html = buildDymoExtractionBatchLabelPrintHtml(fields, defaultDymoLabelCalibrationSettings, 4);
+    expect(html.match(/class="dymo-label-page"/g)?.length).toBe(4);
+  });
+
+  it("defaults to one page when copies omitted", () => {
+    const html = buildDymoExtractionBatchLabelPrintHtml(fields);
+    expect(html.match(/class="dymo-label-page"/g)?.length).toBe(1);
+  });
 });

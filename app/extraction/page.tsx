@@ -39,6 +39,7 @@ import {
   suggestExtractionProductNames,
 } from "@/lib/api";
 import {
+  clampDymoLabelPrintCopies,
   defaultDymoLabelCalibrationSettings,
   resolveDymoLabelCalibration,
   validateDymoLabelCalibrationSettings,
@@ -519,6 +520,11 @@ export default function Extraction() {
     useState<DymoLabelCalibrationSettings>(defaultDymoLabelCalibrationSettings);
   const [dymoSaveBusy, setDymoSaveBusy] = useState(false);
   const [dymoSaveError, setDymoSaveError] = useState<string | null>(null);
+  const [dymoLabelPrintCopies, setDymoLabelPrintCopies] = useState(1);
+  const dymoLabelPrintCopiesClamped = useMemo(
+    () => clampDymoLabelPrintCopies(dymoLabelPrintCopies),
+    [dymoLabelPrintCopies],
+  );
 
   const [type, setType] = useState(productTypes[0]);
   const [sourceInputs, setSourceInputs] = useState<any[]>([
@@ -2127,6 +2133,7 @@ export default function Extraction() {
       return {
         label,
         dymoCalibration: dymoSavedCalibration,
+        labelPrintCopies: dymoLabelPrintCopiesClamped,
         printerModel: "DYMO LabelWriter",
         labelStock: `${dymoSavedCalibration.labelWidth} × ${dymoSavedCalibration.labelHeight}`,
       };
@@ -3388,13 +3395,14 @@ export default function Extraction() {
                     >
                       This task is <strong style={{ color: "#e2e8f0" }}>always available</strong> at
                       any workflow stage so you can reprint labels. Layout is anchored to the{" "}
-                      <strong style={{ color: "#e2e8f0" }}>top</strong> of one sticker with columns using the full
+                      <strong style={{ color: "#e2e8f0" }}>top</strong> of one sticker with lines using the full
                       calibrated width — sized from{" "}
                       <strong style={{ color: "#e2e8f0" }}>DYMO calibration</strong> below.{" "}
                       <strong style={{ color: "#e2e8f0" }}>Print label</strong> uses{" "}
                       <strong style={{ color: "#e2e8f0" }}>saved</strong> settings; use{" "}
                       <strong style={{ color: "#e2e8f0" }}>Test print</strong> to try draft values.
-                      Then save each print to the log as usual.
+                      Set <strong style={{ color: "#e2e8f0" }}>Labels to print</strong> for how many identical stickers
+                      go out in one job. Then save each print to the log as usual.
                     </p>
                     <div
                       style={{
@@ -3413,10 +3421,15 @@ export default function Extraction() {
                           setDymoDraftCalibration({ ...defaultDymoLabelCalibrationSettings });
                           setDymoSaveError(null);
                         }}
+                        printCopies={dymoLabelPrintCopies}
+                        onPrintCopiesChange={(n) => setDymoLabelPrintCopies(clampDymoLabelPrintCopies(n))}
                         onTestPrint={() => {
                           const ok = openExtractionBatchLabelPrintWindow(
                             buildExtractionBatchLabelFields(selectedExt),
-                            { calibration: dymoDraftCalibration },
+                            {
+                              calibration: dymoDraftCalibration,
+                              copies: dymoLabelPrintCopiesClamped,
+                            },
                           );
                           if (!ok) {
                             showNotice(
@@ -3450,7 +3463,10 @@ export default function Extraction() {
                         onClick={() => {
                           const ok = openExtractionBatchLabelPrintWindow(
                             buildExtractionBatchLabelFields(selectedExt),
-                            { calibration: dymoSavedCalibration },
+                            {
+                              calibration: dymoSavedCalibration,
+                              copies: dymoLabelPrintCopiesClamped,
+                            },
                           );
                           if (!ok) {
                             showNotice(
@@ -3461,7 +3477,11 @@ export default function Extraction() {
                         }}
                       >
                         Print label (saved calibration: {dymoSavedCalibration.labelWidth} ×{" "}
-                        {dymoSavedCalibration.labelHeight})
+                        {dymoSavedCalibration.labelHeight}
+                        {dymoLabelPrintCopiesClamped > 1
+                          ? ` · ×${dymoLabelPrintCopiesClamped}`
+                          : ""}
+                        )
                       </button>
                       <p
                         style={{

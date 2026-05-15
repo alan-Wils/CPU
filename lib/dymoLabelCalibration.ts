@@ -47,6 +47,15 @@ export type DymoLabelCalibrationSettings = {
 
 export const DYMO_CALIBRATION_CONFIG_KEY = "dymoLabelCalibration" as const;
 
+/** Max identical extraction labels in one browser print document (each uses one @page). */
+export const DYMO_LABEL_PRINT_COPIES_MAX = 50;
+
+export function clampDymoLabelPrintCopies(raw: unknown): number {
+  const n = typeof raw === "number" ? raw : Number.parseInt(String(raw ?? "").trim(), 10);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(DYMO_LABEL_PRINT_COPIES_MAX, Math.floor(n));
+}
+
 /**
  * Defaults for common 1″×1½″ die-cut extraction labels. Offsets stay neutral; print layout pins copy to the sticker
  * top and centers horizontally within width/height (avoids vertical center splitting across gaps between dies).
