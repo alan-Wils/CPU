@@ -3258,18 +3258,7 @@ export default function Extraction() {
 
         {showTaskModal && selectedExt && (
           <div style={modalBackStyle}>
-            <div
-              style={{
-                ...modalStyle,
-                ...(selectedTask === "Print Batch Label"
-                  ? {
-                      maxHeight: "none",
-                      overflow: "visible",
-                      maxWidth: "min(780px, calc(100vw - 20px))",
-                    }
-                  : {}),
-              }}
-            >
+            <div style={modalStyle}>
               <h2 style={{ marginTop: 0 }}>Log Extraction Task</h2>
 
               <div style={{ display: "grid", gap: 10 }}>
@@ -3427,7 +3416,7 @@ export default function Extraction() {
                           if (!ok) {
                             showNotice(
                               "Print could not start",
-                              "Could not open the print document (popup and fallback frame both failed). Try again or use a different browser.",
+                              "Could not start print (iframe document failed). Try again or use a different browser.",
                             );
                           }
                         }}
@@ -3461,7 +3450,7 @@ export default function Extraction() {
                           if (!ok) {
                             showNotice(
                               "Print could not start",
-                              "Could not open the print document (popup and fallback frame both failed). Try again or use a different browser.",
+                              "Could not start print (iframe document failed). Try again or use a different browser.",
                             );
                           }
                         }}
@@ -3481,11 +3470,12 @@ export default function Extraction() {
                       >
                         If the job lands between stickers, decrease{" "}
                         <strong style={{ color: "#cbd5e1" }}>Top/start offset</strong> (more negative)
-                        and run <strong style={{ color: "#cbd5e1" }}>Test print</strong>. Allow site popups so Chrome
-                        can open the label window (better @page preview). In the dialog, pick matching DYMO stock,
-                        {" "}
-                        <strong style={{ color: "#cbd5e1" }}>100% scale</strong>, and the correct{" "}
-                        <strong style={{ color: "#cbd5e1" }}>Paper size</strong>.
+                        and run <strong style={{ color: "#cbd5e1" }}>Test print</strong>. In Chrome/Edge, open{" "}
+                        <strong style={{ color: "#cbd5e1" }}>More settings</strong> and set{" "}
+                        <strong style={{ color: "#cbd5e1" }}>Paper size</strong> and{" "}
+                        <strong style={{ color: "#cbd5e1" }}>margins</strong> to match your DYMO stock, and use{" "}
+                        <strong style={{ color: "#cbd5e1" }}>100% scale</strong> (Chrome may still show a Letter-sized
+                        preview even when ink lands on the die-cut).
                       </p>
                     </div>
                   </>

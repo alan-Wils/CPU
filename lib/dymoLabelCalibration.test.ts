@@ -120,11 +120,11 @@ describe("approximateCssLengthToViewportPx", () => {
 });
 
 describe("approximateDymoPrintHostSurfacePx", () => {
-  it("pads iframe/popup beyond label intrinsic px for transform bleed", () => {
+  it("pads hidden print iframe moderately beyond label px for transform bleed", () => {
     const h = approximateDymoPrintHostSurfacePx("1in", "1.5in");
-    expect(h.iframeWpx).toBeGreaterThanOrEqual(96 + 280 * 2);
-    expect(h.iframeHpx).toBeGreaterThanOrEqual(144 + 280 * 2);
-    expect(h.popupW).toBe(h.iframeWpx);
-    expect(h.popupH).toBe(h.iframeHpx);
+    expect(h.iframeWpx).toBeGreaterThanOrEqual(96 + 200);
+    expect(h.iframeHpx).toBeGreaterThanOrEqual(144 + 200);
+    expect(h.iframeWpx).toBeLessThanOrEqual(600);
+    expect(h.iframeHpx).toBeLessThanOrEqual(700);
   });
 });

@@ -219,7 +219,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     flex: 0 0 auto;
     display: inline-block;
     width: max-content;
-    max-width: none;
+    max-width: var(--label-width);
   }
   .dymo-label-content {
     position: relative;
@@ -229,7 +229,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     transform: ${contentTransform};
     display: block;
     width: max-content;
-    max-width: none;
+    max-width: var(--label-width);
   }
   .dymo-label-inner {
     display: flex;
@@ -434,8 +434,8 @@ function openDymoLabelPrintViaHiddenIframe(
 }
 
 /**
- * Opens Chrome/Edge print on a tiny top-level window so `@page { size: … }` is honored in preview.
- * Nested iframes often keep Letter/A4 in the preview even when `@page` is correct; iframe is only a fallback when popups are blocked.
+ * Opens Chrome/Edge print from a narrow hidden iframe. DYMO/Windows drivers often ignore CSS @page in the preview —
+ * Paper size must match stock in Print → More settings; we keep iframe small without extra popup windows.
  */
 export function openExtractionBatchLabelPrintWindow(
   f: ExtractionBatchLabelFields,
@@ -447,76 +447,7 @@ export function openExtractionBatchLabelPrintWindow(
     options?.calibration ?? defaultDymoLabelCalibrationSettings,
   );
   const html = buildDymoExtractionBatchLabelPrintHtml(f, calibration);
-
-  const host = approximateDymoPrintHostSurfacePx(calibration.labelWidth, calibration.labelHeight);
-  const outerW = host.popupW;
-  const outerH = host.popupH;
-  const left =
-    typeof screen !== "undefined"
-      ? Math.max(0, Math.round((screen.availWidth - outerW) / 2))
-      : 80;
-  const top =
-    typeof screen !== "undefined"
-      ? Math.max(0, Math.round((screen.availHeight - outerH) / 2))
-      : 80;
-
-  const features = `popup=yes,width=${outerW},height=${outerH},left=${left},top=${top}`;
-  const popup =
-    typeof window !== "undefined"
-      ? window.open("about:blank", "cpu_dymo_label_print", features)
-      : null;
-
-  if (!popup) {
-    return openDymoLabelPrintViaHiddenIframe(html, calibration);
-  }
-
-  try {
-    popup.document.open();
-    popup.document.write(html);
-    popup.document.close();
-  } catch {
-    popup.close();
-    return openDymoLabelPrintViaHiddenIframe(html, calibration);
-  }
-
-  const schedulePrint = () => {
-    try {
-      popup.focus();
-      popup.print();
-    } catch {
-      try {
-        popup.close();
-      } catch {
-        /* ignore */
-      }
-      return;
-    }
-    const cleanup = () => {
-      try {
-        popup.close();
-      } catch {
-        /* ignore */
-      }
-    };
-    popup.addEventListener("afterprint", cleanup, { once: true });
-    setTimeout(cleanup, 5000);
-  };
-
-  const start = () => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setTimeout(schedulePrint, 150);
-      });
-    });
-  };
-
-  if (popup.document.readyState === "complete") {
-    start();
-  } else {
-    popup.addEventListener("load", start, { once: true });
-  }
-
-  return true;
+  return openDymoLabelPrintViaHiddenIframe(html, calibration);
 }
 
 type PreviewProps = {
@@ -564,7 +495,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
     <div
       style={{
         width: "fit-content",
-        maxWidth: "min(720px, calc(96vw + 96px))",
+        maxWidth: "min(560px, 96vw)",
         margin: "0 auto",
         padding: "clamp(10px, 2vw, 18px)",
         border: "1px solid rgba(148, 163, 184, 0.55)",
@@ -589,23 +520,13 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             maxWidth: 420,
           }}
         >
-          White box with dark edge = physical sticker ({s.labelWidth} × {s.labelHeight}). Layout is pinned to the{" "}
-          <strong style={{ color: "#e2e8f0" }}>top</strong> and horizontally centered unless you shift with offsets —
-          calibrated <strong style={{ color: "#e2e8f0" }}>negative X</strong> intentionally bleeds{" "}
-          <em>outside</em> that box in this preview; transforms are never clipped until the sticker edge on paper.{" "}
-          <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job (offsets + rotation + start).{" "}
-          <strong style={{ color: "#93c5fd" }}>Blue</strong> = template frame.{" "}
-          <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content (fine shift + scale).
+          Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}). Copy pinned to the{" "}
+          <strong style={{ color: "#e2e8f0" }}>top</strong> edge and horizontally centered within that box unless you use
+          offsets. <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job ·{" "}
+          <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame · <strong style={{ color: "#c4b5fd" }}>Violet</strong>{" "}
+          = inner content.
         </p>
       ) : null}
-      <div
-        style={{
-          padding: "clamp(36px, 6vw, 56px)",
-          overflow: "visible",
-          margin: "0 auto",
-          boxSizing: "border-box",
-        }}
-      >
       <div
         style={{
           position: "relative",
@@ -673,6 +594,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                   flex: "0 0 auto",
                   display: "inline-block",
                   width: "max-content",
+                  maxWidth: s.labelWidth,
                   boxSizing: "border-box",
                   pointerEvents: "none",
                   ...(dbg ? { boxShadow: "inset 0 0 0 2px #2563eb" } : {}),
@@ -688,6 +610,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                     transform: contentTransform,
                     display: "block",
                     width: "max-content",
+                    maxWidth: s.labelWidth,
                     boxSizing: "border-box",
                     ...(dbg ? { boxShadow: "inset 0 0 0 2px #7c3aed" } : {}),
                   }}
@@ -772,7 +695,6 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             </div>
           </div>
         </div>
-      </div>
       </div>
     </div>
   );

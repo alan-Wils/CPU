@@ -340,37 +340,32 @@ export function approximateCssLengthToViewportPx(raw: string): number {
   return Math.round(Math.max(32, px));
 }
 
-/** Margin beyond label box for print iframe/popup so calibrated transforms do not hit viewport clipping. */
-export const DYMO_PRINT_HOST_MARGIN_PX = 280;
+/** Total extra pixels added to each iframe axis (room for translate/rotate); kept modest so print does not open a huge window. */
+export const DYMO_PRINT_IFRAME_AXIS_SLACK_PX = 220;
 
 /**
- * Sizes iframe and popup viewports for print: label dimensions plus bleed for translates/rotation;
- * caps to available {@link screen} space in the browser.
+ * Hidden print iframe size only: label intrinsic px plus {@link DYMO_PRINT_IFRAME_AXIS_SLACK_PX} per axis, capped so
+ * the element stays small compared to available screen pixels (no auxiliary print popup windows).
  */
 export function approximateDymoPrintHostSurfacePx(
   labelWidth: string,
   labelHeight: string,
-): { popupW: number; popupH: number; iframeWpx: number; iframeHpx: number } {
+): { iframeWpx: number; iframeHpx: number } {
   const vw = approximateCssLengthToViewportPx(labelWidth);
   const vh = approximateCssLengthToViewportPx(labelHeight);
-  const bleed = DYMO_PRINT_HOST_MARGIN_PX * 2;
+  const slack = DYMO_PRINT_IFRAME_AXIS_SLACK_PX;
 
-  let capW = 1280;
-  let capH = 1000;
+  let capW = 560;
+  let capH = 680;
   if (typeof screen !== "undefined") {
-    capW = Math.max(560, Math.min(screen.availWidth - 40, capW));
-    capH = Math.max(460, Math.min(screen.availHeight - 72, capH));
+    capW = Math.min(capW, Math.max(380, screen.availWidth - 48));
+    capH = Math.min(capH, Math.max(440, screen.availHeight - 96));
   }
 
-  const iframeWpx = Math.min(capW, Math.max(vw + bleed, Math.round(vw * 2.4)));
-  const iframeHpx = Math.min(capH, Math.max(vh + bleed, Math.round(vh * 2.4)));
+  const iframeWpx = Math.min(capW, Math.max(vw + slack, vw + Math.round(vw * 0.45)));
+  const iframeHpx = Math.min(capH, Math.max(vh + slack, vh + Math.round(vh * 0.45)));
 
-  return {
-    iframeWpx,
-    iframeHpx,
-    popupW: iframeWpx,
-    popupH: iframeHpx,
-  };
+  return { iframeWpx, iframeHpx };
 }
 
 const INCH_PAGE_DIM_RE = /^((?:\d*\.\d+|\d+))\s*in$/i;
