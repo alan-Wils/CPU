@@ -10,22 +10,22 @@ export type DymoLabelCalibrationSettings = {
   /** Physical label height (CSS length). */
   labelHeight: string;
   /**
-   * Moves the **entire** label template (frame + columns + text) horizontally from the sticker’s top-left.
+   * Moves the **entire print job** horizontally: white sheet, frame, border, columns, and text together (print origin on X).
    */
   labelFrameOffsetX: string;
   /**
-   * Moves the **entire** label template vertically from the sticker’s top-left (before {@link startOffsetY}).
+   * Moves the **entire print job** vertically from the page origin; combined with {@link startOffsetY} on the job transform (feed axis).
    */
   labelFrameOffsetY: string;
   /**
-   * Fine horizontal shift of **inner** content only (inside {@link labelFrameOffsetX} / frame).
+   * Fine horizontal shift of **inner** content only (inside the frame border).
    */
   contentOffsetX: string;
   /**
    * Fine vertical shift of **inner** content only (inside the frame).
    */
   contentOffsetY: string;
-  /** Rotation in degrees (clockwise), applied to the whole frame (border + text). */
+  /** Rotation in degrees (clockwise), applied to the whole print job (sheet + frame + text). */
   rotationDeg: number;
   /**
    * Multiplier applied to base font sizes (unitless, typically 0.75–1.25).
@@ -33,7 +33,7 @@ export type DymoLabelCalibrationSettings = {
    */
   fontSizeMultiplier: number;
   /**
-   * Additional shift along the **label feed axis** (CSS length), combined with {@link labelFrameOffsetY} on the frame.
+   * Additional shift along the **label feed axis** (CSS length), combined with {@link labelFrameOffsetY} on the job transform.
    * Use negative values when the driver prints “too late” and content straddles the gap between die-cut labels.
    */
   startOffsetY: string;
@@ -100,7 +100,7 @@ export function normalizeDymoLabelCalibrationSettings(
   };
 }
 
-/** Map legacy `offsetX` / `offsetY` from saved JSON into frame offsets before merge. */
+/** Map legacy `offsetX` / `offsetY` from saved JSON onto whole-label job offsets before merge. */
 export function coerceLegacyDymoCalibrationInput(
   input: Partial<DymoLabelCalibrationSettings> | DymoLabelCalibrationSettings,
 ): Partial<DymoLabelCalibrationSettings> {

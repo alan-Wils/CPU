@@ -50,7 +50,7 @@ describe("validateDymoLabelCalibrationSettings", () => {
 });
 
 describe("coerceLegacyDymoCalibrationInput", () => {
-  it("maps offsetX/offsetY to frame offsets", () => {
+  it("maps offsetX/offsetY to whole-label offsets", () => {
     const c = coerceLegacyDymoCalibrationInput({
       offsetX: "-12px",
       offsetY: "3mm",

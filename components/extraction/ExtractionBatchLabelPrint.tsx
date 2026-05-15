@@ -11,7 +11,7 @@ export type { DymoLabelCalibrationSettings };
 export { defaultDymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration";
 
 /**
- * Debug outlines: sheet (red), printable (orange), **frame** (blue whole template), **content** (violet inner).
+ * Debug outlines: sheet (red), printable (orange), **job** (teal whole-label transform), **frame** (blue template border), **content** (violet inner).
  * Set to false once alignment is dialed in.
  */
 export const DYMO_LABEL_LAYOUT_DEBUG = true;
@@ -62,8 +62,8 @@ function resolveCalibration(
   return v.ok ? v.value : defaultDymoLabelCalibrationSettings;
 }
 
-/** Frame: whole template position + rotation (+ roll timing on Y). */
-function buildDymoLabelFrameTransform(s: DymoLabelCalibrationSettings): string {
+/** Print job: whole sheet + template position, rotation, and feed-axis Y (including {@link DymoLabelCalibrationSettings.startOffsetY}). */
+function buildDymoLabelJobTransform(s: DymoLabelCalibrationSettings): string {
   const ty = `calc(${s.labelFrameOffsetY} + ${s.startOffsetY})`;
   return [
     `translateX(${s.labelFrameOffsetX})`,
@@ -72,7 +72,7 @@ function buildDymoLabelFrameTransform(s: DymoLabelCalibrationSettings): string {
   ].join(" ");
 }
 
-/** Inner content: fine nudge + scale only (no rotation here — rotation is on the frame). */
+/** Inner content: fine nudge + scale only (no rotation — rotation is on the job). */
 function buildDymoLabelContentTransform(s: DymoLabelCalibrationSettings): string {
   return [
     `translateX(${s.contentOffsetX})`,
@@ -95,35 +95,37 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     ? '<div class="dymo-label-origin-marker" aria-hidden="true"></div>'
     : "";
   const inner = `
-<div class="dymo-label-sheet${dbg}">
-  <div class="dymo-label-printable-area${dbg}">
-    ${originMarker}
-    <div class="dymo-label-frame${dbg}">
-      <div class="dymo-label-content${dbg}">
-      <div class="dymo-label-inner">
-      <div class="col left">
-        <div class="code">${escapeHtml(f.marketCode)}</div>
-        <div class="id">${escapeHtml(f.batchId)}</div>
-      </div>
-      <div class="col right">
-        <div class="ptype">${escapeHtml(f.productType)}</div>
-        <div class="src">${escapeHtml(f.sourcesLine)}</div>
-      </div>
-      </div>
+<div class="dymo-label-job${dbg}">
+  <div class="dymo-label-sheet${dbg}">
+    <div class="dymo-label-printable-area${dbg}">
+      ${originMarker}
+      <div class="dymo-label-frame${dbg}">
+        <div class="dymo-label-content${dbg}">
+        <div class="dymo-label-inner">
+        <div class="col left">
+          <div class="code">${escapeHtml(f.marketCode)}</div>
+          <div class="id">${escapeHtml(f.batchId)}</div>
+        </div>
+        <div class="col right">
+          <div class="ptype">${escapeHtml(f.productType)}</div>
+          <div class="src">${escapeHtml(f.sourcesLine)}</div>
+        </div>
+        </div>
+        </div>
       </div>
     </div>
   </div>
 </div>
 `;
 
-  const frameTransform = buildDymoLabelFrameTransform(s);
+  const jobTransform = buildDymoLabelJobTransform(s);
   const contentTransform = buildDymoLabelContentTransform(s);
 
   return `<!DOCTYPE html>
 <html lang="en" class="dymo-label-print-root"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Extraction batch label</title>
 <style>
-  /* --- DYMO print: (0,0) = sticker top-left; frame moves whole template; content shifts/scales inside --- */
+  /* --- DYMO print: (0,0) = page top-left; job moves entire sheet + template; content shifts/scales inside frame --- */
   @page {
     size: ${s.labelWidth} ${s.labelHeight};
     margin: 0;
@@ -144,6 +146,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     overflow: hidden;
   }
   body {
+    position: relative;
     margin: 0;
     padding: 0;
     width: var(--label-width);
@@ -155,6 +158,16 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     background: #fff;
     page-break-after: avoid;
     break-after: avoid;
+  }
+  .dymo-label-job {
+    position: absolute;
+    left: 0;
+    top: 0;
+    margin: 0;
+    padding: 0;
+    transform-origin: top left;
+    transform: ${jobTransform};
+    display: block;
   }
   .dymo-label-sheet {
     position: relative;
@@ -196,8 +209,6 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     top: 0;
     margin: 0;
     padding: 0;
-    transform-origin: top left;
-    transform: ${frameTransform};
     display: inline-block;
     width: max-content;
     max-width: var(--label-width);
@@ -237,6 +248,9 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   }
   .right {
     padding-left: 0;
+  }
+  .dymo-label-debug.dymo-label-job {
+    box-shadow: inset 0 0 0 2px #14b8a6;
   }
   .dymo-label-debug.dymo-label-sheet {
     box-shadow: inset 0 0 0 2px #e11d48;
@@ -393,7 +407,7 @@ type PreviewProps = {
 export function ExtractionBatchLabelPreview({ fields, calibration, style }: PreviewProps) {
   const s = resolveCalibration(calibration);
   const dbg = DYMO_LABEL_LAYOUT_DEBUG;
-  const frameTransform = buildDymoLabelFrameTransform(s);
+  const jobTransform = buildDymoLabelJobTransform(s);
   const contentTransform = buildDymoLabelContentTransform(s);
   const fmul = s.fontSizeMultiplier;
 
@@ -452,150 +466,176 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             maxWidth: 420,
           }}
         >
-          White rectangle = label ({s.labelWidth} × {s.labelHeight}). Red/orange = sticker origin /
-          clip. <strong style={{ color: "#93c5fd" }}>Blue</strong> = whole frame (offsets +
-          rotation). <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content (fine shift +
-          scale).
+          Outer box = physical label viewport ({s.labelWidth} × {s.labelHeight}). White card = printable
+          sheet; red/orange = clip planes.{" "}
+          <strong style={{ color: "#2dd4bf" }}>Teal</strong> = print job (whole-label offsets + rotation +
+          start). <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame at (0,0) in sheet.{" "}
+          <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content (fine shift + scale).
         </p>
       ) : null}
       <div
-        className="dymo-label-sheet"
         style={{
           position: "relative",
           width: s.labelWidth,
           height: s.labelHeight,
-          margin: 0,
-          padding: 0,
+          margin: "0 auto",
           overflow: "hidden",
-          background: "#fff",
-          display: "block",
           boxSizing: "border-box",
-          ...(dbg ? { boxShadow: "inset 0 0 0 2px #e11d48" } : {}),
+          background: "rgba(15, 23, 42, 0.4)",
         }}
       >
         <div
-          className="dymo-label-printable-area"
+          className="dymo-label-job"
           style={{
             position: "absolute",
-            inset: 0,
+            left: 0,
+            top: 0,
             margin: 0,
             padding: 0,
-            overflow: "hidden",
+            transformOrigin: "top left",
+            transform: jobTransform,
             display: "block",
-            boxSizing: "border-box",
-            ...(dbg ? { boxShadow: "inset 0 0 0 2px #ea580c" } : {}),
+            ...(dbg ? { boxShadow: "inset 0 0 0 2px #14b8a6" } : {}),
           }}
         >
-          {dbg ? <div style={originMarker} aria-hidden /> : null}
           <div
-            className="dymo-label-frame"
-            style={{
-              position: "absolute",
-              left: 0,
-              top: 0,
-              margin: 0,
-              padding: 0,
-              transformOrigin: "top left",
-              transform: frameTransform,
-              display: "inline-block",
-              width: "max-content",
-              maxWidth: s.labelWidth,
-              boxSizing: "border-box",
-              pointerEvents: "none",
-              ...(dbg ? { boxShadow: "inset 0 0 0 2px #2563eb" } : {}),
-            }}
-          >
-          <div
-            className="dymo-label-content"
+            className="dymo-label-sheet"
             style={{
               position: "relative",
+              width: s.labelWidth,
+              height: s.labelHeight,
               margin: 0,
               padding: 0,
-              transformOrigin: "top left",
-              transform: contentTransform,
+              overflow: "hidden",
+              background: "#fff",
               display: "block",
-              width: "max-content",
-              maxWidth: s.labelWidth,
               boxSizing: "border-box",
-              ...(dbg ? { boxShadow: "inset 0 0 0 2px #7c3aed" } : {}),
+              ...(dbg ? { boxShadow: "inset 0 0 0 2px #e11d48" } : {}),
             }}
           >
             <div
-              className="dymo-label-inner"
+              className="dymo-label-printable-area"
               style={{
-                display: "flex",
-                flexDirection: "row",
-                alignItems: "flex-start",
-                justifyContent: "flex-start",
-                gap: s.textSpacing,
-                textAlign: "left",
-                paddingLeft: s.paddingLeftRight,
-                paddingRight: s.paddingLeftRight,
+                position: "absolute",
+                inset: 0,
                 margin: 0,
-                fontFamily: 'system-ui, "Segoe UI", Roboto, Arial, sans-serif',
+                padding: 0,
+                overflow: "hidden",
+                display: "block",
+                boxSizing: "border-box",
+                ...(dbg ? { boxShadow: "inset 0 0 0 2px #ea580c" } : {}),
               }}
             >
+              {dbg ? <div style={originMarker} aria-hidden /> : null}
               <div
+                className="dymo-label-frame"
                 style={{
-                  ...col,
-                  borderRight: "1px solid rgba(148, 163, 184, 0.35)",
-                  paddingRight: s.textSpacing,
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  margin: 0,
+                  padding: 0,
+                  display: "inline-block",
+                  width: "max-content",
+                  maxWidth: s.labelWidth,
+                  boxSizing: "border-box",
+                  pointerEvents: "none",
+                  ...(dbg ? { boxShadow: "inset 0 0 0 2px #2563eb" } : {}),
                 }}
               >
                 <div
+                  className="dymo-label-content"
                   style={{
-                    fontSize: `calc(10.5pt * ${fmul})`,
-                    fontWeight: 700,
-                    lineHeight: 1.07,
-                    letterSpacing: "0.02em",
-                    maxWidth: "100%",
-                    wordBreak: "break-word",
-                    color: "#0f172a",
+                    position: "relative",
+                    margin: 0,
+                    padding: 0,
+                    transformOrigin: "top left",
+                    transform: contentTransform,
+                    display: "block",
+                    width: "max-content",
+                    maxWidth: s.labelWidth,
+                    boxSizing: "border-box",
+                    ...(dbg ? { boxShadow: "inset 0 0 0 2px #7c3aed" } : {}),
                   }}
                 >
-                  {fields.marketCode}
-                </div>
-                <div
-                  style={{
-                    fontSize: `calc(6.25pt * ${fmul})`,
-                    color: "#334155",
-                    wordBreak: "break-all",
-                    marginTop: "0.04in",
-                    lineHeight: 1.1,
-                    maxWidth: "100%",
-                  }}
-                >
-                  {fields.batchId}
-                </div>
-              </div>
-              <div style={{ ...col }}>
-                <div
-                  style={{
-                    fontSize: `calc(8pt * ${fmul})`,
-                    fontWeight: 600,
-                    lineHeight: 1.1,
-                    maxWidth: "100%",
-                    wordBreak: "break-word",
-                    color: "#0f172a",
-                  }}
-                >
-                  {fields.productType}
-                </div>
-                <div
-                  style={{
-                    fontSize: `calc(6.25pt * ${fmul})`,
-                    marginTop: "0.04in",
-                    lineHeight: 1.1,
-                    color: "#222",
-                    maxWidth: "100%",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {fields.sourcesLine}
+                  <div
+                    className="dymo-label-inner"
+                    style={{
+                      display: "flex",
+                      flexDirection: "row",
+                      alignItems: "flex-start",
+                      justifyContent: "flex-start",
+                      gap: s.textSpacing,
+                      textAlign: "left",
+                      paddingLeft: s.paddingLeftRight,
+                      paddingRight: s.paddingLeftRight,
+                      margin: 0,
+                      fontFamily: 'system-ui, "Segoe UI", Roboto, Arial, sans-serif',
+                    }}
+                  >
+                    <div
+                      style={{
+                        ...col,
+                        borderRight: "1px solid rgba(148, 163, 184, 0.35)",
+                        paddingRight: s.textSpacing,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: `calc(10.5pt * ${fmul})`,
+                          fontWeight: 700,
+                          lineHeight: 1.07,
+                          letterSpacing: "0.02em",
+                          maxWidth: "100%",
+                          wordBreak: "break-word",
+                          color: "#0f172a",
+                        }}
+                      >
+                        {fields.marketCode}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: `calc(6.25pt * ${fmul})`,
+                          color: "#334155",
+                          wordBreak: "break-all",
+                          marginTop: "0.04in",
+                          lineHeight: 1.1,
+                          maxWidth: "100%",
+                        }}
+                      >
+                        {fields.batchId}
+                      </div>
+                    </div>
+                    <div style={{ ...col }}>
+                      <div
+                        style={{
+                          fontSize: `calc(8pt * ${fmul})`,
+                          fontWeight: 600,
+                          lineHeight: 1.1,
+                          maxWidth: "100%",
+                          wordBreak: "break-word",
+                          color: "#0f172a",
+                        }}
+                      >
+                        {fields.productType}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: `calc(6.25pt * ${fmul})`,
+                          marginTop: "0.04in",
+                          lineHeight: 1.1,
+                          color: "#222",
+                          maxWidth: "100%",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {fields.sourcesLine}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
           </div>
         </div>
       </div>
