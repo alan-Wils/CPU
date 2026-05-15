@@ -7260,6 +7260,13 @@ export default function Cultivation() {
     textAlign: "center",
   } as const;
 
+  /** Caps tall batch lists so the page does not grow without bound; scroll inside the panel. */
+  const cappedScrollListStyle = {
+    maxHeight: "min(480px, 50vh)",
+    overflowY: "auto" as const,
+    paddingRight: 4,
+  } as const;
+
   const rowStyle = {
     padding: 10,
     background: "#0f172a",
@@ -7803,6 +7810,7 @@ export default function Cultivation() {
           <section style={cardStyle}>
             <h3 style={sectionTitleStyle}>Production Batches / Completed Outputs</h3>
 
+            <div style={cappedScrollListStyle}>
             {s.productionBatches.length === 0 ? (
               <p style={{ textAlign: "center", color: "#cbd5e1" }}>No production batches yet.</p>
             ) : (
@@ -7831,11 +7839,13 @@ export default function Cultivation() {
                 </div>
               ))
             )}
+            </div>
           </section>
 
           <section style={cardStyle}>
             <h3 style={sectionTitleStyle}>Completed Cultivation Batches</h3>
 
+            <div style={cappedScrollListStyle}>
             {s.completedCultivationBatches.length === 0 ? (
               <p style={{ textAlign: "center", color: "#cbd5e1" }}>No completed cultivation batches yet.</p>
             ) : (
@@ -7882,6 +7892,7 @@ export default function Cultivation() {
                 </div>
               ))
             )}
+            </div>
           </section>
         </div>
       </div>
