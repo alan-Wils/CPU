@@ -11,7 +11,7 @@ export type { DymoLabelCalibrationSettings };
 export { defaultDymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration";
 
 /**
- * Outlines label bounds, printable clip region, and content transform box (screen + print).
+ * Debug outlines: sheet (red), printable (orange), **frame** (blue whole template), **content** (violet inner).
  * Set to false once alignment is dialed in.
  */
 export const DYMO_LABEL_LAYOUT_DEBUG = true;
@@ -62,13 +62,21 @@ function resolveCalibration(
   return v.ok ? v.value : defaultDymoLabelCalibrationSettings;
 }
 
-/** Same transform string for print CSS and preview — only applied to `.dymo-label-content`. */
-function buildDymoLabelContentTransform(s: DymoLabelCalibrationSettings): string {
-  const ty = `calc(${s.offsetY} + ${s.startOffsetY})`;
+/** Frame: whole template position + rotation (+ roll timing on Y). */
+function buildDymoLabelFrameTransform(s: DymoLabelCalibrationSettings): string {
+  const ty = `calc(${s.labelFrameOffsetY} + ${s.startOffsetY})`;
   return [
-    `translateX(${s.offsetX})`,
+    `translateX(${s.labelFrameOffsetX})`,
     `translateY(${ty})`,
     `rotate(${cssNum(s.rotationDeg)}deg)`,
+  ].join(" ");
+}
+
+/** Inner content: fine nudge + scale only (no rotation here — rotation is on the frame). */
+function buildDymoLabelContentTransform(s: DymoLabelCalibrationSettings): string {
+  return [
+    `translateX(${s.contentOffsetX})`,
+    `translateY(${s.contentOffsetY})`,
     `scale(${cssNum(s.printScale)})`,
   ].join(" ");
 }
@@ -90,7 +98,8 @@ export function buildDymoExtractionBatchLabelPrintHtml(
 <div class="dymo-label-sheet${dbg}">
   <div class="dymo-label-printable-area${dbg}">
     ${originMarker}
-    <div class="dymo-label-content${dbg}">
+    <div class="dymo-label-frame${dbg}">
+      <div class="dymo-label-content${dbg}">
       <div class="dymo-label-inner">
       <div class="col left">
         <div class="code">${escapeHtml(f.marketCode)}</div>
@@ -101,18 +110,20 @@ export function buildDymoExtractionBatchLabelPrintHtml(
         <div class="src">${escapeHtml(f.sourcesLine)}</div>
       </div>
       </div>
+      </div>
     </div>
   </div>
 </div>
 `;
 
-  const transform = buildDymoLabelContentTransform(s);
+  const frameTransform = buildDymoLabelFrameTransform(s);
+  const contentTransform = buildDymoLabelContentTransform(s);
 
   return `<!DOCTYPE html>
 <html lang="en" class="dymo-label-print-root"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Extraction batch label</title>
 <style>
-  /* --- DYMO print: sticker top-left = (0,0); transform only on .dymo-label-content --- */
+  /* --- DYMO print: (0,0) = sticker top-left; frame moves whole template; content shifts/scales inside --- */
   @page {
     size: ${s.labelWidth} ${s.labelHeight};
     margin: 0;
@@ -179,17 +190,27 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
-  .dymo-label-content {
+  .dymo-label-frame {
     position: absolute;
     left: 0;
     top: 0;
-    width: max-content;
-    max-width: var(--label-width);
     margin: 0;
     padding: 0;
     transform-origin: top left;
-    transform: ${transform};
+    transform: ${frameTransform};
+    display: inline-block;
+    width: max-content;
+    max-width: var(--label-width);
+  }
+  .dymo-label-content {
+    position: relative;
+    margin: 0;
+    padding: 0;
+    transform-origin: top left;
+    transform: ${contentTransform};
     display: block;
+    width: max-content;
+    max-width: var(--label-width);
   }
   .dymo-label-inner {
     display: flex;
@@ -223,8 +244,11 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   .dymo-label-debug.dymo-label-printable-area {
     box-shadow: inset 0 0 0 2px #ea580c;
   }
-  .dymo-label-debug.dymo-label-content {
+  .dymo-label-debug.dymo-label-frame {
     box-shadow: inset 0 0 0 2px #2563eb;
+  }
+  .dymo-label-debug.dymo-label-content {
+    box-shadow: inset 0 0 0 2px #7c3aed;
   }
   .code {
     font-size: calc(10.5pt * var(--dymo-font-mul));
@@ -369,7 +393,8 @@ type PreviewProps = {
 export function ExtractionBatchLabelPreview({ fields, calibration, style }: PreviewProps) {
   const s = resolveCalibration(calibration);
   const dbg = DYMO_LABEL_LAYOUT_DEBUG;
-  const transform = buildDymoLabelContentTransform(s);
+  const frameTransform = buildDymoLabelFrameTransform(s);
+  const contentTransform = buildDymoLabelContentTransform(s);
   const fmul = s.fontSizeMultiplier;
 
   const col: CSSProperties = {
@@ -427,8 +452,10 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             maxWidth: 420,
           }}
         >
-          White rectangle = physical label at CSS size ({s.labelWidth} × {s.labelHeight}). Red square =
-          sticker (0,0). Blue inset = transformed content block (matches print).
+          White rectangle = label ({s.labelWidth} × {s.labelHeight}). Red/orange = sticker origin /
+          clip. <strong style={{ color: "#93c5fd" }}>Blue</strong> = whole frame (offsets +
+          rotation). <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content (fine shift +
+          scale).
         </p>
       ) : null}
       <div
@@ -461,21 +488,36 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
         >
           {dbg ? <div style={originMarker} aria-hidden /> : null}
           <div
-            className="dymo-label-content"
+            className="dymo-label-frame"
             style={{
               position: "absolute",
               left: 0,
               top: 0,
-              width: "max-content",
-              maxWidth: s.labelWidth,
               margin: 0,
               padding: 0,
               transformOrigin: "top left",
-              transform,
-              display: "block",
+              transform: frameTransform,
+              display: "inline-block",
+              width: "max-content",
+              maxWidth: s.labelWidth,
               boxSizing: "border-box",
               pointerEvents: "none",
               ...(dbg ? { boxShadow: "inset 0 0 0 2px #2563eb" } : {}),
+            }}
+          >
+          <div
+            className="dymo-label-content"
+            style={{
+              position: "relative",
+              margin: 0,
+              padding: 0,
+              transformOrigin: "top left",
+              transform: contentTransform,
+              display: "block",
+              width: "max-content",
+              maxWidth: s.labelWidth,
+              boxSizing: "border-box",
+              ...(dbg ? { boxShadow: "inset 0 0 0 2px #7c3aed" } : {}),
             }}
           >
             <div
@@ -553,6 +595,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                 </div>
               </div>
             </div>
+          </div>
           </div>
         </div>
       </div>

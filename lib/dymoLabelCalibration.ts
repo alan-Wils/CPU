@@ -10,14 +10,22 @@ export type DymoLabelCalibrationSettings = {
   /** Physical label height (CSS length). */
   labelHeight: string;
   /**
-   * Horizontal nudge of the printed block from the **left edge** of the sticker (CSS length).
+   * Moves the **entire** label template (frame + columns + text) horizontally from the sticker’s top-left.
    */
-  offsetX: string;
+  labelFrameOffsetX: string;
   /**
-   * Vertical nudge from the **top edge** of the sticker (CSS length).
+   * Moves the **entire** label template vertically from the sticker’s top-left (before {@link startOffsetY}).
    */
-  offsetY: string;
-  /** Rotation in degrees (clockwise). Use 0 for horizontal layout on wide labels. */
+  labelFrameOffsetY: string;
+  /**
+   * Fine horizontal shift of **inner** content only (inside {@link labelFrameOffsetX} / frame).
+   */
+  contentOffsetX: string;
+  /**
+   * Fine vertical shift of **inner** content only (inside the frame).
+   */
+  contentOffsetY: string;
+  /** Rotation in degrees (clockwise), applied to the whole frame (border + text). */
   rotationDeg: number;
   /**
    * Multiplier applied to base font sizes (unitless, typically 0.75–1.25).
@@ -25,7 +33,7 @@ export type DymoLabelCalibrationSettings = {
    */
   fontSizeMultiplier: number;
   /**
-   * Additional shift along the **label feed axis** (CSS length), after {@link offsetY}.
+   * Additional shift along the **label feed axis** (CSS length), combined with {@link labelFrameOffsetY} on the frame.
    * Use negative values when the driver prints “too late” and content straddles the gap between die-cut labels.
    */
   startOffsetY: string;
@@ -33,7 +41,7 @@ export type DymoLabelCalibrationSettings = {
   paddingLeftRight: string;
   /** Gap between the two columns / perceived text looseness (CSS length). */
   textSpacing: string;
-  /** Uniform scale applied with CSS transform (0.5–2 typical). */
+  /** Uniform scale applied on `.dymo-label-content` only (inner content). */
   printScale: number;
 };
 
@@ -43,11 +51,12 @@ export const DYMO_CALIBRATION_CONFIG_KEY = "dymoLabelCalibration" as const;
 export const defaultDymoLabelCalibrationSettings: DymoLabelCalibrationSettings = {
   labelWidth: "2in",
   labelHeight: "1in",
-  offsetX: "0in",
-  offsetY: "-0.05in",
+  labelFrameOffsetX: "0in",
+  labelFrameOffsetY: "-0.05in",
+  contentOffsetX: "0px",
+  contentOffsetY: "0px",
   rotationDeg: 0,
   fontSizeMultiplier: 1,
-  /** Negative pulls content toward the leading edge of the detected label */
   startOffsetY: "-0.18in",
   paddingLeftRight: "0.06in",
   textSpacing: "0.05in",
@@ -81,12 +90,32 @@ export function normalizeDymoLabelCalibrationSettings(
     ...s,
     labelWidth: normalizeDymoCalibrationCssLength(s.labelWidth),
     labelHeight: normalizeDymoCalibrationCssLength(s.labelHeight),
-    offsetX: normalizeDymoCalibrationCssLength(s.offsetX),
-    offsetY: normalizeDymoCalibrationCssLength(s.offsetY),
+    labelFrameOffsetX: normalizeDymoCalibrationCssLength(s.labelFrameOffsetX),
+    labelFrameOffsetY: normalizeDymoCalibrationCssLength(s.labelFrameOffsetY),
+    contentOffsetX: normalizeDymoCalibrationCssLength(s.contentOffsetX),
+    contentOffsetY: normalizeDymoCalibrationCssLength(s.contentOffsetY),
     startOffsetY: normalizeDymoCalibrationCssLength(s.startOffsetY),
     paddingLeftRight: normalizeDymoCalibrationCssLength(s.paddingLeftRight),
     textSpacing: normalizeDymoCalibrationCssLength(s.textSpacing),
   };
+}
+
+/** Map legacy `offsetX` / `offsetY` from saved JSON into frame offsets before merge. */
+export function coerceLegacyDymoCalibrationInput(
+  input: Partial<DymoLabelCalibrationSettings> | DymoLabelCalibrationSettings,
+): Partial<DymoLabelCalibrationSettings> {
+  const src = input as Record<string, unknown>;
+  const base: Partial<DymoLabelCalibrationSettings> = { ...(input as object) };
+  delete (base as Record<string, unknown>).offsetX;
+  delete (base as Record<string, unknown>).offsetY;
+
+  if (typeof src.offsetX === "string" && base.labelFrameOffsetX === undefined) {
+    base.labelFrameOffsetX = src.offsetX;
+  }
+  if (typeof src.offsetY === "string" && base.labelFrameOffsetY === undefined) {
+    base.labelFrameOffsetY = src.offsetY;
+  }
+  return base;
 }
 
 export function mergeDymoLabelCalibration(
@@ -94,35 +123,50 @@ export function mergeDymoLabelCalibration(
   patch: Partial<DymoLabelCalibrationSettings> | null | undefined,
 ): DymoLabelCalibrationSettings {
   if (!patch || typeof patch !== "object") return { ...base };
+  const p = coerceLegacyDymoCalibrationInput(patch);
   return {
     ...base,
-    ...patch,
+    ...p,
     labelWidth:
-      typeof patch.labelWidth === "string" ? patch.labelWidth : base.labelWidth,
+      typeof p.labelWidth === "string" ? p.labelWidth : base.labelWidth,
     labelHeight:
-      typeof patch.labelHeight === "string" ? patch.labelHeight : base.labelHeight,
-    offsetX: typeof patch.offsetX === "string" ? patch.offsetX : base.offsetX,
-    offsetY: typeof patch.offsetY === "string" ? patch.offsetY : base.offsetY,
+      typeof p.labelHeight === "string" ? p.labelHeight : base.labelHeight,
+    labelFrameOffsetX:
+      typeof p.labelFrameOffsetX === "string"
+        ? p.labelFrameOffsetX
+        : base.labelFrameOffsetX,
+    labelFrameOffsetY:
+      typeof p.labelFrameOffsetY === "string"
+        ? p.labelFrameOffsetY
+        : base.labelFrameOffsetY,
+    contentOffsetX:
+      typeof p.contentOffsetX === "string"
+        ? p.contentOffsetX
+        : base.contentOffsetX,
+    contentOffsetY:
+      typeof p.contentOffsetY === "string"
+        ? p.contentOffsetY
+        : base.contentOffsetY,
     rotationDeg:
-      typeof patch.rotationDeg === "number" && Number.isFinite(patch.rotationDeg)
-        ? patch.rotationDeg
+      typeof p.rotationDeg === "number" && Number.isFinite(p.rotationDeg)
+        ? p.rotationDeg
         : base.rotationDeg,
     fontSizeMultiplier:
-      typeof patch.fontSizeMultiplier === "number" &&
-      Number.isFinite(patch.fontSizeMultiplier)
-        ? patch.fontSizeMultiplier
+      typeof p.fontSizeMultiplier === "number" &&
+      Number.isFinite(p.fontSizeMultiplier)
+        ? p.fontSizeMultiplier
         : base.fontSizeMultiplier,
     startOffsetY:
-      typeof patch.startOffsetY === "string" ? patch.startOffsetY : base.startOffsetY,
+      typeof p.startOffsetY === "string" ? p.startOffsetY : base.startOffsetY,
     paddingLeftRight:
-      typeof patch.paddingLeftRight === "string"
-        ? patch.paddingLeftRight
+      typeof p.paddingLeftRight === "string"
+        ? p.paddingLeftRight
         : base.paddingLeftRight,
     textSpacing:
-      typeof patch.textSpacing === "string" ? patch.textSpacing : base.textSpacing,
+      typeof p.textSpacing === "string" ? p.textSpacing : base.textSpacing,
     printScale:
-      typeof patch.printScale === "number" && Number.isFinite(patch.printScale)
-        ? patch.printScale
+      typeof p.printScale === "number" && Number.isFinite(p.printScale)
+        ? p.printScale
         : base.printScale,
   };
 }
@@ -136,7 +180,7 @@ export function extractDymoCalibrationFromCompanyConfig(
   if (!ext || typeof ext !== "object") return {};
   const raw = (ext as Record<string, unknown>)[DYMO_CALIBRATION_CONFIG_KEY];
   if (!raw || typeof raw !== "object") return {};
-  return raw as Partial<DymoLabelCalibrationSettings>;
+  return coerceLegacyDymoCalibrationInput(raw as Partial<DymoLabelCalibrationSettings>);
 }
 
 export type DymoCalibrationValidationResult =
@@ -146,15 +190,18 @@ export type DymoCalibrationValidationResult =
 export function validateDymoLabelCalibrationSettings(
   input: Partial<DymoLabelCalibrationSettings> | DymoLabelCalibrationSettings,
 ): DymoCalibrationValidationResult {
-  const merged = mergeDymoLabelCalibration(defaultDymoLabelCalibrationSettings, input);
+  const coerced = coerceLegacyDymoCalibrationInput(input);
+  const merged = mergeDymoLabelCalibration(defaultDymoLabelCalibrationSettings, coerced);
   const normalized = normalizeDymoLabelCalibrationSettings(merged);
   const errors: string[] = [];
 
   for (const key of [
     "labelWidth",
     "labelHeight",
-    "offsetX",
-    "offsetY",
+    "labelFrameOffsetX",
+    "labelFrameOffsetY",
+    "contentOffsetX",
+    "contentOffsetY",
     "startOffsetY",
     "paddingLeftRight",
     "textSpacing",
@@ -195,7 +242,9 @@ export function readDymoCalibrationFromLocalStorage(
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== "object") return null;
-    return parsed as Partial<DymoLabelCalibrationSettings>;
+    return coerceLegacyDymoCalibrationInput(
+      parsed as Partial<DymoLabelCalibrationSettings>,
+    );
   } catch {
     return null;
   }

@@ -87,13 +87,13 @@ export function DymoLabelCalibrationPanel({
         DYMO label calibration
       </h3>
       <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-        Layout uses a <strong style={{ color: "#e2e8f0" }}>printer-style origin</strong>: the top-left corner of
-        the sticker is (0,0). <strong style={{ color: "#e2e8f0" }}>X / Y offset</strong> move from that corner;{" "}
-        <strong style={{ color: "#e2e8f0" }}>translateY</strong> combines Y + top/start offset in one step (matches
-        print/preview). Lengths: use units (<code style={{ color: "#a5b4fc" }}>2in</code>,{" "}
-        <code style={{ color: "#a5b4fc" }}>-12px</code>) or plain numbers (
+        Sticker top-left is (0,0). <strong style={{ color: "#e2e8f0" }}>Whole label</strong> offsets + rotation
+        move the entire template (frame). <strong style={{ color: "#e2e8f0" }}>Inner content</strong> offsets only
+        nudge text inside that frame; <strong style={{ color: "#e2e8f0" }}>Top/start offset</strong> adds feed-axis
+        correction combined into whole-label Y. Lengths: <code style={{ color: "#a5b4fc" }}>2in</code>,{" "}
+        <code style={{ color: "#a5b4fc" }}>-18px</code>, or plain{" "}
         <code style={{ color: "#a5b4fc" }}>-18</code>
-        {" "}→ <code style={{ color: "#a5b4fc" }}>-18px</code> on save/load).
+        {" "}→ <code style={{ color: "#a5b4fc" }}>-18px</code>.
       </p>
 
       <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>
@@ -113,24 +113,40 @@ export function DymoLabelCalibrationPanel({
         />
       </div>
 
-      <div style={fieldRowStyle()}>
-        <div style={labelStyle()}>X offset</div>
+      <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>
+        <div style={labelStyle()}>Whole label X offset</div>
         <input
           style={inp}
-          value={draft.offsetX}
-          onChange={(e) => patch({ offsetX: e.target.value })}
-          aria-label="X offset"
+          value={draft.labelFrameOffsetX}
+          onChange={(e) => patch({ labelFrameOffsetX: e.target.value })}
+          aria-label="Whole label X offset"
         />
-      </div>
-      <div style={fieldRowStyle()}>
-        <div style={labelStyle()}>Y offset</div>
+        <div style={labelStyle()}>Whole label Y offset</div>
         <input
           style={inp}
-          value={draft.offsetY}
-          onChange={(e) => patch({ offsetY: e.target.value })}
-          aria-label="Y offset"
+          value={draft.labelFrameOffsetY}
+          onChange={(e) => patch({ labelFrameOffsetY: e.target.value })}
+          aria-label="Whole label Y offset"
         />
       </div>
+
+      <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>
+        <div style={labelStyle()}>Inner content X offset</div>
+        <input
+          style={inp}
+          value={draft.contentOffsetX}
+          onChange={(e) => patch({ contentOffsetX: e.target.value })}
+          aria-label="Inner content X offset"
+        />
+        <div style={labelStyle()}>Inner content Y offset</div>
+        <input
+          style={inp}
+          value={draft.contentOffsetY}
+          onChange={(e) => patch({ contentOffsetY: e.target.value })}
+          aria-label="Inner content Y offset"
+        />
+      </div>
+
       <div style={fieldRowStyle()}>
         <div style={labelStyle()}>Top/start offset</div>
         <input

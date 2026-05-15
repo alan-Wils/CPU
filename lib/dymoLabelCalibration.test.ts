@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  coerceLegacyDymoCalibrationInput,
   defaultDymoLabelCalibrationSettings,
   mergeDymoLabelCalibration,
   parseCssLengthNumber,
@@ -8,18 +9,20 @@ import {
 } from "./dymoLabelCalibration";
 
 describe("validateDymoLabelCalibrationSettings", () => {
-  it("normalizes bare numeric offsets to px", () => {
+  it("normalizes bare numeric frame offsets to px", () => {
     const r = validateDymoLabelCalibrationSettings({
       ...defaultDymoLabelCalibrationSettings,
-      offsetX: "-18",
-      offsetY: "-37",
+      labelFrameOffsetX: "-18",
+      labelFrameOffsetY: "-37",
       startOffsetY: "0",
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.value.offsetX).toBe("-18px");
-      expect(r.value.offsetY).toBe("-37px");
+      expect(r.value.labelFrameOffsetX).toBe("-18px");
+      expect(r.value.labelFrameOffsetY).toBe("-37px");
       expect(r.value.startOffsetY).toBe("0px");
+      expect(r.value.contentOffsetX).toBe("0px");
+      expect(r.value.contentOffsetY).toBe("0px");
     }
   });
 
@@ -46,12 +49,24 @@ describe("validateDymoLabelCalibrationSettings", () => {
   });
 });
 
+describe("coerceLegacyDymoCalibrationInput", () => {
+  it("maps offsetX/offsetY to frame offsets", () => {
+    const c = coerceLegacyDymoCalibrationInput({
+      offsetX: "-12px",
+      offsetY: "3mm",
+    } as Record<string, unknown>);
+    expect(c.labelFrameOffsetX).toBe("-12px");
+    expect(c.labelFrameOffsetY).toBe("3mm");
+    expect((c as Record<string, unknown>).offsetX).toBeUndefined();
+  });
+});
+
 describe("mergeDymoLabelCalibration", () => {
   it("overrides partial fields", () => {
     const m = mergeDymoLabelCalibration(defaultDymoLabelCalibrationSettings, {
-      offsetY: "-1mm",
+      labelFrameOffsetY: "-1mm",
     });
-    expect(m.offsetY).toBe("-1mm");
+    expect(m.labelFrameOffsetY).toBe("-1mm");
     expect(m.labelWidth).toBe(defaultDymoLabelCalibrationSettings.labelWidth);
   });
 });
