@@ -2712,10 +2712,13 @@ export default function Extraction() {
     inset: 0,
     background: "rgba(2, 6, 23, 0.78)",
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "center",
     zIndex: 9999,
-    padding: 20,
+    padding: "28px 18px 36px",
+    overflowY: "auto",
+    overscrollBehavior: "contain",
+    WebkitOverflowScrolling: "touch",
   };
 
   const modalStyle: any = {
@@ -2726,8 +2729,9 @@ export default function Extraction() {
     padding: 24,
     width: "100%",
     maxWidth: 650,
-    maxHeight: "85vh",
-    overflowY: "auto",
+    marginTop: "max(0px, env(safe-area-inset-top))",
+    marginBottom: 32,
+    overflow: "visible",
     boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
   };
 
@@ -3383,8 +3387,9 @@ export default function Extraction() {
                       }}
                     >
                       This task is <strong style={{ color: "#e2e8f0" }}>always available</strong> at
-                      any workflow stage so you can reprint labels.                       Layout is anchored to the <strong style={{ color: "#e2e8f0" }}>top</strong> of one sticker with
-                      horizontal centering — sized from{" "}
+                      any workflow stage so you can reprint labels. Layout is anchored to the{" "}
+                      <strong style={{ color: "#e2e8f0" }}>top</strong> of one sticker with columns using the full
+                      calibrated width — sized from{" "}
                       <strong style={{ color: "#e2e8f0" }}>DYMO calibration</strong> below.{" "}
                       <strong style={{ color: "#e2e8f0" }}>Print label</strong> uses{" "}
                       <strong style={{ color: "#e2e8f0" }}>saved</strong> settings; use{" "}

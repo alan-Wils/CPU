@@ -67,18 +67,19 @@ describe("DYMO extraction batch label print layout", () => {
     expect(printBlock).toContain(".dymo-label-printable-area");
   });
 
-  it("anchors frame to top center of printable flex (avoid straddling two labels vertically)", () => {
+  it("uses full sticker width for text columns (top-aligned)", () => {
     const html = buildDymoExtractionBatchLabelPrintHtml(fields);
     const pa = html.match(/\.dymo-label-printable-area\s*\{[^}]*\}/s)?.[0] ?? "";
     expect(pa).toContain("display: flex");
-    expect(pa).toContain("justify-content: center");
-    expect(pa).toContain("align-items: flex-start");
+    expect(pa).toContain("justify-content: flex-start");
+    expect(pa).toContain("align-items: stretch");
     const frame = html.match(/\.dymo-label-frame\s*\{[^}]*\}/s)?.[0] ?? "";
     expect(frame).toContain("position: relative");
     expect(frame).not.toContain("left: 0");
-    expect(frame).toContain("max-width: var(--label-width)");
+    expect(frame).toContain("width: 100%");
+    expect(frame).toContain("flex: 1 1 auto");
     const innerContent = html.match(/\.dymo-label-content\s*\{[^}]*\}/s)?.[0] ?? "";
-    expect(innerContent).toContain("max-width: var(--label-width)");
+    expect(innerContent).toContain("width: 100%");
   });
 
   it("@media print pins job with fixed top-left vs Chrome vertical centering on tall paper selections", () => {

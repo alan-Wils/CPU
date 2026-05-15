@@ -87,9 +87,9 @@ export function DymoLabelCalibrationPanel({
         DYMO label calibration
       </h3>
       <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-        Layout is <strong style={{ color: "#e2e8f0" }}>pinned to the top</strong> of the sticker and{" "}
-        <strong style={{ color: "#e2e8f0" }}>centered horizontally</strong> inside the width/height below so it stays
-        on one die-cut roll label (vertical centering tends to print across the gap between two stickers). Use{" "}
+        Layout is <strong style={{ color: "#e2e8f0" }}>pinned to the top</strong> of the sticker; text columns span the{" "}
+        <strong style={{ color: "#e2e8f0" }}>full label width</strong> so wrapping stays tame on wide stock (vertical
+        centering tends to print across the gap between two roll stickers). Use{" "}
         <strong style={{ color: "#e2e8f0" }}>Whole label</strong> X/Y,{" "}
         <strong style={{ color: "#e2e8f0" }}>Top/start offset</strong>, rotation, and inner nudges only when your{" "}
         <em>printer or driver</em> is consistently shifted. Lengths:{" "}

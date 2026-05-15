@@ -193,8 +193,8 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     padding: 0;
     overflow: visible;
     display: flex;
-    justify-content: center;
-    align-items: flex-start;
+    justify-content: flex-start;
+    align-items: stretch;
   }
   .dymo-label-origin-marker {
     position: absolute;
@@ -216,10 +216,13 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     position: relative;
     margin: 0;
     padding: 0;
-    flex: 0 0 auto;
-    display: inline-block;
-    width: max-content;
-    max-width: var(--label-width);
+    flex: 1 1 auto;
+    display: flex;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    align-self: stretch;
   }
   .dymo-label-content {
     position: relative;
@@ -228,19 +231,26 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     transform-origin: top left;
     transform: ${contentTransform};
     display: block;
-    width: max-content;
-    max-width: var(--label-width);
+    flex: 1 1 auto;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
   }
   .dymo-label-inner {
     display: flex;
     flex-direction: row;
     align-items: flex-start;
     justify-content: flex-start;
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
     gap: var(--dymo-gap);
     text-align: left;
     padding-left: var(--dymo-pad-x);
     padding-right: var(--dymo-pad-x);
     margin: 0;
+    box-sizing: border-box;
   }
   .col {
     display: flex;
@@ -351,8 +361,8 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     .dymo-label-printable-area {
       overflow: visible !important;
       display: flex !important;
-      justify-content: center !important;
-      align-items: flex-start !important;
+      justify-content: flex-start !important;
+      align-items: stretch !important;
     }
   }
 </style></head><body>${inner}</body></html>`;
@@ -520,11 +530,11 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             maxWidth: 420,
           }}
         >
-          Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}). Copy pinned to the{" "}
-          <strong style={{ color: "#e2e8f0" }}>top</strong> edge and horizontally centered within that box unless you use
-          offsets. <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job ·{" "}
-          <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame · <strong style={{ color: "#c4b5fd" }}>Violet</strong>{" "}
-          = inner content.
+          Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}). Columns use the{" "}
+          <strong style={{ color: "#e2e8f0" }}>full width</strong> of that box (top-aligned) so lines wrap less on wide
+          stock. Use offsets only when your printer/driver is shifted. <strong style={{ color: "#2dd4bf" }}>Teal</strong>{" "}
+          = whole job · <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame ·{" "}
+          <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content.
         </p>
       ) : null}
       <div
@@ -578,8 +588,8 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                 padding: 0,
                 overflow: "visible",
                 display: "flex",
-                justifyContent: "center",
-                alignItems: "flex-start",
+                justifyContent: "flex-start",
+                alignItems: "stretch",
                 boxSizing: "border-box",
                 ...(dbg ? { boxShadow: "inset 0 0 0 2px #ea580c" } : {}),
               }}
@@ -591,10 +601,12 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                   position: "relative",
                   margin: 0,
                   padding: 0,
-                  flex: "0 0 auto",
-                  display: "inline-block",
-                  width: "max-content",
-                  maxWidth: s.labelWidth,
+                  flex: "1 1 auto",
+                  alignSelf: "stretch",
+                  display: "flex",
+                  width: "100%",
+                  minWidth: 0,
+                  maxWidth: "100%",
                   boxSizing: "border-box",
                   pointerEvents: "none",
                   ...(dbg ? { boxShadow: "inset 0 0 0 2px #2563eb" } : {}),
@@ -609,8 +621,10 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                     transformOrigin: "top left",
                     transform: contentTransform,
                     display: "block",
-                    width: "max-content",
-                    maxWidth: s.labelWidth,
+                    flex: "1 1 auto",
+                    width: "100%",
+                    minWidth: 0,
+                    maxWidth: "100%",
                     boxSizing: "border-box",
                     ...(dbg ? { boxShadow: "inset 0 0 0 2px #7c3aed" } : {}),
                   }}
@@ -624,6 +638,10 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                       justifyContent: "flex-start",
                       gap: s.textSpacing,
                       textAlign: "left",
+                      flex: "1 1 auto",
+                      width: "100%",
+                      minWidth: 0,
+                      boxSizing: "border-box",
                       paddingLeft: s.paddingLeftRight,
                       paddingRight: s.paddingLeftRight,
                       margin: 0,
