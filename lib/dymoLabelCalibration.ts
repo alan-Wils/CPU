@@ -340,6 +340,34 @@ export function approximateCssLengthToViewportPx(raw: string): number {
   return Math.round(Math.max(32, px));
 }
 
+const INCH_PAGE_DIM_RE = /^((?:\d*\.\d+|\d+))\s*in$/i;
+
+/**
+ * Emit `@page size` for DYMO: Chromium often applies narrow stock dimensions more reliably as mm than as in.
+ * Plain inch calibration (`1in`, `0.75in`) is converted to rounded mm `${w} ${h}`; otherwise returns raw lengths.
+ */
+export function pageSizeCssForDymoAtPage(labelWidth: string, labelHeight: string): string {
+  const w = normalizeDymoCalibrationCssLength(labelWidth).trim();
+  const h = normalizeDymoCalibrationCssLength(labelHeight).trim();
+  const mmW = cssInchesOnlyLengthToMmString(w);
+  const mmH = cssInchesOnlyLengthToMmString(h);
+  if (mmW != null && mmH != null) {
+    return `${mmW} ${mmH}`;
+  }
+  return `${w} ${h}`;
+}
+
+function cssInchesOnlyLengthToMmString(s: string): string | null {
+  const m = s.match(INCH_PAGE_DIM_RE);
+  if (!m) return null;
+  const inches = Number(m[1]);
+  if (!Number.isFinite(inches) || inches <= 0) return null;
+  const mmRounded = Math.round(inches * 25.4 * 10000) / 10000;
+  let digits = String(mmRounded);
+  if (digits.includes(".")) digits = digits.replace(/\.?0+$/, "");
+  return `${digits}mm`;
+}
+
 /** Aspect ratio width/height for preview when both dimensions share the same unit kind. */
 export function previewAspectRatioFromSettings(s: DymoLabelCalibrationSettings): number {
   const uw = parseCssLengthNumber(s.labelWidth);

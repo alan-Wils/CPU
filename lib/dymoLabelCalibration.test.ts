@@ -4,6 +4,7 @@ import {
   coerceLegacyDymoCalibrationInput,
   defaultDymoLabelCalibrationSettings,
   mergeDymoLabelCalibration,
+  pageSizeCssForDymoAtPage,
   parseCssLengthNumber,
   previewAspectRatioFromSettings,
   validateDymoLabelCalibrationSettings,
@@ -92,6 +93,16 @@ describe("parseCssLengthNumber", () => {
   it("parses positive lengths for aspect ratio", () => {
     expect(parseCssLengthNumber("1in")).toBe(1);
     expect(parseCssLengthNumber("")).toBe(null);
+  });
+});
+
+describe("pageSizeCssForDymoAtPage", () => {
+  it("converts plain inch label dimensions to mm for @page (Chromium)", () => {
+    expect(pageSizeCssForDymoAtPage("1in", "1.5in")).toBe("25.4mm 38.1mm");
+  });
+
+  it("falls back to raw lengths when mixing units", () => {
+    expect(pageSizeCssForDymoAtPage("144px", "1.5in")).toBe("144px 1.5in");
   });
 });
 

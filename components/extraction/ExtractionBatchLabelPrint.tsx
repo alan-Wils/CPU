@@ -5,6 +5,7 @@ import type { DymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration";
 import {
   approximateCssLengthToViewportPx,
   defaultDymoLabelCalibrationSettings,
+  pageSizeCssForDymoAtPage,
   validateDymoLabelCalibrationSettings,
 } from "@/lib/dymoLabelCalibration";
 
@@ -122,14 +123,15 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   const jobTransform = buildDymoLabelJobTransform(s);
   const contentTransform = buildDymoLabelContentTransform(s);
   const viewportW = approximateCssLengthToViewportPx(s.labelWidth);
+  const pageSizeDecl = pageSizeCssForDymoAtPage(s.labelWidth, s.labelHeight);
 
   return `<!DOCTYPE html>
 <html lang="en" class="dymo-label-print-root"><head><meta charset="utf-8"/><meta name="viewport" content="width=${viewportW}, initial-scale=1"/>
 <title>Extraction batch label</title>
 <style>
-  /* --- DYMO die-cut: one sticker = @page size. Flex pins template to sticker TOP (avoid vertical center → gap between labels); JUSTIFY centers columns horizontally. Whole-label offsets = printer/driver skew. Overflow visible avoids pre-clip. --- */
+  /* --- DYMO: @page size uses mm translated from inch calibration so Chrome respects true sticker width; body uses user units + flex placement. --- */
   @page {
-    size: ${s.labelWidth} ${s.labelHeight};
+    size: ${pageSizeDecl};
     margin: 0;
   }
   :root {

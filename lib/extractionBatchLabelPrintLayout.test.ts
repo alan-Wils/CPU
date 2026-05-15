@@ -55,6 +55,7 @@ describe("DYMO extraction batch label print layout", () => {
 
     expect(html).not.toMatch(/viewport[^>]+device-width/i);
     expect(html).toContain('meta name="viewport" content="width=96');
+    expect(html).toContain("size: 25.4mm 38.1mm");
   });
 
   it("@media print allows overflow visible so horizontal offsets are not clipped by sheet layers", () => {

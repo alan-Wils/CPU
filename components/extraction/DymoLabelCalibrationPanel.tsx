@@ -121,6 +121,15 @@ export function DymoLabelCalibrationPanel({
           aria-label="Label height"
         />
       </div>
+      <p style={{ margin: "0 0 12px", fontSize: 11, color: "#64748b", lineHeight: 1.42 }}>
+        <strong style={{ color: "#cbd5e1" }}>Preview sheet too wide?</strong> For portrait{" "}
+        <code style={{ color: "#a5b4fc" }}>1in</code> × <code style={{ color: "#a5b4fc" }}>1.5in</code> stock, Label
+        width must be the{" "}
+        <em>narrow</em> inch (often <code style={{ color: "#a5b4fc" }}>1in</code>, not{" "}
+        <code style={{ color: "#a5b4fc" }}>1.5in</code>). Match the same dimensions in Chrome →{" "}
+        <strong style={{ color: "#cbd5e1" }}>More settings → Paper size</strong> (or closest DYMO preset); print uses
+        @page in mm converted from inches for accurate width.
+      </p>
 
       <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>
         <div style={labelStyle()}>Whole label X offset</div>
