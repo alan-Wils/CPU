@@ -313,6 +313,21 @@ export function buildDymoExtractionBatchLabelPrintHtml(
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
+    /*
+     * Chrome/Edge print preview often vertically centers absolutely positioned content when the user's
+     * paper profile is taller than @page — fixed top-left ties the sheet to the real page/sticker origin.
+     */
+    .dymo-label-job {
+      position: fixed !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: auto !important;
+      bottom: auto !important;
+      width: var(--label-width) !important;
+      height: var(--label-height) !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
     .dymo-label-origin-marker {
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;

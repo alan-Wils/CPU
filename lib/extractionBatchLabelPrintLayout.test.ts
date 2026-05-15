@@ -76,4 +76,14 @@ describe("DYMO extraction batch label print layout", () => {
     expect(frame).toContain("position: relative");
     expect(frame).not.toContain("left: 0");
   });
+
+  it("@media print pins job with fixed top-left vs Chrome vertical centering on tall paper selections", () => {
+    const html = buildDymoExtractionBatchLabelPrintHtml(fields);
+    const printBlock =
+      html.split("@media print")[1]?.split("</style>")[0] ?? "";
+    expect(printBlock).toContain(".dymo-label-job");
+    expect(printBlock).toContain("position: fixed !important");
+    expect(printBlock).toContain("top: 0 !important");
+    expect(printBlock).toContain("left: 0 !important");
+  });
 });
