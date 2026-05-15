@@ -33,7 +33,18 @@ import {
 } from "@/lib/extractionApi";
 import { createPackagingBatch } from "@/lib/packagingApi";
 import { createLog } from "@/lib/logsApi";
-import { apiRequest, suggestExtractionProductNames } from "@/lib/api";
+import {
+  apiRequest,
+  getSelectedCompanyId,
+  suggestExtractionProductNames,
+} from "@/lib/api";
+import {
+  defaultDymoLabelCalibrationSettings,
+  resolveDymoLabelCalibration,
+  validateDymoLabelCalibrationSettings,
+  writeDymoCalibrationToLocalStorage,
+  type DymoLabelCalibrationSettings,
+} from "@/lib/dymoLabelCalibration";
 import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
 import {
   extractCustomTasksRewardDefsFromCompanyConfig,
@@ -52,6 +63,7 @@ import {
   nowIsoForLog,
   syncCompanyTimezoneFromConfigPayload,
 } from "@/lib/companyTimezone";
+import { DymoLabelCalibrationPanel } from "@/components/extraction/DymoLabelCalibrationPanel";
 import {
   buildExtractionBatchLabelFields,
   ExtractionBatchLabelPreview,
@@ -501,6 +513,13 @@ export default function Extraction() {
   const [finishBatchManualName, setFinishBatchManualName] = useState("");
   const [blendNameHistory, setBlendNameHistory] = useState<BlendNameHistoryRow[]>([]);
 
+  const [dymoSavedCalibration, setDymoSavedCalibration] =
+    useState<DymoLabelCalibrationSettings>(defaultDymoLabelCalibrationSettings);
+  const [dymoDraftCalibration, setDymoDraftCalibration] =
+    useState<DymoLabelCalibrationSettings>(defaultDymoLabelCalibrationSettings);
+  const [dymoSaveBusy, setDymoSaveBusy] = useState(false);
+  const [dymoSaveError, setDymoSaveError] = useState<string | null>(null);
+
   const [type, setType] = useState(productTypes[0]);
   const [sourceInputs, setSourceInputs] = useState<any[]>([
     { sourceId: "", amount: "" },
@@ -752,8 +771,17 @@ export default function Extraction() {
       const merged = mergeWorkflowTaskList(extractionTasks, defs.extraction);
       setExtractionTaskList(merged);
       setSelectedTask((prev) => (merged.includes(prev) ? prev : merged[0] || extractionTasks[0]));
+      const cid = getSelectedCompanyId();
+      const dymoResolved = resolveDymoLabelCalibration(cid, cfg);
+      setDymoSavedCalibration(dymoResolved);
+      setDymoDraftCalibration(dymoResolved);
+      setDymoSaveError(null);
     } catch (error) {
       console.error("Could not load extraction blend name history:", error);
+      const cid = getSelectedCompanyId();
+      const fallback = resolveDymoLabelCalibration(cid, {});
+      setDymoSavedCalibration(fallback);
+      setDymoDraftCalibration(fallback);
     }
   }
 
@@ -799,6 +827,52 @@ export default function Extraction() {
       },
     });
     setBlendNameHistory(nextRows);
+  }
+
+  async function saveDymoCalibrationSettings() {
+    setDymoSaveError(null);
+    const validated = validateDymoLabelCalibrationSettings(dymoDraftCalibration);
+    if (!validated.ok) {
+      const msg = validated.errors.join("; ");
+      setDymoSaveError(msg);
+      showNotice("DYMO calibration", msg);
+      return;
+    }
+    setDymoSaveBusy(true);
+    try {
+      const cfg = await apiRequest<any>("/api/config");
+      syncCompanyTimezoneFromConfigPayload(cfg);
+      const extractionCfg =
+        cfg?.extraction && typeof cfg.extraction === "object" ? cfg.extraction : {};
+      await apiRequest("/api/config", {
+        method: "PUT",
+        body: {
+          extraction: {
+            ...extractionCfg,
+            dymoLabelCalibration: validated.value,
+          },
+        },
+      });
+      writeDymoCalibrationToLocalStorage(getSelectedCompanyId(), validated.value);
+      setDymoSavedCalibration(validated.value);
+      setDymoDraftCalibration(validated.value);
+      showNotice(
+        "DYMO calibration saved",
+        "Extraction batch labels will use these dimensions and offsets on every workstation that loads company config.",
+      );
+    } catch (error) {
+      console.error("Could not save DYMO calibration:", error);
+      writeDymoCalibrationToLocalStorage(getSelectedCompanyId(), validated.value);
+      setDymoSavedCalibration(validated.value);
+      setDymoDraftCalibration(validated.value);
+      setDymoSaveError("Could not reach API; backup saved in this browser only.");
+      showNotice(
+        "DYMO calibration (offline backup)",
+        "Settings were saved only in this browser. Reconnect or check permissions, then tap Save again so all devices pick them up.",
+      );
+    } finally {
+      setDymoSaveBusy(false);
+    }
   }
 
   function saveLog(log: any) {
@@ -2052,8 +2126,9 @@ export default function Extraction() {
       const label = buildExtractionBatchLabelFields(selectedExt);
       return {
         label,
-        printerModel: "DYMO LabelWriter 450 Turbo",
-        labelStock: '1.5" × 1" horizontal',
+        dymoCalibration: dymoSavedCalibration,
+        printerModel: "DYMO LabelWriter",
+        labelStock: `${dymoSavedCalibration.labelWidth} × ${dymoSavedCalibration.labelHeight}`,
       };
     }
 
@@ -3308,12 +3383,13 @@ export default function Extraction() {
                       }}
                     >
                       This task is <strong style={{ color: "#e2e8f0" }}>always available</strong> at
-                      any workflow stage (including after the batch is finished) so you can reprint
-                      labels whenever needed. Layout is <strong style={{ color: "#e2e8f0" }}>horizontal</strong>{" "}
-                      (1.5&quot; × 1&quot;) for <strong style={{ color: "#e2e8f0" }}>DYMO LabelWriter 450 Turbo</strong>.
-                      Use <strong>Print label</strong> to open your browser's print dialog{" "}
-                      <strong style={{ color: "#e2e8f0" }}> without a new tab</strong> (label is rendered
-                      in a hidden frame). Then save to log each print.
+                      any workflow stage so you can reprint labels. Layout is{" "}
+                      <strong style={{ color: "#e2e8f0" }}>horizontal</strong> and sized from{" "}
+                      <strong style={{ color: "#e2e8f0" }}>DYMO calibration</strong> below.{" "}
+                      <strong style={{ color: "#e2e8f0" }}>Print label</strong> uses{" "}
+                      <strong style={{ color: "#e2e8f0" }}>saved</strong> settings; use{" "}
+                      <strong style={{ color: "#e2e8f0" }}>Test print</strong> to try draft values.
+                      Then save each print to the log as usual.
                     </p>
                     <div
                       style={{
@@ -3324,8 +3400,33 @@ export default function Extraction() {
                         width: "100%",
                       }}
                     >
+                      <DymoLabelCalibrationPanel
+                        draft={dymoDraftCalibration}
+                        onDraftChange={setDymoDraftCalibration}
+                        onSave={() => saveDymoCalibrationSettings()}
+                        onReset={() => {
+                          setDymoDraftCalibration({ ...defaultDymoLabelCalibrationSettings });
+                          setDymoSaveError(null);
+                        }}
+                        onTestPrint={() => {
+                          const ok = openExtractionBatchLabelPrintWindow(
+                            buildExtractionBatchLabelFields(selectedExt),
+                            { calibration: dymoDraftCalibration },
+                          );
+                          if (!ok) {
+                            showNotice(
+                              "Print could not start",
+                              "Your browser blocked the print frame. Try again or use a different browser.",
+                            );
+                          }
+                        }}
+                        saveBusy={dymoSaveBusy}
+                        saveError={dymoSaveError}
+                        inputStyle={inputStyle}
+                      />
                       <ExtractionBatchLabelPreview
                         fields={buildExtractionBatchLabelFields(selectedExt)}
+                        calibration={dymoDraftCalibration}
                       />
                       <button
                         type="button"
@@ -3344,6 +3445,7 @@ export default function Extraction() {
                         onClick={() => {
                           const ok = openExtractionBatchLabelPrintWindow(
                             buildExtractionBatchLabelFields(selectedExt),
+                            { calibration: dymoSavedCalibration },
                           );
                           if (!ok) {
                             showNotice(
@@ -3353,7 +3455,8 @@ export default function Extraction() {
                           }
                         }}
                       >
-                        Print label (1.5&quot; × 1&quot; horizontal)
+                        Print label (saved calibration: {dymoSavedCalibration.labelWidth} ×{" "}
+                        {dymoSavedCalibration.labelHeight})
                       </button>
                       <p
                         style={{
@@ -3365,10 +3468,11 @@ export default function Extraction() {
                           lineHeight: 1.4,
                         }}
                       >
-                        If nothing prints, confirm the printer has a matching horizontal label roll and
-                        drivers are installed. If the preview shows <strong>2 sheets</strong>, open{" "}
-                        <strong>More settings</strong> and set paper / scale to a single label (1.5&quot; ×
-                        1&quot;) or choose <strong>Fit to page</strong> where available.
+                        If the job lands between stickers, decrease{" "}
+                        <strong style={{ color: "#cbd5e1" }}>Top/start offset</strong> (more negative)
+                        and run <strong style={{ color: "#cbd5e1" }}>Test print</strong>. In the system
+                        dialog, choose matching DYMO stock and{" "}
+                        <strong style={{ color: "#cbd5e1" }}>100% scale</strong> when available.
                       </p>
                     </div>
                   </>
