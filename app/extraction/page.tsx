@@ -505,6 +505,12 @@ export default function Extraction() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [viewBatch, setViewBatch] = useState<any>(null);
+  const [viewBatchEditing, setViewBatchEditing] = useState(false);
+  const [editBatchSaving, setEditBatchSaving] = useState(false);
+  const [editBatchName, setEditBatchName] = useState("");
+  const [editProductType, setEditProductType] = useState("");
+  const [editMarketBatchCode, setEditMarketBatchCode] = useState("");
+  const [editSourceBlendLabel, setEditSourceBlendLabel] = useState("");
   const [showAiNameModal, setShowAiNameModal] = useState(false);
   const [aiNameLoading, setAiNameLoading] = useState(false);
   const [aiNameError, setAiNameError] = useState("");
@@ -622,6 +628,10 @@ export default function Extraction() {
   });
 
   useEffect(() => {
+    setViewBatchEditing(false);
+  }, [viewBatch?.id]);
+
+  useEffect(() => {
     const grouped = groupExtractionBatchesByUiStage(s.extractionBatches);
     if (selectedExtractionStage === null) {
       setSelectedExt(null);
@@ -698,6 +708,74 @@ export default function Extraction() {
     );
 
     return false;
+  }
+
+  function startViewBatchEdit() {
+    if (!viewBatch) return;
+    if (!requireWriteAccess("edit extraction batch details")) return;
+    setEditBatchName(String(viewBatch.name ?? ""));
+    setEditProductType(
+      String(viewBatch.productType || viewBatch.name || productTypes[0] || ""),
+    );
+    setEditMarketBatchCode(String(viewBatch.marketBatchCode ?? ""));
+    setEditSourceBlendLabel(String(viewBatch.sourceBlendLabel ?? ""));
+    setViewBatchEditing(true);
+  }
+
+  function cancelViewBatchEdit() {
+    setViewBatchEditing(false);
+  }
+
+  async function saveViewBatchEdits() {
+    if (!viewBatch) return;
+    if (!requireWriteAccess("edit extraction batch details")) return;
+    if (
+      !requireFields([
+        { label: "Batch / product name", value: editBatchName },
+        { label: "Product type", value: editProductType },
+      ])
+    ) {
+      return;
+    }
+
+    const latest =
+      s.extractionBatches.find((b: any) => b.id === viewBatch.id) || viewBatch;
+    const payload: any = { ...latest };
+    if (payload && typeof payload === "object" && "_db" in payload) {
+      delete payload._db;
+    }
+    payload.name = editBatchName.trim();
+    payload.productType = editProductType.trim();
+    payload.marketBatchCode = editMarketBatchCode.trim();
+    payload.sourceBlendLabel = editSourceBlendLabel.trim();
+
+    setEditBatchSaving(true);
+    try {
+      const updated = await updateExtractionBatch(viewBatch.id, payload);
+      if (updated && typeof updated === "object") {
+        const row = s.extractionBatches.find((b: any) => b.id === viewBatch.id);
+        if (row) Object.assign(row, updated);
+        setViewBatch((prev: any) =>
+          prev && prev.id === viewBatch.id ? { ...prev, ...updated } : prev,
+        );
+        setSelectedExt((cur: any) =>
+          cur?.id === viewBatch.id ? { ...cur, ...updated } : cur,
+        );
+        setViewBatchEditing(false);
+        showSyncMessageNotice("Batch details saved.");
+        forceRefresh();
+      }
+    } catch (error) {
+      console.error("Could not save extraction batch edits:", error);
+      showNotice(
+        "Backend Save Failed",
+        error instanceof Error
+          ? error.message
+          : "The server rejected the update.",
+      );
+    } finally {
+      setEditBatchSaving(false);
+    }
   }
 
   function requireFields(fields: { label: string; value: any }[]) {
@@ -4180,28 +4258,146 @@ export default function Extraction() {
             <div style={{ ...modalStyle, maxWidth: 750 }}>
               <h2 style={{ marginTop: 0 }}>Batch Details</h2>
 
-              <p>
-                <b>{viewBatch.marketBatchCode || viewBatch.id}</b>
-                {viewBatch.marketBatchCode ? (
-                  <span style={{ color: "#94a3b8", fontWeight: 600 }}>
-                    {" "}
-                    (run {viewBatch.id})
-                  </span>
+              <p style={{ fontSize: 13, color: "#94a3b8", marginTop: 0 }}>
+                Run id (fixed):{" "}
+                <code style={{ color: "#e2e8f0" }}>{viewBatch.id}</code>
+              </p>
+
+              {viewBatchEditing ? (
+                <div
+                  style={{
+                    padding: 14,
+                    background: "#1e293b",
+                    borderRadius: 12,
+                    marginBottom: 16,
+                    border: "1px solid #334155",
+                  }}
+                >
+                  <h3 style={{ marginTop: 0, marginBottom: 12 }}>Edit batch</h3>
+                  <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+                    Batch / product name
+                  </label>
+                  <input
+                    style={{ ...inputStyle, marginBottom: 14 }}
+                    value={editBatchName}
+                    onChange={(e) => setEditBatchName(e.target.value)}
+                    autoComplete="off"
+                  />
+                  <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+                    Product type
+                  </label>
+                  <select
+                    style={{ ...inputStyle, marginBottom: 14 }}
+                    value={editProductType}
+                    onChange={(e) => setEditProductType(e.target.value)}
+                  >
+                    {[...new Set([...productTypes, editProductType].filter(Boolean))].map(
+                      (pt) => (
+                        <option key={pt} value={pt}>
+                          {pt}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                  <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+                    Market batch code{" "}
+                    <span style={{ color: "#64748b", fontWeight: 400 }}>
+                      (optional; shared lot-style code)
+                    </span>
+                  </label>
+                  <input
+                    style={{ ...inputStyle, marginBottom: 14 }}
+                    value={editMarketBatchCode}
+                    onChange={(e) => setEditMarketBatchCode(e.target.value)}
+                    autoComplete="off"
+                  />
+                  <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+                    Blend label
+                  </label>
+                  <input
+                    style={{ ...inputStyle, marginBottom: 4 }}
+                    value={editSourceBlendLabel}
+                    onChange={(e) => setEditSourceBlendLabel(e.target.value)}
+                    autoComplete="off"
+                  />
+                  <p style={{ fontSize: 12, color: "#64748b", margin: "8px 0 0" }}>
+                    Sources and completed tasks are unchanged here — use workflow tasks to log
+                    process steps.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <p>
+                    <b>{viewBatch.marketBatchCode || viewBatch.id}</b>
+                    {viewBatch.marketBatchCode ? (
+                      <span style={{ color: "#94a3b8", fontWeight: 600 }}>
+                        {" "}
+                        (run {viewBatch.id})
+                      </span>
+                    ) : null}
+                  </p>
+
+                  <p>
+                    {viewBatch.name} | Status: {viewBatch.status} | Biomass Used:{" "}
+                    {viewBatch.totalBiomassUsed || viewBatch.amount || "—"} lbs |
+                    Final: {num(viewBatch.totalFinalGrams) || "—"} g | Yield:{" "}
+                    {getYieldPercentage(viewBatch) || "—"}
+                  </p>
+
+                  {viewBatch.sourceBlendLabel ? (
+                    <p style={{ color: "#cbd5e1" }}>
+                      <b>Blend:</b> {viewBatch.sourceBlendLabel}
+                    </p>
+                  ) : null}
+                </>
+              )}
+
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 10,
+                  marginTop: 4,
+                  marginBottom: 12,
+                  alignItems: "center",
+                }}
+              >
+                {userCanWrite && !viewBatchEditing ? (
+                  <button type="button" style={blueButtonStyle} onClick={startViewBatchEdit}>
+                    Edit details
+                  </button>
                 ) : null}
-              </p>
-
-              <p>
-                {viewBatch.name} | Status: {viewBatch.status} | Biomass Used:{" "}
-                {viewBatch.totalBiomassUsed || viewBatch.amount || "—"} lbs |
-                Final: {num(viewBatch.totalFinalGrams) || "—"} g | Yield:{" "}
-                {getYieldPercentage(viewBatch) || "—"}
-              </p>
-
-              {viewBatch.sourceBlendLabel ? (
-                <p style={{ color: "#cbd5e1" }}>
-                  <b>Blend:</b> {viewBatch.sourceBlendLabel}
-                </p>
-              ) : null}
+                {viewBatchEditing ? (
+                  <>
+                    <button
+                      type="button"
+                      style={buttonStyle}
+                      onClick={cancelViewBatchEdit}
+                      disabled={editBatchSaving}
+                    >
+                      Cancel edit
+                    </button>
+                    <button
+                      type="button"
+                      style={greenButtonStyle}
+                      onClick={() => void saveViewBatchEdits()}
+                      disabled={editBatchSaving}
+                    >
+                      {editBatchSaving ? "Saving…" : "Save changes"}
+                    </button>
+                  </>
+                ) : null}
+                <button
+                  type="button"
+                  style={buttonStyle}
+                  onClick={() => {
+                    setViewBatch(null);
+                    setViewBatchEditing(false);
+                  }}
+                >
+                  Close
+                </button>
+              </div>
 
               {hasCompletedTask(viewBatch, "Pack Socks Stop") && (
                 <div
@@ -4260,10 +4456,6 @@ export default function Extraction() {
               ) : (
                 <p>{viewBatch.source}</p>
               )}
-
-              <button style={buttonStyle} onClick={() => setViewBatch(null)}>
-                Close
-              </button>
 
               <div style={{ marginTop: 18 }}>
                 <h3>Task History</h3>
