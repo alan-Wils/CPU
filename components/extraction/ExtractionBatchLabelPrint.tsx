@@ -21,12 +21,32 @@ export { defaultDymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration"
 export const DYMO_LABEL_LAYOUT_DEBUG = false;
 
 export type ExtractionBatchLabelFields = {
-  /** Unique extraction batch id (e.g. EXT-GMO0-051226-2), not the shared market/lot code. */
+  /**
+   * Display extraction number: `acronym-date-run` (e.g. `GMO-051226-2`) parsed from stored `EXT-…` ids;
+   * non-matching ids pass through unchanged.
+   */
   newExtractionNumber: string;
   /** Strain names from extraction source rows (deduped, first-seen order), else saved blend/source line. */
   strain: string;
   product: string;
 };
+
+/**
+ * Turns stored ids like `EXT-GMO0-051226` / `EXT-GMO0-051226-2` into label copy `GMO-051226-1` / `GMO-051226-2`:
+ * drops the `EXT-` prefix, strips trailing zeros from the acronym token (so `GMO0` → `GMO`), and always appends an explicit run (default `1`).
+ */
+export function formatExtractionBatchLabelNumber(batchId: string): string {
+  const id = String(batchId || "").trim();
+  if (!id || id === "—") return id || "—";
+  const m = id.match(/^EXT-([A-Za-z0-9]+)-(\d{6})(?:-(\d+))?$/i);
+  if (!m) return id;
+  const rawAcronym = m[1];
+  const date = m[2];
+  const run = m[3] && m[3].length > 0 ? m[3] : "1";
+  const acronym =
+    (rawAcronym.replace(/0+$/, "") || rawAcronym).toUpperCase();
+  return `${acronym}-${date}-${run}`;
+}
 
 function collectStrainNamesFromSources(sources: Array<{ name?: string }>): string[] {
   const out: string[] = [];
@@ -51,7 +71,7 @@ export function buildExtractionBatchLabelFields(batch: {
 }): ExtractionBatchLabelFields {
   const batchId = String(batch?.id || "").trim() || "—";
   const product = String(batch?.productType || batch?.name || "").trim() || "—";
-  const newExtractionNumber = batchId;
+  const newExtractionNumber = formatExtractionBatchLabelNumber(batchId);
   let strain = "—";
   if (Array.isArray(batch?.sources) && batch.sources.length > 0) {
     const names = collectStrainNamesFromSources(batch.sources);
@@ -119,7 +139,7 @@ function buildDymoLabelContentTransform(s: DymoLabelCalibrationSettings): string
 
 /**
  * Full HTML document for a hidden iframe (no inline script — parent calls print()).
- * Label copy is a single column: new extraction number → strain → product (see `.dymo-label-inner`), all bold.
+ * Label copy is a single column: extraction number (acronym-date-run) → strain → product (see `.dymo-label-inner`), all bold.
  * @param copies Number of identical labels (each on its own @page); clamped {@link clampDymoLabelPrintCopies}.
  */
 export function buildDymoExtractionBatchLabelPrintHtml(
@@ -565,7 +585,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
           }}
         >
           Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}). Lines top → bottom:{" "}
-          <strong style={{ color: "#e2e8f0" }}>extraction # → strain → product</strong> (all bold).{" "}
+          <strong style={{ color: "#e2e8f0" }}>acronym-date-run → strain → product</strong> (all bold).{" "}
           <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job ·{" "}
           <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame ·{" "}
           <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content.
