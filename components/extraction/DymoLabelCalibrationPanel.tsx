@@ -87,25 +87,21 @@ export function DymoLabelCalibrationPanel({
         DYMO label calibration
       </h3>
       <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-        Page top-left is the print origin (0,0). <strong style={{ color: "#e2e8f0" }}>Whole label</strong> X/Y
-        offset + rotation moves the <em>entire</em> print job — white sheet/card, border, columns, and text
-        together (not just content inside the sheet). <strong style={{ color: "#e2e8f0" }}>Inner content</strong>{" "}
-        X/Y offsets only nudge text inside the frame border. <strong style={{ color: "#e2e8f0" }}>Top/start
-        offset</strong> adds feed-axis correction combined into whole-label Y. Lengths:{" "}
-        <code style={{ color: "#a5b4fc" }}>2in</code>,{" "}
+        Extraction labels are <strong style={{ color: "#e2e8f0" }}>centered</strong> horizontally and vertically
+        inside the size you set below — you should not need to dial in margins manually for a typical run. Use{" "}
+        <strong style={{ color: "#e2e8f0" }}>Whole label</strong> X/Y,{" "}
+        <strong style={{ color: "#e2e8f0" }}>Top/start offset</strong>, rotation, and inner nudges only when your{" "}
+        <em>printer or driver</em> is consistently shifted from the die-cut. Lengths:{" "}
+        <code style={{ color: "#a5b4fc" }}>1in</code>,{" "}
         <code style={{ color: "#a5b4fc" }}>-18px</code>, or plain{" "}
         <code style={{ color: "#a5b4fc" }}>-18</code>
         {" "}→ <code style={{ color: "#a5b4fc" }}>-18px</code>.
       </p>
       <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
-        If the ink sits between stickers or Chrome shows a huge white strip with tiny copy centered,
-        keep <strong style={{ color: "#e2e8f0" }}>Whole label</strong>/<strong style={{ color: "#e2e8f0" }}>
-          Top/start offset
-        </strong>{" "}
-        dial-in and use <strong style={{ color: "#e2e8f0" }}>Test print</strong>; in the system dialog choose{" "}
-        matching DYMO stock and <strong style={{ color: "#e2e8f0" }}>100% scale</strong>.{" "}
-        <strong style={{ color: "#e2e8f0" }}>Whole label X</strong> positive nudges ink right; layouts no longer
-        pre-clip mid-page, but the physical die-cut/sticker edge still limits how far you can shift.
+        If ink still bridges between stickers or Chrome rescales oddly, tweak{" "}
+        <strong style={{ color: "#e2e8f0" }}>Top/start offset</strong> with{" "}
+        <strong style={{ color: "#e2e8f0" }}>Test print</strong>. Pick the matching DYMO stock in the system dialog
+        and use <strong style={{ color: "#e2e8f0" }}>100% scale</strong> so the centered layout stays true.
       </p>
 
       <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>

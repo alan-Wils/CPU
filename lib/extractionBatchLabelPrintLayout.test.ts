@@ -50,14 +50,11 @@ describe("DYMO extraction batch label print layout", () => {
     expect(contentCss).toContain("scale(0.9)");
   });
 
-  it("does not use device-width viewport (prevents Chromium shrink-fit centering on tiny @page)", () => {
-    const html = buildDymoExtractionBatchLabelPrintHtml(fields, {
-      ...defaultDymoLabelCalibrationSettings,
-      labelWidth: "1.5in",
-    });
+  it("sizes viewport meta from labelWidth (defaults use 1in → ~96 logical px)", () => {
+    const html = buildDymoExtractionBatchLabelPrintHtml(fields, defaultDymoLabelCalibrationSettings);
 
     expect(html).not.toMatch(/viewport[^>]+device-width/i);
-    expect(html).toContain('meta name="viewport" content="width=144');
+    expect(html).toContain('meta name="viewport" content="width=96');
   });
 
   it("@media print allows overflow visible so horizontal offsets are not clipped by sheet layers", () => {
@@ -67,5 +64,16 @@ describe("DYMO extraction batch label print layout", () => {
     expect(printBlock.length).toBeGreaterThan(20);
     expect(printBlock).toContain("overflow: visible !important");
     expect(printBlock).toContain(".dymo-label-printable-area");
+  });
+
+  it("centers the frame stack inside printable area with flex alignment", () => {
+    const html = buildDymoExtractionBatchLabelPrintHtml(fields);
+    const pa = html.match(/\.dymo-label-printable-area\s*\{[^}]*\}/s)?.[0] ?? "";
+    expect(pa).toContain("display: flex");
+    expect(pa).toContain("justify-content: center");
+    expect(pa).toContain("align-items: center");
+    const frame = html.match(/\.dymo-label-frame\s*\{[^}]*\}/s)?.[0] ?? "";
+    expect(frame).toContain("position: relative");
+    expect(frame).not.toContain("left: 0");
   });
 });

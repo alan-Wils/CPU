@@ -5,7 +5,7 @@
  */
 
 export type DymoLabelCalibrationSettings = {
-  /** Physical label width for `@page` size and print iframe (CSS length, e.g. `2in`). */
+  /** Physical label width for `@page` size and print iframe (CSS length, e.g. `1in`). */
   labelWidth: string;
   /** Physical label height (CSS length). */
   labelHeight: string;
@@ -47,17 +47,20 @@ export type DymoLabelCalibrationSettings = {
 
 export const DYMO_CALIBRATION_CONFIG_KEY = "dymoLabelCalibration" as const;
 
-/** Defaults tuned for small horizontal tag-style stock and earlier vertical placement on the roll. */
+/**
+ * Defaults for common 1″×1½″ die-cut extraction labels. Frame offsets stay neutral — print CSS auto-centers
+ * the two-column template within the calibrated label width and height.
+ */
 export const defaultDymoLabelCalibrationSettings: DymoLabelCalibrationSettings = {
-  labelWidth: "2in",
-  labelHeight: "1in",
+  labelWidth: "1in",
+  labelHeight: "1.5in",
   labelFrameOffsetX: "0in",
-  labelFrameOffsetY: "-0.05in",
+  labelFrameOffsetY: "0in",
   contentOffsetX: "0px",
   contentOffsetY: "0px",
   rotationDeg: 0,
   fontSizeMultiplier: 1,
-  startOffsetY: "-0.18in",
+  startOffsetY: "0in",
   paddingLeftRight: "0.06in",
   textSpacing: "0.05in",
   printScale: 1,
@@ -342,5 +345,6 @@ export function previewAspectRatioFromSettings(s: DymoLabelCalibrationSettings):
   const uw = parseCssLengthNumber(s.labelWidth);
   const uh = parseCssLengthNumber(s.labelHeight);
   if (uw != null && uh != null && uh > 0) return uw / uh;
-  return 2;
+  /** Fallback ratio for {@link defaultDymoLabelCalibrationSettings} — 1in × 1.5in. */
+  return 2 / 3;
 }

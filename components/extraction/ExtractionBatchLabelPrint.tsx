@@ -127,7 +127,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
 <html lang="en" class="dymo-label-print-root"><head><meta charset="utf-8"/><meta name="viewport" content="width=${viewportW}, initial-scale=1"/>
 <title>Extraction batch label</title>
 <style>
-  /* --- DYMO print: (0,0) = page top-left; job moves entire sheet + template; content shifts/scales inside frame. Keep overflow visible so translateX can reach the sticker edge without ancestor clipping. --- */
+  /* --- DYMO print: calibrated page size + whole-job transform + inner scale. Content is centered in the sticker box via flex on .dymo-label-printable-area; Whole label offsets nudge vs printer hardware. Overflow visible avoids transform clipping before @page edge. --- */
   @page {
     size: ${s.labelWidth} ${s.labelHeight};
     margin: 0;
@@ -169,7 +169,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     height: var(--label-height);
     margin: 0;
     padding: 0;
-    transform-origin: top left;
+    transform-origin: center center;
     transform: ${jobTransform};
     display: block;
   }
@@ -189,7 +189,9 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     margin: 0;
     padding: 0;
     overflow: visible;
-    display: block;
+    display: flex;
+    justify-content: center;
+    align-items: center;
   }
   .dymo-label-origin-marker {
     position: absolute;
@@ -208,11 +210,10 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     print-color-adjust: exact;
   }
   .dymo-label-frame {
-    position: absolute;
-    left: 0;
-    top: 0;
+    position: relative;
     margin: 0;
     padding: 0;
+    flex: 0 0 auto;
     display: inline-block;
     width: max-content;
     max-width: var(--label-width);
@@ -221,7 +222,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     position: relative;
     margin: 0;
     padding: 0;
-    transform-origin: top left;
+    transform-origin: center center;
     transform: ${contentTransform};
     display: block;
     width: max-content;
@@ -326,6 +327,9 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     }
     .dymo-label-printable-area {
       overflow: visible !important;
+      display: flex !important;
+      justify-content: center !important;
+      align-items: center !important;
     }
   }
 </style></head><body>${inner}</body></html>`;
@@ -482,10 +486,11 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             maxWidth: 420,
           }}
         >
-          Outer box = physical label reference ({s.labelWidth} × {s.labelHeight}); grey border is not a hard
-          software clip — transformed ink can extend to the printer/@page edge.{" "}
-          <strong style={{ color: "#2dd4bf" }}>Teal</strong> = print job (whole-label offsets + rotation +
-          start). <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame at (0,0) in sheet.{" "}
+          Outer box = physical label reference ({s.labelWidth} × {s.labelHeight}); the layout is{" "}
+          <strong style={{ color: "#e2e8f0" }}>centered</strong> in that box automatically. Grey border does not clip
+          before the printer/@page boundary.{" "}
+          <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job (offsets + rotation + start).{" "}
+          <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame (centered sheet content).{" "}
           <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content (fine shift + scale).
         </p>
       ) : null}
@@ -510,7 +515,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             height: s.labelHeight,
             margin: 0,
             padding: 0,
-            transformOrigin: "top left",
+            transformOrigin: "center center",
             transform: jobTransform,
             display: "block",
             ...(dbg ? { boxShadow: "inset 0 0 0 2px #14b8a6" } : {}),
@@ -539,7 +544,9 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                 margin: 0,
                 padding: 0,
                 overflow: "visible",
-                display: "block",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
                 boxSizing: "border-box",
                 ...(dbg ? { boxShadow: "inset 0 0 0 2px #ea580c" } : {}),
               }}
@@ -548,11 +555,10 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
               <div
                 className="dymo-label-frame"
                 style={{
-                  position: "absolute",
-                  left: 0,
-                  top: 0,
+                  position: "relative",
                   margin: 0,
                   padding: 0,
+                  flex: "0 0 auto",
                   display: "inline-block",
                   width: "max-content",
                   maxWidth: s.labelWidth,
@@ -567,7 +573,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                     position: "relative",
                     margin: 0,
                     padding: 0,
-                    transformOrigin: "top left",
+                    transformOrigin: "center center",
                     transform: contentTransform,
                     display: "block",
                     width: "max-content",
