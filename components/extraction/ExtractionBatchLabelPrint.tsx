@@ -4,11 +4,17 @@ import type { CSSProperties } from "react";
 
 /**
  * Printed page size — must match the label selected in the OS/DYMO dialog (width × height).
- * Portrait matches common die-cut strips fed with the long edge along the roll; landscape
- * (e.g. 1.5in × 1in) often rotates or mis-registers across the gap sensor between labels.
+ * Portrait matches common die-cut strips fed with the long edge along the roll.
  */
 const LABEL_PRINT_W = "1in";
 const LABEL_PRINT_H = "1.5in";
+
+/** Landscape copy block (two columns); rotated to fit portrait label — keeps text sideways on the strip */
+const LABEL_CONTENT_W = "1.5in";
+const LABEL_CONTENT_H = "1in";
+
+/** Degrees; flip sign if copy reads upside-down on your printer/stock */
+const LABEL_ROTATE_DEG = -90;
 
 export type ExtractionBatchLabelFields = {
   batchId: string;
@@ -45,14 +51,16 @@ function escapeHtml(s: string) {
 function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
   const inner = `
 <div class="sheet">
-  <div class="inner">
-    <div class="col left">
-      <div class="code">${escapeHtml(f.marketCode)}</div>
-      <div class="id">${escapeHtml(f.batchId)}</div>
-    </div>
-    <div class="col right">
-      <div class="ptype">${escapeHtml(f.productType)}</div>
-      <div class="src">${escapeHtml(f.sourcesLine)}</div>
+  <div class="spin">
+    <div class="inner">
+      <div class="col left">
+        <div class="code">${escapeHtml(f.marketCode)}</div>
+        <div class="id">${escapeHtml(f.batchId)}</div>
+      </div>
+      <div class="col right">
+        <div class="ptype">${escapeHtml(f.productType)}</div>
+        <div class="src">${escapeHtml(f.sourcesLine)}</div>
+      </div>
     </div>
   </div>
 </div>
@@ -73,7 +81,7 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
     height: ${LABEL_PRINT_H};
     margin: 0;
     padding: 0;
-    overflow: hidden;
+    overflow: visible;
   }
   body {
     margin: 0;
@@ -82,7 +90,7 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
     height: ${LABEL_PRINT_H};
     max-width: ${LABEL_PRINT_W};
     max-height: ${LABEL_PRINT_H};
-    overflow: hidden;
+    overflow: visible;
     font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif;
     background: #fff;
     page-break-after: avoid;
@@ -94,22 +102,31 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
     max-width: ${LABEL_PRINT_W};
     max-height: ${LABEL_PRINT_H};
     margin: 0;
-    padding: 0.06in 0.06in;
+    padding: 0;
     background: #fff;
+    position: relative;
+    overflow: visible;
+  }
+  .spin {
+    position: absolute;
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: visible;
   }
   .inner {
-    width: 100%;
-    height: 100%;
+    flex-shrink: 0;
+    width: ${LABEL_CONTENT_W};
+    height: ${LABEL_CONTENT_H};
     display: flex;
     flex-direction: row;
     align-items: stretch;
     justify-content: center;
     gap: 0.05in;
     text-align: center;
-    min-height: 0;
+    transform: rotate(${LABEL_ROTATE_DEG}deg);
+    transform-origin: center center;
   }
   .col {
     display: flex;
@@ -128,7 +145,7 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
     padding-left: 0.04in;
   }
   .code {
-    font-size: 9.5pt;
+    font-size: 10.5pt;
     font-weight: 700;
     letter-spacing: 0.02em;
     line-height: 1.07;
@@ -136,7 +153,7 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
     word-break: break-word;
   }
   .id {
-    font-size: 6pt;
+    font-size: 6.25pt;
     color: #333;
     line-height: 1.1;
     margin-top: 0.04in;
@@ -144,14 +161,14 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
     word-break: break-all;
   }
   .ptype {
-    font-size: 7.25pt;
+    font-size: 8pt;
     font-weight: 600;
     line-height: 1.1;
     max-width: 100%;
     word-break: break-word;
   }
   .src {
-    font-size: 6pt;
+    font-size: 6.25pt;
     margin-top: 0.04in;
     line-height: 1.1;
     color: #222;
@@ -163,6 +180,9 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
       background: #fff !important;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
+    }
+    html, body, .sheet, .spin {
+      overflow: visible !important;
     }
     /* Single label only — avoid extra page / bleed into inter-label gap */
     .sheet {
@@ -177,7 +197,7 @@ function buildLabelPrintDocumentHtml(f: ExtractionBatchLabelFields): string {
 
 /**
  * Opens the system print dialog from NexBatch (no new tab — uses a hidden iframe).
- * Portrait sheet matching LABEL_PRINT_W × LABEL_PRINT_H; pick the same stock in the OS/DYMO dialog.
+ * Portrait sheet (LABEL_PRINT_W × LABEL_PRINT_H); copy rotated sideways and centered; match stock in OS/DYMO.
  */
 export function openExtractionBatchLabelPrintWindow(f: ExtractionBatchLabelFields): boolean {
   if (typeof document === "undefined") return false;
@@ -275,24 +295,37 @@ export function ExtractionBatchLabelPreview({ fields, style }: PreviewProps) {
         fontFamily: "system-ui, Segoe UI, Roboto, Arial, sans-serif",
         overflow: "hidden",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
+        flexDirection: "column",
+        alignItems: "stretch",
         boxShadow: "0 12px 40px rgba(0,0,0,0.35)",
         ...style,
       }}
     >
       <div
         style={{
+          flex: 1,
           display: "flex",
-          flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
-          gap: "clamp(10px, 2vw, 18px)",
+          minHeight: 0,
           width: "100%",
-          height: "100%",
-          textAlign: "center",
         }}
       >
+        <div
+          style={{
+            transform: `rotate(${LABEL_ROTATE_DEG}deg)`,
+            transformOrigin: "center center",
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "clamp(10px, 2vw, 18px)",
+            width: "min(340px, 78vmin)",
+            aspectRatio: "3 / 2",
+            maxHeight: "92%",
+            textAlign: "center",
+          }}
+        >
         <div
           style={{
             ...col,
@@ -349,6 +382,7 @@ export function ExtractionBatchLabelPreview({ fields, style }: PreviewProps) {
           >
             {fields.sourcesLine}
           </div>
+        </div>
         </div>
       </div>
     </div>
