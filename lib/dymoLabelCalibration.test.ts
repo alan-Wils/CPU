@@ -29,7 +29,7 @@ describe("validateDymoLabelCalibrationSettings", () => {
   it("accepts defaults", () => {
     const r = validateDymoLabelCalibrationSettings(defaultDymoLabelCalibrationSettings);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.value.labelWidth).toBe("2in");
+    if (r.ok) expect(r.value.labelWidth).toBe("1in");
   });
 
   it("rejects invalid length strings", () => {
@@ -81,11 +81,15 @@ describe("previewAspectRatioFromSettings", () => {
       }),
     ).toBe(2);
   });
+
+  it("matches default 1in × 1.5in portrait stock", () => {
+    expect(previewAspectRatioFromSettings(defaultDymoLabelCalibrationSettings)).toBeCloseTo(2 / 3, 6);
+  });
 });
 
 describe("parseCssLengthNumber", () => {
   it("parses positive lengths for aspect ratio", () => {
-    expect(parseCssLengthNumber("2in")).toBe(2);
+    expect(parseCssLengthNumber("1in")).toBe(1);
     expect(parseCssLengthNumber("")).toBe(null);
   });
 });
