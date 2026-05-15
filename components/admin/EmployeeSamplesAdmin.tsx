@@ -64,6 +64,16 @@ function csvEscape(v: string): string {
   return needs ? `"${t}"` : t;
 }
 
+function InfoCircleGlyph({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9.25" stroke="currentColor" strokeWidth="1.75" />
+      <circle cx="12" cy="8" r="1.1" fill="currentColor" />
+      <path d="M12 11v6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export type EmployeeSamplesAdminProps = {
   enabled: boolean;
   companyId: string;
@@ -90,6 +100,7 @@ export default function EmployeeSamplesAdmin({
   const cid = String(companyId || "").trim() || String(getSelectedCompanyId() || "").trim();
 
   const [newOpen, setNewOpen] = useState(false);
+  const [medRuleInfoOpen, setMedRuleInfoOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [detail, setDetail] = useState<SampleDetail | null>(null);
   const [error, setError] = useState("");
@@ -136,6 +147,10 @@ export default function EmployeeSamplesAdmin({
     if (!newOpen || !enabled) return;
     void loadEligible().catch(() => setEligible([]));
   }, [newOpen, enabled, loadEligible]);
+
+  useEffect(() => {
+    if (!newOpen) setMedRuleInfoOpen(false);
+  }, [newOpen]);
 
   const refreshUsage = useCallback(async () => {
     if (!cid || !enabled || !fEmployeeId || !monthKey) {
@@ -296,7 +311,38 @@ export default function EmployeeSamplesAdmin({
             }}
           >
             <div style={{ ...modalStyle, maxWidth: 720 }} onClick={(ev) => ev.stopPropagation()}>
-              <h2 style={{ marginTop: 0, fontSize: 22, fontWeight: 950 }}>New employee sample</h2>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginTop: 0,
+                  marginBottom: 4,
+                }}
+              >
+                <h2 style={{ ...sectionTitleStyle, margin: 0, flex: 1, fontSize: 22 }}>New employee sample</h2>
+                <button
+                  type="button"
+                  title="Colorado MED sample rule"
+                  aria-label="Colorado MED sample rule"
+                  onClick={() => setMedRuleInfoOpen(true)}
+                  style={{
+                    flexShrink: 0,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 36,
+                    height: 36,
+                    borderRadius: 999,
+                    border: "1px solid rgba(56, 189, 248, 0.45)",
+                    background: "rgba(56, 189, 248, 0.12)",
+                    color: "#7dd3fc",
+                    cursor: "pointer",
+                  }}
+                >
+                  <InfoCircleGlyph size={20} />
+                </button>
+              </div>
               {error ? (
                 <div
                   style={{
@@ -562,6 +608,90 @@ export default function EmployeeSamplesAdmin({
                   </button>
                 </div>
               </form>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {newOpen &&
+        medRuleInfoOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="med-employee-sample-rule-title"
+            style={{ ...modalOverlayStyle, zIndex: 2147482650 }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setMedRuleInfoOpen(false);
+            }}
+          >
+            <div style={{ ...modalStyle, maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+              <h2
+                id="med-employee-sample-rule-title"
+                style={{ marginTop: 0, marginBottom: 0, fontSize: 18, fontWeight: 950, color: "#e2e8f0" }}
+              >
+                Colorado MED Employee Sample Rule
+              </h2>
+              <div style={{ color: "#cbd5e1", fontSize: 14, lineHeight: 1.65, marginTop: 14 }}>
+                <p style={{ margin: "0 0 14px" }}>
+                  Colorado MED employee samples / R-and-D units may only be transferred to a designated eligible
+                  employee for quality control, product development, or R-and-D purposes.
+                </p>
+                <p style={{ margin: "0 0 14px" }}>
+                  Before transfer, the business must verify the employee will not exceed the monthly limit.
+                </p>
+                <p style={{ margin: "0 0 6px", fontWeight: 800, color: "#e2e8f0" }}>Monthly limits:</p>
+                <ul style={{ margin: "0 0 14px", paddingLeft: 22, color: "#cbd5e1" }}>
+                  <li style={{ marginBottom: 6 }}>Medical marijuana concentrate: 15 grams per calendar month</li>
+                  <li style={{ marginBottom: 6 }}>Retail marijuana concentrate: 8 grams per calendar month</li>
+                  <li style={{ marginBottom: 6 }}>
+                    Edible marijuana product: 14 individual serving-size units per calendar month
+                  </li>
+                  <li style={{ marginBottom: 6 }}>
+                    Non-edible marijuana product: applicable equivalent limit
+                  </li>
+                </ul>
+                <p style={{ margin: "0 0 6px", fontWeight: 800, color: "#e2e8f0" }}>Samples may not be:</p>
+                <ul style={{ margin: "0 0 14px", paddingLeft: 22, color: "#cbd5e1" }}>
+                  <li style={{ marginBottom: 6 }}>used as compensation</li>
+                  <li style={{ marginBottom: 6 }}>consumed on licensed premises</li>
+                  <li style={{ marginBottom: 6 }}>resold</li>
+                  <li style={{ marginBottom: 6 }}>transferred to another person</li>
+                  <li style={{ marginBottom: 6 }}>issued to a non-designated employee</li>
+                </ul>
+                <p style={{ margin: 0 }}>
+                  Each transfer must be tracked with employee, date, product, quantity, source batch/package, and
+                  monthly total.
+                </p>
+              </div>
+              <p
+                style={{
+                  marginTop: 16,
+                  marginBottom: 0,
+                  fontSize: 12,
+                  lineHeight: 1.55,
+                  color: "#94a3b8",
+                  borderTop: "1px solid rgba(148, 163, 184, 0.22)",
+                  paddingTop: 14,
+                }}
+              >
+                Based on Colorado HB25-1209 and 1 CCR 212-3 Rule 5-320 / related MED R-and-D unit rules. Confirm
+                against current MED rules before production use.
+              </p>
+              <button
+                type="button"
+                onClick={() => setMedRuleInfoOpen(false)}
+                style={{
+                  ...smallButtonStyle,
+                  marginTop: 16,
+                  background: "#334155",
+                  border: "1px solid #475569",
+                  color: "#e2e8f0",
+                }}
+              >
+                Close
+              </button>
             </div>
           </div>,
           document.body,
