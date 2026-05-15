@@ -344,6 +344,12 @@ export default function Nav() {
             </Link>
           )}
 
+          {canNavToPage("page.edibles") && (
+            <Link href="/edibles" style={navButtonStyle(pathname === "/edibles")}>
+              Edibles
+            </Link>
+          )}
+
           {canNavToPage("page.inventory") && (
             <Link
               href="/inventory"

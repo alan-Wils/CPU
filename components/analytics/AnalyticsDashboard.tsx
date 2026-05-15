@@ -248,7 +248,13 @@ export function AnalyticsDashboard(props: {
   const ordTrend = trendLine((kpi?.totalOrders as { trend?: { pct: number; up: boolean } })?.trend ?? null);
   const growthTrend = trendLine((kpi?.monthlyGrowthPct as { trend?: { pct: number; up: boolean } })?.trend ?? null);
   const activeBatches = kpi?.activeBatches as
-    | { value?: number; cultivationOpen?: number; extraction?: number; packaging?: number }
+    | {
+        value?: number;
+        cultivationOpen?: number;
+        extraction?: number;
+        packaging?: number;
+        ediblesKitchen?: number;
+      }
     | undefined;
 
   return (
@@ -340,6 +346,7 @@ export function AnalyticsDashboard(props: {
               <option value="cultivation">Cultivation</option>
               <option value="extraction">Extraction</option>
               <option value="packaging">Packaging</option>
+              <option value="edibles">Edibles</option>
             </select>
           </label>
           <button
@@ -444,7 +451,7 @@ export function AnalyticsDashboard(props: {
           <KpiCard
             title="Active batches"
             value={String(Number(activeBatches?.value) || 0)}
-            sub={`Cult ${activeBatches?.cultivationOpen ?? "—"} · Ext ${activeBatches?.extraction ?? "—"} · Pkg ${activeBatches?.packaging ?? "—"}`}
+            sub={`Cult ${activeBatches?.cultivationOpen ?? "—"} · Ext ${activeBatches?.extraction ?? "—"} · Pkg ${activeBatches?.packaging ?? "—"} · Ed ${activeBatches?.ediblesKitchen ?? "—"}`}
             icon="▣"
           />
           <KpiCard
@@ -511,6 +518,66 @@ export function AnalyticsDashboard(props: {
         </div>
       ) : null}
 
+      {prefs.production && props.data && !props.error
+        ? (() => {
+            const ed = props.data.edibles as {
+              activeKitchenBatches?: number;
+              inDateRange?: {
+                batchCount?: number;
+                completedCount?: number;
+                failedBatchPct?: number;
+                oilUtilizationGrams?: number;
+                wastePct?: number;
+                totalMgScheduled?: number;
+                avgYieldPct?: number | null;
+                mgEfficiencyHint?: number | null;
+              };
+            } | null;
+            if (!ed) return null;
+            const r = ed.inDateRange || {};
+            return (
+              <Panel
+                title="Edibles kitchen"
+                subtitle="Infused product batches from the relational Edibles module (oil allocation, QA, packaging transfer)."
+              >
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))",
+                    gap: 10,
+                    fontSize: 13,
+                  }}
+                >
+                  {[
+                    ["Active kitchen batches", String(ed.activeKitchenBatches ?? 0)],
+                    ["Batches started (range)", String(r.batchCount ?? 0)],
+                    ["Completed (range)", String(r.completedCount ?? 0)],
+                    ["Failed batch % (range)", `${Number(r.failedBatchPct ?? 0).toFixed(1)}%`],
+                    ["Oil used (g, range)", `${Number(r.oilUtilizationGrams ?? 0).toFixed(2)}`],
+                    ["Waste % of oil (range)", `${Number(r.wastePct ?? 0).toFixed(1)}%`],
+                    ["Total MG scheduled (range)", `${Number(r.totalMgScheduled ?? 0).toFixed(0)}`],
+                    ["Avg yield % (completed)", r.avgYieldPct != null ? `${Number(r.avgYieldPct).toFixed(1)}%` : "—"],
+                    ["MG / g oil (hint)", r.mgEfficiencyHint != null ? `${Number(r.mgEfficiencyHint).toFixed(2)}` : "—"],
+                  ].map(([k, v]) => (
+                    <div
+                      key={k}
+                      style={{
+                        borderRadius: 12,
+                        border: "1px solid rgba(251,146,60,0.35)",
+                        background: "linear-gradient(145deg, rgba(30,27,15,0.9), rgba(15,23,42,0.95))",
+                        padding: "10px 12px",
+                      }}
+                    >
+                      <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700 }}>{k}</div>
+                      <div style={{ color: "#fdba74", fontWeight: 900, marginTop: 6, fontSize: 15 }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+            );
+          })()
+        : null}
+
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         <div
           style={{
@@ -554,6 +621,7 @@ export function AnalyticsDashboard(props: {
                         ["Room utilization %", p.roomUtilizationPct != null ? `${p.roomUtilizationPct}%` : "—"],
                         ["Extraction in progress", String(activeBatches?.extraction ?? 0)],
                         ["Packaging in progress", String(activeBatches?.packaging ?? 0)],
+                        ["Edibles kitchen active", String(activeBatches?.ediblesKitchen ?? 0)],
                         ["Open cultivation batches", String(activeBatches?.cultivationOpen ?? 0)],
                         ["METRC sync health", p.metrcSyncHealth != null ? `${p.metrcSyncHealth}%` : "—"],
                       ].map(([k, v]) => (

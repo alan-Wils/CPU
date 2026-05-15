@@ -51,6 +51,18 @@ export {
   type FlowerRoomForSqFt,
 } from "./strainCanopyMath.js";
 
+export {
+  additiveMassFractionFromGoals,
+  estimatedGummyWeightGramsFromMoldMl,
+  planPectinMultiAdditiveBatch,
+  planPectinSingleAdditiveBatch,
+  type PectinAdditiveLineInput,
+  type PectinMultiAdditiveInput,
+  type PectinMultiAdditivePlan,
+  type PectinSingleAdditiveInput,
+  type PectinSingleAdditivePlan,
+} from "./pectinMeltToMakeFormula.js";
+
 export const ROLE_PERMISSIONS: Record<AppRole, string[]> = {
   OWNER: ["*"],
   ADMIN: ["users.manage", "workflow.manage", "audit.read", "finance.read", "config.manage"],

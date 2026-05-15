@@ -1,14 +1,17 @@
 import { prisma } from "../config/prisma.js";
 import { gPerPound } from "./operationalWorkflowService.js";
+import { EdiblesService } from "../modules/edibles/ediblesService.js";
 const g = (n) => Number(n.toFixed(4));
+const ediblesService = new EdiblesService();
 export class DataHubService {
     async getSnapshot(companyId) {
-        const [batches, cultPackComplete, labors] = await Promise.all([
+        const [batches, cultPackComplete, labors, ediblesMetrics] = await Promise.all([
             prisma.cultivationBatch.findMany({ where: { companyId }, orderBy: { createdAt: "desc" } }),
             prisma.cultivationPackagingRun.findMany({
                 where: { companyId, status: "COMPLETED" }
             }),
-            prisma.laborEntry.findMany({ where: { companyId, cultivationBatchId: { not: null } } })
+            prisma.laborEntry.findMany({ where: { companyId, cultivationBatchId: { not: null } } }),
+            ediblesService.analyticsSnapshot(companyId),
         ]);
         const packedFlowerGrams = g(cultPackComplete
             .filter((r) => r.line === "A_GRADE_FLOWER")
@@ -59,6 +62,7 @@ export class DataHubService {
             };
         });
         return {
+            edibles: ediblesMetrics,
             labor: {
                 totalCost: laborCost,
                 totalHours: laborHours,

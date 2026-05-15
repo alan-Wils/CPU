@@ -16,6 +16,8 @@ enum UserRole {
   CULTIVATION_SPECIALIST
   EXTRACTION_SPECIALIST
   PACKAGING_SPECIALIST
+  EDIBLES
+  EDIBLES_MANAGER
   FINANCIAL_ANALYST
   DATABASE_ARCHITECT
   FULL_STACK_DEVELOPER
@@ -53,6 +55,7 @@ enum WorkflowStage {
   CULTIVATION
   EXTRACTION
   PACKAGING
+  EDIBLES
 }
 
 enum CultivationAutoStatus {
@@ -190,6 +193,9 @@ model Company {
   facilityAssets                    FacilityAsset[]
   facilityPartRequests                FacilityPartRequest[]
   facilityLocations                 FacilityLocation[]
+
+  edibleBatches      EdibleBatch[]
+  edibleTaskLogs     EdibleTaskLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -539,6 +545,9 @@ model User {
   marketplaceOrdersCreated MarketplaceOrder[]
   conversationMessagesSent ConversationMessage[]
 
+  edibleBatchesCreated EdibleBatch[] @relation("EdibleBatchCreatedBy")
+  edibleTaskLogsCreated EdibleTaskLog[] @relation("EdibleTaskLogCreatedBy")
+
   @@index([companyId])
 }
 
@@ -738,6 +747,7 @@ model ExtractionRun {
 
   biomassLines ExtractionBiomassInput[] @relation("RunBiomass")
   packagingLots PackagingLot[]
+  edibleBatches  EdibleBatch[]
 
   /// Rich extraction UI state (tasks, labels, workflow); merged with columns on read.
   extractionUiState Json?
@@ -789,6 +799,10 @@ model PackagingLot {
   /// Packaging UI-only fields merged with relational columns on read.
   packagingUiState Json?
 
+  /// When this lot was created from an edible kitchen transfer (traceability).
+  edibleBatchId String? @unique
+  edibleBatch   EdibleBatch? @relation(fields: [edibleBatchId], references: [id], onDelete: SetNull)
+
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
   finishedAt DateTime?
@@ -796,6 +810,114 @@ model PackagingLot {
   @@index([companyId])
   @@index([extractionRunId])
   @@index([status])
+}
+
+/// Cannabis infused product kitchen batch (gummies, chocolates, etc.).
+model EdibleBatch {
+  id          String  @id @default(cuid())
+  companyId String
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  batchNumber String
+  sku         String
+  flavor      String
+  productType String
+  status      String  @default("PENDING")
+  stage       String  @default("OIL_INTAKE")
+
+  targetMgPerPiece Float
+  targetPieces     Int
+  expectedYield    Int?
+  actualYield      Int?
+
+  oilInputGrams     Float  @default(0)
+  totalMgInput      Float  @default(0)
+  wasteGrams        Float  @default(0)
+  potencyMgPerGram  Float?
+
+  extractionRunId String
+  extractionRun   ExtractionRun @relation(fields: [extractionRunId], references: [id], onDelete: Restrict)
+
+  notes String?
+
+  packagingLot PackagingLot?
+
+  createdById String
+  createdBy   User     @relation("EdibleBatchCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  startDate     DateTime?
+  completedDate DateTime?
+
+  taskLogs     EdibleTaskLog[]
+  ingredients  EdibleIngredient[]
+  qaTests      EdibleQaTest[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, batchNumber])
+  @@index([companyId, stage])
+  @@index([companyId, status])
+  @@index([extractionRunId])
+}
+
+model EdibleTaskLog {
+  id              String      @id @default(cuid())
+  companyId       String
+  company         Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  edibleBatchId   String
+  edibleBatch     EdibleBatch @relation(fields: [edibleBatchId], references: [id], onDelete: Cascade)
+
+  taskType        String
+  startedAt       DateTime?
+  completedAt     DateTime?
+  durationMinutes Int?
+  employees       String?
+  notes           String?
+  temperature     Float?
+  weight          Float?
+
+  createdById String
+  createdBy   User   @relation("EdibleTaskLogCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@index([companyId, createdAt])
+  @@index([edibleBatchId, createdAt])
+}
+
+model EdibleIngredient {
+  id            String      @id @default(cuid())
+  edibleBatchId String
+  edibleBatch   EdibleBatch @relation(fields: [edibleBatchId], references: [id], onDelete: Cascade)
+
+  ingredientName String
+  lotNumber      String?
+  weight         Float
+  unit           String    @default("g")
+
+  createdAt DateTime @default(now())
+
+  @@index([edibleBatchId])
+}
+
+model EdibleQaTest {
+  id              String      @id @default(cuid())
+  edibleBatchId   String
+  edibleBatch     EdibleBatch @relation(fields: [edibleBatchId], references: [id], onDelete: Cascade)
+
+  potencyStatus     String @default("PENDING")
+  homogeneityStatus String @default("PENDING")
+  microbialStatus   String @default("PENDING")
+  failedReason      String?
+  submittedAt       DateTime?
+  passedAt          DateTime?
+  notes             String?
+  reviewedById      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([edibleBatchId, createdAt])
 }
 
 model LaborEntry {

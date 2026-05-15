@@ -45,4 +45,28 @@ describe("sectionCalendarAccess RBAC", () => {
             }),
         ).toBe(true);
     });
+
+    it("allows EDIBLES roles to read/write edibles calendar", () => {
+        expect(
+            canReadSectionCalendar({
+                role: "EDIBLES",
+                permissions: ["page.edibles", "page.data-hub"],
+                section: "edibles",
+            }),
+        ).toBe(true);
+        expect(
+            canWriteSectionCalendar({
+                role: "EDIBLES",
+                permissions: ["page.edibles", "page.data-hub"],
+                section: "edibles",
+            }),
+        ).toBe(true);
+        expect(
+            canWriteSectionCalendar({
+                role: "EDIBLES_MANAGER",
+                permissions: ["page.edibles", "page.data-hub", "page.analytics"],
+                section: "edibles",
+            }),
+        ).toBe(true);
+    });
 });

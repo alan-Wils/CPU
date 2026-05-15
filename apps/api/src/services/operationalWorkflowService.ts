@@ -1007,6 +1007,9 @@ export class OperationalWorkflowService {
         const lotCount = await prisma.packagingLot.count({ where: { extractionRunId: run.id } });
         if (lotCount > 0)
             throw new AppError("Cannot delete extraction run with packaging lots", 400);
+        const edibleCount = await prisma.edibleBatch.count({ where: { extractionRunId: run.id } });
+        if (edibleCount > 0)
+            throw new AppError("Cannot delete extraction run linked to edible batches", 400);
         await prisma.extractionRun.delete({ where: { id: run.id } });
         await this.audit.logAction({
             companyId: input.companyId,

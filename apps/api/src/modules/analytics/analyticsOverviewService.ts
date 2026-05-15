@@ -79,6 +79,7 @@ function laborStageFromDepartment(dept: string | null | undefined): WorkflowStag
   if (d === "cultivation") return ["CULTIVATION"];
   if (d === "extraction") return ["EXTRACTION"];
   if (d === "packaging") return ["PACKAGING"];
+  if (d === "edibles") return ["EDIBLES"];
   return null;
 }
 
@@ -263,6 +264,23 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     ordersService.getOrdersAnalytics(companyId, { dateFrom: prevFromYmd, dateTo: prevToYmd }),
   ]);
 
+  const edibleBatchesAll = await prisma.edibleBatch.findMany({
+    where: { companyId },
+    select: {
+      id: true,
+      stage: true,
+      status: true,
+      oilInputGrams: true,
+      wasteGrams: true,
+      totalMgInput: true,
+      expectedYield: true,
+      actualYield: true,
+      targetPieces: true,
+      createdAt: true,
+    },
+    take: 8000,
+  });
+
   let plantsVeg = 0;
   let plantsFlower = 0;
   let activeCultivationBatches = 0;
@@ -281,6 +299,32 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
 
   const extractionInProgress = extractionRuns.filter((r) => r.phase !== "COMPLETED" && !r.finishedAt).length;
   const packagingInProgress = packagingLots.filter((p) => p.status === "IN_PROGRESS" && !p.finishedAt).length;
+
+  const ediblesActiveKitchen = edibleBatchesAll.filter(
+    (b) =>
+      b.stage !== "COMPLETED" &&
+      b.status !== "CANCELLED" &&
+      b.status !== "COMPLETED",
+  ).length;
+
+  const edibleInRange = edibleBatchesAll.filter(
+    (b) => b.createdAt.getTime() >= fromMs && b.createdAt.getTime() <= toMs,
+  );
+  const gEd = (n: number) => Number(Number(n).toFixed(4));
+  const nEdibleR = edibleInRange.length || 1;
+  const edCompletedR = edibleInRange.filter((b) => b.status === "COMPLETED");
+  const edFailedR = edibleInRange.filter((b) => b.status === "QA_FAILED");
+  const edOilR = gEd(edibleInRange.reduce((s, b) => s + (Number(b.oilInputGrams) || 0), 0));
+  const edWasteR = gEd(edibleInRange.reduce((s, b) => s + (Number(b.wasteGrams) || 0), 0));
+  const edMgR = gEd(edibleInRange.reduce((s, b) => s + (Number(b.totalMgInput) || 0), 0));
+  const edYieldsR = edCompletedR
+    .map((r) =>
+      r.expectedYield && r.expectedYield > 0 && r.actualYield != null
+        ? gEd((100 * r.actualYield) / r.expectedYield)
+        : null,
+    )
+    .filter((x): x is number => x != null);
+  const edAvgYieldR = edYieldsR.length ? gEd(edYieldsR.reduce((a, b) => a + b, 0) / edYieldsR.length) : null;
 
   const leafLinkRevenue = leafLinkQualifyingRevenueUsd(ordersCurrent);
   const leafLinkPrev = leafLinkQualifyingRevenueUsd(ordersPrev);
@@ -305,7 +349,8 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
 
   const totalOrders =
     ordersCurrent.ordersIncluded + (sellerWorkspaceOn ? sellerOrderCount : 0) + buyerOrderCount;
-  const activeBatches = activeCultivationBatches + extractionInProgress + packagingInProgress;
+  const activeBatches =
+    activeCultivationBatches + extractionInProgress + packagingInProgress + ediblesActiveKitchen;
 
   const inventoryValue = sumLeafLinkInventoryValueUsd(
     leafLinkInventoryRowsForPageDefaultTotals(leafLinkInventoryItems),
@@ -659,7 +704,13 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
         leafLink: ordersCurrent.ordersIncluded,
         marketplace: (sellerWorkspaceOn ? sellerOrderCount : 0) + buyerOrderCount,
       },
-      activeBatches: { value: activeBatches, cultivationOpen: activeCultivationBatches, extraction: extractionInProgress, packaging: packagingInProgress },
+      activeBatches: {
+        value: activeBatches,
+        cultivationOpen: activeCultivationBatches,
+        extraction: extractionInProgress,
+        packaging: packagingInProgress,
+        ediblesKitchen: ediblesActiveKitchen,
+      },
       inventoryValue: {
         value: inventoryValue,
         note: "LeafLink: Σ price × qty (status Available, qty>0 — matches Inventory page defaults)",
@@ -758,6 +809,21 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     liveOps,
     insights,
     alerts,
+    edibles: services.productionEnabled
+      ? {
+          activeKitchenBatches: ediblesActiveKitchen,
+          inDateRange: {
+            batchCount: edibleInRange.length,
+            completedCount: edCompletedR.length,
+            failedBatchPct: gEd((100 * edFailedR.length) / nEdibleR),
+            oilUtilizationGrams: edOilR,
+            wastePct: edOilR > 0 ? gEd((100 * edWasteR) / edOilR) : 0,
+            totalMgScheduled: edMgR,
+            avgYieldPct: edAvgYieldR,
+            mgEfficiencyHint: edOilR > 0 && edMgR > 0 ? gEd(edMgR / edOilR) : null,
+          },
+        }
+      : null,
     executiveCompare,
     ordersMeta: {
       leafLinkConfigured: ordersCurrent.configured,

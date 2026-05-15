@@ -7,6 +7,7 @@ export const APP_PAGE_PERMISSION_IDS = [
   "page.cultivation",
   "page.extraction",
   "page.packaging",
+  "page.edibles",
   "page.inventory",
   "page.orders",
   "page.data-hub",
@@ -33,6 +34,7 @@ export const APP_PERMISSION_LABELS: Record<AppPermissionId, string> = {
   "page.cultivation": "Cultivation",
   "page.extraction": "Extraction",
   "page.packaging": "Packaging",
+  "page.edibles": "Edibles",
   "page.inventory": "Inventory",
   "page.orders": "Orders",
   "page.data-hub": "Data Hub",
@@ -48,6 +50,7 @@ const PAGE_SET_ALL: AppPagePermissionId[] = [
   "page.cultivation",
   "page.extraction",
   "page.packaging",
+  "page.edibles",
   "page.inventory",
   "page.orders",
   "page.data-hub",
@@ -89,6 +92,9 @@ export function defaultPagePermissionsForRole(role: string): AppPermissionId[] {
     return ["page.extraction", "page.data-hub"];
   if (r === "PACKAGING_SPECIALIST" || r === "PACKAGING")
     return ["page.packaging", "page.data-hub"];
+  if (r === "EDIBLES") return ["page.edibles", "page.data-hub"];
+  if (r === "EDIBLES_MANAGER")
+    return ["page.edibles", "page.data-hub", "page.analytics"];
   if (r === "FACILITY_MAINTENANCE_SPECIALIST")
     return ["page.facilities-maintenance", "page.data-hub"];
   if (r === "VIEW_ONLY")

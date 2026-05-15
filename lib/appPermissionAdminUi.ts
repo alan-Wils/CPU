@@ -6,6 +6,7 @@ export const ALL_APP_PERMISSION_IDS = [
   "page.cultivation",
   "page.extraction",
   "page.packaging",
+  "page.edibles",
   "page.inventory",
   "page.orders",
   "page.data-hub",
@@ -21,6 +22,7 @@ export const APP_PERMISSION_LABELS: Record<AdminUiPermissionId, string> = {
   "page.cultivation": "Cultivation",
   "page.extraction": "Extraction",
   "page.packaging": "Packaging",
+  "page.edibles": "Edibles",
   "page.inventory": "Inventory",
   "page.orders": "Orders",
   "page.data-hub": "Data Hub",
@@ -38,7 +40,7 @@ export const ADMIN_PERMISSION_SECTIONS: ReadonlyArray<{
 }> = [
   {
     title: "Production floor",
-    ids: ["page.cultivation", "page.extraction", "page.packaging"],
+    ids: ["page.cultivation", "page.extraction", "page.packaging", "page.edibles"],
   },
   {
     title: "Inventory, orders, and analytics",
@@ -64,6 +66,7 @@ const PAGE_SET_ALL: AdminUiPermissionId[] = [
   "page.cultivation",
   "page.extraction",
   "page.packaging",
+  "page.edibles",
   "page.inventory",
   "page.orders",
   "page.data-hub",
@@ -84,6 +87,9 @@ export function defaultPagePermissionsForRole(role: string): AdminUiPermissionId
     return ["page.extraction", "page.data-hub"];
   if (r === "PACKAGING_SPECIALIST" || r === "PACKAGING")
     return ["page.packaging", "page.data-hub"];
+  if (r === "EDIBLES") return ["page.edibles", "page.data-hub"];
+  if (r === "EDIBLES_MANAGER")
+    return ["page.edibles", "page.data-hub", "page.analytics"];
   if (r === "FACILITY_MAINTENANCE_SPECIALIST")
     return ["page.facilities-maintenance", "page.data-hub"];
   if (r === "VIEW_ONLY")

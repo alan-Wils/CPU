@@ -45,6 +45,14 @@ const dashboardCards: DashboardCard[] = [
     permission: "page.packaging",
   },
   {
+    title: "Edibles",
+    description:
+      "Kitchen-scale infused manufacturing: oil-linked batches, prep and production tasks, QA, and transfer into packaging with full traceability.",
+    href: "/edibles",
+    accent: "#fb923c",
+    permission: "page.edibles",
+  },
+  {
     title: "Inventory",
     description:
       "Track lots, manifests, labeling, METRC-aligned inventory snapshots, movement, and reconciliation.",

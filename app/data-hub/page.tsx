@@ -28,7 +28,8 @@ import {
   deletePackagingBatchRecord,
 } from "@/lib/packagingApi";
 import { deleteAllLogs, deleteLog as deleteTaskLogRemote } from "@/lib/logsApi";
-import { getLogs } from "@/lib/api";
+import { apiRequest, getLogs, getSelectedCompanyId } from "@/lib/api";
+import { hasAppPermission, computeEffectiveAppPermissions } from "@cpu/shared";
 import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
 import { formatLogDisplayTime, nowIsoForLog } from "@/lib/companyTimezone";
 
@@ -780,12 +781,47 @@ export default function DataHub() {
   const [refresh, setRefresh] = useState(0);
   const [selectedChain, setSelectedChain] = useState<any>(null);
   const [tenantEpoch, setTenantEpoch] = useState(0);
+  const [hubEdiblesMetrics, setHubEdiblesMetrics] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     const bump = () => setTenantEpoch((n) => n + 1);
     window.addEventListener(CPU_TENANT_CHANGED_EVENT, bump);
     return () => window.removeEventListener(CPU_TENANT_CHANGED_EVENT, bump);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadEdiblesHub = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      const u = getAuthUser();
+      const role = String(u?.role || "").toUpperCase();
+      const granted =
+        Array.isArray(u?.permissions) && u.permissions.length > 0
+          ? u.permissions
+          : computeEffectiveAppPermissions(role, null);
+      if (!hasAppPermission(granted, "page.edibles")) {
+        if (!cancelled) setHubEdiblesMetrics(null);
+        return;
+      }
+      try {
+        const data = await apiRequest<{ edibles?: Record<string, unknown> }>("/api/data-hub", {
+          companyId: getSelectedCompanyId().trim() || undefined,
+        });
+        if (!cancelled) setHubEdiblesMetrics(data?.edibles ?? null);
+      } catch {
+        if (!cancelled) setHubEdiblesMetrics(null);
+      }
+    };
+    void loadEdiblesHub();
+    const id = window.setInterval(() => void loadEdiblesHub(), 12_000);
+    const vis = () => void loadEdiblesHub();
+    document.addEventListener("visibilitychange", vis);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", vis);
+    };
+  }, [tenantEpoch, refresh]);
 
   useEffect(() => {
     let mounted = true;
@@ -1777,6 +1813,67 @@ export default function DataHub() {
             Clean batch chain view with cultivation flower output, trim, extraction, extraction packaging, and cost data separated.
           </p>
         </div>
+
+        {hubEdiblesMetrics && (
+          <div
+            style={{
+              ...cardStyle,
+              border: "1px solid rgba(251, 146, 60, 0.35)",
+              background: "linear-gradient(145deg, rgba(30,22,10,0.55), rgba(15,23,42,0.92))",
+            }}
+          >
+            <h2 style={{ marginTop: 0 }}>Edibles (relational)</h2>
+            <p style={{ color: "#94a3b8", marginTop: 6 }}>
+              Live metrics from edible batches, labor tagged EDIBLES, ingredient weights, and weekly task throughput.
+            </p>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+                gap: 10,
+                marginTop: 14,
+              }}
+            >
+              {(
+                [
+                  ["Kitchen batches", hubEdiblesMetrics.batchCount],
+                  ["Completed", hubEdiblesMetrics.completedCount],
+                  ["Failed %", hubEdiblesMetrics.failedBatchPct],
+                  ["Oil used (g)", hubEdiblesMetrics.oilUtilizationGrams],
+                  ["Waste %", hubEdiblesMetrics.wastePct],
+                  ["Total MG scheduled", hubEdiblesMetrics.totalMgScheduled],
+                  ["Avg yield %", hubEdiblesMetrics.avgYieldPct],
+                  ["Labor $ (EDIBLES)", hubEdiblesMetrics.laborCostUsd],
+                  ["Labor hrs", hubEdiblesMetrics.laborHours],
+                  ["Est. $ / unit (labor)", hubEdiblesMetrics.costPerUnitUsd],
+                  ["Ingredient wt (g)", hubEdiblesMetrics.ingredientWeightGrams],
+                  ["Tasks (7d)", hubEdiblesMetrics.taskCompletionsLast7Days],
+                ] as [string, unknown][]
+              ).map(([k, v]) => (
+                <div
+                  key={k}
+                  style={{
+                    borderRadius: 12,
+                    border: "1px solid rgba(51,65,85,0.9)",
+                    padding: "10px 12px",
+                    background: "#0f172a",
+                  }}
+                >
+                  <div style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700 }}>{k}</div>
+                  <div style={{ color: "#fdba74", fontWeight: 900, marginTop: 6, fontSize: 15 }}>
+                    {v == null
+                      ? "—"
+                      : typeof v === "number"
+                        ? Number.isFinite(v)
+                          ? String(v)
+                          : "—"
+                        : String(v)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {!canWriteDataHub() && (
           <div

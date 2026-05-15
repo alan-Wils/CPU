@@ -5,7 +5,7 @@ import {
     type AppPagePermissionId,
 } from "../../lib/appPermissions.js";
 
-export const SECTION_CALENDAR_SECTIONS = ["cultivation", "extraction", "packaging"] as const;
+export const SECTION_CALENDAR_SECTIONS = ["cultivation", "extraction", "packaging", "edibles"] as const;
 export type SectionCalendarSection = (typeof SECTION_CALENDAR_SECTIONS)[number];
 
 const ROLE_LEVELS: Record<string, number> = {
@@ -16,6 +16,9 @@ const ROLE_LEVELS: Record<string, number> = {
     EXTRACTION_SPECIALIST: 2,
     PACKAGING: 2,
     PACKAGING_SPECIALIST: 2,
+    EDIBLES: 2,
+    EDIBLES_MANAGER: 3,
+    OPERATIONS_MANAGER: 3,
     MANAGER: 3,
     ADMIN: 4,
     OWNER: 5,
@@ -33,6 +36,8 @@ function sectionPagePermission(section: SectionCalendarSection): AppPagePermissi
         return "page.cultivation";
     if (section === "extraction")
         return "page.extraction";
+    if (section === "edibles")
+        return "page.edibles";
     return "page.packaging";
 }
 
@@ -43,6 +48,8 @@ function roleMatchesExtractionOrPackagingFloor(role: string, section: SectionCal
         return r === "EXTRACTION" || r === "EXTRACTION_SPECIALIST" || r === "VIEW_ONLY";
     if (section === "packaging")
         return r === "PACKAGING" || r === "PACKAGING_SPECIALIST" || r === "VIEW_ONLY";
+    if (section === "edibles")
+        return r === "EDIBLES" || r === "EDIBLES_MANAGER" || r === "VIEW_ONLY";
     return false;
 }
 
@@ -58,7 +65,7 @@ function legacyManagerUp(role: string): boolean {
 
 export function parseSectionCalendarSection(raw: string): SectionCalendarSection | null {
     const s = String(raw || "").trim().toLowerCase();
-    if (s === "cultivation" || s === "extraction" || s === "packaging")
+    if (s === "cultivation" || s === "extraction" || s === "packaging" || s === "edibles")
         return s;
     return null;
 }
@@ -94,7 +101,8 @@ export function canReadSectionCalendar(params: {
         return true;
     if (section === "cultivation" && roleMatchesCultivationFloor(role))
         return true;
-    if ((section === "extraction" || section === "packaging") && roleMatchesExtractionOrPackagingFloor(role, section))
+    if ((section === "extraction" || section === "packaging" || section === "edibles") &&
+        roleMatchesExtractionOrPackagingFloor(role, section))
         return true;
     return false;
 }
@@ -121,6 +129,9 @@ export function canWriteSectionCalendar(params: {
     }
     if (params.section === "packaging") {
         return role === "PACKAGING" || role === "PACKAGING_SPECIALIST";
+    }
+    if (params.section === "edibles") {
+        return role === "EDIBLES" || role === "EDIBLES_MANAGER";
     }
     return false;
 }

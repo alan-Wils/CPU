@@ -7,6 +7,8 @@ const LEGACY_TO_COMPANY: Record<UserRole, NexBatchCompanyRole> = {
     CULTIVATION_SPECIALIST: "grow_staff",
     EXTRACTION_SPECIALIST: "extraction_staff",
     PACKAGING_SPECIALIST: "packaging_staff",
+    EDIBLES: "lead_staff",
+    EDIBLES_MANAGER: "management",
     FINANCIAL_ANALYST: "lead_staff",
     DATABASE_ARCHITECT: "lead_staff",
     FULL_STACK_DEVELOPER: "lead_staff",

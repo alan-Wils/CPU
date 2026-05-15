@@ -212,6 +212,18 @@ const INVITE_ROLE_OPTIONS: {
       "Starts with Packaging and Data Hub. Other areas can be granted by a Manager or Company Admin; Owners can adjust anyone.",
   },
   {
+    value: "EDIBLES",
+    label: "Edibles",
+    description:
+      "Starts with Edibles kitchen and Data Hub. Create batches, log production tasks, submit QA. Managers handle approvals and packaging transfers.",
+  },
+  {
+    value: "EDIBLES_MANAGER",
+    label: "Edibles Manager",
+    description:
+      "Edibles + Data Hub + Analytics. Can approve QA, delete batches, and transfer finished goods to packaging.",
+  },
+  {
     value: "FACILITY_MAINTENANCE_SPECIALIST",
     label: "Facility Maintenance Specialist",
     description:
@@ -263,6 +275,8 @@ function getRoleColor(role: string) {
     return "#14b8a6";
   if (role === "PACKAGING" || role === "PACKAGING_SPECIALIST")
     return "#ec4899";
+  if (role === "EDIBLES") return "#fb923c";
+  if (role === "EDIBLES_MANAGER") return "#f97316";
   if (role === "FACILITY_MAINTENANCE_SPECIALIST")
     return "#06b6d4";
   if (role === "FINANCIAL_ANALYST") return "#eab308";
@@ -478,6 +492,8 @@ function canEditTargetUser(currentRole: string, targetRole: string) {
       "CULTIVATION_SPECIALIST",
       "EXTRACTION_SPECIALIST",
       "PACKAGING_SPECIALIST",
+      "EDIBLES",
+      "EDIBLES_MANAGER",
       "FACILITY_MAINTENANCE_SPECIALIST",
     ]);
     return floor.has(t);

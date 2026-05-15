@@ -169,6 +169,8 @@ const createUserRoleEnum = z.enum([
     "CULTIVATION_SPECIALIST",
     "EXTRACTION_SPECIALIST",
     "PACKAGING_SPECIALIST",
+    "EDIBLES",
+    "EDIBLES_MANAGER",
     "FACILITY_MAINTENANCE_SPECIALIST",
     "FINANCIAL_ANALYST",
     "DATABASE_ARCHITECT",
@@ -402,14 +404,14 @@ export const packagingLotUpdateSchema = z.object({
     packagingUiState: z.union([jsonRecordSchema, z.null()]).optional()
 });
 export const taskLogCreateSchema = z.object({
-    stage: z.enum(["CULTIVATION", "EXTRACTION", "PACKAGING"]),
+    stage: z.enum(["CULTIVATION", "EXTRACTION", "PACKAGING", "EDIBLES"]),
     note: z.string().min(4).max(500),
     minutes: z.number().int().min(1).max(24 * 60),
     /** Cultivation cuid, dry-flower id, or display chain id (e.g. ACRO.YY-####) for filtering. */
     referenceId: z.string().min(1).max(200).optional()
 });
 export const laborEntryCreateSchema = z.object({
-    stage: z.enum(["CULTIVATION", "EXTRACTION", "PACKAGING"]),
+    stage: z.enum(["CULTIVATION", "EXTRACTION", "PACKAGING", "EDIBLES"]),
     taskType: z.string().min(2).max(64).default("CPU_OPERATIONAL_LABOR"),
     hours: z.number().positive().max(24),
     hourlyRate: z.number().positive().max(500),
@@ -426,6 +428,8 @@ const adminUserUpdateRoleEnum = z.enum([
     "CULTIVATION_SPECIALIST",
     "EXTRACTION_SPECIALIST",
     "PACKAGING_SPECIALIST",
+    "EDIBLES",
+    "EDIBLES_MANAGER",
     "FACILITY_MAINTENANCE_SPECIALIST",
     "FINANCIAL_ANALYST",
     "DATABASE_ARCHITECT",
@@ -462,6 +466,8 @@ const inviteCreateRoleEnum = z.enum([
     "CULTIVATION_SPECIALIST",
     "EXTRACTION_SPECIALIST",
     "PACKAGING_SPECIALIST",
+    "EDIBLES",
+    "EDIBLES_MANAGER",
     "FACILITY_MAINTENANCE_SPECIALIST",
     "FINANCIAL_ANALYST",
     "DATABASE_ARCHITECT",

@@ -1,6 +1,6 @@
 import { apiRequest } from "@/lib/api";
 
-export type SectionCalendarSection = "cultivation" | "extraction" | "packaging";
+export type SectionCalendarSection = "cultivation" | "extraction" | "packaging" | "edibles";
 
 export type SectionCalendarEventDto = {
   id: string;

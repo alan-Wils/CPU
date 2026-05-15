@@ -164,6 +164,8 @@ export class AdminService {
             "CULTIVATION_SPECIALIST",
             "EXTRACTION_SPECIALIST",
             "PACKAGING_SPECIALIST",
+            "EDIBLES",
+            "EDIBLES_MANAGER",
             "FACILITY_MAINTENANCE_SPECIALIST",
         ]);
         if (actorR === "OPERATIONS_MANAGER") {
@@ -316,6 +318,8 @@ export class AdminService {
             "CULTIVATION_SPECIALIST",
             "EXTRACTION_SPECIALIST",
             "PACKAGING_SPECIALIST",
+            "EDIBLES",
+            "EDIBLES_MANAGER",
             "FACILITY_MAINTENANCE_SPECIALIST",
         ]);
         if (actorR === "OPERATIONS_MANAGER" && !floorStaffRoles.has(targetR)) {

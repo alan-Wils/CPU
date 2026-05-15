@@ -16,7 +16,7 @@ import { syncCultivationSectionCalendarFromTemplates } from "../../services/sect
 
 export const sectionCalendarRouter = Router();
 
-const sectionEnum = z.enum(["cultivation", "extraction", "packaging"]);
+const sectionEnum = z.enum(["cultivation", "extraction", "packaging", "edibles"]);
 
 const listQuerySchema = z.object({
     section: sectionEnum,
