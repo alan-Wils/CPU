@@ -4,7 +4,7 @@ import {
   estimatedGummyWeightGramsFromMoldMl,
   planPectinMultiAdditiveBatch,
   planPectinSingleAdditiveBatch,
-} from "@cpu/shared";
+} from "../../lib/pectinMeltToMakeFormula.js";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { validate } from "../../middleware/validate.js";
