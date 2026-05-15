@@ -10,11 +10,11 @@ export type DymoLabelCalibrationSettings = {
   /** Physical label height (CSS length). */
   labelHeight: string;
   /**
-   * Horizontal nudge of the printed block (CSS length). Positive moves content right on the sticker.
+   * Horizontal nudge of the printed block from the **left edge** of the sticker (CSS length).
    */
   offsetX: string;
   /**
-   * Vertical nudge (CSS length). Positive moves content down; combine with startOffsetY for feed alignment.
+   * Vertical nudge from the **top edge** of the sticker (CSS length).
    */
   offsetY: string;
   /** Rotation in degrees (clockwise). Use 0 for horizontal layout on wide labels. */
@@ -25,8 +25,8 @@ export type DymoLabelCalibrationSettings = {
    */
   fontSizeMultiplier: number;
   /**
-   * Extra shift along the label feed direction (CSS length). Negative values move the job “earlier”
-   * on die-cut rolls—use when Chrome/driver starts printing too late (content lands between stickers).
+   * Additional shift along the **label feed axis** (CSS length), after {@link offsetY}.
+   * Use negative values when the driver prints “too late” and content straddles the gap between die-cut labels.
    */
   startOffsetY: string;
   /** Horizontal padding inside the text columns (CSS length). */

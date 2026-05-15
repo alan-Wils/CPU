@@ -11,6 +11,12 @@ import {
 export type { DymoLabelCalibrationSettings };
 export { defaultDymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration";
 
+/**
+ * Outlines label bounds, printable clip region, and content transform box (screen + print).
+ * Set to false once alignment is dialed in.
+ */
+export const DYMO_LABEL_LAYOUT_DEBUG = true;
+
 export type ExtractionBatchLabelFields = {
   batchId: string;
   marketCode: string;
@@ -66,10 +72,12 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   calibration?: DymoLabelCalibrationSettings,
 ): string {
   const s = resolveCalibration(calibration ?? defaultDymoLabelCalibrationSettings);
+  const dbg = DYMO_LABEL_LAYOUT_DEBUG ? " dymo-label-debug" : "";
   const inner = `
-<div class="dymo-label-sheet">
-  <div class="dymo-label-stage">
-    <div class="dymo-label-inner">
+<div class="dymo-label-sheet${dbg}">
+  <div class="dymo-label-printable-area${dbg}">
+    <div class="dymo-label-content${dbg}">
+      <div class="dymo-label-inner">
       <div class="col left">
         <div class="code">${escapeHtml(f.marketCode)}</div>
         <div class="id">${escapeHtml(f.batchId)}</div>
@@ -78,19 +86,26 @@ export function buildDymoExtractionBatchLabelPrintHtml(
         <div class="ptype">${escapeHtml(f.productType)}</div>
         <div class="src">${escapeHtml(f.sourcesLine)}</div>
       </div>
+      </div>
     </div>
   </div>
 </div>
 `;
 
-  const ty = `calc(${s.offsetY} + ${s.startOffsetY})`;
-  const transform = `translate(${s.offsetX}, ${ty}) rotate(${cssNum(s.rotationDeg)}deg) scale(${cssNum(s.printScale)})`;
+  /* Printer coords: origin = top-left of sticker. offsetX/Y from edges; startOffsetY = extra feed-axis shift (roll timing). */
+  const transform = [
+    `translateX(${s.offsetX})`,
+    `translateY(${s.offsetY})`,
+    `translateY(${s.startOffsetY})`,
+    `rotate(${cssNum(s.rotationDeg)}deg)`,
+    `scale(${cssNum(s.printScale)})`,
+  ].join(" ");
 
   return `<!DOCTYPE html>
 <html lang="en" class="dymo-label-print-root"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Extraction batch label</title>
 <style>
-  /* --- DYMO extraction batch label print --- */
+  /* --- DYMO extraction batch label print (top-left anchored; transforms only on .dymo-label-content) --- */
   @page {
     size: ${s.labelWidth} ${s.labelHeight};
     margin: 0;
@@ -130,14 +145,26 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     overflow: hidden;
     background: #fff;
   }
-  .dymo-label-stage {
-    margin: 0;
-    padding: 0;
+  .dymo-label-printable-area {
     position: absolute;
     left: 0;
     top: 0;
-    transform-origin: 0 0;
+    right: 0;
+    bottom: 0;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  .dymo-label-content {
+    position: absolute;
+    left: 0;
+    top: 0;
+    margin: 0;
+    padding: 0;
+    transform-origin: left top;
     transform: ${transform};
+    width: max-content;
+    max-width: ${s.labelWidth};
   }
   .dymo-label-inner {
     display: flex;
@@ -145,15 +172,15 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     align-items: flex-start;
     justify-content: flex-start;
     gap: var(--dymo-gap);
-    text-align: center;
+    text-align: left;
     padding-left: var(--dymo-pad-x);
     padding-right: var(--dymo-pad-x);
-    max-width: ${s.labelWidth};
+    margin: 0;
   }
   .col {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
     justify-content: flex-start;
     min-width: 0;
     flex: 1 1 0;
@@ -164,6 +191,15 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   }
   .right {
     padding-left: 0;
+  }
+  .dymo-label-debug.dymo-label-sheet {
+    box-shadow: inset 0 0 0 2px #e11d48;
+  }
+  .dymo-label-debug.dymo-label-printable-area {
+    box-shadow: inset 0 0 0 2px #ea580c;
+  }
+  .dymo-label-debug.dymo-label-content {
+    box-shadow: inset 0 0 0 2px #2563eb;
   }
   .code {
     font-size: calc(10.5pt * var(--dymo-font-mul));
@@ -300,18 +336,26 @@ type PreviewProps = {
   style?: CSSProperties;
 };
 
-/** Horizontal on-screen preview; mirrors print transforms and typography scale. */
+/** On-screen preview: same coordinate system as print (top-left origin, transforms on content block only). */
 export function ExtractionBatchLabelPreview({ fields, calibration, style }: PreviewProps) {
   const s = resolveCalibration(calibration);
   const aspect = previewAspectRatioFromSettings(s);
-  const ty = `calc(${s.offsetY} + ${s.startOffsetY})`;
+  const dbg = DYMO_LABEL_LAYOUT_DEBUG;
+
+  const transform = [
+    `translateX(${s.offsetX})`,
+    `translateY(${s.offsetY})`,
+    `translateY(${s.startOffsetY})`,
+    `rotate(${s.rotationDeg}deg)`,
+    `scale(${s.printScale})`,
+  ].join(" ");
 
   const col: CSSProperties = {
     display: "flex",
     flexDirection: "column",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "flex-start",
-    textAlign: "center",
+    textAlign: "left",
     minWidth: 0,
     flex: "1 1 0",
   };
@@ -342,15 +386,14 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
       <div
         style={{
           flex: 1,
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "flex-start",
           minHeight: 0,
           width: "100%",
-          background: "rgba(15, 23, 42, 0.35)",
+          background: "#fff",
           borderRadius: 8,
           overflow: "hidden",
           position: "relative",
+          boxSizing: "border-box",
+          ...(dbg ? { boxShadow: "inset 0 0 0 2px #e11d48" } : {}),
         }}
       >
         <div
@@ -358,27 +401,42 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             position: "absolute",
             left: 0,
             top: 0,
-            transformOrigin: "0 0",
-            transform: `translate(${s.offsetX}, ${ty}) rotate(${s.rotationDeg}deg) scale(${s.printScale})`,
-            width: "100%",
-            height: "100%",
-            pointerEvents: "none",
+            right: 0,
+            bottom: 0,
+            overflow: "hidden",
+            margin: 0,
+            padding: 0,
+            ...(dbg ? { boxShadow: "inset 0 0 0 2px #ea580c" } : {}),
           }}
         >
           <div
             style={{
-              display: "flex",
-              flexDirection: "row",
-              alignItems: "flex-start",
-              justifyContent: "flex-start",
-              gap: s.textSpacing,
-              textAlign: "center",
-              paddingLeft: s.paddingLeftRight,
-              paddingRight: s.paddingLeftRight,
-              height: "100%",
-              width: "100%",
+              position: "absolute",
+              left: 0,
+              top: 0,
+              margin: 0,
+              padding: 0,
+              transformOrigin: "left top",
+              transform,
+              width: "max-content",
+              maxWidth: "100%",
+              pointerEvents: "none",
+              ...(dbg ? { boxShadow: "inset 0 0 0 2px #2563eb" } : {}),
             }}
           >
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "flex-start",
+                justifyContent: "flex-start",
+                gap: s.textSpacing,
+                textAlign: "left",
+                paddingLeft: s.paddingLeftRight,
+                paddingRight: s.paddingLeftRight,
+                margin: 0,
+              }}
+            >
             <div
               style={{
                 ...col,
@@ -394,6 +452,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                   letterSpacing: "0.03em",
                   maxWidth: "100%",
                   wordBreak: "break-word",
+                  color: "#0f172a",
                 }}
               >
                 {fields.marketCode}
@@ -401,7 +460,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
               <div
                 style={{
                   fontSize: `calc(clamp(0.55rem, 1.5vw, 0.75rem) * ${fmul})`,
-                  color: "#94a3b8",
+                  color: "#475569",
                   wordBreak: "break-all",
                   marginTop: 6,
                   lineHeight: 1.12,
@@ -419,6 +478,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                   lineHeight: 1.12,
                   maxWidth: "100%",
                   wordBreak: "break-word",
+                  color: "#0f172a",
                 }}
               >
                 {fields.productType}
@@ -428,13 +488,14 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                   fontSize: `calc(clamp(0.58rem, 1.7vw, 0.82rem) * ${fmul})`,
                   marginTop: 8,
                   lineHeight: 1.15,
-                  color: "#cbd5e1",
+                  color: "#334155",
                   maxWidth: "100%",
                   wordBreak: "break-word",
                 }}
               >
                 {fields.sourcesLine}
               </div>
+            </div>
             </div>
           </div>
         </div>
