@@ -122,13 +122,15 @@ export function DymoLabelCalibrationPanel({
         />
       </div>
       <p style={{ margin: "0 0 12px", fontSize: 11, color: "#64748b", lineHeight: 1.42 }}>
-        <strong style={{ color: "#cbd5e1" }}>Preview sheet too wide?</strong> For portrait{" "}
+        <strong style={{ color: "#cbd5e1" }}>Preview sheet too wide?</strong> Chrome/Edge often ignores{" "}
+        <code style={{ color: "#a5b4fc" }}>@page</code> when printing from a hidden iframe (Letter/A4 preview).{" "}
+        <strong style={{ color: "#cbd5e1" }}>Test print</strong> opens a small real window first so the preview can
+        shrink to your label. Allow popups for this site; if the browser blocks it, we fall back to an iframe and the
+        white sheet may stay large — then set{" "}
+        <strong style={{ color: "#cbd5e1" }}>More settings → Paper size</strong> to the matching DYMO size. For{" "}
         <code style={{ color: "#a5b4fc" }}>1in</code> × <code style={{ color: "#a5b4fc" }}>1.5in</code> stock, Label
-        width must be the{" "}
-        <em>narrow</em> inch (often <code style={{ color: "#a5b4fc" }}>1in</code>, not{" "}
-        <code style={{ color: "#a5b4fc" }}>1.5in</code>). Match the same dimensions in Chrome →{" "}
-        <strong style={{ color: "#cbd5e1" }}>More settings → Paper size</strong> (or closest DYMO preset); print uses
-        @page in mm converted from inches for accurate width.
+        width is the <em>narrow</em> side (<code style={{ color: "#a5b4fc" }}>1in</code>, not{" "}
+        <code style={{ color: "#a5b4fc" }}>1.5in</code>).
       </p>
 
       <div style={{ ...fieldRowStyle(), gridTemplateColumns: "1fr 1fr" }}>

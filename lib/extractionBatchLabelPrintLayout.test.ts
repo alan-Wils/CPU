@@ -87,4 +87,13 @@ describe("DYMO extraction batch label print layout", () => {
     expect(printBlock).toContain("top: 0 !important");
     expect(printBlock).toContain("left: 0 !important");
   });
+
+  it("repeats @page size inside @media print (Chromium print stack)", () => {
+    const html = buildDymoExtractionBatchLabelPrintHtml(fields, defaultDymoLabelCalibrationSettings);
+    const printBlock =
+      html.split("@media print")[1]?.split("</style>")[0] ?? "";
+    expect(printBlock).toContain("@page");
+    expect(printBlock).toContain("size: 25.4mm 38.1mm");
+    expect(printBlock).toContain("margin: 0");
+  });
 });

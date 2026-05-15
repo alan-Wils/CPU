@@ -3416,7 +3416,7 @@ export default function Extraction() {
                           if (!ok) {
                             showNotice(
                               "Print could not start",
-                              "Your browser blocked the print frame. Try again or use a different browser.",
+                              "Could not open the print document (popup and fallback frame both failed). Try again or use a different browser.",
                             );
                           }
                         }}
@@ -3450,7 +3450,7 @@ export default function Extraction() {
                           if (!ok) {
                             showNotice(
                               "Print could not start",
-                              "Your browser blocked the print frame. Try again or use a different browser.",
+                              "Could not open the print document (popup and fallback frame both failed). Try again or use a different browser.",
                             );
                           }
                         }}
@@ -3470,9 +3470,11 @@ export default function Extraction() {
                       >
                         If the job lands between stickers, decrease{" "}
                         <strong style={{ color: "#cbd5e1" }}>Top/start offset</strong> (more negative)
-                        and run <strong style={{ color: "#cbd5e1" }}>Test print</strong>. In the system
-                        dialog, choose matching DYMO stock and{" "}
-                        <strong style={{ color: "#cbd5e1" }}>100% scale</strong> when available.
+                        and run <strong style={{ color: "#cbd5e1" }}>Test print</strong>. Allow site popups so Chrome
+                        can open the label window (better @page preview). In the dialog, pick matching DYMO stock,
+                        {" "}
+                        <strong style={{ color: "#cbd5e1" }}>100% scale</strong>, and the correct{" "}
+                        <strong style={{ color: "#cbd5e1" }}>Paper size</strong>.
                       </p>
                     </div>
                   </>

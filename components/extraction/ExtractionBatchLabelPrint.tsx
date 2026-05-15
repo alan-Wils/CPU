@@ -303,6 +303,11 @@ export function buildDymoExtractionBatchLabelPrintHtml(
     word-break: break-word;
   }
   @media print {
+    /* Repeat @page here: Chromium often applies size from the print media stack only when both are present. */
+    @page {
+      size: ${pageSizeDecl};
+      margin: 0;
+    }
     html.dymo-label-print-root, body {
       width: var(--label-width) !important;
       height: var(--label-height) !important;
@@ -364,20 +369,12 @@ export type OpenExtractionBatchLabelPrintOptions = {
   calibration: DymoLabelCalibrationSettings;
 };
 
-/**
- * Opens the print dialog via a hidden iframe sized to the calibrated label.
- * Pass saved calibration for production prints; pass draft calibration for test prints.
- */
-export function openExtractionBatchLabelPrintWindow(
-  f: ExtractionBatchLabelFields,
-  options?: Partial<OpenExtractionBatchLabelPrintOptions>,
+function openDymoLabelPrintViaHiddenIframe(
+  html: string,
+  calibration: DymoLabelCalibrationSettings,
 ): boolean {
   if (typeof document === "undefined") return false;
 
-  const calibration = resolveCalibration(
-    options?.calibration ?? defaultDymoLabelCalibrationSettings,
-  );
-  const html = buildDymoExtractionBatchLabelPrintHtml(f, calibration);
   const iframe = document.createElement("iframe");
   iframe.setAttribute("title", "DYMO extraction batch label print");
   iframe.style.cssText = [
@@ -429,6 +426,93 @@ export function openExtractionBatchLabelPrintWindow(
       setTimeout(runPrint, 150);
     });
   });
+
+  return true;
+}
+
+/**
+ * Opens Chrome/Edge print on a tiny top-level window so `@page { size: … }` is honored in preview.
+ * Nested iframes often keep Letter/A4 in the preview even when `@page` is correct; iframe is only a fallback when popups are blocked.
+ */
+export function openExtractionBatchLabelPrintWindow(
+  f: ExtractionBatchLabelFields,
+  options?: Partial<OpenExtractionBatchLabelPrintOptions>,
+): boolean {
+  if (typeof document === "undefined") return false;
+
+  const calibration = resolveCalibration(
+    options?.calibration ?? defaultDymoLabelCalibrationSettings,
+  );
+  const html = buildDymoExtractionBatchLabelPrintHtml(f, calibration);
+
+  const vw = approximateCssLengthToViewportPx(calibration.labelWidth);
+  const vh = approximateCssLengthToViewportPx(calibration.labelHeight);
+  const outerW = Math.min(Math.round(vw + 120), 720);
+  const outerH = Math.min(Math.round(vh + 220), 900);
+  const left =
+    typeof screen !== "undefined"
+      ? Math.max(0, Math.round((screen.availWidth - outerW) / 2))
+      : 80;
+  const top =
+    typeof screen !== "undefined"
+      ? Math.max(0, Math.round((screen.availHeight - outerH) / 2))
+      : 80;
+
+  const features = `popup=yes,width=${outerW},height=${outerH},left=${left},top=${top}`;
+  const popup =
+    typeof window !== "undefined"
+      ? window.open("about:blank", "cpu_dymo_label_print", features)
+      : null;
+
+  if (!popup) {
+    return openDymoLabelPrintViaHiddenIframe(html, calibration);
+  }
+
+  try {
+    popup.document.open();
+    popup.document.write(html);
+    popup.document.close();
+  } catch {
+    popup.close();
+    return openDymoLabelPrintViaHiddenIframe(html, calibration);
+  }
+
+  const schedulePrint = () => {
+    try {
+      popup.focus();
+      popup.print();
+    } catch {
+      try {
+        popup.close();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    const cleanup = () => {
+      try {
+        popup.close();
+      } catch {
+        /* ignore */
+      }
+    };
+    popup.addEventListener("afterprint", cleanup, { once: true });
+    setTimeout(cleanup, 5000);
+  };
+
+  const start = () => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTimeout(schedulePrint, 150);
+      });
+    });
+  };
+
+  if (popup.document.readyState === "complete") {
+    start();
+  } else {
+    popup.addEventListener("load", start, { once: true });
+  }
 
   return true;
 }
