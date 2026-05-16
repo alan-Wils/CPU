@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import { store } from "@/lib/store";
@@ -782,6 +782,7 @@ export default function DataHub() {
   const [selectedChain, setSelectedChain] = useState<any>(null);
   const [tenantEpoch, setTenantEpoch] = useState(0);
   const [hubEdiblesMetrics, setHubEdiblesMetrics] = useState<Record<string, unknown> | null>(null);
+  const hubMainLoadInFlightRef = useRef(false);
 
   useEffect(() => {
     const bump = () => setTenantEpoch((n) => n + 1);
@@ -804,10 +805,10 @@ export default function DataHub() {
         return;
       }
       try {
-        const data = await apiRequest<{ edibles?: Record<string, unknown> }>("/api/data-hub", {
+        const metrics = await apiRequest<Record<string, unknown>>("/api/edibles/analytics", {
           companyId: getSelectedCompanyId().trim() || undefined,
         });
-        if (!cancelled) setHubEdiblesMetrics(data?.edibles ?? null);
+        if (!cancelled) setHubEdiblesMetrics(metrics ?? null);
       } catch {
         if (!cancelled) setHubEdiblesMetrics(null);
       }
@@ -827,8 +828,14 @@ export default function DataHub() {
     let mounted = true;
 
     async function loadSharedData() {
+      if (typeof document !== "undefined" && document.hidden) return;
+      if (hubMainLoadInFlightRef.current) return;
+      hubMainLoadInFlightRef.current = true;
       try {
-        await loadBackendStore({ omitCultivation: true });
+        await loadBackendStore({
+          omitCultivation: true,
+          skipFullStoreIfUnchanged: true,
+        });
 
         const [
           realCultivationBatches,
@@ -841,7 +848,7 @@ export default function DataHub() {
           loadSourceBatches(),
           loadExtractionBatches(),
           loadPackagingBatches(),
-          getLogs(),
+          getLogs(undefined, { take: 1200 }),
         ]);
 
         if (!mounted) return;
@@ -912,18 +919,26 @@ export default function DataHub() {
         } catch (backupError) {
           console.error("Could not load backend store fallback:", backupError);
         }
+      } finally {
+        hubMainLoadInFlightRef.current = false;
       }
     }
 
-    loadSharedData();
+    void loadSharedData();
 
     const interval = setInterval(() => {
-      loadSharedData();
-    }, 5000);
+      void loadSharedData();
+    }, 30_000);
+
+    const onVis = () => {
+      if (!document.hidden) void loadSharedData();
+    };
+    document.addEventListener("visibilitychange", onVis);
 
     return () => {
       mounted = false;
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, [tenantEpoch]);
 

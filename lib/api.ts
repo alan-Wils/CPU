@@ -455,8 +455,10 @@ export async function deleteCompanyItem(
   });
 }
 
-export async function getLogs(companyId?: string) {
-  return apiRequest("/api/logs", {
+export async function getLogs(companyId?: string, opts?: { take?: number }) {
+  const take = opts?.take != null ? Math.min(2000, Math.max(1, Math.floor(opts.take))) : 800;
+  const q = take === 800 ? "" : `?take=${encodeURIComponent(String(take))}`;
+  return apiRequest(`/api/logs${q}`, {
     companyId,
   });
 }

@@ -72,4 +72,21 @@ export class StoreService {
         const row = await this.repo.getCompanyStore(companyId);
         return { updatedAt: row?.updatedAt?.toISOString() ?? null };
     }
+
+    /**
+     * Subset of the company store for analytics (dry flower + source-related arrays only).
+     * Falls back to `load()` on SQLite or if the JSON slice query fails.
+     */
+    async loadAnalyticsDryFlowerSourceSlices(companyId: string) {
+        const sliced = await this.repo.getAnalyticsStoreSliceArrays(companyId);
+        if (sliced)
+            return sliced;
+        const full = await this.load(companyId);
+        return {
+            dryFlowerBatches: full.dryFlowerBatches ?? [],
+            sourceBatches: full.sourceBatches ?? [],
+            productionBatches: full.productionBatches ?? [],
+            completedSourceBatches: full.completedSourceBatches ?? [],
+        };
+    }
 }

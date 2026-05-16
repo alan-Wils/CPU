@@ -6,5 +6,6 @@ export const dataHubRouter = Router();
 const service = new DataHubService();
 dataHubRouter.get("/", asyncHandler(async (req, res) => {
     const data = await service.getSnapshot(getScopedCompanyId(req));
+    res.setHeader("Cache-Control", "private, no-store");
     res.json(data);
 }));

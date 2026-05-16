@@ -464,11 +464,15 @@ legacyCpuRouter.post("/cultivation", requireRole(cultivationWriteRoles), asyncHa
 }));
 legacyCpuRouter.get("/logs", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
+    const rawTake = req.query.take ?? req.query.limit;
+    const parsed = typeof rawTake === "string" ? Number.parseInt(rawTake, 10) : Number(rawTake);
+    const take = Number.isFinite(parsed) ? Math.min(2000, Math.max(1, Math.floor(parsed))) : 800;
     const rows = await prisma.taskLog.findMany({
         where: { companyId },
         orderBy: { createdAt: "desc" },
-        take: 2000
+        take,
     });
+    res.setHeader("Cache-Control", "private, no-store");
     res.json(rows.map(taskRowToLegacyLog));
 }));
 /** Compact latest task log for realtime “peer task” UI toasts (SPA poll). */

@@ -1377,9 +1377,13 @@ export default function Cultivation() {
 
     async function loadSharedData() {
       const pollGen = ++cultivationPollGenRef.current;
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
         /** CompanyStore JSON often lags `/api/cultivation`; applying it to cultivation lists causes stage flicker (e.g. Veg → Flower). */
-        await loadBackendStore({ omitCultivation: true });
+        await loadBackendStore({
+          omitCultivation: true,
+          skipFullStoreIfUnchanged: true,
+        });
         if (!mounted || pollGen !== cultivationPollGenRef.current) return;
 
         await hydrateTaskLogsFromApi();
@@ -1480,11 +1484,17 @@ export default function Cultivation() {
 
     const interval = setInterval(() => {
       loadSharedData();
-    }, 5000);
+    }, 15_000);
+
+    const onVis = () => {
+      if (!document.hidden) loadSharedData();
+    };
+    document.addEventListener("visibilitychange", onVis);
 
     return () => {
       mounted = false;
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, []);
 

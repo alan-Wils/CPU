@@ -36,6 +36,7 @@
     "@types/jsonwebtoken": "latest",
     "@types/node": "latest",
     "bcryptjs": "latest",
+    "compression": "^1.8.1",
     "cors": "latest",
     "dotenv": "latest",
     "express": "latest",
@@ -47,6 +48,7 @@
     "zod": "latest"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
     "tsx": "latest",
     "vitest": "^2.1.9"
   }

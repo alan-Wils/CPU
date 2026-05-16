@@ -4,6 +4,7 @@ import dns from "node:dns";
 dns.setDefaultResultOrder("ipv4first");
 
 import express from "express";
+import compression from "compression";
 import cors from "cors";
 import helmet from "helmet";
 import path from "path";
@@ -11,6 +12,7 @@ import { env } from "./config/env.js";
 import { createCorsOriginResolver, describeCorsAllowlist } from "./config/cors.js";
 import { resolvePublicWebBaseUrl } from "./config/publicWebUrl.js";
 import { appRouter } from "./router.js";
+import { apiResponseMetricsMiddleware } from "./middleware/apiResponseMetrics.js";
 import { errorMiddleware } from "./middleware/error.js";
 import { prisma } from "./config/prisma.js";
 import { logInfo, logError, logWarn } from "./lib/logger.js";
@@ -32,6 +34,9 @@ app.use(cors({
     allowedHeaders: ["Content-Type", "Authorization", "X-Company-Id"],
 }));
 app.use(express.json({ limit: "15mb" }));
+app.use(compression({
+    threshold: 1024,
+}));
 registerUploadStreamRoutes(app);
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 /** Liveness: process is up; does not hit the database. */
@@ -130,7 +135,7 @@ app.get("/accept-invite", (req, res) => {
     logInfo("invite_browser_redirect_to_web", { destinationHost: destHost });
     res.redirect(302, redirectHref);
 });
-app.use("/api", appRouter);
+app.use("/api", apiResponseMetricsMiddleware, appRouter);
 app.use(errorMiddleware);
 
 let cashLogEodSchedulerRunning = false;

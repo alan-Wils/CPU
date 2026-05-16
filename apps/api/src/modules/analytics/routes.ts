@@ -45,14 +45,22 @@ analyticsRouter.get(
             throw new AppError("from must be on or before to", 400);
         }
 
-        const [rows, storeSnap] = await Promise.all([
+        const [rows, storeSlices] = await Promise.all([
             prisma.cultivationBatch.findMany({
                 where: { companyId },
                 /** Larger window so older harvested batches still appear once lab THC is written. */
-                take: 3500,
+                take: 2500,
                 orderBy: { updatedAt: "desc" },
+                select: {
+                    id: true,
+                    strain: true,
+                    strainAcronym: true,
+                    updatedAt: true,
+                    cultivationUiState: true,
+                    freshFrozenGrams: true,
+                },
             }),
-            storeService.load(companyId).catch(() => ({
+            storeService.loadAnalyticsDryFlowerSourceSlices(companyId).catch(() => ({
                 dryFlowerBatches: [] as unknown[],
                 sourceBatches: [] as unknown[],
                 productionBatches: [] as unknown[],
@@ -60,17 +68,11 @@ analyticsRouter.get(
             })),
         ]);
 
-        const dryFlowerBatches = Array.isArray((storeSnap as { dryFlowerBatches?: unknown }).dryFlowerBatches)
-            ? (storeSnap as { dryFlowerBatches: unknown[] }).dryFlowerBatches
-            : [];
-        const sourceBatches = Array.isArray((storeSnap as { sourceBatches?: unknown }).sourceBatches)
-            ? (storeSnap as { sourceBatches: unknown[] }).sourceBatches
-            : [];
-        const productionBatches = Array.isArray((storeSnap as { productionBatches?: unknown }).productionBatches)
-            ? (storeSnap as { productionBatches: unknown[] }).productionBatches
-            : [];
-        const completedSourceBatches = Array.isArray((storeSnap as { completedSourceBatches?: unknown }).completedSourceBatches)
-            ? (storeSnap as { completedSourceBatches: unknown[] }).completedSourceBatches
+        const dryFlowerBatches = Array.isArray(storeSlices.dryFlowerBatches) ? storeSlices.dryFlowerBatches : [];
+        const sourceBatches = Array.isArray(storeSlices.sourceBatches) ? storeSlices.sourceBatches : [];
+        const productionBatches = Array.isArray(storeSlices.productionBatches) ? storeSlices.productionBatches : [];
+        const completedSourceBatches = Array.isArray(storeSlices.completedSourceBatches)
+            ? storeSlices.completedSourceBatches
             : [];
 
         const mergedSourceBatches = mergeFreshFrozenSourcesForAnalytics(

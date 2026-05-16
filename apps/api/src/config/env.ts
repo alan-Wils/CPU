@@ -183,7 +183,19 @@ const envSchema = z
             return 5;
         const n = Number(v);
         return Number.isFinite(n) ? Math.max(1, Math.floor(n)) : 5;
-    }, z.number().int().min(1).max(60).default(5))
+    }, z.number().int().min(1).max(60).default(5)),
+    /**
+     * When true, logs structured API response metrics (approx JSON byte size, duration, route).
+     * Emits an occasional `api_transfer_top10_recent` summary — no response bodies, company id truncated.
+     */
+    API_TRANSFER_METRICS: z.preprocess((v) => {
+        if (v === undefined || v === null || v === "")
+            return false;
+        if (typeof v === "boolean")
+            return v;
+        const s = String(v).trim().toLowerCase();
+        return s === "1" || s === "true" || s === "yes";
+    }, z.boolean().default(false)),
 })
     .superRefine((data, ctx) => {
     if (data.NODE_ENV !== "production")

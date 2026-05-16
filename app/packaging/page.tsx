@@ -316,8 +316,9 @@ export default function Packaging() {
     let active = true;
 
     async function loadPackagingData() {
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
-        await loadBackendStore();
+        await loadBackendStore({ skipFullStoreIfUnchanged: true });
         await hydrateTaskLogsFromApi();
 
         const [realPackagingBatches, extractionList] = await Promise.all([
@@ -365,11 +366,17 @@ export default function Packaging() {
 
     const interval = setInterval(() => {
       loadPackagingData();
-    }, 5000);
+    }, 15_000);
+
+    const onVis = () => {
+      if (!document.hidden) void loadPackagingData();
+    };
+    document.addEventListener("visibilitychange", onVis);
 
     return () => {
       active = false;
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, []);
 

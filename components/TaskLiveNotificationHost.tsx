@@ -261,6 +261,7 @@ export default function TaskLiveNotificationHost() {
     }
 
     async function syncAll() {
+      if (typeof document !== "undefined" && document.hidden) return;
       await syncTaskPoll();
       await syncOrderPoll();
     }

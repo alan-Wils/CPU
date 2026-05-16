@@ -1,5 +1,6 @@
-import { apiRequest, getLogs } from "@/lib/api";
+import { apiRequest, getLogs, getSelectedCompanyId } from "@/lib/api";
 import { store } from "@/lib/store";
+import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
 import {
   copyDryFlowerBatchesIntoProduction,
   hydrateDryFlowerBatchesFromLogSnapshots,
@@ -115,9 +116,51 @@ export function markDryFlowerBatchDeleted(batchId: string) {
   locallyDeletedDryFlowerBatchIds.add(id);
 }
 
+export type LoadBackendStoreOptions = ApplyStoreSnapshotOptions & {
+  /**
+   * When true, calls `GET /api/store/version` first and skips downloading the full company JSON
+   * if the server `updatedAt` matches the last successful load for this tenant (big Neon + bandwidth win).
+   */
+  skipFullStoreIfUnchanged?: boolean;
+};
+
+const lastStoreUpdatedAtByCompany = new Map<string, string | null>();
+
+if (typeof window !== "undefined") {
+  window.addEventListener(CPU_TENANT_CHANGED_EVENT, () => {
+    lastStoreUpdatedAtByCompany.clear();
+  });
+}
+
+function rememberStoreVersion(companyId: string, updatedAt: string | null | undefined) {
+  const id = String(companyId || "").trim();
+  if (!id) return;
+  if (updatedAt === undefined) return;
+  lastStoreUpdatedAtByCompany.set(id, updatedAt ?? null);
+}
+
 /** `@cpu/api` exposes `/api/store` (legacy Node backend used `/api/sync`). */
-export async function loadBackendStore(options?: ApplyStoreSnapshotOptions) {
-  const snapshot = await apiRequest("/api/store");
+export async function loadBackendStore(options?: LoadBackendStoreOptions) {
+  const companyId = typeof window !== "undefined" ? getSelectedCompanyId().trim() : "";
+
+  if (options?.skipFullStoreIfUnchanged && companyId) {
+    try {
+      const version = await apiRequest<{ updatedAt: string | null }>("/api/store/version", {
+        companyId,
+      });
+      const last = lastStoreUpdatedAtByCompany.get(companyId);
+      if (last && version?.updatedAt === last) {
+        return null;
+      }
+    } catch {
+      /* continue with full load */
+    }
+  }
+
+  const snapshot = await apiRequest("/api/store", companyId ? { companyId } : {});
+  const meta = (snapshot as { _meta?: { updatedAt?: string | null } })?._meta;
+  rememberStoreVersion(companyId, meta?.updatedAt ?? null);
+
   const prevDry = [...((store as any).dryFlowerBatches || [])];
   applyStoreSnapshot(snapshot, options);
   removeLocallyDeletedDryRows();
@@ -136,9 +179,9 @@ export async function loadBackendStore(options?: ApplyStoreSnapshotOptions) {
  * are not written (`NEXT_PUBLIC_SERVER_DATABASE_ONLY`), snapshot `logs` are stale
  * and task history would otherwise stay empty.
  */
-export async function hydrateTaskLogsFromApi() {
+export async function hydrateTaskLogsFromApi(opts?: { take?: number }) {
   try {
-    const rows = await getLogs();
+    const rows = await getLogs(undefined, { take: opts?.take ?? 900 });
     (store as any).logs = Array.isArray(rows) ? rows : [];
     hydrateDryFlowerBatchesFromLogSnapshots(store, locallyDeletedDryFlowerBatchIds);
   } catch (e) {
@@ -152,8 +195,12 @@ export async function saveBackendStore() {
   }
   const snapshot = getStoreSnapshot();
 
-  return apiRequest("/api/store", {
+  const result = await apiRequest("/api/store", {
     method: "PUT",
     body: snapshot,
   });
+  const cid = typeof window !== "undefined" ? getSelectedCompanyId().trim() : "";
+  const meta = (result as { _meta?: { updatedAt?: string | null } })?._meta;
+  rememberStoreVersion(cid, meta?.updatedAt ?? null);
+  return result;
 }

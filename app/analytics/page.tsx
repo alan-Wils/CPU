@@ -72,7 +72,7 @@ export default function AnalyticsPage() {
 
     const id = window.setInterval(() => {
       void tick();
-    }, 15_000);
+    }, 45_000);
     /** First silent poll soon after mount so the toast is noticeable without waiting 15s. */
     const boot = window.setTimeout(() => {
       void tick();

@@ -23,7 +23,7 @@ import type { PeerNotificationKind, PeerNotificationItem } from "@/lib/peerNotif
 export type { PeerNotificationKind, PeerNotificationItem };
 
 const MAX_ITEMS = 60;
-const INBOX_POLL_MS = 2200;
+const INBOX_POLL_MS = 5500;
 
 function skipInboxPollingPath(pathname: string | null): boolean {
   const p = String(pathname || "");
@@ -113,6 +113,7 @@ export function PeerNotificationsProvider({ children }: { children: ReactNode })
     async function poll() {
       if (cancelled) return;
       if (!isLoggedIn()) return;
+      if (typeof document !== "undefined" && document.hidden) return;
       const next = await fetchInboxOrEmpty();
       if (cancelled) return;
       applySerializedIfDifferent(next, serializedRef, setItems);

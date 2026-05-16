@@ -6,5 +6,6 @@ export const dashboardRouter = Router();
 const dashboardService = new DashboardService();
 dashboardRouter.get("/overview", asyncHandler(async (req, res) => {
     const data = await dashboardService.getOverview(getScopedCompanyId(req));
+    res.setHeader("Cache-Control", "private, max-age=8");
     res.json(data);
 }));

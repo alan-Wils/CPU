@@ -21,10 +21,12 @@ export const storeRouter = Router();
 const service = new StoreService();
 storeRouter.get("/version", asyncHandler(async (req, res) => {
     const version = await service.getVersion(getScopedCompanyId(req));
+    res.setHeader("Cache-Control", "private, max-age=5");
     res.json(version);
 }));
 storeRouter.get("/", asyncHandler(async (req, res) => {
     const data = await service.load(getScopedCompanyId(req));
+    res.setHeader("Cache-Control", "private, no-store");
     res.json(data);
 }));
 const saveStack = [

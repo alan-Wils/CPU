@@ -417,8 +417,9 @@ export default function Extraction() {
     let active = true;
 
     async function loadSharedCompanyData() {
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
-        await loadBackendStore();
+        await loadBackendStore({ skipFullStoreIfUnchanged: true });
         await hydrateTaskLogsFromApi();
 
         const [realSourceBatches, realExtractionBatches] = await Promise.all([
@@ -485,11 +486,17 @@ export default function Extraction() {
 
     const interval = setInterval(() => {
       loadSharedCompanyData();
-    }, 5000);
+    }, 15_000);
+
+    const onVis = () => {
+      if (!document.hidden) void loadSharedCompanyData();
+    };
+    document.addEventListener("visibilitychange", onVis);
 
     return () => {
       active = false;
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, []);
 
