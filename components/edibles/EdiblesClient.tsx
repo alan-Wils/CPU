@@ -29,6 +29,7 @@ import {
   type PectinMeltFormulaSnapshot,
 } from "@/lib/ediblesPectinBatchNotes";
 import {
+  additiveMassFractionFromGoals,
   estimatedGummyWeightGramsFromMoldMl,
   planPectinMultiAdditiveBatch,
   planPectinSingleAdditiveBatch,
@@ -115,6 +116,13 @@ const CALENDAR_TASK_SUGGESTIONS = [
 ];
 
 type PectinMultiRow = { goalMg: number; potencyFrac: number };
+
+/** Drive total formula mass from target pieces × weight, or from grams of Part A on hand (inverted workbook math). */
+type GummyBatchDriveMode = "pieces" | "partA";
+
+type GummyFormulaSizingResult =
+  | { ok: true; batchG: number; nominalPiecesDisplay: number }
+  | { ok: false; error: string };
 
 type EdibleCreatePrintSummary = {
   created: EdibleBatchCreated;
@@ -271,6 +279,8 @@ export default function EdiblesClient() {
   const [cNotes, setCNotes] = useState("");
 
   const [pectinMode, setPectinMode] = useState<"single" | "multi">("single");
+  const [gummyBatchDrive, setGummyBatchDrive] = useState<GummyBatchDriveMode>("partA");
+  const [pectinPartAGrams, setPectinPartAGrams] = useState(10_000);
   const [createPrintSummary, setCreatePrintSummary] = useState<EdibleCreatePrintSummary | null>(null);
   const [pectinGPerPc, setPectinGPerPc] = useState(3.5);
   const [pectinMoldMl, setPectinMoldMl] = useState("");
@@ -386,14 +396,6 @@ export default function EdiblesClient() {
 
   const selectedOil = useMemo(() => oilOptions.find((o) => o.extractionRunId === cRunId), [oilOptions, cRunId]);
 
-  /** Total formula mass for the Melt-to-Make sheet — same as pieces × nominal piece weight (no duplicate field). */
-  const derivedPectinBatchG = useMemo(() => {
-    const pcs = Number(cPieces);
-    const g = Number(pectinGPerPc);
-    if (!Number.isFinite(pcs) || !Number.isFinite(g) || pcs <= 0 || g <= 0) return 0;
-    return pcs * g;
-  }, [cPieces, pectinGPerPc]);
-
   const derivedPotencyMgPerGram = useMemo(
     () => mgThcPerGramOilFromCoaMassFraction(cOilPotencyFrac),
     [cOilPotencyFrac],
@@ -413,15 +415,121 @@ export default function EdiblesClient() {
     return sum > 0 ? sum : cMg;
   }, [cProduct, pectinMode, pectinMultiAdditivesForPlan, cMg]);
 
+  const gummyFormulaSizing = useMemo((): GummyFormulaSizingResult => {
+    if (cProduct !== "Gummies") {
+      const pcs = Math.floor(Number(cPieces));
+      return { ok: true, batchG: 0, nominalPiecesDisplay: Number.isFinite(pcs) && pcs > 0 ? pcs : 0 };
+    }
+    if (!Number.isFinite(pectinGPerPc) || pectinGPerPc <= 0) {
+      return { ok: false, error: "Piece weight (grams) must be positive." };
+    }
+    if (gummyBatchDrive === "pieces") {
+      const pcs = Math.floor(Number(cPieces));
+      if (!Number.isFinite(pcs) || pcs < 1) {
+        return { ok: false, error: "Gummies per batch (target pieces) must be an integer ≥ 1." };
+      }
+      return { ok: true, batchG: pcs * pectinGPerPc, nominalPiecesDisplay: pcs };
+    }
+    const partAG = Number(pectinPartAGrams);
+    if (!Number.isFinite(partAG) || partAG <= 0) {
+      return {
+        ok: false,
+        error: "Part A — Melt-to-Make™ pectin base on hand (grams) must be a positive number.",
+      };
+    }
+    const citric = WORKBOOK_CITRIC_MASS_FRAC;
+    try {
+      if (pectinMode === "single") {
+        if (cMg <= 0) {
+          return { ok: false, error: "Target MG / piece must be positive for the pectin plan." };
+        }
+        if (cOilPotencyFrac <= 0 || cOilPotencyFrac > 1) {
+          return {
+            ok: false,
+            error: "Oil COA potency (mass fraction) must be in (0, 1] for the pectin plan.",
+          };
+        }
+        const fAdd = additiveMassFractionFromGoals({
+          targetMgPerPiece: cMg,
+          potencyFraction: cOilPotencyFrac,
+          gramsPerPiece: pectinGPerPc,
+        });
+        const fPartA = Number((1 - fAdd - citric).toFixed(8));
+        if (fPartA <= 0 || !Number.isFinite(fPartA)) {
+          return {
+            ok: false,
+            error:
+              "Part A share of formula is zero or negative. Lower target mg/piece, raise piece weight or oil COA fraction, or check inputs.",
+          };
+        }
+        const batchG = partAG / fPartA;
+        return { ok: true, batchG, nominalPiecesDisplay: batchG / pectinGPerPc };
+      }
+      let extras: number[] = [];
+      try {
+        extras = parseExtraMassFractionsCsv(pectinExtraCsv);
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "Invalid extra mass fractions." };
+      }
+      if (pectinMultiAdditivesForPlan.length === 0) {
+        return {
+          ok: false,
+          error: "Multi-additive mode requires at least one additive row with goal mg > 0.",
+        };
+      }
+      for (const row of pectinMultiAdditivesForPlan) {
+        if (row.potencyFraction <= 0 || row.potencyFraction > 1) {
+          return { ok: false, error: "Each additive potency fraction must be in (0, 1]." };
+        }
+      }
+      const addFracs = pectinMultiAdditivesForPlan.map((line) =>
+        additiveMassFractionFromGoals({
+          targetMgPerPiece: line.goalMgPerPiece,
+          potencyFraction: line.potencyFraction,
+          gramsPerPiece: pectinGPerPc,
+        }),
+      );
+      const addSum = addFracs.reduce((a, b) => a + b, 0);
+      const extraSum = extras.reduce((a, b) => a + b, 0);
+      const fPartA = Number((1 - addSum - extraSum - citric).toFixed(8));
+      if (fPartA <= 0 || !Number.isFinite(fPartA)) {
+        return {
+          ok: false,
+          error:
+            "Part A share of formula is zero or negative. Reduce additive goals or extra mass fractions, or adjust piece weight.",
+        };
+      }
+      const batchG = partAG / fPartA;
+      return { ok: true, batchG, nominalPiecesDisplay: batchG / pectinGPerPc };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Invalid sizing inputs." };
+    }
+  }, [
+    cProduct,
+    gummyBatchDrive,
+    pectinGPerPc,
+    cPieces,
+    pectinPartAGrams,
+    pectinMode,
+    cMg,
+    cOilPotencyFrac,
+    pectinMultiAdditivesForPlan,
+    pectinExtraCsv,
+  ]);
+
   const pectinPreview = useMemo(() => {
     if (cProduct !== "Gummies") {
       return { ok: true as const, error: null as string | null, mode: "single" as const };
     }
     try {
-      if (derivedPectinBatchG <= 0 || !Number.isFinite(derivedPectinBatchG)) {
+      if (!gummyFormulaSizing.ok) {
+        return { ok: false as const, error: gummyFormulaSizing.error, mode: pectinMode };
+      }
+      const batchG = gummyFormulaSizing.batchG;
+      if (batchG <= 0 || !Number.isFinite(batchG)) {
         return {
           ok: false as const,
-          error: "Formula batch size must be positive — check gummies per batch and piece weight (grams).",
+          error: "Formula batch size must be positive — adjust batch sizing inputs.",
           mode: pectinMode,
         };
       }
@@ -441,7 +549,7 @@ export default function EdiblesClient() {
           };
         }
         const singlePlan = planPectinSingleAdditiveBatch({
-          batchSizeGrams: derivedPectinBatchG,
+          batchSizeGrams: batchG,
           potencyFraction: cOilPotencyFrac,
           targetMgPerPiece: cMg,
           gramsPerPiece: pectinGPerPc,
@@ -472,7 +580,7 @@ export default function EdiblesClient() {
         }
       }
       const multiPlan = planPectinMultiAdditiveBatch({
-        batchSizeGrams: derivedPectinBatchG,
+        batchSizeGrams: batchG,
         gramsPerPiece: pectinGPerPc,
         additives: pectinMultiAdditivesForPlan,
         citricMassFraction,
@@ -495,7 +603,7 @@ export default function EdiblesClient() {
   }, [
     cProduct,
     pectinMode,
-    derivedPectinBatchG,
+    gummyFormulaSizing,
     pectinGPerPc,
     cOilPotencyFrac,
     cMg,
@@ -523,6 +631,10 @@ export default function EdiblesClient() {
       return;
     }
     if (cProduct === "Gummies") {
+      if (!gummyFormulaSizing.ok) {
+        setError(gummyFormulaSizing.error);
+        return;
+      }
       if (!pectinPreview.ok) {
         setError(pectinPreview.error || "Complete the pectin formula calculator before creating a gummy batch.");
         return;
@@ -539,7 +651,15 @@ export default function EdiblesClient() {
       );
       return;
     }
-    const targetPiecesInt = Math.floor(Number(cPieces));
+    let targetPiecesInt: number;
+    if (cProduct === "Gummies") {
+      targetPiecesInt =
+        gummyBatchDrive === "partA"
+          ? Math.max(1, Math.floor(gummyFormulaSizing.nominalPiecesDisplay))
+          : Math.floor(Number(cPieces));
+    } else {
+      targetPiecesInt = Math.floor(Number(cPieces));
+    }
     if (!Number.isFinite(targetPiecesInt) || targetPiecesInt < 1) {
       setError("Gummies per batch (target pieces) must be an integer ≥ 1.");
       return;
@@ -563,13 +683,16 @@ export default function EdiblesClient() {
       .filter(Boolean)
       .join("\n\n");
 
+    const pectinBatchGrams =
+      cProduct === "Gummies" && gummyFormulaSizing.ok ? gummyFormulaSizing.batchG : 0;
+
     let notesPayload: string | null = userKitchenNotes || null;
     let pectinSnapshot: PectinMeltFormulaSnapshot | null = null;
     if (cProduct === "Gummies" && pectinPreview.ok) {
       if (pectinPreview.mode === "single" && "singlePlan" in pectinPreview && pectinPreview.singlePlan) {
         pectinSnapshot = buildSnapshotFromSingle({
           input: {
-            batchSizeGrams: derivedPectinBatchG,
+            batchSizeGrams: pectinBatchGrams,
             potencyFraction: cOilPotencyFrac,
             targetMgPerPiece: cMg,
             gramsPerPiece: pectinGPerPc,
@@ -590,7 +713,7 @@ export default function EdiblesClient() {
           return;
         }
         pectinSnapshot = buildSnapshotFromMulti({
-          batchSizeGrams: derivedPectinBatchG,
+          batchSizeGrams: pectinBatchGrams,
           gramsPerPiece: pectinGPerPc,
           citricMassFraction: WORKBOOK_CITRIC_MASS_FRAC,
           lineWasteFraction: WORKBOOK_LINE_WASTE_FRAC,
@@ -1242,6 +1365,32 @@ export default function EdiblesClient() {
                 }}
               >
                 <div style={{ fontWeight: 800, marginBottom: 8, color: "#93c5fd", fontSize: 13 }}>Gummy batch size</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                  <button
+                    type="button"
+                    style={{
+                      ...ghostBtn,
+                      border:
+                        gummyBatchDrive === "partA" ? "1px solid rgba(251, 146, 60, 0.75)" : ghostBtn.border,
+                      boxShadow: gummyBatchDrive === "partA" ? "0 0 14px rgba(251,146,60,0.2)" : "none",
+                    }}
+                    onClick={() => setGummyBatchDrive("partA")}
+                  >
+                    From Part A on hand
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      ...ghostBtn,
+                      border:
+                        gummyBatchDrive === "pieces" ? "1px solid rgba(251, 146, 60, 0.75)" : ghostBtn.border,
+                      boxShadow: gummyBatchDrive === "pieces" ? "0 0 14px rgba(251,146,60,0.2)" : "none",
+                    }}
+                    onClick={() => setGummyBatchDrive("pieces")}
+                  >
+                    From target piece count
+                  </button>
+                </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
                   {pectinMode === "single" ? (
                     <label style={{ fontSize: 13 }}>
@@ -1263,17 +1412,35 @@ export default function EdiblesClient() {
                       <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>Sum of additive goals below.</div>
                     </div>
                   )}
-                  <label style={{ fontSize: 13 }}>
-                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>Gummies per batch (target)</div>
-                    <input
-                      type="number"
-                      required
-                      min={1}
-                      value={cPieces}
-                      onChange={(e) => setCPieces(Number(e.target.value))}
-                      style={inputFull}
-                    />
-                  </label>
+                  {gummyBatchDrive === "pieces" ? (
+                    <label style={{ fontSize: 13 }}>
+                      <div style={{ color: "#94a3b8", marginBottom: 4 }}>Gummies per batch (target)</div>
+                      <input
+                        type="number"
+                        required
+                        min={1}
+                        value={cPieces}
+                        onChange={(e) => setCPieces(Number(e.target.value))}
+                        style={inputFull}
+                      />
+                    </label>
+                  ) : (
+                    <label style={{ fontSize: 13 }}>
+                      <div style={{ color: "#94a3b8", marginBottom: 4 }}>Part A on hand (g)</div>
+                      <input
+                        type="number"
+                        required
+                        min={0.01}
+                        step={0.01}
+                        value={pectinPartAGrams}
+                        onChange={(e) => setPectinPartAGrams(Number(e.target.value))}
+                        style={inputFull}
+                      />
+                      <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                        Melt-to-Make™ pectin base you are using; total formula and piece count are derived from this.
+                      </div>
+                    </label>
+                  )}
                   <label style={{ fontSize: 13 }}>
                     <div style={{ color: "#94a3b8", marginBottom: 4 }}>Piece weight (g)</div>
                     <input
@@ -1321,9 +1488,31 @@ export default function EdiblesClient() {
                   </button>
                 </div>
                 <div style={{ fontSize: 12, color: "#fdba74", marginTop: 10 }}>
-                  Melt-to-Make formula batch size: <strong>{derivedPectinBatchG.toFixed(2)} g</strong> (= pieces × piece
-                  weight)
+                  {gummyBatchDrive === "pieces" ? (
+                    <>
+                      Melt-to-Make formula batch size:{" "}
+                      <strong>
+                        {gummyFormulaSizing.ok ? `${gummyFormulaSizing.batchG.toFixed(2)} g` : "—"}
+                      </strong>{" "}
+                      (= pieces × piece weight).
+                    </>
+                  ) : (
+                    <>
+                      Total formula mass:{" "}
+                      <strong>
+                        {gummyFormulaSizing.ok ? `${gummyFormulaSizing.batchG.toFixed(2)} g` : "—"}
+                      </strong>{" "}
+                      (from Part A ÷ Part A % of formula). Nominal pieces:{" "}
+                      <strong>
+                        {gummyFormulaSizing.ok ? gummyFormulaSizing.nominalPiecesDisplay.toFixed(1) : "—"}
+                      </strong>{" "}
+                      (batch record uses floor).{" "}
+                    </>
+                  )}
                 </div>
+                {!gummyFormulaSizing.ok && (
+                  <div style={{ fontSize: 12, color: "#fecaca", marginTop: 8 }}>{gummyFormulaSizing.error}</div>
+                )}
               </div>
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
@@ -1429,8 +1618,9 @@ export default function EdiblesClient() {
                 <div style={{ fontWeight: 900, marginBottom: 6, color: "#fdba74" }}>Pectin (Melt-to-Make) formula</div>
                 <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 10px", lineHeight: 1.45 }}>
                   Uses the same calculator as the Melt-to-Make workbook. Total formula mass comes from{" "}
-                  <strong style={{ color: "#e2e8f0" }}>Gummy batch size</strong> above (pieces × piece weight). Part B
-                  citric ({WORKBOOK_CITRIC_PCT}% of formula) and line-loss on piece count (
+                  <strong style={{ color: "#e2e8f0" }}>Gummy batch size</strong> above — either{" "}
+                  <strong style={{ color: "#e2e8f0" }}>Part A on hand</strong> (inverted math) or{" "}
+                  <strong style={{ color: "#e2e8f0" }}>target piece count</strong> × piece weight. Part B citric ({WORKBOOK_CITRIC_PCT}% of formula) and line-loss on piece count (
                   {(WORKBOOK_LINE_WASTE_FRAC * 100).toFixed(0)}%) match the sheet defaults and are not editable here. The
                   saved plan is appended to batch notes (with JSON); Part A, oil, citric, and extras post as ingredient
                   lines.
@@ -1664,7 +1854,8 @@ export default function EdiblesClient() {
                     </>
                   ) : (
                     <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                      Enter gummy batch size, piece weight, and mg targets to populate the workbook-style split.
+                      Enter gummy batch sizing (Part A on hand or piece count), piece weight, and mg targets to populate
+                      the workbook-style split.
                     </div>
                   )}
                 </div>
