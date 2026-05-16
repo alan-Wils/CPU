@@ -854,6 +854,8 @@ export default function ConfigPage() {
   const [fieldModalSquareFeet, setFieldModalSquareFeet] = useState("");
   const [fieldModalError, setFieldModalError] = useState("");
   const [saveSuccessModalOpen, setSaveSuccessModalOpen] = useState(false);
+  const [saveErrorModalOpen, setSaveErrorModalOpen] = useState(false);
+  const [saveErrorModalMessage, setSaveErrorModalMessage] = useState("");
   const [timeZoneModalOpen, setTimeZoneModalOpen] = useState(false);
   const [displayTimezoneDraft, setDisplayTimezoneDraft] = useState("");
   const [timeZoneFilter, setTimeZoneFilter] = useState("");
@@ -1276,6 +1278,7 @@ export default function ConfigPage() {
         },
       });
       syncCompanyTimezoneFromConfigPayload(data);
+      setSaveErrorModalOpen(false);
       setSaveSuccessModalOpen(true);
       void syncCultivationSectionScheduleTemplates().catch((e) => {
         console.error("Cultivation schedule template sync failed:", e);
@@ -1286,7 +1289,9 @@ export default function ConfigPage() {
         error instanceof Error && error.message.trim()
           ? error.message
           : "Could not save config";
-      alert(message);
+      setSaveErrorModalMessage(message);
+      setSaveSuccessModalOpen(false);
+      setSaveErrorModalOpen(true);
     } finally {
       setSaving(false);
     }
@@ -5972,28 +5977,15 @@ export default function ConfigPage() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="save-config-success-title"
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 20002,
-            background: "rgba(2,6,23,0.88)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 20,
-          }}
+          style={configFeedbackModalOverlayStyle}
           onClick={(e) => {
             if (e.target === e.currentTarget) setSaveSuccessModalOpen(false);
           }}
         >
           <div
             style={{
-              ...styles.card,
-              maxWidth: 560,
-              width: "100%",
-              margin: 0,
+              ...configFeedbackModalCardStyle,
               border: "1px solid #334155",
-              boxShadow: "0 24px 48px rgba(0,0,0,0.45)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -6011,6 +6003,61 @@ export default function ConfigPage() {
                 type="button"
                 style={styles.saveButton}
                 onClick={() => setSaveSuccessModalOpen(false)}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {saveErrorModalOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="save-config-error-title"
+          style={configFeedbackModalOverlayStyle}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSaveErrorModalOpen(false);
+          }}
+        >
+          <div
+            style={{
+              ...configFeedbackModalCardStyle,
+              border: "1px solid rgba(248, 113, 113, 0.45)",
+              boxShadow:
+                "0 24px 48px rgba(0,0,0,0.45), 0 0 32px rgba(56, 189, 248, 0.12)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              id="save-config-error-title"
+              style={{
+                ...styles.sectionTitle,
+                marginTop: 0,
+                marginBottom: 8,
+                color: "#fca5a5",
+              }}
+            >
+              Could not save config
+            </h3>
+            <p
+              style={{
+                color: "#cbd5e1",
+                fontSize: 14,
+                marginTop: 0,
+                lineHeight: 1.55,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {saveErrorModalMessage}
+            </p>
+            <div style={{ ...styles.inline, justifyContent: "flex-end", marginTop: 16 }}>
+              <button
+                type="button"
+                style={styles.saveButton}
+                onClick={() => setSaveErrorModalOpen(false)}
               >
                 OK
               </button>
@@ -6414,6 +6461,27 @@ function CultivationRoomAccordionList({
     </div>
   );
 }
+
+const configFeedbackModalOverlayStyle: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 20002,
+  background: "rgba(2, 6, 23, 0.88)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 20,
+};
+
+const configFeedbackModalCardStyle: React.CSSProperties = {
+  maxWidth: 560,
+  width: "100%",
+  margin: 0,
+  background: "#0f172a",
+  borderRadius: 18,
+  padding: 22,
+  boxShadow: "0 24px 48px rgba(0,0,0,0.45)",
+};
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
