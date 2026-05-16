@@ -62,6 +62,41 @@ span.login-brand-logo-glow-link img {
   }
 }
 
+/* Cultivation: Moms button — blue/cyan pulse (same rhythm as login logo glow) */
+@keyframes cultivation-moms-btn-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 8px rgba(56, 189, 248, 0.95),
+      0 0 22px rgba(37, 99, 235, 0.75),
+      0 0 40px rgba(34, 211, 238, 0.45);
+    border-color: rgba(56, 189, 248, 0.85);
+  }
+  50% {
+    box-shadow:
+      0 0 12px rgba(34, 211, 238, 1),
+      0 0 28px rgba(14, 165, 233, 0.9),
+      0 0 48px rgba(59, 130, 246, 0.55);
+    border-color: rgba(103, 232, 249, 0.95);
+  }
+}
+
+button.cultivation-moms-glow-btn {
+  will-change: box-shadow, border-color;
+  animation: cultivation-moms-btn-glow 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button.cultivation-moms-glow-btn {
+    animation: none;
+    will-change: auto;
+    box-shadow:
+      0 0 10px rgba(56, 189, 248, 0.9),
+      0 0 24px rgba(37, 99, 235, 0.55);
+    border-color: rgba(56, 189, 248, 0.8);
+  }
+}
+
 /* Login page slogan — Space Grotesk via `--font-space-grotesk` (see app/layout.tsx). */
 @keyframes login-slogan-fade-in {
   from {

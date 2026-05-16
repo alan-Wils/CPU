@@ -7736,19 +7736,27 @@ export default function Cultivation() {
     display: "grid",
     gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: 12,
-    marginTop: 10,
+    marginTop: 0,
   } as const;
 
   const momsButtonStyle = {
     ...buttonStyle,
-    alignSelf: "flex-start",
-    padding: "6px 10px",
+    padding: "6px 12px",
     fontSize: 12,
     fontWeight: 800,
     minHeight: 0,
-    background: "#1e293b",
-    border: "1px solid #475569",
-    color: "#e2e8f0",
+    background: "rgba(15, 23, 42, 0.95)",
+    border: "1px solid rgba(56, 189, 248, 0.65)",
+    color: "#e0f2fe",
+    borderRadius: 8,
+    cursor: "pointer",
+  } as const;
+
+  const stagePanelWithMomsStyle = {
+    position: "relative" as const,
+    marginTop: 10,
+    paddingTop: 4,
+    overflow: "visible" as const,
   } as const;
 
   const stageCardButtonStyle = {
@@ -7994,75 +8002,65 @@ export default function Cultivation() {
         </div>
 
         <section style={cardStyle}>
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 10,
-              marginBottom: 8,
-            }}
-          >
-            <h3 style={{ ...sectionTitleStyle, margin: 0, flex: 1, textAlign: "center" }}>
-              Active Cultivation Batches
-            </h3>
-            {activeBatches.length === 0 ? (
-              <button type="button" style={momsButtonStyle} onClick={() => openMomsModal()}>
-                Moms ({activeMotherCount})
-              </button>
-            ) : null}
-          </div>
+          <h3 style={sectionTitleStyle}>Active Cultivation Batches</h3>
 
           {activeBatches.length === 0 ? (
-            <p style={{ textAlign: "center", color: "#cbd5e1" }}>No active cultivation batches.</p>
+            <div style={{ textAlign: "center" }}>
+              <button
+                type="button"
+                className="cultivation-moms-glow-btn"
+                style={{ ...momsButtonStyle, marginBottom: 12 }}
+                onClick={() => openMomsModal()}
+              >
+                Moms ({activeMotherCount})
+              </button>
+              <p style={{ color: "#cbd5e1", margin: 0 }}>No active cultivation batches.</p>
+            </div>
           ) : (
-            <div style={activeStageThreeColStyle}>
-              {stageOrder.map((stageName) => {
-                const stageCard = (
-                  <button
-                    key={`${stageName}-card`}
-                    type="button"
-                    style={stageCardButtonStyle}
-                    onClick={() => setSelectedStage(stageName)}
-                  >
-                    <span style={{ fontWeight: 900, fontSize: 16 }}>{stageName}</span>
-                    <span style={{ color: "#cbd5e1", fontWeight: 700 }}>
-                      {activeBatchesByStage[stageName].length} Batches
-                    </span>
-                    <span style={{ color: "#93c5fd", fontWeight: 700 }}>
-                      {stagePlantTotals[stageName].toLocaleString()} plant
-                      {stagePlantTotals[stageName] === 1 ? "" : "s"}
-                      {typeof stagePlantTargetTotals[stageName] === "number" ? (
-                        <>
-                          {" "}
-                          <span style={{ color: "#64748b" }}>/</span>{" "}
-                          {stagePlantTargetTotals[stageName]!.toLocaleString()}{" "}
-                          <span style={{ color: "#94a3b8", fontWeight: 600 }}>target</span>
-                        </>
-                      ) : null}
-                    </span>
-                  </button>
-                );
-                if (stageName === "Clones") {
-                  return (
-                    <div
-                      key={stageName}
-                      style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}
-                    >
-                      <button type="button" style={momsButtonStyle} onClick={() => openMomsModal()}>
-                        Moms ({activeMotherCount})
-                      </button>
-                      {stageCard}
-                    </div>
-                  );
-                }
-                return (
+            <div style={stagePanelWithMomsStyle}>
+              <button
+                type="button"
+                className="cultivation-moms-glow-btn"
+                style={{
+                  ...momsButtonStyle,
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  transform: "translateY(calc(-100% - 6px))",
+                  zIndex: 2,
+                }}
+                onClick={() => openMomsModal()}
+              >
+                Moms ({activeMotherCount})
+              </button>
+              <div style={activeStageThreeColStyle}>
+                {stageOrder.map((stageName) => (
                   <div key={stageName} style={{ minWidth: 0 }}>
-                    {stageCard}
+                    <button
+                      type="button"
+                      style={stageCardButtonStyle}
+                      onClick={() => setSelectedStage(stageName)}
+                    >
+                      <span style={{ fontWeight: 900, fontSize: 16 }}>{stageName}</span>
+                      <span style={{ color: "#cbd5e1", fontWeight: 700 }}>
+                        {activeBatchesByStage[stageName].length} Batches
+                      </span>
+                      <span style={{ color: "#93c5fd", fontWeight: 700 }}>
+                        {stagePlantTotals[stageName].toLocaleString()} plant
+                        {stagePlantTotals[stageName] === 1 ? "" : "s"}
+                        {typeof stagePlantTargetTotals[stageName] === "number" ? (
+                          <>
+                            {" "}
+                            <span style={{ color: "#64748b" }}>/</span>{" "}
+                            {stagePlantTargetTotals[stageName]!.toLocaleString()}{" "}
+                            <span style={{ color: "#94a3b8", fontWeight: 600 }}>target</span>
+                          </>
+                        ) : null}
+                      </span>
+                    </button>
                   </div>
-                );
-              })}
+                ))}
+              </div>
             </div>
           )}
         </section>
