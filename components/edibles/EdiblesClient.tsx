@@ -65,6 +65,12 @@ const WORKBOOK_CITRIC_MASS_FRAC = WORKBOOK_CITRIC_PCT / 100;
 /** Line loss on nominal piece count — workbook default 5%. */
 const WORKBOOK_LINE_WASTE_FRAC = 0.05 as const;
 
+/** COA THC as mass fraction of oil (0–1) → mg THC per gram oil for batch records (same oil used in kitchen + melt math). */
+function mgThcPerGramOilFromCoaMassFraction(frac: number): number {
+  if (!Number.isFinite(frac) || frac <= 0) return 0;
+  return frac * 1000;
+}
+
 function pctOfFormula(frac: number): string {
   if (!Number.isFinite(frac)) return "—";
   return `${(frac * 100).toFixed(2)}%`;
@@ -119,6 +125,8 @@ type EdibleCreatePrintSummary = {
   targetPieces: number;
   oilInputGrams: number;
   potencyMgPerGram: number | null;
+  /** THC mass fraction in oil (0–1) used to derive potencyMgPerGram. */
+  oilPotencyMassFraction: number | null;
   extractionRunLabel: string | null;
   projectedTotalMg: number;
   projectedEstPieces: number;
@@ -258,12 +266,12 @@ export default function EdiblesClient() {
   const [cPieces, setCPieces] = useState(5000);
   const [cRunId, setCRunId] = useState("");
   const [cOilG, setCOilG] = useState(100);
-  const [cPotency, setCPotency] = useState<number | "">(85);
+  /** Lab / COA: THC mass fraction in this oil (0–1). Drives mg/g on the batch (= ×1000) and single-additive pectin math. */
+  const [cOilPotencyFrac, setCOilPotencyFrac] = useState(0.7933);
   const [cNotes, setCNotes] = useState("");
 
   const [pectinMode, setPectinMode] = useState<"single" | "multi">("single");
   const [createPrintSummary, setCreatePrintSummary] = useState<EdibleCreatePrintSummary | null>(null);
-  const [pectinPotencySingle, setPectinPotencySingle] = useState(0.7933);
   const [pectinGPerPc, setPectinGPerPc] = useState(3.5);
   const [pectinMoldMl, setPectinMoldMl] = useState("");
   const [pectinExtraCsv, setPectinExtraCsv] = useState("");
@@ -386,6 +394,11 @@ export default function EdiblesClient() {
     return pcs * g;
   }, [cPieces, pectinGPerPc]);
 
+  const derivedPotencyMgPerGram = useMemo(
+    () => mgThcPerGramOilFromCoaMassFraction(cOilPotencyFrac),
+    [cOilPotencyFrac],
+  );
+
   const pectinMultiAdditivesForPlan = useMemo(
     () =>
       pectinMultiRows
@@ -420,12 +433,16 @@ export default function EdiblesClient() {
         if (cMg <= 0) {
           return { ok: false as const, error: "Target MG / piece must be positive for the pectin plan.", mode: "single" as const };
         }
-        if (pectinPotencySingle <= 0 || pectinPotencySingle > 1) {
-          return { ok: false as const, error: "Additive potency fraction must be in (0, 1].", mode: "single" as const };
+        if (cOilPotencyFrac <= 0 || cOilPotencyFrac > 1) {
+          return {
+            ok: false as const,
+            error: "Oil COA potency (mass fraction) must be in (0, 1] for the pectin plan.",
+            mode: "single" as const,
+          };
         }
         const singlePlan = planPectinSingleAdditiveBatch({
           batchSizeGrams: derivedPectinBatchG,
-          potencyFraction: pectinPotencySingle,
+          potencyFraction: cOilPotencyFrac,
           targetMgPerPiece: cMg,
           gramsPerPiece: pectinGPerPc,
           citricMassFraction,
@@ -480,20 +497,19 @@ export default function EdiblesClient() {
     pectinMode,
     derivedPectinBatchG,
     pectinGPerPc,
-    pectinPotencySingle,
+    cOilPotencyFrac,
     cMg,
     pectinMultiAdditivesForPlan,
     pectinExtraCsv,
   ]);
 
   const projected = useMemo(() => {
-    const potencyNum = cPotency === "" ? 0 : Number(cPotency);
-    const mg = Number.isFinite(potencyNum) && potencyNum > 0 ? cOilG * potencyNum : 0;
+    const mg = derivedPotencyMgPerGram > 0 ? cOilG * derivedPotencyMgPerGram : 0;
     const perPieceMg =
       cProduct === "Gummies" && pectinMode === "multi" ? effectiveTargetMgForBatch : cMg;
     const per = perPieceMg > 0 ? mg / perPieceMg : 0;
     return { totalMg: mg, estPieces: per > 0 ? Math.floor(per) : 0 };
-  }, [cOilG, cPotency, cMg, cProduct, pectinMode, effectiveTargetMgForBatch]);
+  }, [cOilG, derivedPotencyMgPerGram, cMg, cProduct, pectinMode, effectiveTargetMgForBatch]);
 
   async function onCreateSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -537,6 +553,11 @@ export default function EdiblesClient() {
       );
       return;
     }
+    if (!Number.isFinite(cOilPotencyFrac) || cOilPotencyFrac <= 0 || cOilPotencyFrac > 1) {
+      setError("Enter oil COA potency as a THC mass fraction between 0 and 1 (e.g. 79.33% → 0.7933).");
+      return;
+    }
+    const potencyMgPerGramApi = derivedPotencyMgPerGram;
 
     const userKitchenNotes = [cNotes.trim(), cIngredientNotes.trim() ? `Ingredients: ${cIngredientNotes.trim()}` : ""]
       .filter(Boolean)
@@ -549,7 +570,7 @@ export default function EdiblesClient() {
         pectinSnapshot = buildSnapshotFromSingle({
           input: {
             batchSizeGrams: derivedPectinBatchG,
-            potencyFraction: pectinPotencySingle,
+            potencyFraction: cOilPotencyFrac,
             targetMgPerPiece: cMg,
             gramsPerPiece: pectinGPerPc,
             citricMassFraction: WORKBOOK_CITRIC_MASS_FRAC,
@@ -600,7 +621,7 @@ export default function EdiblesClient() {
         targetPieces: targetPiecesInt,
         extractionRunId: cRunId,
         oilInputGrams: oilG,
-        potencyMgPerGram: cPotency === "" ? null : Number(cPotency),
+        potencyMgPerGram: potencyMgPerGramApi,
         notes: notesPayload,
         expectedYield: projected.estPieces > 0 ? projected.estPieces : null,
       });
@@ -630,7 +651,8 @@ export default function EdiblesClient() {
         targetMgPerPiece: targetMgForApi,
         targetPieces: targetPiecesInt,
         oilInputGrams: oilG,
-        potencyMgPerGram: cPotency === "" ? null : Number(cPotency),
+        potencyMgPerGram: potencyMgPerGramApi,
+        oilPotencyMassFraction: cOilPotencyFrac,
         extractionRunLabel: runLabel,
         projectedTotalMg: projected.totalMg,
         projectedEstPieces: projected.estPieces,
@@ -1070,7 +1092,16 @@ export default function EdiblesClient() {
                         <td>{createPrintSummary.oilInputGrams.toFixed(4)} g</td>
                       </tr>
                       <tr>
-                        <th>Potency</th>
+                        <th>Oil COA mass fraction</th>
+                        <td>
+                          {createPrintSummary.oilPotencyMassFraction != null &&
+                          Number.isFinite(createPrintSummary.oilPotencyMassFraction)
+                            ? createPrintSummary.oilPotencyMassFraction.toFixed(4)
+                            : "—"}
+                        </td>
+                      </tr>
+                      <tr>
+                        <th>Potency (saved mg/g)</th>
                         <td>
                           {createPrintSummary.potencyMgPerGram != null && Number.isFinite(createPrintSummary.potencyMgPerGram)
                             ? `${createPrintSummary.potencyMgPerGram} mg/g`
@@ -1360,15 +1391,26 @@ export default function EdiblesClient() {
               />
             </label>
             <label style={{ display: "block", marginBottom: 10, fontSize: 13 }}>
-              <div style={{ color: "#94a3b8", marginBottom: 4 }}>Potency (mg THC per gram oil)</div>
+              <div style={{ color: "#94a3b8", marginBottom: 4 }}>
+                Oil COA — THC mass fraction in oil (0–1, e.g. 79.33% → 0.7933)
+              </div>
               <input
                 type="number"
-                min={0}
-                step={0.1}
-                value={cPotency}
-                onChange={(e) => setCPotency(e.target.value === "" ? "" : Number(e.target.value))}
+                required
+                min={0.0001}
+                max={1}
+                step={0.0001}
+                value={cOilPotencyFrac}
+                onChange={(e) => setCOilPotencyFrac(Number(e.target.value))}
                 style={inputFull}
               />
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 6 }}>
+                Stored on batch as{" "}
+                <span style={{ color: "#fdba74", fontWeight: 700 }}>
+                  {derivedPotencyMgPerGram > 0 ? `${derivedPotencyMgPerGram.toFixed(2)} mg THC / g oil` : "—"}
+                </span>{" "}
+                (fraction × 1000). Gummies single-additive melt math uses this same value.
+              </div>
             </label>
             <div style={{ fontSize: 12, color: "#fdba74", marginBottom: 10 }}>
               Projected total MG: {Math.round(projected.totalMg)} · Estimated pieces @ target MG: {projected.estPieces}
@@ -1627,21 +1669,20 @@ export default function EdiblesClient() {
                   )}
                 </div>
                 {pectinMode === "single" ? (
-                  <label style={{ display: "block", marginBottom: 10, fontSize: 13 }}>
-                    <div style={{ color: "#94a3b8", marginBottom: 4 }}>
-                      Additive potency (0–1 fraction, e.g. COA 79.33% → 0.7933)
-                    </div>
-                    <input
-                      type="number"
-                      required
-                      min={0.0001}
-                      max={1}
-                      step={0.0001}
-                      value={pectinPotencySingle}
-                      onChange={(e) => setPectinPotencySingle(Number(e.target.value))}
-                      style={inputFull}
-                    />
-                  </label>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "#94a3b8",
+                      marginBottom: 10,
+                      lineHeight: 1.5,
+                      borderLeft: "3px solid rgba(251, 146, 60, 0.45)",
+                      paddingLeft: 10,
+                    }}
+                  >
+                    <strong style={{ color: "#fdba74" }}>Single additive:</strong> the oil COA mass fraction above is used
+                    for both batch THC accounting and the Melt-to-Make additive line (same field as the old separate
+                    inputs).
+                  </div>
                 ) : (
                   <>
                     <div style={{ fontSize: 12, color: "#fdba74", marginBottom: 6 }}>
