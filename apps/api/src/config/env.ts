@@ -153,6 +153,8 @@ const envSchema = z
     CLOUDFLARE_API_TOKEN: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().optional()),
     NEON_API_KEY: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().optional()),
     NEON_PROJECT_ID: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().optional()),
+    /** Required for Neon consumption metrics API (`/consumption_history/v2/projects`). */
+    NEON_ORG_ID: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.string().optional()),
     /**
      * Bearer secret for `POST /api/internal/jobs/*` when called by Railway Cron
      * (cash log digest job). Minimum 16 characters. Must be set identically as

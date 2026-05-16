@@ -543,12 +543,19 @@ model VendorBillingSnapshot {
   provider     UsageProvider
   /// UTC month key: YYYY-MM.
   month        String
-  totalCost    Float         @default(0)
+  /// Vendor MTD / period USD when known (manual entry or future vendor dollar APIs). Null = no authoritative vendor total.
+  totalCost    Float?
   currency     String        @default("USD")
   rawUsageJson Json?
   /// live_synced | missing_token | sync_failed | estimated_only | no_activity
   status       String
   syncedAt     DateTime?
+  /// Inclusive billing window (optional; defaults derived from `month` when unset).
+  billingPeriodStart DateTime?
+  billingPeriodEnd   DateTime?
+  /// vendor_api | manual | estimated
+  source       String        @default("estimated")
+  errorMessage String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 

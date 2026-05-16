@@ -14,5 +14,9 @@ export type VendorSyncResult = {
     rawUsageJson?: Prisma.InputJsonValue;
     message?: string;
     syncedAt: Date | null;
+    billingPeriodStart?: Date | null;
+    billingPeriodEnd?: Date | null;
+    source?: "vendor_api" | "manual" | "estimated";
+    errorMessage?: string | null;
 };
 

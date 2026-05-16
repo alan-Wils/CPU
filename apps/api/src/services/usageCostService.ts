@@ -10,9 +10,17 @@ export type UsageCostProviderRow = {
     displayName: string;
     usageSummary: string;
     usageMetrics: UsageCostMetric[];
+    /** Company-allocated share (vendor USD × share, or exact internal, or internal estimate). */
     displayCost: number;
     estimatedCost: number;
+    /** Authoritative vendor MTD USD when manual/API provides it; otherwise null. */
     vendorTotalCost: number | null;
+    actualVendorCostUsd: number | null;
+    allocatedCompanyCostUsd: number;
+    /** True when `actualVendorCostUsd` is from a stored vendor/manual snapshot. */
+    vendorBillingConnected: boolean;
+    /** One-line explanation for the vendor bill row (never a fake $0). */
+    vendorCostLineLabel: string;
     currency: "USD";
     status: "live_synced" | "missing_token" | "sync_failed" | "estimated_only" | "no_activity";
     statusLabel: string;
@@ -203,12 +211,17 @@ export class UsageCostService {
             const snapshotStatus =
                 (snapshot?.status as UsageCostProviderRow["status"] | undefined) ??
                 "estimated_only";
-            const vendorTotalCost =
+            const snapSource = String(snapshot?.source ?? "estimated").trim();
+
+            const actualVendorCostUsd =
                 snapshot &&
-                snapshotStatus === "live_synced" &&
-                Number.isFinite(snapshot.totalCost)
-                    ? snapshot.totalCost
+                snapshot.totalCost != null &&
+                Number.isFinite(snapshot.totalCost) &&
+                (snapSource === "manual" || snapSource === "vendor_api")
+                    ? Number(snapshot.totalCost)
                     : null;
+            const vendorBillingConnected = actualVendorCostUsd != null;
+
             let displayCost = estimatedCost;
             let allocationMethod: UsageCostProviderRow["allocationMethod"] = "estimated";
 
@@ -224,8 +237,8 @@ export class UsageCostService {
                 displayCost = estimatedCost;
                 allocationMethod = "exact_internal";
             }
-            else if (vendorTotalCost != null && totalWeight > 0) {
-                displayCost = vendorTotalCost * (companyWeight / totalWeight);
+            else if (actualVendorCostUsd != null && totalWeight > 0) {
+                displayCost = actualVendorCostUsd * (companyWeight / totalWeight);
                 allocationMethod = "vendor_allocated";
             }
 
@@ -334,6 +347,29 @@ export class UsageCostService {
                     statusLabel = "Error";
             }
 
+            const rawFull = snapshot?.rawUsageJson as Record<string, unknown> | null | undefined;
+            const neonConsumptionOk = Boolean(
+                rawFull &&
+                typeof rawFull.neonConsumption === "object" &&
+                rawFull.neonConsumption &&
+                (rawFull.neonConsumption as { ok?: unknown }).ok === true,
+            );
+            let vendorCostLineLabel = "Vendor billing not connected";
+            if (actualVendorCostUsd != null) {
+                vendorCostLineLabel =
+                    actualVendorCostUsd === 0 ? "$0.00 (vendor confirmed)" : formatUsd(actualVendorCostUsd);
+            }
+            else if (snapSource === "vendor_api" && neonConsumptionOk && provider === "neon") {
+                vendorCostLineLabel =
+                    "Neon metrics synced — enter MTD total from Neon billing (manual override) for invoice $";
+            }
+            else if (snapSource === "vendor_api" && provider === "neon" && snapshot?.errorMessage) {
+                vendorCostLineLabel = `Vendor sync: ${String(snapshot.errorMessage).slice(0, 120)}`;
+            }
+            else if (estimatedCost > 0 || hasCompanyActivity) {
+                vendorCostLineLabel = "Estimated from app usage only (no vendor invoice total)";
+            }
+
             return {
                 provider,
                 displayName: meta.displayName,
@@ -341,7 +377,11 @@ export class UsageCostService {
                 usageMetrics,
                 displayCost,
                 estimatedCost,
-                vendorTotalCost,
+                vendorTotalCost: actualVendorCostUsd,
+                actualVendorCostUsd,
+                allocatedCompanyCostUsd: displayCost,
+                vendorBillingConnected,
+                vendorCostLineLabel,
                 currency: "USD" as const,
                 status: effectiveStatus,
                 statusLabel,

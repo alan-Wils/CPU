@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { z } from "zod";
+import { z } from "zod";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
@@ -13,11 +13,12 @@ import {
     employeeSampleMonthlyUsageQuerySchema,
     inviteCreateSchema,
     inviteIdParam,
+    vendorBillingManualOverrideSchema,
 } from "../../validation/schemas.js";
 import { AdminService } from "../../services/adminService.js";
 import { requirePlatformRoles, requireRole } from "../../middleware/rbac.js";
 import { UsageCostService } from "../../services/usageCostService.js";
-import { VendorBillingSyncService } from "../../services/vendorBillingSyncService.js";
+import { utcMonthLabel, VendorBillingSyncService } from "../../services/vendorBillingSyncService.js";
 import { NexbatchCompanyUsageLogService } from "../../services/nexbatchCompanyUsageLogService.js";
 import { requireEmployeeSampleAccess } from "../../middleware/employeeSampleAccess.js";
 import { EmployeeSampleService } from "../../services/employeeSampleService.js";
@@ -56,6 +57,38 @@ adminRouter.post(
     asyncHandler(async (_req, res) => {
         const out = await vendorBillingSyncService.syncCurrentMonthAllProviders();
         res.json(out);
+    }),
+);
+
+adminRouter.get(
+    "/usage-costs",
+    requirePlatformRoles(["nexbatch_admin", "owner"]),
+    asyncHandler(async (req, res) => {
+        const q = req.query.month;
+        const month =
+            typeof q === "string" && /^\d{4}-\d{2}$/.test(q.trim()) ? q.trim() : utcMonthLabel();
+        const snapshots = await vendorBillingSyncService.listSnapshotsForMonth(month);
+        res.json({ month, snapshots });
+    }),
+);
+
+adminRouter.post(
+    "/usage-costs/manual-override",
+    requirePlatformRoles(["nexbatch_admin", "owner"]),
+    validate({ body: vendorBillingManualOverrideSchema }),
+    asyncHandler(async (req, res) => {
+        const body = req.body as z.infer<typeof vendorBillingManualOverrideSchema>;
+        const month = body.month ?? utcMonthLabel();
+        await vendorBillingSyncService.saveManualOverride({
+            provider: body.provider,
+            month,
+            totalCostUsd: body.totalCostUsd,
+            billingPeriodStart: body.billingPeriodStart ? new Date(body.billingPeriodStart) : null,
+            billingPeriodEnd: body.billingPeriodEnd ? new Date(body.billingPeriodEnd) : null,
+            rawUsageJson: body.rawUsageJson ?? null,
+        });
+        const snapshots = await vendorBillingSyncService.listSnapshotsForMonth(month);
+        res.json({ ok: true, month, snapshots });
     }),
 );
 

@@ -611,6 +611,10 @@ export type UsageCostProviderDto = {
   displayCost: number;
   estimatedCost: number;
   vendorTotalCost: number | null;
+  actualVendorCostUsd: number | null;
+  allocatedCompanyCostUsd: number;
+  vendorBillingConnected: boolean;
+  vendorCostLineLabel: string;
   currency: "USD";
   status: "live_synced" | "missing_token" | "sync_failed" | "estimated_only" | "no_activity";
   statusLabel: string;
@@ -667,12 +671,50 @@ export type VendorSyncSummaryDto = {
   currency: string;
   syncedAt: string | null;
   message: string | null;
+  source?: string;
 };
 
 export async function syncVendorUsageCosts() {
   return apiRequest<{ month: string; results: VendorSyncSummaryDto[] }>(
     "/api/admin/usage-costs/sync",
     { method: "POST", omitCompanyHeader: true },
+  );
+}
+
+export type VendorBillingSnapshotDto = {
+  id: string;
+  provider: string;
+  month: string;
+  totalCost: number | null;
+  currency: string;
+  status: string;
+  source: string;
+  syncedAt: string | null;
+  billingPeriodStart: string | null;
+  billingPeriodEnd: string | null;
+  errorMessage: string | null;
+  rawUsageJson: unknown;
+};
+
+export async function fetchAdminVendorBillingSnapshots(month?: string) {
+  const q = month && /^\d{4}-\d{2}$/.test(month) ? `?month=${encodeURIComponent(month)}` : "";
+  return apiRequest<{ month: string; snapshots: VendorBillingSnapshotDto[] }>(
+    `/api/admin/usage-costs${q}`,
+    { omitCompanyHeader: true },
+  );
+}
+
+export async function postVendorBillingManualOverride(body: {
+  provider: "vercel" | "railway" | "neon" | "resend" | "cloudflare_r2" | "ai";
+  month?: string;
+  totalCostUsd: number;
+  billingPeriodStart?: string;
+  billingPeriodEnd?: string;
+  rawUsageJson?: Record<string, unknown>;
+}) {
+  return apiRequest<{ ok: boolean; month: string; snapshots: VendorBillingSnapshotDto[] }>(
+    "/api/admin/usage-costs/manual-override",
+    { method: "POST", omitCompanyHeader: true, body },
   );
 }
 

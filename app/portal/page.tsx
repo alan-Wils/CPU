@@ -7,11 +7,13 @@ import {
   API_BASE_URL,
   clearSelectedCompanyId,
   deletePlatformCompany,
+  fetchAdminVendorBillingSnapshots,
   fetchCompanyUsageCosts,
   fetchNexbatchCompanyUsageLog,
   getSelectedCompanyId,
   portalGetCompanyServices,
   portalPatchCompanyServices,
+  postVendorBillingManualOverride,
   setSelectedCompanyId,
   syncVendorUsageCosts,
   type CompanyServicesDto,
@@ -80,23 +82,40 @@ function UsageCostsModal({
   onClose: () => void;
 }) {
   const [data, setData] = useState<CompanyUsageCostsDto | null>(null);
+  const [snapshots, setSnapshots] = useState<
+    Awaited<ReturnType<typeof fetchAdminVendorBillingSnapshots>>["snapshots"]
+  >([]);
   const [nexbatchLog, setNexbatchLog] = useState<NexbatchCompanyUsageLogItemDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncNote, setSyncNote] = useState("");
   const [err, setErr] = useState("");
+  const [manualUsd, setManualUsd] = useState("");
+  const [manualProvider, setManualProvider] = useState<"neon" | "railway" | "vercel" | "resend" | "cloudflare_r2" | "ai">(
+    "neon",
+  );
+  const [manualSaving, setManualSaving] = useState(false);
+  const [manualNote, setManualNote] = useState("");
 
   const loadUsage = useCallback(async (mode: "initial" | "refresh" = "initial") => {
     if (mode === "initial") setLoading(true);
     else setRefreshing(true);
     setErr("");
     try {
-      const [d, logOut] = await Promise.all([
-        fetchCompanyUsageCosts(companyId),
-        fetchNexbatchCompanyUsageLog(companyId, 35).catch(() => ({ companyId, items: [] as NexbatchCompanyUsageLogItemDto[] })),
+      const d = await fetchCompanyUsageCosts(companyId);
+      const [logOut, snapOut] = await Promise.all([
+        fetchNexbatchCompanyUsageLog(companyId, 35).catch(() => ({
+          companyId,
+          items: [] as NexbatchCompanyUsageLogItemDto[],
+        })),
+        fetchAdminVendorBillingSnapshots(d.monthLabel).catch(() => ({
+          month: d.monthLabel,
+          snapshots: [],
+        })),
       ]);
       setData(d);
+      setSnapshots(snapOut.snapshots);
       setNexbatchLog(logOut.items);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "Could not load usage and costs.");
@@ -131,6 +150,35 @@ function UsageCostsModal({
   const onRefresh = useCallback(async () => {
     await loadUsage("refresh");
   }, [loadUsage]);
+
+  const onManualSubmit = useCallback(async () => {
+    if (!canSyncVendors) return;
+    const n = Number.parseFloat(manualUsd);
+    if (!Number.isFinite(n) || n < 0) {
+      setManualNote("Enter a valid USD amount (e.g. 45.90).");
+      return;
+    }
+    setManualSaving(true);
+    setManualNote("");
+    try {
+      await postVendorBillingManualOverride({
+        provider: manualProvider,
+        month: data?.monthLabel,
+        totalCostUsd: n,
+        rawUsageJson: {
+          manualEntry: true,
+          notes: "Entered from NexBatch portal to match vendor dashboard MTD.",
+        },
+      });
+      setManualNote("Saved vendor MTD override.");
+      setManualUsd("");
+      await loadUsage("refresh");
+    } catch (e: unknown) {
+      setManualNote(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setManualSaving(false);
+    }
+  }, [canSyncVendors, data?.monthLabel, manualProvider, manualUsd, loadUsage]);
 
   const badgeForProviderStatus = useCallback((status: CompanyUsageCostsDto["providers"][number]["status"]) => {
     if (status === "live_synced") return { text: "Live vendor synced", color: "#22d3ee" };
@@ -238,6 +286,93 @@ function UsageCostsModal({
         </div>
         {syncNote ? <p style={{ margin: "0 0 12px", color: "#93c5fd", fontSize: 12 }}>{syncNote}</p> : null}
 
+        {canSyncVendors ? (
+          <div
+            style={{
+              marginBottom: 14,
+              padding: 12,
+              borderRadius: 12,
+              border: "1px solid rgba(71, 85, 105, 0.75)",
+              background: "#020617",
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#94a3b8", marginBottom: 8 }}>Manual vendor MTD</div>
+            <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+              When a vendor does not expose invoice dollars via API (Neon consumption returns units only), enter the
+              month-to-date total from the vendor billing page. This is stored as the authoritative vendor bill for
+              allocation.
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+              <label style={{ fontSize: 12, color: "#cbd5e1", display: "flex", flexDirection: "column", gap: 4 }}>
+                Provider
+                <select
+                  value={manualProvider}
+                  onChange={(e) =>
+                    setManualProvider(e.target.value as typeof manualProvider)
+                  }
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: "1px solid rgba(148,163,184,0.45)",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                    fontWeight: 600,
+                  }}
+                >
+                  <option value="neon">Neon Database</option>
+                  <option value="railway">Railway Backend</option>
+                  <option value="vercel">Vercel Frontend</option>
+                  <option value="resend">Resend Email</option>
+                  <option value="cloudflare_r2">Cloudflare R2</option>
+                  <option value="ai">AI Data Analysis</option>
+                </select>
+              </label>
+              <label style={{ fontSize: 12, color: "#cbd5e1", display: "flex", flexDirection: "column", gap: 4 }}>
+                MTD USD
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={manualUsd}
+                  onChange={(e) => setManualUsd(e.target.value)}
+                  placeholder="e.g. 45.90"
+                  style={{
+                    width: 120,
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: "1px solid rgba(148,163,184,0.45)",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void onManualSubmit()}
+                disabled={loading || refreshing || syncing || manualSaving}
+                style={{
+                  marginTop: 18,
+                  border: "1px solid rgba(34,197,94,0.5)",
+                  borderRadius: 10,
+                  padding: "6px 12px",
+                  background: "rgba(22, 163, 74, 0.2)",
+                  color: "#bbf7d0",
+                  fontWeight: 800,
+                  cursor: loading || refreshing || syncing || manualSaving ? "wait" : "pointer",
+                }}
+              >
+                {manualSaving ? "Saving…" : "Save manual MTD"}
+              </button>
+            </div>
+            {manualNote ? <p style={{ margin: "10px 0 0", fontSize: 12, color: "#93c5fd" }}>{manualNote}</p> : null}
+            {snapshots.length > 0 ? (
+              <p style={{ margin: "10px 0 0", fontSize: 11, color: "#475569" }}>
+                Stored snapshots this month: {snapshots.map((s) => `${s.provider} (${s.source})`).join(", ")}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
         {loading ? (
           <p style={{ color: "#93c5fd", fontWeight: 700 }}>Loading usage…</p>
         ) : err ? (
@@ -296,7 +431,19 @@ function UsageCostsModal({
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
                     <strong style={{ color: "#bae6fd", fontSize: 15 }}>{p.displayName}</strong>
-                    <span style={{ color: "#fcd34d", fontWeight: 800 }}>{fmtUsd(p.displayCost ?? p.estimatedCost)}</span>
+                    <span style={{ color: "#fcd34d", fontWeight: 800 }}>{fmtUsd(p.allocatedCompanyCostUsd)}</span>
+                  </div>
+                  <div style={{ display: "grid", gap: 6, marginBottom: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 12, color: "#64748b" }}>Vendor bill MTD</span>
+                      <span style={{ fontSize: 12, color: "#e2e8f0", fontWeight: 700, textAlign: "right", maxWidth: "72%" }}>
+                        {p.vendorCostLineLabel}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 12, color: "#64748b" }}>Allocated to this workspace</span>
+                      <span style={{ fontSize: 12, color: "#fcd34d", fontWeight: 800 }}>{fmtUsd(p.allocatedCompanyCostUsd)}</span>
+                    </div>
                   </div>
                   <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>{p.usageSummary}</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 14px", marginBottom: 8 }}>
