@@ -1058,7 +1058,9 @@ export default function AdminPage() {
     setCashEodLoading(true);
     try {
       const { prefs } = await fetchCashLogEodPrefs(cid);
-      setCashEodPrefs(prefs);
+      setCashEodPrefs(
+        normalizePlatformRole(currentUser?.role) === "OWNER" ? { ...prefs, enabled: false } : prefs,
+      );
     } catch (e: any) {
       setCashEodError(e?.message || "Could not load email settings.");
     } finally {
@@ -1072,7 +1074,11 @@ export default function AdminPage() {
     setCashEodError("");
     setCashEodSaving(true);
     try {
-      const { prefs } = await saveCashLogEodPrefs(cid, cashEodPrefs);
+      const prefsToSave =
+        normalizePlatformRole(currentUser?.role) === "OWNER"
+          ? { ...cashEodPrefs, enabled: false }
+          : cashEodPrefs;
+      const { prefs } = await saveCashLogEodPrefs(cid, prefsToSave);
       setCashEodPrefs(prefs);
       setCashEodModalOpen(false);
     } catch (e: any) {
@@ -3970,7 +3976,8 @@ export default function AdminPage() {
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.55, fontSize: 14 }}>
                 <strong>Schedule</strong> (days, time, timezone, 24h vs 7-day window) is saved for the{" "}
-                <strong>whole company</strong>. The <strong>Send digest…</strong> checkbox is per user. Delivery uses a{" "}
+                <strong>whole company</strong>. The <strong>Send digest…</strong> checkbox is per user (hidden for the
+                application owner — they cannot receive these digests). Delivery uses a{" "}
                 <strong>short window after send time</strong> (default ~10 minutes; server env can widen it)—typically{" "}
                 <strong>one successful email per local day</strong> per person. Saving here again bumps the schedule so an
                 extra send the same day is allowed if you are still inside that window. The email includes{" "}
@@ -3995,14 +4002,33 @@ export default function AdminPage() {
                 <p style={{ color: "#94a3b8" }}>Loading…</p>
               ) : (
                 <>
-                  <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={cashEodPrefs.enabled}
-                      onChange={(e) => setCashEodPrefs((p) => ({ ...p, enabled: e.target.checked }))}
-                    />
-                    <span>Send digest emails when the schedule matches</span>
-                  </label>
+                  {normalizePlatformRole(currentUser?.role) === "OWNER" ? (
+                    <div
+                      style={{
+                        marginBottom: 16,
+                        padding: 12,
+                        borderRadius: 10,
+                        border: "1px solid rgba(148, 163, 184, 0.25)",
+                        background: "rgba(15, 23, 42, 0.65)",
+                        color: "#94a3b8",
+                        fontSize: 14,
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      <strong style={{ color: "#e2e8f0" }}>Digest delivery</strong> is off for the application owner and
+                      cannot be turned on. You can still edit the company schedule below; other users keep their own
+                      receive-mail setting.
+                    </div>
+                  ) : (
+                    <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={cashEodPrefs.enabled}
+                        onChange={(e) => setCashEodPrefs((p) => ({ ...p, enabled: e.target.checked }))}
+                      />
+                      <span>Send digest emails when the schedule matches</span>
+                    </label>
+                  )}
                   <div style={{ marginTop: 16, marginBottom: 8, fontWeight: 800, color: "#e2e8f0" }}>Days (local)</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                     {CASH_EOD_WEEKDAY_LABELS.map((label, day) => (
@@ -4900,9 +4926,9 @@ export default function AdminPage() {
                   >
                     <b style={{ color: "#e2e8f0" }}>EOD financial digest emails</b>
                     <br />
-                    Not controlled here for the <strong>application owner</strong>. They turn digests on or off under{" "}
-                    <strong>Admin → Financial logs</strong> using <strong>Financial digest email (cash & checks)</strong>{" "}
-                    (same schedule as the rest of the company; only “receive mail” is per person there).
+                    The application owner <strong>cannot</strong> receive these digests (product policy). Company schedule
+                    and other users{"'"} delivery are still set under <strong>Admin → Financial logs</strong> →{" "}
+                    <strong>Financial digest email (cash & checks)</strong>.
                   </div>
                 ) : (
                   <div

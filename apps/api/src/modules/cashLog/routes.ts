@@ -178,9 +178,25 @@ cashLogRouter.get("/eod-prefs", requireRole([...cashLogReadRoles]), asyncHandler
     }
     const m = await prisma.companyMembership.findUnique({
         where: { userId_companyId: { userId, companyId } },
-        select: { cashLogEodPrefs: true },
+        select: { id: true, role: true, cashLogEodPrefs: true },
     });
     const prefs = mergeCashLogEodPrefs(m?.cashLogEodPrefs ?? null);
+    if (m?.role === "owner") {
+        if (prefs.enabled && m.id) {
+            const repaired = cashLogEodPrefsSchema.parse({ ...prefs, enabled: false });
+            await prisma.companyMembership.update({
+                where: { id: m.id },
+                data: { cashLogEodPrefs: repaired },
+            });
+            logInfo("[cash_log_eod] owner_digest_disabled_read_repair", {
+                membershipId: m.id,
+                companyId,
+                userId,
+            });
+        }
+        res.json({ prefs: { ...prefs, enabled: false } });
+        return;
+    }
     res.json({ prefs });
 }));
 
@@ -194,15 +210,25 @@ cashLogRouter.put(
         if (!companyId || !userId) {
             throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
         }
-        const body = req.body as z.infer<typeof cashLogEodPrefsSchema>;
-        await prisma.$transaction(async (tx) => {
-            const caller = await tx.companyMembership.findUnique({
-                where: { userId_companyId: { userId, companyId } },
-                select: { id: true },
-            });
-            if (!caller) {
-                throw new AppError("Company membership not found", 404, "MEMBERSHIP_NOT_FOUND");
+        const caller = await prisma.companyMembership.findUnique({
+            where: { userId_companyId: { userId, companyId } },
+            select: { id: true, role: true },
+        });
+        if (!caller) {
+            throw new AppError("Company membership not found", 404, "MEMBERSHIP_NOT_FOUND");
+        }
+        let body = req.body as z.infer<typeof cashLogEodPrefsSchema>;
+        if (caller.role === "owner") {
+            if (body.enabled) {
+                logInfo("[cash_log_eod] owner_digest_force_disabled_on_save", {
+                    membershipId: caller.id,
+                    companyId,
+                    userId,
+                });
             }
+            body = cashLogEodPrefsSchema.parse({ ...body, enabled: false });
+        }
+        await prisma.$transaction(async (tx) => {
             await tx.companyMembership.update({
                 where: { id: caller.id },
                 data: {

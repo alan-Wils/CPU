@@ -243,19 +243,14 @@ export class AdminService {
         if (input.actorRole === "ADMIN" && input.role === "OWNER") {
             throw new AppError("Admins cannot promote users to OWNER", 403);
         }
-        const prevDigestEnabled = mergeCashLogEodPrefs(
-            membershipBefore?.cashLogEodPrefs ?? null,
-        ).enabled;
         if (
             !mayAdminEnableOwnerDigestEmails({
-                actorRole: input.actorRole,
                 targetRole: target.role,
                 requestedEnabled: input.cashLogEodEnabled,
-                prevEnabled: prevDigestEnabled,
             })
         ) {
             throw new AppError(
-                "Only the application owner can turn on digest emails for their account (sign in as owner and enable it here, or use Financial digest settings).",
+                "Cash and check digest emails cannot be enabled for the application owner.",
                 403,
                 "OWNER_DIGEST_SELF_ENABLE_ONLY",
             );
