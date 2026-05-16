@@ -35,6 +35,7 @@ import {
 } from "@/lib/cultivationApi";
 import { resolveAbsorbedPlantsAndStageForUncombine } from "@/lib/cultivationMergeHelpers";
 import { apiRequest, API_BASE_URL } from "@/lib/api";
+import { fetchCachedCompanyConfig } from "@/lib/configClient";
 import { extractHarvestSheet, uploadHarvestSheetImage } from "@/lib/harvestSheetApi";
 import { fileToBase64DataUrl, shrinkHarvestSheetImageFileIfLarge } from "@/lib/shrinkHarvestSheetImage";
 import { createSourceBatch, loadSourceBatches } from "@/lib/sourceBatchApi";
@@ -1309,7 +1310,7 @@ export default function Cultivation() {
 
     async function loadCompanyCultivationConfig() {
       try {
-        const data = await apiRequest<{
+        const data = await fetchCachedCompanyConfig<{
           cultivation?: {
             strains?: ConfigStrain[];
             rooms?: unknown;
@@ -1320,7 +1321,7 @@ export default function Cultivation() {
             settings?: { laborBreaks?: unknown };
             metrc?: { integrationEnabled?: boolean };
           };
-        }>("/api/config");
+        }>("/api/config/cultivation");
         syncCompanyTimezoneFromConfigPayload(data);
         const strains = normalizeStrainConfigList(pickStrainsFromConfigPayload(data));
         const rooms = pickCultivationRoomsFromConfigPayload(data);

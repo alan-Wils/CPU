@@ -41,6 +41,7 @@ import {
   getSelectedCompanyId,
   suggestExtractionProductNames,
 } from "@/lib/api";
+import { fetchCachedCompanyConfig, invalidateCompanyConfigClientCache } from "@/lib/configClient";
 import {
   clampDymoLabelPrintCopies,
   defaultDymoLabelCalibrationSettings,
@@ -855,7 +856,7 @@ export default function Extraction() {
 
   async function loadBlendNameHistory() {
     try {
-      const cfg = await apiRequest<any>("/api/config");
+      const cfg = await fetchCachedCompanyConfig<any>("/api/config/extraction");
       syncCompanyTimezoneFromConfigPayload(cfg);
       const rows = Array.isArray(cfg?.extraction?.blendNameHistory)
         ? cfg.extraction.blendNameHistory
@@ -887,7 +888,7 @@ export default function Extraction() {
     const { blendKey, blendLabel } = makeBlendSignatureFromBatch(batch);
     if (!blendKey) return;
     const nowIso = new Date().toISOString();
-    const cfg = await apiRequest<any>("/api/config");
+    const cfg = await fetchCachedCompanyConfig<any>("/api/config/extraction", { skipCache: true });
     syncCompanyTimezoneFromConfigPayload(cfg);
     const extractionCfg =
       cfg?.extraction && typeof cfg.extraction === "object" ? cfg.extraction : {};
@@ -922,6 +923,7 @@ export default function Extraction() {
         },
       },
     });
+    invalidateCompanyConfigClientCache();
     setBlendNameHistory(nextRows);
   }
 
@@ -936,7 +938,7 @@ export default function Extraction() {
     }
     setDymoSaveBusy(true);
     try {
-      const cfg = await apiRequest<any>("/api/config");
+      const cfg = await fetchCachedCompanyConfig<any>("/api/config/extraction", { skipCache: true });
       syncCompanyTimezoneFromConfigPayload(cfg);
       const extractionCfg =
         cfg?.extraction && typeof cfg.extraction === "object" ? cfg.extraction : {};
@@ -949,6 +951,7 @@ export default function Extraction() {
           },
         },
       });
+      invalidateCompanyConfigClientCache();
       writeDymoCalibrationToLocalStorage(getSelectedCompanyId(), validated.value);
       setDymoSavedCalibration(validated.value);
       setDymoDraftCalibration(validated.value);

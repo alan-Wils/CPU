@@ -203,5 +203,8 @@ export function clearAuthSession() {
   for (const k of LEGACY_AUTH_KEYS) {
     window.localStorage.removeItem(k);
   }
+  void import("./configClient")
+    .then((m) => m.clearCompanyConfigClientCache())
+    .catch(() => {});
   window.dispatchEvent(new Event(CPU_AUTH_CHANGED_EVENT));
 }

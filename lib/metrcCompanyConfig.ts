@@ -36,6 +36,9 @@ export type MetrcCompanyConfig = {
   metrcLastLocationCount?: number | null;
   /** Last successful GET /locations/v2/active auth mode label (server-set). */
   metrcLastSuccessfulAuthMode?: string | null;
+  /** Present when API scrubbed secrets; key still stored server-side. */
+  hasMetrcVendorApiKey?: boolean;
+  hasMetrcUserApiKey?: boolean;
 };
 
 export const defaultMetrcCompanyConfig: MetrcCompanyConfig = {

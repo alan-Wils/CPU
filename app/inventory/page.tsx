@@ -5,12 +5,11 @@ import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import {
   API_BASE_URL,
-  appendCompanyIdQuery,
   fetchLeafLinkInventory,
   getSelectedCompanyId,
   type LeafLinkInventoryItemDto,
 } from "@/lib/api";
-import { getAuthToken } from "@/lib/auth";
+import { fetchCachedCompanyConfig } from "@/lib/configClient";
 import {
   clampInventoryLogoMaxHeightPx,
   clampInventoryLogoMaxWidthPx,
@@ -121,14 +120,8 @@ export default function InventoryPage() {
 
   async function loadProductsConfig() {
     try {
-      const token = getAuthToken();
       const companyId = getSelectedCompanyId().trim();
-      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
-      if (companyId) headers["X-Company-Id"] = companyId;
-      const path = appendCompanyIdQuery("/api/config", companyId);
-      const res = await fetch(`${API_BASE_URL}${path}`, { headers });
-      if (!res.ok) return;
-      const data = (await res.json()) as {
+      const data = await fetchCachedCompanyConfig<{
         sales?: {
           leafLinkCategoryLabels?: CategoryLabelOverride[];
           inventoryPrintLogoUrl?: string;
@@ -136,7 +129,7 @@ export default function InventoryPage() {
           inventoryPrintLogoMaxHeightPx?: unknown;
         };
         products?: { categoryLabels?: CategoryLabelOverride[] };
-      };
+      }>("/api/config/basic", { companyId: companyId || undefined });
       if (
         data.sales &&
         "leafLinkCategoryLabels" in data.sales &&

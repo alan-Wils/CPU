@@ -1,6 +1,6 @@
 /**
  * Autogrow MultiGrow v3 settings stored under `company.climateControl.autogrow`.
- * API key is used server-side only via `@cpu/api`; may appear in GET /api/config (admin pattern).
+ * API key is used server-side only via `@cpu/api`; GET config responses scrub this field (see `hasAutogrowApiKey`).
  */
 
 /** One display label for a MultiGrow `comps/{index}` climate zone. */
@@ -20,6 +20,8 @@ export type AutogrowCompanyConfig = {
   compLabels: AutogrowCompLabel[];
   /** Internal notes; not sent to Autogrow */
   notes: string;
+  /** Present when API scrubbed the key; value still stored server-side. */
+  hasAutogrowApiKey?: boolean;
 };
 
 export const defaultAutogrowCompanyConfig: AutogrowCompanyConfig = {

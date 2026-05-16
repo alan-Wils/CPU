@@ -23,6 +23,7 @@ import {
   getSelectedCompanyId,
 } from "@/lib/api";
 import { getAuthToken } from "@/lib/auth";
+import { invalidateCompanyConfigClientCache } from "@/lib/configClient";
 import {
   formatCompanyTimestamp,
   formatInCompanyTimezone,
@@ -253,6 +254,10 @@ type AppConfig = {
     notes: string;
   };
 };
+
+/** Shown on METRC / Autogrow secret fields when the API returned a scrubbed empty value but a credential exists server-side. */
+const MASKED_SECRET_FIELD_PLACEHOLDER =
+  "•••••••• configured — enter a new key only if you intend to replace the stored value.";
 
 const emptyConfig: AppConfig = {
   company: {
@@ -948,7 +953,7 @@ export default function ConfigPage() {
       if (companyId) {
         headers["X-Company-Id"] = companyId;
       }
-      const path = appendCompanyIdQuery("/api/config", companyId);
+      const path = appendCompanyIdQuery("/api/config/full", companyId);
       const res = await fetch(`${API_BASE_URL}${path}`, {
         headers,
       });
@@ -958,6 +963,7 @@ export default function ConfigPage() {
       }
 
       const raw = await res.json();
+      invalidateCompanyConfigClientCache();
       const { rows: _rows, ...data } = raw as AppConfig & { rows?: unknown };
       setConfig({
         ...emptyConfig,
@@ -1107,7 +1113,7 @@ export default function ConfigPage() {
       if (companyId) {
         headers["X-Company-Id"] = companyId;
       }
-      const path = appendCompanyIdQuery("/api/config", companyId);
+      const path = appendCompanyIdQuery("/api/config/full", companyId);
       const payload = {
         ...config,
         sales: {
@@ -1137,6 +1143,7 @@ export default function ConfigPage() {
       }
 
       const data = await res.json();
+      invalidateCompanyConfigClientCache();
       setConfig({
         ...emptyConfig,
         ...data,
@@ -2597,6 +2604,12 @@ export default function ConfigPage() {
                 rows={3}
                 spellCheck={false}
                 autoComplete="off"
+                placeholder={
+                  !String(config.company.metrc.apiKey || "").trim() &&
+                  config.company.metrc.hasMetrcVendorApiKey
+                    ? MASKED_SECRET_FIELD_PLACEHOLDER
+                    : ""
+                }
                 value={config.company.metrc.apiKey}
                 onChange={(e) =>
                   setConfig((prev) => ({
@@ -2616,6 +2629,12 @@ export default function ConfigPage() {
                 style={styles.input}
                 type="password"
                 autoComplete="off"
+                placeholder={
+                  !String(config.company.metrc.apiKey || "").trim() &&
+                  config.company.metrc.hasMetrcVendorApiKey
+                    ? MASKED_SECRET_FIELD_PLACEHOLDER
+                    : ""
+                }
                 value={config.company.metrc.apiKey}
                 onChange={(e) =>
                   setConfig((prev) => ({
@@ -2651,6 +2670,12 @@ export default function ConfigPage() {
                 rows={4}
                 spellCheck={false}
                 autoComplete="off"
+                placeholder={
+                  !String(config.company.metrc.userKey || "").trim() &&
+                  config.company.metrc.hasMetrcUserApiKey
+                    ? MASKED_SECRET_FIELD_PLACEHOLDER
+                    : ""
+                }
                 value={config.company.metrc.userKey}
                 onChange={(e) =>
                   setConfig((prev) => ({
@@ -2670,6 +2695,12 @@ export default function ConfigPage() {
                 style={styles.input}
                 type="password"
                 autoComplete="off"
+                placeholder={
+                  !String(config.company.metrc.userKey || "").trim() &&
+                  config.company.metrc.hasMetrcUserApiKey
+                    ? MASKED_SECRET_FIELD_PLACEHOLDER
+                    : ""
+                }
                 value={config.company.metrc.userKey}
                 onChange={(e) =>
                   setConfig((prev) => ({
@@ -4454,6 +4485,12 @@ export default function ConfigPage() {
               rows={3}
               spellCheck={false}
               autoComplete="off"
+              placeholder={
+                !String(config.company.climateControl.autogrow.apiKey || "").trim() &&
+                config.company.climateControl.autogrow.hasAutogrowApiKey
+                  ? MASKED_SECRET_FIELD_PLACEHOLDER
+                  : ""
+              }
               value={config.company.climateControl.autogrow.apiKey}
               onChange={(e) =>
                 setConfig((prev) => ({
@@ -4473,6 +4510,12 @@ export default function ConfigPage() {
               style={styles.input}
               type="password"
               autoComplete="off"
+              placeholder={
+                !String(config.company.climateControl.autogrow.apiKey || "").trim() &&
+                config.company.climateControl.autogrow.hasAutogrowApiKey
+                  ? MASKED_SECRET_FIELD_PLACEHOLDER
+                  : ""
+              }
               value={config.company.climateControl.autogrow.apiKey}
               onChange={(e) =>
                 setConfig((prev) => ({

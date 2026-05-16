@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiRequest } from "@/lib/api";
+import { fetchCachedCompanyConfig } from "@/lib/configClient";
 import {
   fetchCultivationStrainMetrics,
   type CultivationStrainMetricPoint,
@@ -274,10 +274,10 @@ export function CultivationStrainMetricsCharts(props: { from: string; to: string
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiRequest<{
+        const data = await fetchCachedCompanyConfig<{
           cultivation?: { strains?: ConfigStrain[] };
           strains?: ConfigStrain[];
-        }>("/api/config");
+        }>("/api/config/cultivation");
         const raw = data?.cultivation?.strains ?? data?.strains ?? [];
         const list = Array.isArray(raw) ? raw : [];
         if (!cancelled) {

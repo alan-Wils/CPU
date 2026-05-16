@@ -10,7 +10,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
-  apiRequest,
   API_BASE_URL,
   clearSelectedCompanyId,
   fetchCompanyWithServices,
@@ -20,6 +19,7 @@ import {
   setSelectedCompanyId,
   type CompanyServicesDto,
 } from "@/lib/api";
+import { fetchCachedCompanyConfig } from "@/lib/configClient";
 import TopBrandStrip from "@/components/TopBrandStrip";
 import {
   extractCompanyHeaderLogoMaxHeightPx,
@@ -82,7 +82,7 @@ export default function Nav() {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiRequest<unknown>("/api/config", {
+        const data = await fetchCachedCompanyConfig<unknown>("/api/config/basic", {
           companyId: getSelectedCompanyId().trim() || undefined,
         });
         if (cancelled) return;
@@ -102,7 +102,7 @@ export default function Nav() {
     return () => {
       cancelled = true;
     };
-  }, [pathname, authCompanyId]);
+  }, [authCompanyId]);
 
   useEffect(() => {
     if (!isLoggedIn())
@@ -149,7 +149,7 @@ export default function Nav() {
     return () => {
       cancelled = true;
     };
-  }, [pathname, authCompanyId, company?.id, sessionBump]);
+  }, [authCompanyId, company?.id, sessionBump]);
 
   useEffect(() => {
     if (!isLoggedIn()) return;

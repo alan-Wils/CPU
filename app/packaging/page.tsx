@@ -28,7 +28,7 @@ import {
   nowIsoForLog,
   syncCompanyTimezoneFromConfigPayload,
 } from "@/lib/companyTimezone";
-import { apiRequest } from "@/lib/api";
+import { fetchCachedCompanyConfig } from "@/lib/configClient";
 import { extractRewardsFromCompanyConfig } from "@/lib/rewardsConfig";
 import {
   extractCustomTasksRewardDefsFromCompanyConfig,
@@ -567,7 +567,7 @@ export default function Packaging() {
     let cancelled = false;
     void (async () => {
       try {
-        const cfg = await apiRequest<unknown>("/api/config");
+        const cfg = await fetchCachedCompanyConfig<unknown>("/api/config/packaging");
         if (cancelled) return;
         syncCompanyTimezoneFromConfigPayload(cfg);
         setRewardsCfg(extractRewardsFromCompanyConfig(cfg));

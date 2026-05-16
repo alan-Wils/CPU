@@ -1,5 +1,5 @@
 /**
- * Company display timezone (IANA) cached from GET /api/config `company.settings.displayTimezone`.
+ * Company display timezone (IANA) cached from config payloads (`company.settings.displayTimezone`), e.g. `GET /api/config/basic`.
  * Used to format all log/batch timestamps consistently for the facility.
  */
 
@@ -26,7 +26,7 @@ export function setCompanyDisplayTimezone(tz: string | undefined | null) {
   window.localStorage.setItem(STORAGE_KEY, t);
 }
 
-/** Call after loading merged config from `/api/config`. */
+/** Call after loading a config payload that includes `company.settings.displayTimezone` (e.g. `/api/config/basic` or workflow slices). */
 export function syncCompanyTimezoneFromConfigPayload(data: unknown) {
   if (!data || typeof data !== "object") return;
   const company = (data as { company?: { settings?: { displayTimezone?: string } } }).company;

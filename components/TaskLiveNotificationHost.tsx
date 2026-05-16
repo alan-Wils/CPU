@@ -8,7 +8,8 @@ import {
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { usePathname } from "next/navigation";
 import { usePeerNotifications } from "@/components/PeerNotificationsContext";
-import { apiRequest, fetchLatestOrderLive, fetchLatestTaskLogLive } from "@/lib/api";
+import { fetchLatestOrderLive, fetchLatestTaskLogLive } from "@/lib/api";
+import { fetchCachedCompanyConfig } from "@/lib/configClient";
 import { CPU_AUTH_CHANGED_EVENT, getAuthUser, isLoggedIn } from "@/lib/auth";
 import {
   extractLiveOrderNotificationsEnabled,
@@ -110,7 +111,7 @@ export default function TaskLiveNotificationHost() {
         return;
       }
       try {
-        const data = await apiRequest<unknown>("/api/config");
+        const data = await fetchCachedCompanyConfig<unknown>("/api/config/basic");
         if (!cancelled) {
           taskNotifEnabledRef.current = extractLiveTaskNotificationsEnabled(data);
           orderNotifEnabledRef.current = extractLiveOrderNotificationsEnabled(data);
@@ -125,14 +126,15 @@ export default function TaskLiveNotificationHost() {
 
     void refreshSettings();
     const onVis = () => {
-      void refreshSettings();
+      if (document.visibilityState === "visible")
+        void refreshSettings();
     };
     document.addEventListener("visibilitychange", onVis);
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [pathname, authBump]);
+  }, [authBump]);
 
   useEffect(() => {
     taskPrimedRef.current = false;

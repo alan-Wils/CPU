@@ -36,7 +36,13 @@ export function getSelectedCompanyId() {
 
 export function setSelectedCompanyId(companyId: string) {
   if (typeof window === "undefined") return;
+  const prev = window.localStorage.getItem(SELECTED_COMPANY_KEY) || "";
   window.localStorage.setItem(SELECTED_COMPANY_KEY, companyId);
+  if (prev !== companyId) {
+    void import("./configClient")
+      .then((m) => m.clearCompanyConfigClientCache())
+      .catch(() => {});
+  }
 }
 
 export function clearSelectedCompanyId() {

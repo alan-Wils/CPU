@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
-import { apiRequest, getSelectedCompanyId } from "@/lib/api";
+import { getSelectedCompanyId } from "@/lib/api";
+import { fetchCachedCompanyConfig } from "@/lib/configClient";
 import { getAuthUser } from "@/lib/auth";
 import { store } from "@/lib/store";
 import { extractRewardsFromCompanyConfig, type RewardsSettings } from "@/lib/rewardsConfig";
@@ -60,7 +61,7 @@ function RewardsBody() {
       try {
         await loadBackendStore({ omitCultivation: true });
         await hydrateTaskLogsFromApi();
-        const cfg = await apiRequest<unknown>("/api/config", {
+        const cfg = await fetchCachedCompanyConfig<unknown>("/api/config/rewards", {
           companyId: getSelectedCompanyId().trim() || undefined,
         });
         const rewards = extractRewardsFromCompanyConfig(cfg);

@@ -8,6 +8,8 @@ export type JwtAuthPayload = {
     role: string;
     sessionKind?: "company" | "portal";
     platformRole?: string | null;
+    /** Effective app permission ids (server-normalized). */
+    permissions?: string[];
 };
 
 /**
