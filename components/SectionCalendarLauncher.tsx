@@ -903,7 +903,7 @@ export default function SectionCalendarLauncher({
           style={deleteConfirmOverlayStyle}
           onClick={cancelPendingDelete}
         >
-          <motion.div
+          <div
             style={deleteConfirmCardStyle}
             onClick={(e) => e.stopPropagation()}
           >
@@ -931,7 +931,7 @@ export default function SectionCalendarLauncher({
                 {loading ? "Removing…" : "Remove"}
               </button>
             </div>
-          </motion.div>
+          </div>
         </div>
       ) : null}
     </>
