@@ -27,6 +27,8 @@ export type PectinMeltFormulaSnapshot = {
   mctCarrierPercent?: number;
   gramsMctCarrier?: number;
   gramsTotalInfusedOilBlend?: number;
+  finalDosingBatchGrams?: number;
+  totalActiveMgNeeded?: number;
   /** Oil grams submitted on the edible batch (infusion allocation). */
   oilInputGrams: number;
   gramsCitric: number;
@@ -78,9 +80,16 @@ export function formatPectinReadableHeader(s: PectinMeltFormulaSnapshot): string
     `Cannabis oil required: ${s.gramsAdditive.toFixed(2)} g`,
   ];
   if (s.gramsMctCarrier != null && s.gramsMctCarrier > 0) {
+    lines.push(`Base / Part A: ${s.gramsPartA.toFixed(2)} g`);
     lines.push(
-      `MCT carrier (${s.mctCarrierPercent ?? "?"}% of cannabis oil): ${s.gramsMctCarrier.toFixed(2)} g`,
+      `MCT carrier (${s.mctCarrierPercent ?? "?"}% of base): ${s.gramsMctCarrier.toFixed(2)} g`,
     );
+    if (s.finalDosingBatchGrams != null) {
+      lines.push(`Final dosing batch (base + MCT): ${s.finalDosingBatchGrams.toFixed(2)} g`);
+    }
+    if (s.totalActiveMgNeeded != null) {
+      lines.push(`Total active mg needed: ${s.totalActiveMgNeeded.toFixed(2)} mg`);
+    }
     lines.push(`Total infused oil blend to add: ${(s.gramsTotalInfusedOilBlend ?? s.gramsAdditive).toFixed(2)} g`);
   }
   return lines.join("\n");
@@ -110,6 +119,8 @@ export function buildSnapshotFromSingle(args: {
     gramsMctCarrier: plan.gramsMctCarrier > 0 ? plan.gramsMctCarrier : undefined,
     gramsTotalInfusedOilBlend:
       plan.gramsMctCarrier > 0 ? plan.gramsTotalInfusedOilBlend : undefined,
+    finalDosingBatchGrams: plan.gramsMctCarrier > 0 ? plan.finalDosingBatchGrams : undefined,
+    totalActiveMgNeeded: plan.gramsMctCarrier > 0 ? plan.totalActiveMgNeeded : undefined,
     oilInputGrams,
     gramsCitric: plan.gramsCitricSolution,
     piecesBeforeWaste: plan.nominalPieces,
@@ -156,6 +167,8 @@ export function buildSnapshotFromMulti(args: {
     gramsMctCarrier: plan.gramsMctCarrier > 0 ? plan.gramsMctCarrier : undefined,
     gramsTotalInfusedOilBlend:
       plan.gramsMctCarrier > 0 ? plan.gramsTotalInfusedOilBlend : undefined,
+    finalDosingBatchGrams: plan.gramsMctCarrier > 0 ? plan.finalDosingBatchGrams : undefined,
+    totalActiveMgNeeded: plan.gramsMctCarrier > 0 ? plan.totalActiveMgNeeded : undefined,
     oilInputGrams,
     gramsCitric: plan.gramsByLine.citric,
     piecesBeforeWaste: plan.nominalPieces,

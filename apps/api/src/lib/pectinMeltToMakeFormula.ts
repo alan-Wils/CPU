@@ -11,6 +11,7 @@
 const g = (n: number) => Number(Number(n).toFixed(6));
 
 export type PectinSingleAdditiveInput = {
+  /** Full formula batch mass (workbook mode). Ignored for oil math when MCT base mode is active. */
   batchSizeGrams: number;
   /** Lab / COA potency of the active additive as a 0–1 fraction (not percent). */
   potencyFraction: number;
@@ -21,10 +22,11 @@ export type PectinSingleAdditiveInput = {
   /** Line loss applied to nominal piece count (workbook uses 5% → 0.95). */
   lineWasteFraction?: number;
   /**
-   * Optional MCT carrier as % of calculated cannabis oil grams (e.g. 5 = 5%).
-   * Does not change dose math or Part A balance.
+   * MCT carrier as % of Part A / base grams (e.g. 2 = 2%). Blank or ≤0 uses workbook batch math only.
    */
   mctCarrierPercent?: number;
+  /** Part A on hand (g). Required when `mctCarrierPercent` > 0. */
+  basePartAGrams?: number;
 };
 
 export type PectinMctCarrierBlend = {
@@ -38,11 +40,14 @@ export type PectinSingleAdditivePlan = {
   citricMassFraction: number;
   partAPectinMassFraction: number;
   gramsPartAPectin: number;
-  /** Cannabis oil required for target dose (same as pre-MCT `gramsAdditive`). */
+  /** Cannabis oil required for target dose. */
   gramsAdditive: number;
   gramsMctCarrier: number;
   gramsTotalInfusedOilBlend: number;
   mctCarrierPercent?: number;
+  /** Base + MCT mass used for piece count / dosing (excludes oil and citric). */
+  finalDosingBatchGrams: number;
+  totalActiveMgNeeded: number;
   gramsCitricSolution: number;
   gramsTotalCheck: number;
   nominalPieces: number;
@@ -73,10 +78,40 @@ export function estimatedGummyWeightGramsFromMoldMl(moldMl: number, densityFacto
   return g(moldMl * densityFactor);
 }
 
+function usesMctBaseMode(raw: {
+  mctCarrierPercent?: number;
+  basePartAGrams?: number;
+}): boolean {
+  const pct = raw.mctCarrierPercent ?? 0;
+  const base = raw.basePartAGrams ?? 0;
+  return pct > 0 && base > 0;
+}
+
 /**
- * MCT carrier is a % of calculated cannabis oil only (not batch %, not potency dilution).
- * Omit or pass ≤0 for no carrier — returns cannabis oil only with zero MCT.
+ * MCT carrier is a % of Part A / base grams. Infused blend = cannabis oil + MCT (computed separately).
  */
+export function computeMctFromPartABase(
+  basePartAGrams: number,
+  mctCarrierPercent: number,
+  gramsCannabisOil: number,
+): PectinMctCarrierBlend {
+  const base = g(basePartAGrams);
+  const pct = mctCarrierPercent;
+  if (!Number.isFinite(pct) || pct <= 0) {
+    const oil = g(gramsCannabisOil);
+    return { gramsCannabisOil: oil, gramsMctCarrier: 0, gramsTotalInfusedOilBlend: oil };
+  }
+  if (pct > 1000) throw new RangeError("mctCarrierPercent must be reasonable (≤ 1000)");
+  const gramsMctCarrier = g(base * (pct / 100));
+  const oil = g(gramsCannabisOil);
+  return {
+    gramsCannabisOil: oil,
+    gramsMctCarrier,
+    gramsTotalInfusedOilBlend: g(oil + gramsMctCarrier),
+  };
+}
+
+/** @deprecated Use computeMctFromPartABase — kept for callers/tests migrating off oil-% MCT. */
 export function computeMctCarrierBlend(
   gramsCannabisOil: number,
   mctCarrierPercent?: number,
@@ -95,7 +130,70 @@ export function computeMctCarrierBlend(
   };
 }
 
+function planPectinSingleAdditiveBatchMctBase(raw: PectinSingleAdditiveInput): PectinSingleAdditivePlan {
+  const basePartAGrams = g(raw.basePartAGrams!);
+  const mctPct = g(raw.mctCarrierPercent!);
+  const citricMassFraction = g(raw.citricMassFraction ?? 0.014);
+  const lineWasteFraction = raw.lineWasteFraction ?? 0.05;
+
+  if (raw.potencyFraction <= 0 || raw.potencyFraction > 1) {
+    throw new RangeError("potencyFraction must be in (0, 1]");
+  }
+  if (raw.targetMgPerPiece <= 0) throw new RangeError("targetMgPerPiece must be positive");
+  if (raw.gramsPerPiece <= 0) throw new RangeError("gramsPerPiece must be positive");
+  if (lineWasteFraction < 0 || lineWasteFraction >= 1) throw new RangeError("lineWasteFraction must be in [0, 1)");
+
+  const gramsMctCarrier = g(basePartAGrams * (mctPct / 100));
+  const finalDosingBatchGrams = g(basePartAGrams + gramsMctCarrier);
+  const nominalPieces = g(finalDosingBatchGrams / raw.gramsPerPiece);
+  const piecesAfterLineWaste = g(nominalPieces * (1 - lineWasteFraction));
+  const totalActiveMgNeeded = g(nominalPieces * raw.targetMgPerPiece);
+  const gramsCannabisOil = g(totalActiveMgNeeded / (raw.potencyFraction * 1000));
+
+  const oilBlend = computeMctFromPartABase(basePartAGrams, mctPct, gramsCannabisOil);
+
+  const nonCitricMass = g(basePartAGrams + gramsMctCarrier + gramsCannabisOil);
+  const gramsTotalFormula = g(nonCitricMass / (1 - citricMassFraction));
+  const gramsCitricSolution = g(gramsTotalFormula * citricMassFraction);
+  const gramsTotalCheck = g(basePartAGrams + gramsMctCarrier + gramsCannabisOil + gramsCitricSolution);
+
+  const additiveMassFraction =
+    finalDosingBatchGrams > 0 ? g(gramsCannabisOil / finalDosingBatchGrams) : 0;
+  const partAPectinMassFraction =
+    gramsTotalFormula > 0 ? g(basePartAGrams / gramsTotalFormula) : 0;
+
+  const warnings: string[] = [];
+  if (additiveMassFraction > 0.04) {
+    warnings.push(
+      "Cannabis oil is above 4% of the dosing batch (base + MCT) — Melt-to-Make recommends staying under 4% for best results.",
+    );
+  }
+
+  return {
+    additiveMassFraction,
+    citricMassFraction,
+    partAPectinMassFraction,
+    gramsPartAPectin: basePartAGrams,
+    gramsAdditive: oilBlend.gramsCannabisOil,
+    gramsMctCarrier: oilBlend.gramsMctCarrier,
+    gramsTotalInfusedOilBlend: oilBlend.gramsTotalInfusedOilBlend,
+    mctCarrierPercent: mctPct,
+    finalDosingBatchGrams,
+    totalActiveMgNeeded,
+    gramsCitricSolution,
+    gramsTotalCheck,
+    nominalPieces,
+    piecesAfterLineWaste,
+    additiveMassFractionPct: g(additiveMassFraction * 100),
+    warnings,
+  };
+}
+
 export function planPectinSingleAdditiveBatch(raw: PectinSingleAdditiveInput): PectinSingleAdditivePlan {
+  if (usesMctBaseMode(raw)) {
+    return planPectinSingleAdditiveBatchMctBase(raw);
+  }
+
   const batchSizeGrams = g(raw.batchSizeGrams);
   const citricMassFraction = g(raw.citricMassFraction ?? 0.014);
   const lineWasteFraction = raw.lineWasteFraction ?? 0.05;
@@ -128,19 +226,18 @@ export function planPectinSingleAdditiveBatch(raw: PectinSingleAdditiveInput): P
 
   const nominalPieces = g(batchSizeGrams / raw.gramsPerPiece);
   const piecesAfterLineWaste = g(nominalPieces * (1 - lineWasteFraction));
-
-  const oilBlend = computeMctCarrierBlend(gramsAdditive, raw.mctCarrierPercent);
+  const totalActiveMgNeeded = g(nominalPieces * raw.targetMgPerPiece);
 
   return {
     additiveMassFraction,
     citricMassFraction,
     partAPectinMassFraction,
     gramsPartAPectin,
-    gramsAdditive: oilBlend.gramsCannabisOil,
-    gramsMctCarrier: oilBlend.gramsMctCarrier,
-    gramsTotalInfusedOilBlend: oilBlend.gramsTotalInfusedOilBlend,
-    mctCarrierPercent:
-      raw.mctCarrierPercent != null && raw.mctCarrierPercent > 0 ? g(raw.mctCarrierPercent) : undefined,
+    gramsAdditive,
+    gramsMctCarrier: 0,
+    gramsTotalInfusedOilBlend: gramsAdditive,
+    finalDosingBatchGrams: batchSizeGrams,
+    totalActiveMgNeeded,
     gramsCitricSolution,
     gramsTotalCheck,
     nominalPieces,
@@ -163,8 +260,8 @@ export type PectinMultiAdditiveInput = {
   /** Fixed mass fractions (flavor, color, enhancer, etc.) summed like extra rows in the workbook. */
   extraMassFractions?: number[];
   lineWasteFraction?: number;
-  /** MCT carrier as % of combined calculated cannabis oil grams. */
   mctCarrierPercent?: number;
+  basePartAGrams?: number;
 };
 
 export type PectinMultiAdditivePlan = {
@@ -176,13 +273,94 @@ export type PectinMultiAdditivePlan = {
   gramsMctCarrier: number;
   gramsTotalInfusedOilBlend: number;
   mctCarrierPercent?: number;
+  finalDosingBatchGrams: number;
+  totalActiveMgNeeded: number;
   nominalPieces: number;
   piecesAfterLineWaste: number;
   totalAdditiveMassFractionPct: number;
   warnings: string[];
 };
 
+function planPectinMultiAdditiveBatchMctBase(raw: PectinMultiAdditiveInput): PectinMultiAdditivePlan {
+  const basePartAGrams = g(raw.basePartAGrams!);
+  const mctPct = g(raw.mctCarrierPercent!);
+  const citricMassFraction = g(raw.citricMassFraction ?? 0.014);
+  const lineWasteFraction = raw.lineWasteFraction ?? 0.05;
+  const extras = (raw.extraMassFractions ?? []).map((x) => g(x));
+  const extraSum = g(extras.reduce((s, x) => s + x, 0));
+
+  if (!raw.additives.length) throw new RangeError("At least one additive line is required");
+  if (raw.gramsPerPiece <= 0) throw new RangeError("gramsPerPiece must be positive");
+  if (lineWasteFraction < 0 || lineWasteFraction >= 1) throw new RangeError("lineWasteFraction must be in [0, 1)");
+
+  const gramsMctCarrier = g(basePartAGrams * (mctPct / 100));
+  const finalDosingBatchGrams = g(basePartAGrams + gramsMctCarrier);
+  const nominalPieces = g(finalDosingBatchGrams / raw.gramsPerPiece);
+  const piecesAfterLineWaste = g(nominalPieces * (1 - lineWasteFraction));
+
+  const gramsAdditives = raw.additives.map((line) => {
+    if (line.potencyFraction <= 0) throw new RangeError("potencyFraction must be positive");
+    const mg = g(nominalPieces * line.goalMgPerPiece);
+    return g(mg / (line.potencyFraction * 1000));
+  });
+  const gramsCannabisOilCombined = g(gramsAdditives.reduce((a, b) => a + b, 0));
+  const totalActiveMgNeeded = g(
+    raw.additives.reduce((s, line) => s + nominalPieces * line.goalMgPerPiece, 0),
+  );
+
+  const oilBlend = computeMctFromPartABase(basePartAGrams, mctPct, gramsCannabisOilCombined);
+
+  const gramsExtras = extras.map((f) => g(f * finalDosingBatchGrams));
+  const nonCitricMass = g(
+    basePartAGrams + gramsMctCarrier + gramsCannabisOilCombined + gramsExtras.reduce((a, b) => a + b, 0),
+  );
+  const gramsTotalFormula = g(nonCitricMass / (1 - citricMassFraction));
+  const gramsCitric = g(gramsTotalFormula * citricMassFraction);
+  const gramsPartA = basePartAGrams;
+  const total = g(gramsPartA + gramsMctCarrier + gramsCannabisOilCombined + gramsExtras.reduce((a, b) => a + b, 0) + gramsCitric);
+
+  const additiveMassFractions = gramsAdditives.map((oilG) =>
+    finalDosingBatchGrams > 0 ? g(oilG / finalDosingBatchGrams) : 0,
+  );
+  const additivesSum = g(additiveMassFractions.reduce((s, x) => s + x, 0));
+  const partAPectinMassFraction = gramsTotalFormula > 0 ? g(gramsPartA / gramsTotalFormula) : 0;
+
+  const warnings: string[] = [];
+  if (additivesSum > 0.04) {
+    warnings.push(
+      "Combined cannabis oil exceeds 4% of the dosing batch (base + MCT) — Melt-to-Make recommends staying under 4% for most SKUs.",
+    );
+  }
+
+  return {
+    additiveMassFractions,
+    extraMassFraction: extraSum,
+    citricMassFraction,
+    partAPectinMassFraction,
+    gramsByLine: {
+      partAPectin: gramsPartA,
+      additives: gramsAdditives,
+      extras: gramsExtras,
+      citric: gramsCitric,
+      total,
+    },
+    gramsMctCarrier: oilBlend.gramsMctCarrier,
+    gramsTotalInfusedOilBlend: oilBlend.gramsTotalInfusedOilBlend,
+    mctCarrierPercent: mctPct,
+    finalDosingBatchGrams,
+    totalActiveMgNeeded,
+    nominalPieces,
+    piecesAfterLineWaste,
+    totalAdditiveMassFractionPct: g(additivesSum * 100),
+    warnings,
+  };
+}
+
 export function planPectinMultiAdditiveBatch(raw: PectinMultiAdditiveInput): PectinMultiAdditivePlan {
+  if (usesMctBaseMode(raw)) {
+    return planPectinMultiAdditiveBatchMctBase(raw);
+  }
+
   const batchSizeGrams = g(raw.batchSizeGrams);
   const citricMassFraction = g(raw.citricMassFraction ?? 0.014);
   const lineWasteFraction = raw.lineWasteFraction ?? 0.05;
@@ -221,9 +399,9 @@ export function planPectinMultiAdditiveBatch(raw: PectinMultiAdditiveInput): Pec
 
   const nominalPieces = g(batchSizeGrams / raw.gramsPerPiece);
   const piecesAfterLineWaste = g(nominalPieces * (1 - lineWasteFraction));
-
-  const gramsCannabisOilCombined = g(gramsAdditives.reduce((a, b) => a + b, 0));
-  const oilBlend = computeMctCarrierBlend(gramsCannabisOilCombined, raw.mctCarrierPercent);
+  const totalActiveMgNeeded = g(
+    raw.additives.reduce((s, line) => s + nominalPieces * line.goalMgPerPiece, 0),
+  );
 
   return {
     additiveMassFractions,
@@ -237,10 +415,10 @@ export function planPectinMultiAdditiveBatch(raw: PectinMultiAdditiveInput): Pec
       citric: gramsCitric,
       total,
     },
-    gramsMctCarrier: oilBlend.gramsMctCarrier,
-    gramsTotalInfusedOilBlend: oilBlend.gramsTotalInfusedOilBlend,
-    mctCarrierPercent:
-      raw.mctCarrierPercent != null && raw.mctCarrierPercent > 0 ? g(raw.mctCarrierPercent) : undefined,
+    gramsMctCarrier: 0,
+    gramsTotalInfusedOilBlend: g(gramsAdditives.reduce((a, b) => a + b, 0)),
+    finalDosingBatchGrams: batchSizeGrams,
+    totalActiveMgNeeded,
     nominalPieces,
     piecesAfterLineWaste,
     totalAdditiveMassFractionPct: totalAdditivePct,

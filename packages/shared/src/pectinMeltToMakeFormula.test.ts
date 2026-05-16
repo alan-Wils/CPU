@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   additiveMassFractionFromGoals,
-  computeMctCarrierBlend,
+  computeMctFromPartABase,
   estimatedGummyWeightGramsFromMoldMl,
   planPectinMultiAdditiveBatch,
   planPectinSingleAdditiveBatch,
@@ -19,6 +19,7 @@ describe("pectinMeltToMakeFormula", () => {
     expect(plan.additiveMassFraction).toBeCloseTo(10 / (0.7933 * 3.5 * 1000), 6);
     expect(plan.partAPectinMassFraction + plan.additiveMassFraction + plan.citricMassFraction).toBeCloseTo(1, 5);
     expect(plan.piecesAfterLineWaste).toBeCloseTo((10088 / 3.5) * 0.95, 4);
+    expect(plan.gramsMctCarrier).toBe(0);
   });
 
   it("gummy weight calculator: mL × 1.34", () => {
@@ -34,33 +35,36 @@ describe("pectinMeltToMakeFormula", () => {
     expect(f).toBeCloseTo(10 / (1 * 2.68 * 1000), 5);
   });
 
-  it("MCT carrier % applies to calculated cannabis oil only", () => {
-    const blend = computeMctCarrierBlend(36, 5);
-    expect(blend.gramsCannabisOil).toBe(36);
-    expect(blend.gramsMctCarrier).toBeCloseTo(1.8, 4);
-    expect(blend.gramsTotalInfusedOilBlend).toBeCloseTo(37.8, 4);
-    expect(computeMctCarrierBlend(36, 0).gramsMctCarrier).toBe(0);
-    expect(computeMctCarrierBlend(36).gramsTotalInfusedOilBlend).toBe(36);
+  it("MCT carrier % is a percent of Part A base grams", () => {
+    const blend = computeMctFromPartABase(10_000, 2, 36);
+    expect(blend.gramsMctCarrier).toBeCloseTo(200, 2);
+    expect(blend.gramsTotalInfusedOilBlend).toBeCloseTo(236, 2);
   });
 
-  it("single-additive with MCT does not change Part A or cannabis oil dose", () => {
-    const base = planPectinSingleAdditiveBatch({
+  it("single-additive MCT: doses from base + MCT mass (example 10,000g base @ 2%)", () => {
+    const plan = planPectinSingleAdditiveBatch({
+      batchSizeGrams: 10_200,
+      basePartAGrams: 10_000,
+      mctCarrierPercent: 2,
+      potencyFraction: 0.7933,
+      targetMgPerPiece: 10,
+      gramsPerPiece: 3.5,
+    });
+    expect(plan.gramsPartAPectin).toBe(10_000);
+    expect(plan.gramsMctCarrier).toBeCloseTo(200, 2);
+    expect(plan.finalDosingBatchGrams).toBeCloseTo(10_200, 2);
+    expect(plan.nominalPieces).toBeCloseTo(10_200 / 3.5, 2);
+    const expectedOil = (plan.nominalPieces * 10) / (0.7933 * 1000);
+    expect(plan.gramsAdditive).toBeCloseTo(expectedOil, 1);
+    expect(plan.gramsTotalInfusedOilBlend).toBeCloseTo(expectedOil + 200, 1);
+
+    const withoutMct = planPectinSingleAdditiveBatch({
       batchSizeGrams: 10_000,
       potencyFraction: 0.7933,
       targetMgPerPiece: 10,
       gramsPerPiece: 3.5,
     });
-    const withMct = planPectinSingleAdditiveBatch({
-      batchSizeGrams: 10_000,
-      potencyFraction: 0.7933,
-      targetMgPerPiece: 10,
-      gramsPerPiece: 3.5,
-      mctCarrierPercent: 5,
-    });
-    expect(withMct.gramsAdditive).toBe(base.gramsAdditive);
-    expect(withMct.gramsPartAPectin).toBe(base.gramsPartAPectin);
-    expect(withMct.gramsMctCarrier).toBeCloseTo(base.gramsAdditive * 0.05, 4);
-    expect(withMct.gramsTotalInfusedOilBlend).toBeCloseTo(base.gramsAdditive * 1.05, 4);
+    expect(plan.gramsAdditive).toBeGreaterThan(withoutMct.gramsAdditive);
   });
 
   it("multi-additive: four equal 5 mg lines @ 100% potency", () => {

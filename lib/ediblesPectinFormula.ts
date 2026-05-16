@@ -5,6 +5,7 @@
 export {
   additiveMassFractionFromGoals,
   computeMctCarrierBlend,
+  computeMctFromPartABase,
   estimatedGummyWeightGramsFromMoldMl,
   planPectinMultiAdditiveBatch,
   planPectinSingleAdditiveBatch,

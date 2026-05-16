@@ -122,7 +122,7 @@ type PectinMultiRow = { goalMg: number; potencyFrac: number };
 type GummyBatchDriveMode = "pieces" | "partA";
 
 type GummyFormulaSizingResult =
-  | { ok: true; batchG: number; nominalPiecesDisplay: number }
+  | { ok: true; batchG: number; nominalPiecesDisplay: number; basePartAGrams?: number }
   | { ok: false; error: string };
 
 type EdibleCreatePrintSummary = {
@@ -159,7 +159,7 @@ function parseExtraMassFractionsCsv(raw: string): number[] {
   return out;
 }
 
-/** Optional MCT carrier % of calculated cannabis oil; blank or ≤0 → undefined (no MCT). */
+/** Optional MCT carrier % of Part A / base grams; blank or ≤0 → undefined (workbook-only mode). */
 function parseOptionalMctCarrierPercent(raw: string): number | undefined {
   const s = raw.trim();
   if (!s) return undefined;
@@ -169,9 +169,12 @@ function parseOptionalMctCarrierPercent(raw: string): number | undefined {
   return n;
 }
 
-function PectinInfusedOilBlendPanel(props: {
-  gramsCannabisOil: number;
+function PectinMctDosingSummary(props: {
+  gramsPartA: number;
   gramsMctCarrier: number;
+  finalDosingBatchGrams: number;
+  nominalPieces: number;
+  gramsCannabisOil: number;
   gramsTotalInfusedOilBlend: number;
 }) {
   if (props.gramsMctCarrier <= 0) return null;
@@ -189,17 +192,29 @@ function PectinInfusedOilBlendPanel(props: {
       style={{
         marginTop: 12,
         paddingTop: 10,
-        borderTop: "1px solid rgba(52, 211, 153, 0.35)",
+        borderTop: "1px solid rgba(251, 146, 60, 0.35)",
       }}
     >
-      <div style={{ fontWeight: 800, marginBottom: 8, color: "#fdba74", fontSize: 13 }}>Infused oil blend</div>
+      <div style={{ fontWeight: 800, marginBottom: 8, color: "#fdba74", fontSize: 13 }}>MCT dosing summary</div>
       <div style={rowStyle}>
-        <span>Cannabis oil required</span>
-        <span style={{ fontWeight: 700 }}>{props.gramsCannabisOil.toFixed(2)} g</span>
+        <span>Base / Part A</span>
+        <span style={{ fontWeight: 700 }}>{props.gramsPartA.toFixed(2)} g</span>
       </div>
       <div style={rowStyle}>
         <span>MCT carrier oil</span>
         <span style={{ fontWeight: 700 }}>{props.gramsMctCarrier.toFixed(2)} g</span>
+      </div>
+      <div style={rowStyle}>
+        <span>Final total batch (dosing mass)</span>
+        <span style={{ fontWeight: 700 }}>{props.finalDosingBatchGrams.toFixed(2)} g</span>
+      </div>
+      <div style={rowStyle}>
+        <span>Estimated pieces</span>
+        <span style={{ fontWeight: 700 }}>{props.nominalPieces.toFixed(1)}</span>
+      </div>
+      <div style={rowStyle}>
+        <span>Cannabis oil required</span>
+        <span style={{ fontWeight: 700 }}>{props.gramsCannabisOil.toFixed(2)} g</span>
       </div>
       <div style={{ ...rowStyle, borderBottom: "none", color: "#a7f3d0", fontWeight: 800 }}>
         <span>Total infused oil blend to add</span>
@@ -500,6 +515,38 @@ export default function EdiblesClient() {
     if (!Number.isFinite(pectinGPerPc) || pectinGPerPc <= 0) {
       return { ok: false, error: "Piece weight (grams) must be positive." };
     }
+    let mctPct: number | undefined;
+    try {
+      mctPct = parseOptionalMctCarrierPercent(pectinMctCarrierPct);
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Invalid MCT carrier %." };
+    }
+    if (mctPct && mctPct > 0) {
+      if (gummyBatchDrive === "pieces") {
+        const pcs = Math.floor(Number(cPieces));
+        if (!Number.isFinite(pcs) || pcs < 1) {
+          return { ok: false, error: "Gummies per batch (target pieces) must be an integer ≥ 1." };
+        }
+        const finalDosing = pcs * pectinGPerPc;
+        const basePartAGrams = finalDosing / (1 + mctPct / 100);
+        return { ok: true, batchG: finalDosing, nominalPiecesDisplay: pcs, basePartAGrams };
+      }
+      const partAG = Number(pectinPartAGrams);
+      if (!Number.isFinite(partAG) || partAG <= 0) {
+        return {
+          ok: false,
+          error: "Part A — Melt-to-Make™ pectin base on hand (grams) must be a positive number.",
+        };
+      }
+      const mctG = partAG * (mctPct / 100);
+      const finalDosing = partAG + mctG;
+      return {
+        ok: true,
+        batchG: finalDosing,
+        nominalPiecesDisplay: finalDosing / pectinGPerPc,
+        basePartAGrams: partAG,
+      };
+    }
     if (gummyBatchDrive === "pieces") {
       const pcs = Math.floor(Number(cPieces));
       if (!Number.isFinite(pcs) || pcs < 1) {
@@ -592,6 +639,7 @@ export default function EdiblesClient() {
     cOilPotencyFrac,
     pectinMultiAdditivesForPlan,
     pectinExtraCsv,
+    pectinMctCarrierPct,
   ]);
 
   const pectinPreview = useMemo(() => {
@@ -634,8 +682,9 @@ export default function EdiblesClient() {
           citricMassFraction,
           lineWasteFraction: WORKBOOK_LINE_WASTE_FRAC,
           mctCarrierPercent,
+          basePartAGrams: gummyFormulaSizing.basePartAGrams,
         });
-        if (singlePlan.partAPectinMassFraction <= 0) {
+        if (!mctCarrierPercent && singlePlan.partAPectinMassFraction <= 0) {
           return {
             ok: false as const,
             error:
@@ -666,8 +715,9 @@ export default function EdiblesClient() {
         extraMassFractions: extras.length ? extras : undefined,
         lineWasteFraction: WORKBOOK_LINE_WASTE_FRAC,
         mctCarrierPercent,
+        basePartAGrams: gummyFormulaSizing.basePartAGrams,
       });
-      if (multiPlan.partAPectinMassFraction <= 0) {
+      if (!mctCarrierPercent && multiPlan.partAPectinMassFraction <= 0) {
         return {
           ok: false as const,
           error:
@@ -790,6 +840,7 @@ export default function EdiblesClient() {
             citricMassFraction: WORKBOOK_CITRIC_MASS_FRAC,
             lineWasteFraction: WORKBOOK_LINE_WASTE_FRAC,
             mctCarrierPercent: pectinPreview.singlePlan.mctCarrierPercent,
+            basePartAGrams: gummyFormulaSizing.ok ? gummyFormulaSizing.basePartAGrams : undefined,
           },
           plan: pectinPreview.singlePlan,
           oilInputGrams: oilG,
@@ -1839,8 +1890,8 @@ export default function EdiblesClient() {
                     style={inputFull}
                   />
                   <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, lineHeight: 1.45 }}>
-                    Percent of calculated cannabis oil grams — not batch % and does not change dose or Part A. Leave blank
-                    for no MCT.
+                    Percent of Part A / base grams (e.g. 2 = 2%). Adds MCT on top, increases dosing batch mass and piece
+                    count, then recalculates cannabis oil from the larger batch. Leave blank for workbook-only math.
                   </div>
                 </label>
                 <div
@@ -1935,7 +1986,7 @@ export default function EdiblesClient() {
                         <div style={{ textAlign: "right" }}>100.00%</div>
                         <div style={{ textAlign: "right" }}>{pectinPreview.singlePlan.gramsTotalCheck.toFixed(2)}</div>
                       </div>
-                      <PectinInfusedOilBlendPanel
+                      <PectinMctDosingSummary
                         gramsCannabisOil={pectinPreview.singlePlan.gramsAdditive}
                         gramsMctCarrier={pectinPreview.singlePlan.gramsMctCarrier}
                         gramsTotalInfusedOilBlend={pectinPreview.singlePlan.gramsTotalInfusedOilBlend}
@@ -2034,7 +2085,7 @@ export default function EdiblesClient() {
                         <div style={{ textAlign: "right" }}>100.00%</div>
                         <div style={{ textAlign: "right" }}>{pectinPreview.multiPlan.gramsByLine.total.toFixed(2)}</div>
                       </div>
-                      <PectinInfusedOilBlendPanel
+                      <PectinMctDosingSummary
                         gramsCannabisOil={pectinPreview.multiPlan.gramsByLine.additives.reduce((a, b) => a + b, 0)}
                         gramsMctCarrier={pectinPreview.multiPlan.gramsMctCarrier}
                         gramsTotalInfusedOilBlend={pectinPreview.multiPlan.gramsTotalInfusedOilBlend}
