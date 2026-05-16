@@ -33,6 +33,7 @@ import {
   createExtractionBatch,
   updateExtractionBatch,
   deleteExtractionBatchRecord,
+  registerLegacyOilIntake,
 } from "@/lib/extractionApi";
 import { createPackagingBatch } from "@/lib/packagingApi";
 import { createLog } from "@/lib/logsApi";
@@ -162,6 +163,8 @@ function canWriteExtraction(userRole: any) {
 
   return (
     role === "EXTRACTION" ||
+    role === "EXTRACTION_SPECIALIST" ||
+    role === "OPERATIONS_MANAGER" ||
     role === "MANAGER" ||
     role === "ADMIN" ||
     role === "OWNER"
@@ -504,6 +507,17 @@ export default function Extraction() {
   const [refresh, setRefresh] = useState(0);
   const [selectedExtractionStage, setSelectedExtractionStage] = useState<ExtractionUiStageKey | null>(null);
   const [selectedExt, setSelectedExt] = useState<any>(null);
+  const [legacyCultivationBatchId, setLegacyCultivationBatchId] = useState("");
+  const [legacyStrain, setLegacyStrain] = useState("");
+  const [legacyStrainAcronym, setLegacyStrainAcronym] = useState("");
+  const [legacyOutputG, setLegacyOutputG] = useState("");
+  const [legacyExternalRef, setLegacyExternalRef] = useState("");
+  const [legacyNotes, setLegacyNotes] = useState("");
+  const [legacyProductType, setLegacyProductType] = useState("Live Resin Oil (Legacy intake)");
+  const [legacyCategory, setLegacyCategory] = useState<"LIVE" | "CURED_WAX">("LIVE");
+  const [legacyBusy, setLegacyBusy] = useState(false);
+  const [legacyError, setLegacyError] = useState<string | null>(null);
+  const [legacySuccess, setLegacySuccess] = useState<string | null>(null);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
@@ -2849,6 +2863,73 @@ export default function Extraction() {
   const allowedCreateProducts = getAllowedCreateProducts();
   const allowedRunProducts = getAllowedRunProducts();
 
+  async function submitLegacyOilIntake(e: React.FormEvent) {
+    e.preventDefault();
+    setLegacyError(null);
+    setLegacySuccess(null);
+    const grams = Number(legacyOutputG);
+    if (!Number.isFinite(grams) || grams <= 0) {
+      setLegacyError("Output (grams) must be a positive number.");
+      return;
+    }
+    const cult = legacyCultivationBatchId.trim();
+    const strain = legacyStrain.trim();
+    if (!cult && !strain) {
+      setLegacyError("Enter a NexBatch cultivation batch id, or a strain name to create a minimal link batch.");
+      return;
+    }
+    setLegacyBusy(true);
+    try {
+      const payload: {
+        cultivationBatchId?: string;
+        strain?: string;
+        strainAcronym?: string;
+        outputGrams: number;
+        productType: string;
+        productCategory: "LIVE" | "CURED_WAX";
+        externalReference?: string;
+        notes?: string;
+      } = {
+        outputGrams: grams,
+        productType: legacyProductType.trim() || "Live Resin Oil (Legacy intake)",
+        productCategory: legacyCategory,
+      };
+      if (cult) {
+        payload.cultivationBatchId = cult;
+      } else {
+        payload.strain = strain;
+        if (legacyStrainAcronym.trim()) payload.strainAcronym = legacyStrainAcronym.trim();
+      }
+      if (legacyExternalRef.trim()) payload.externalReference = legacyExternalRef.trim();
+      if (legacyNotes.trim()) payload.notes = legacyNotes.trim();
+      const { extractionRun } = await registerLegacyOilIntake(payload);
+      setLegacySuccess(
+        `Registered run ${extractionRun?.id ?? ""}. It appears under Testing / Finishing and is available for packaging and edibles (refresh lists if already open).`,
+      );
+      setLegacyOutputG("");
+      setLegacyCultivationBatchId("");
+      setLegacyStrain("");
+      setLegacyStrainAcronym("");
+      setLegacyExternalRef("");
+      setLegacyNotes("");
+      const extractionList = asArray(await loadExtractionBatches());
+      const prevExById = new Map<string, any>(
+        (s.extractionBatches || [])
+          .map((b: any): [string, any] => [String(b?.id || ""), b])
+          .filter(([k]: [string, any]) => k),
+      );
+      s.extractionBatches = extractionList.map((b: any) => {
+        const prev = prevExById.get(String(b?.id || ""));
+        return prev ? mergeExtractionPollState(b, prev) : b;
+      });
+      setRefresh((n) => n + 1);
+    } catch (err) {
+      setLegacyError(err instanceof Error ? err.message : "Could not register legacy oil.");
+    } finally {
+      setLegacyBusy(false);
+    }
+  }
+
   const extractionBatchesByStage = groupExtractionBatchesByUiStage(s.extractionBatches);
   const visibleExtractionBatches = selectedExtractionStage
     ? extractionBatchesByStage[selectedExtractionStage]
@@ -2896,6 +2977,118 @@ export default function Extraction() {
             <b>Read Only Mode:</b> You can view extraction records and task
             history, but your role cannot create extraction batches, log tasks,
             or change extraction data.
+          </div>
+        )}
+
+        {userCanWrite && (
+          <div
+            style={{
+              ...cardStyle,
+              border: "1px solid rgba(34, 197, 94, 0.45)",
+              marginBottom: 16,
+            }}
+          >
+            <h2 style={{ marginTop: 0, marginBottom: 8, fontSize: 18 }}>Legacy oil intake</h2>
+            <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: 14, fontSize: 13, lineHeight: 1.5 }}>
+              Register finished bulk oil that never ran through NexBatch extraction steps. This creates a{" "}
+              <strong style={{ color: "#e2e8f0" }}>completed</strong> extraction run so packaging and edibles use the same
+              gram ledger. Provide an existing <strong style={{ color: "#e2e8f0" }}>cultivation batch id</strong>, or a{" "}
+              <strong style={{ color: "#e2e8f0" }}>strain</strong> (a minimal 1 g nominal cultivation shell is created for
+              linkage only).
+            </p>
+            <form onSubmit={(e) => void submitLegacyOilIntake(e)} style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
+                <label style={{ fontSize: 13, color: "#cbd5e1" }}>
+                  <div style={{ color: "#94a3b8", marginBottom: 4 }}>Cultivation batch id (optional)</div>
+                  <input
+                    value={legacyCultivationBatchId}
+                    onChange={(e) => setLegacyCultivationBatchId(e.target.value)}
+                    placeholder="Existing NexBatch cultivation CUID"
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#f8fafc" }}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+                <label style={{ fontSize: 13, color: "#cbd5e1" }}>
+                  <div style={{ color: "#94a3b8", marginBottom: 4 }}>Strain (if no batch id)</div>
+                  <input
+                    value={legacyStrain}
+                    onChange={(e) => setLegacyStrain(e.target.value)}
+                    placeholder="e.g. Blue Dream"
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#f8fafc" }}
+                  />
+                </label>
+                <label style={{ fontSize: 13, color: "#cbd5e1" }}>
+                  <div style={{ color: "#94a3b8", marginBottom: 4 }}>Strain acronym (optional)</div>
+                  <input
+                    value={legacyStrainAcronym}
+                    onChange={(e) => setLegacyStrainAcronym(e.target.value)}
+                    placeholder="Auto from strain if empty"
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#f8fafc" }}
+                  />
+                </label>
+                <label style={{ fontSize: 13, color: "#cbd5e1" }}>
+                  <div style={{ color: "#94a3b8", marginBottom: 4 }}>Oil on hand (grams) *</div>
+                  <input
+                    type="number"
+                    min={0.01}
+                    step={0.01}
+                    required
+                    value={legacyOutputG}
+                    onChange={(e) => setLegacyOutputG(e.target.value)}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#f8fafc" }}
+                  />
+                </label>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
+                <label style={{ fontSize: 13, color: "#cbd5e1" }}>
+                  <div style={{ color: "#94a3b8", marginBottom: 4 }}>Product label (edibles / display)</div>
+                  <input
+                    value={legacyProductType}
+                    onChange={(e) => setLegacyProductType(e.target.value)}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#f8fafc" }}
+                  />
+                </label>
+                <label style={{ fontSize: 13, color: "#cbd5e1" }}>
+                  <div style={{ color: "#94a3b8", marginBottom: 4 }}>Product family</div>
+                  <select
+                    value={legacyCategory}
+                    onChange={(e) => setLegacyCategory(e.target.value as "LIVE" | "CURED_WAX")}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#f8fafc" }}
+                  >
+                    <option value="LIVE">Live (use for Live Resin oil → edibles path)</option>
+                    <option value="CURED_WAX">Cured wax</option>
+                  </select>
+                </label>
+                <label style={{ fontSize: 13, color: "#cbd5e1" }}>
+                  <div style={{ color: "#94a3b8", marginBottom: 4 }}>External lot / tag (optional)</div>
+                  <input
+                    value={legacyExternalRef}
+                    onChange={(e) => setLegacyExternalRef(e.target.value)}
+                    placeholder="Paper batch, METRC tag, etc."
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#f8fafc" }}
+                  />
+                </label>
+              </div>
+              <label style={{ fontSize: 13, color: "#cbd5e1", display: "block" }}>
+                <div style={{ color: "#94a3b8", marginBottom: 4 }}>Notes (optional)</div>
+                <textarea
+                  value={legacyNotes}
+                  onChange={(e) => setLegacyNotes(e.target.value)}
+                  rows={2}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#f8fafc", resize: "vertical" }}
+                />
+              </label>
+              {legacyError ? (
+                <div style={{ color: "#fecaca", fontSize: 13 }}>{legacyError}</div>
+              ) : null}
+              {legacySuccess ? (
+                <div style={{ color: "#86efac", fontSize: 13 }}>{legacySuccess}</div>
+              ) : null}
+              <button type="submit" disabled={legacyBusy} style={{ ...greenButtonStyle, opacity: legacyBusy ? 0.7 : 1 }}>
+                {legacyBusy ? "Saving…" : "Register legacy oil run"}
+              </button>
+            </form>
           </div>
         )}
 

@@ -619,6 +619,91 @@ export class OperationalWorkflowService {
         this.trackDb(input.companyId, "extraction_run_complete", "write", 1, { domain: "workflow" });
         return out;
     }
+    /**
+     * Onboard oil produced outside NexBatch: creates a **COMPLETED** extraction run tied to an existing
+     * cultivation batch or a new minimal cultivation shell (1 g nominal harvest) so packaging/edibles
+     * pool logic (`extractionRunId`) applies without walking biomass → seal → complete.
+     */
+    async registerLegacyCompletedOilRun(input) {
+        const outG = g(input.outputGrams);
+        if (outG <= 0) {
+            throw new AppError("outputGrams must be positive", 400);
+        }
+        let cultivationBatchId = String(input.cultivationBatchId || "").trim();
+        if (cultivationBatchId) {
+            const existing = await prisma.cultivationBatch.findFirst({
+                where: { id: cultivationBatchId, companyId: input.companyId },
+            });
+            if (!existing) {
+                throw new AppError("Cultivation batch not found for this company", 404);
+            }
+        }
+        else {
+            const strain = String(input.strain || "").trim();
+            if (!strain) {
+                throw new AppError("strain is required when cultivationBatchId is omitted", 400);
+            }
+            const batch = await this.createCultivation({
+                companyId: input.companyId,
+                actorUserId: input.actorUserId,
+                strain,
+                strainAcronym: String(input.strainAcronym || "").trim() || deriveStrainAcronym(strain),
+                plantedAt: input.plantedAt instanceof Date && !Number.isNaN(input.plantedAt.getTime())
+                    ? input.plantedAt
+                    : new Date(),
+                aGradeFlowerGrams: 1,
+                popcornGrams: 0,
+                trimGrams: 0,
+                freshFrozenGrams: 0,
+            });
+            cultivationBatchId = batch.id;
+        }
+        const category = input.productCategory === "CURED_WAX" ? "CURED_WAX" : "LIVE";
+        const productType = String(input.productType || "Live Resin Oil (Legacy intake)")
+            .trim()
+            .slice(0, 120);
+        let inG = input.inputGrams != null ? g(input.inputGrams) : outG;
+        if (inG < 0) {
+            throw new AppError("inputGrams must be non-negative", 400);
+        }
+        if (inG < outG) {
+            inG = outG;
+        }
+        const ui = {
+            productType,
+            legacyIntake: true,
+            externalReference: input.externalReference != null ? String(input.externalReference).trim().slice(0, 500) || null : null,
+            notes: input.notes != null ? String(input.notes).trim().slice(0, 8000) || null : null,
+            status: "Ready for packaging",
+        };
+        assertUiJsonSize("extractionUiState", ui);
+        const run = await prisma.extractionRun.create({
+            data: {
+                companyId: input.companyId,
+                cultivationBatchId,
+                phase: "COMPLETED",
+                productCategory: category,
+                method: "Legacy oil intake",
+                inputGrams: inG,
+                outputGrams: outG,
+                supplyUsed: input.externalReference != null
+                    ? String(input.externalReference).trim().slice(0, 200) || null
+                    : null,
+                extractionUiState: ui,
+                finishedAt: new Date(),
+            },
+        });
+        await this.audit.logAction({
+            companyId: input.companyId,
+            actorUserId: input.actorUserId,
+            action: "extraction.run.legacy_oil_intake",
+            entityType: "ExtractionRun",
+            entityId: run.id,
+            after: { outputGrams: outG, cultivationBatchId, productType, phase: run.phase },
+        });
+        this.trackDb(input.companyId, "extraction_legacy_oil_intake", "write", 2, { domain: "workflow" });
+        return run;
+    }
     async startExtractionPackaging(input) {
         const run = await prisma.extractionRun.findFirst({ where: { companyId: input.companyId, id: input.extractionRunId } });
         if (!run) {

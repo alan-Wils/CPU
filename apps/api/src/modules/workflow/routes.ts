@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { validate } from "../../middleware/validate.js";
 import { asyncHandler } from "../../middleware/asyncHandler.js";
-import { batchIdParam, cultPackStartSchema, cultWeighSchema, cultivationCreateSchema, exBiomassSchema, exCompleteSchema, exRunIdParam, extractionCreateShellSchema, extractionPackagingStartSchema, extPackWeighSchema, freshSetSchema, cultivationUpdateSchema, lotIdParam, packagingLotUpdateSchema, runIdParam, sealExtractionSchema, trimSetSchema, sourcePackageConsumeSchema, sourcePackageCreateSchema, sourcePackageIdParam, sourcePackageUpdateSchema, extractionRunUpdateSchema } from "../../validation/schemas.js";
+import { batchIdParam, cultPackStartSchema, cultWeighSchema, cultivationCreateSchema, exBiomassSchema, exCompleteSchema, exRunIdParam, extractionCreateShellSchema, legacyOilIntakeSchema, extractionPackagingStartSchema, extPackWeighSchema, freshSetSchema, cultivationUpdateSchema, lotIdParam, packagingLotUpdateSchema, runIdParam, sealExtractionSchema, trimSetSchema, sourcePackageConsumeSchema, sourcePackageCreateSchema, sourcePackageIdParam, sourcePackageUpdateSchema, extractionRunUpdateSchema } from "../../validation/schemas.js";
 import { WorkflowService } from "../../services/workflowService.js";
 import { requireRole, requireRoleOrAppPermission } from "../../middleware/rbac.js";
 export const workflowRouter = Router();
@@ -142,6 +142,10 @@ workflowRouter.post("/cultivation-packaging-runs/:runId/finish", requireRole(["O
     const { runId } = req.params;
     const run = await workflowService.finishCultPackaging(getScopedCompanyId(req), req.auth.userId, runId);
     res.json(run);
+}));
+workflowRouter.post("/extraction-runs/legacy-oil-intake", requireRole(["OWNER", "ADMIN", "OPERATIONS_MANAGER", "EXTRACTION_SPECIALIST", "CULTIVATION_SPECIALIST"]), validate({ body: legacyOilIntakeSchema }), asyncHandler(async (req, res) => {
+    const run = await workflowService.registerLegacyOilIntake(getScopedCompanyId(req), req.auth.userId, req.body);
+    res.status(201).json({ extractionRun: run });
 }));
 workflowRouter.post("/extraction-runs", requireRole(["OWNER", "ADMIN", "OPERATIONS_MANAGER", "EXTRACTION_SPECIALIST"]), validate({ body: extractionCreateShellSchema }), asyncHandler(async (req, res) => {
     const run = await workflowService.createExtractionShell(getScopedCompanyId(req), req.auth.userId, req.body.cultivationBatchId);

@@ -66,6 +66,22 @@ export class WorkflowService {
     async completeExtraction(companyId, actorUserId, body) {
         return operational.completeExtractionRun({ companyId, actorUserId, ...body });
     }
+    async registerLegacyOilIntake(companyId, actorUserId, body) {
+        return operational.registerLegacyCompletedOilRun({
+            companyId,
+            actorUserId,
+            cultivationBatchId: body.cultivationBatchId,
+            strain: body.strain,
+            strainAcronym: body.strainAcronym,
+            plantedAt: body.plantedAt,
+            outputGrams: body.outputGrams,
+            inputGrams: body.inputGrams,
+            productType: body.productType,
+            productCategory: body.productCategory,
+            externalReference: body.externalReference,
+            notes: body.notes,
+        });
+    }
     async updateExtractionRun(companyId, actorUserId, body) {
         return operational.updateExtractionRun({ companyId, actorUserId, ...body });
     }

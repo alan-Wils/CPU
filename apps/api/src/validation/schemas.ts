@@ -237,6 +237,25 @@ export const exCompleteSchema = z.object({
 export const extractionCreateShellSchema = z.object({
     cultivationBatchId: z.string().cuid()
 });
+/** Register finished oil that never went through NexBatch extraction steps — creates a completed `ExtractionRun` (and optionally a minimal cultivation batch) for packaging + edibles pool. */
+export const legacyOilIntakeSchema = z
+    .object({
+        cultivationBatchId: z.string().cuid().optional(),
+        strain: z.string().min(1).max(120).optional(),
+        strainAcronym: z.string().max(8).optional(),
+        plantedAt: z.coerce.date().optional(),
+        outputGrams: z.number().positive().max(1_000_000),
+        inputGrams: z.number().nonnegative().max(1_000_000).optional(),
+        productType: z.string().min(1).max(120).optional(),
+        productCategory: z.enum(["LIVE", "CURED_WAX"]).optional(),
+        externalReference: z.string().max(500).optional().nullable(),
+        notes: z.string().max(8000).optional().nullable(),
+    })
+    .strict()
+    .refine((d) => Boolean(d.cultivationBatchId?.trim()) || Boolean(d.strain?.trim()), {
+        message: "Provide cultivationBatchId (existing NexBatch cultivation) or strain (creates a minimal shell batch for linkage).",
+        path: ["cultivationBatchId"],
+    });
 export const extPackWeighSchema = z.object({
     netOutputGrams: z.number().nonnegative(),
     terpeneGrams: z.number().nonnegative()

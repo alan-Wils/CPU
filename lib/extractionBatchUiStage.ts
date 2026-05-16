@@ -102,6 +102,10 @@ function statusFallbackStage(batch: any): ExtractionUiStageKey | null {
 }
 
 export function extractionUiStageFromBatch(batch: any): ExtractionUiStageKey {
+  const prismaPhase = String(batch?.phase || "").toUpperCase();
+  if (prismaPhase === "COMPLETED") {
+    return "testing";
+  }
   const fromTasks = (): ExtractionUiStageKey => {
     if (!hasCompletedExtractionTask(batch, "Pack Socks Stop")) return "prep";
     if (!hasCompletedExtractionTask(batch, "Run Extraction")) return "extraction";

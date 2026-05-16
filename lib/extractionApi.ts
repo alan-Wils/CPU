@@ -23,3 +23,23 @@ export async function deleteExtractionBatchRecord(batchId: string) {
     method: "DELETE",
   });
 }
+
+/** Register oil produced outside NexBatch as a completed extraction run (packaging + edibles pool). */
+export async function registerLegacyOilIntake(body: {
+  cultivationBatchId?: string;
+  strain?: string;
+  strainAcronym?: string;
+  plantedAt?: string;
+  outputGrams: number;
+  inputGrams?: number;
+  productType?: string;
+  productCategory?: "LIVE" | "CURED_WAX";
+  externalReference?: string | null;
+  notes?: string | null;
+}) {
+  return apiRequest<{ extractionRun: { id: string; cultivationBatchId?: string; outputGrams?: number } }>(
+    "/api/workflow/extraction-runs/legacy-oil-intake",
+    { method: "POST", body },
+  );
+}
+
