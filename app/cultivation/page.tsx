@@ -7734,7 +7734,6 @@ export default function Cultivation() {
 
   const activeStageThreeColStyle = {
     display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: 12,
     marginTop: 0,
   } as const;
@@ -7752,11 +7751,13 @@ export default function Cultivation() {
     cursor: "pointer",
   } as const;
 
-  const stagePanelWithMomsStyle = {
-    position: "relative" as const,
-    marginTop: 10,
-    paddingTop: 4,
-    overflow: "visible" as const,
+  const activeBatchesSectionHeadStyle = {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 12,
   } as const;
 
   const stageCardButtonStyle = {
@@ -8002,38 +8003,27 @@ export default function Cultivation() {
         </div>
 
         <section style={cardStyle}>
-          <h3 style={sectionTitleStyle}>Active Cultivation Batches</h3>
+          <div style={activeBatchesSectionHeadStyle} className="cultivation-active-batches-head">
+            <h3 style={{ ...sectionTitleStyle, margin: 0, textAlign: "left", flex: "1 1 12rem" }}>
+              Active Cultivation Batches
+            </h3>
+            <button
+              type="button"
+              className="cultivation-moms-glow-btn"
+              style={{ ...momsButtonStyle, flexShrink: 0 }}
+              onClick={() => openMomsModal()}
+            >
+              Moms ({activeMotherCount})
+            </button>
+          </div>
 
           {activeBatches.length === 0 ? (
-            <div style={{ textAlign: "center" }}>
-              <button
-                type="button"
-                className="cultivation-moms-glow-btn"
-                style={{ ...momsButtonStyle, marginBottom: 12 }}
-                onClick={() => openMomsModal()}
-              >
-                Moms ({activeMotherCount})
-              </button>
-              <p style={{ color: "#cbd5e1", margin: 0 }}>No active cultivation batches.</p>
-            </div>
+            <p style={{ color: "#cbd5e1", margin: 0, textAlign: "center" }}>
+              No active cultivation batches.
+            </p>
           ) : (
-            <div style={stagePanelWithMomsStyle}>
-              <button
-                type="button"
-                className="cultivation-moms-glow-btn"
-                style={{
-                  ...momsButtonStyle,
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  transform: "translateY(calc(-100% - 6px))",
-                  zIndex: 2,
-                }}
-                onClick={() => openMomsModal()}
-              >
-                Moms ({activeMotherCount})
-              </button>
-              <div style={activeStageThreeColStyle}>
+            <div>
+              <div style={activeStageThreeColStyle} className="cultivation-active-stage-grid">
                 {stageOrder.map((stageName) => (
                   <div key={stageName} style={{ minWidth: 0 }}>
                     <button

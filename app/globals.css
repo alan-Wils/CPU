@@ -97,6 +97,45 @@ button.cultivation-moms-glow-btn {
   }
 }
 
+/* Cultivation: Moms in section header — tighter glow on phones */
+@media (max-width: 767px) {
+  .cultivation-active-batches-head button.cultivation-moms-glow-btn {
+    box-shadow:
+      0 0 6px rgba(56, 189, 248, 0.85),
+      0 0 14px rgba(37, 99, 235, 0.55);
+  }
+
+  @keyframes cultivation-moms-btn-glow-mobile {
+    0%,
+    100% {
+      box-shadow:
+        0 0 6px rgba(56, 189, 248, 0.9),
+        0 0 14px rgba(37, 99, 235, 0.6);
+      border-color: rgba(56, 189, 248, 0.85);
+    }
+    50% {
+      box-shadow:
+        0 0 8px rgba(34, 211, 238, 0.95),
+        0 0 18px rgba(14, 165, 233, 0.75);
+      border-color: rgba(103, 232, 249, 0.95);
+    }
+  }
+
+  button.cultivation-moms-glow-btn {
+    animation-name: cultivation-moms-btn-glow-mobile;
+  }
+}
+
+.cultivation-active-stage-grid {
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 640px) {
+  .cultivation-active-stage-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 /* Login page slogan — Space Grotesk via `--font-space-grotesk` (see app/layout.tsx). */
 @keyframes login-slogan-fade-in {
   from {
