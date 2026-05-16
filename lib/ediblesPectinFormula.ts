@@ -4,10 +4,12 @@
  */
 export {
   additiveMassFractionFromGoals,
+  computeMctCarrierBlend,
   estimatedGummyWeightGramsFromMoldMl,
   planPectinMultiAdditiveBatch,
   planPectinSingleAdditiveBatch,
   type PectinAdditiveLineInput,
+  type PectinMctCarrierBlend,
   type PectinMultiAdditiveInput,
   type PectinMultiAdditivePlan,
   type PectinSingleAdditiveInput,

@@ -107,6 +107,7 @@ const pectinPreviewSchema = z.discriminatedUnion("kind", [
     gramsPerPiece: z.number().positive().max(100),
     citricMassFraction: z.number().positive().max(0.2).optional(),
     lineWasteFraction: z.number().min(0).max(0.5).optional(),
+    mctCarrierPercent: z.number().min(0).max(1000).optional(),
   }),
   z.object({
     kind: z.literal("multi"),
@@ -124,6 +125,7 @@ const pectinPreviewSchema = z.discriminatedUnion("kind", [
     citricMassFraction: z.number().positive().max(0.2).optional(),
     extraMassFractions: z.array(z.number().nonnegative().max(0.5)).max(16).optional(),
     lineWasteFraction: z.number().min(0).max(0.5).optional(),
+    mctCarrierPercent: z.number().min(0).max(1000).optional(),
   }),
   z.object({
     kind: z.literal("mold_weight"),
@@ -175,6 +177,7 @@ ediblesRouter.post(
           gramsPerPiece: body.gramsPerPiece,
           citricMassFraction: body.citricMassFraction,
           lineWasteFraction: body.lineWasteFraction,
+          mctCarrierPercent: body.mctCarrierPercent,
         });
         res.json({ kind: "single", plan });
         return;
@@ -187,6 +190,7 @@ ediblesRouter.post(
           citricMassFraction: body.citricMassFraction,
           extraMassFractions: body.extraMassFractions,
           lineWasteFraction: body.lineWasteFraction,
+          mctCarrierPercent: body.mctCarrierPercent,
         });
         res.json({ kind: "multi", plan });
         return;

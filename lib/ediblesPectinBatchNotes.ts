@@ -22,8 +22,11 @@ export type PectinMeltFormulaSnapshot = {
   citricMassFraction: number;
   lineWasteFraction: number;
   gramsPartA: number;
-  /** Mass from pectin calculator (active additive phase). */
+  /** Cannabis oil required for target dose (calculated). */
   gramsAdditive: number;
+  mctCarrierPercent?: number;
+  gramsMctCarrier?: number;
+  gramsTotalInfusedOilBlend?: number;
   /** Oil grams submitted on the edible batch (infusion allocation). */
   oilInputGrams: number;
   gramsCitric: number;
@@ -66,13 +69,21 @@ export function mergeUserNotesAndPectinPlan(userNotes: string, snapshot: PectinM
 }
 
 export function formatPectinReadableHeader(s: PectinMeltFormulaSnapshot): string {
-  return [
+  const lines = [
     "Pectin Melt Formula Plan",
     `Formula Version: ${s.formulaVersion}`,
     `Target: ${s.targetMgPerPiece} mg per piece`,
     `Piece Weight: ${s.gramsPerPiece} g`,
     `Expected Yield After Waste: ${s.piecesAfterLineWaste} pieces`,
-  ].join("\n");
+    `Cannabis oil required: ${s.gramsAdditive.toFixed(2)} g`,
+  ];
+  if (s.gramsMctCarrier != null && s.gramsMctCarrier > 0) {
+    lines.push(
+      `MCT carrier (${s.mctCarrierPercent ?? "?"}% of cannabis oil): ${s.gramsMctCarrier.toFixed(2)} g`,
+    );
+    lines.push(`Total infused oil blend to add: ${(s.gramsTotalInfusedOilBlend ?? s.gramsAdditive).toFixed(2)} g`);
+  }
+  return lines.join("\n");
 }
 
 export function buildSnapshotFromSingle(args: {
@@ -95,6 +106,10 @@ export function buildSnapshotFromSingle(args: {
     lineWasteFraction,
     gramsPartA: plan.gramsPartAPectin,
     gramsAdditive: plan.gramsAdditive,
+    mctCarrierPercent: plan.mctCarrierPercent,
+    gramsMctCarrier: plan.gramsMctCarrier > 0 ? plan.gramsMctCarrier : undefined,
+    gramsTotalInfusedOilBlend:
+      plan.gramsMctCarrier > 0 ? plan.gramsTotalInfusedOilBlend : undefined,
     oilInputGrams,
     gramsCitric: plan.gramsCitricSolution,
     piecesBeforeWaste: plan.nominalPieces,
@@ -137,6 +152,10 @@ export function buildSnapshotFromMulti(args: {
     lineWasteFraction,
     gramsPartA: plan.gramsByLine.partAPectin,
     gramsAdditive,
+    mctCarrierPercent: plan.mctCarrierPercent,
+    gramsMctCarrier: plan.gramsMctCarrier > 0 ? plan.gramsMctCarrier : undefined,
+    gramsTotalInfusedOilBlend:
+      plan.gramsMctCarrier > 0 ? plan.gramsTotalInfusedOilBlend : undefined,
     oilInputGrams,
     gramsCitric: plan.gramsByLine.citric,
     piecesBeforeWaste: plan.nominalPieces,
@@ -159,7 +178,14 @@ export async function postPectinKitchenIngredients(batchId: string, snapshot: Pe
     posts.push(postEdibleIngredient(batchId, { ingredientName, weight: grams, unit: "g" }));
   };
   add("Melt-to-Make™ Pectin Base (Part A)", snapshot.gramsPartA);
-  add("Cannabis oil / additive (batch allocation)", snapshot.oilInputGrams);
+  const mct = snapshot.gramsMctCarrier ?? 0;
+  if (mct > 0 && snapshot.gramsTotalInfusedOilBlend != null) {
+    add("Cannabis oil", snapshot.gramsAdditive);
+    add("MCT carrier oil", mct);
+    add("Total infused oil blend", snapshot.gramsTotalInfusedOilBlend);
+  } else {
+    add("Cannabis oil / additive (batch allocation)", snapshot.oilInputGrams);
+  }
   add("Citric Acid Solution (Part B)", snapshot.gramsCitric);
   if (snapshot.kind === "multi" && snapshot.gramsExtras?.length) {
     snapshot.gramsExtras.forEach((grams, i) => {

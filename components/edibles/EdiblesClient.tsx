@@ -159,6 +159,56 @@ function parseExtraMassFractionsCsv(raw: string): number[] {
   return out;
 }
 
+/** Optional MCT carrier % of calculated cannabis oil; blank or ≤0 → undefined (no MCT). */
+function parseOptionalMctCarrierPercent(raw: string): number | undefined {
+  const s = raw.trim();
+  if (!s) return undefined;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  if (n > 1000) throw new Error("MCT carrier % must be between 0 and 1000.");
+  return n;
+}
+
+function PectinInfusedOilBlendPanel(props: {
+  gramsCannabisOil: number;
+  gramsMctCarrier: number;
+  gramsTotalInfusedOilBlend: number;
+}) {
+  if (props.gramsMctCarrier <= 0) return null;
+  const rowStyle: React.CSSProperties = {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 10,
+    fontSize: 12,
+    color: "#e2e8f0",
+    padding: "4px 0",
+    borderBottom: "1px solid rgba(51,65,85,0.6)",
+  };
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        paddingTop: 10,
+        borderTop: "1px solid rgba(52, 211, 153, 0.35)",
+      }}
+    >
+      <div style={{ fontWeight: 800, marginBottom: 8, color: "#fdba74", fontSize: 13 }}>Infused oil blend</div>
+      <div style={rowStyle}>
+        <span>Cannabis oil required</span>
+        <span style={{ fontWeight: 700 }}>{props.gramsCannabisOil.toFixed(2)} g</span>
+      </div>
+      <div style={rowStyle}>
+        <span>MCT carrier oil</span>
+        <span style={{ fontWeight: 700 }}>{props.gramsMctCarrier.toFixed(2)} g</span>
+      </div>
+      <div style={{ ...rowStyle, borderBottom: "none", color: "#a7f3d0", fontWeight: 800 }}>
+        <span>Total infused oil blend to add</span>
+        <span>{props.gramsTotalInfusedOilBlend.toFixed(2)} g</span>
+      </div>
+    </div>
+  );
+}
+
 const cardStyle: React.CSSProperties = {
   background: "linear-gradient(145deg, rgba(15,23,42,0.92), rgba(2,6,23,0.96))",
   border: "1px solid rgba(148, 163, 184, 0.22)",
@@ -290,6 +340,7 @@ export default function EdiblesClient() {
   const [pectinGPerPc, setPectinGPerPc] = useState(3.5);
   const [pectinMoldMl, setPectinMoldMl] = useState("");
   const [pectinExtraCsv, setPectinExtraCsv] = useState("");
+  const [pectinMctCarrierPct, setPectinMctCarrierPct] = useState("");
   const [pectinMultiRows, setPectinMultiRows] = useState<PectinMultiRow[]>([
     { goalMg: 10, potencyFrac: 0.7933 },
     { goalMg: 0, potencyFrac: 1 },
@@ -562,6 +613,7 @@ export default function EdiblesClient() {
       if (pectinGPerPc <= 0 || !Number.isFinite(pectinGPerPc)) {
         return { ok: false as const, error: "Piece weight (grams) must be positive.", mode: pectinMode };
       }
+      const mctCarrierPercent = parseOptionalMctCarrierPercent(pectinMctCarrierPct);
       const citricMassFraction = WORKBOOK_CITRIC_MASS_FRAC;
       if (pectinMode === "single") {
         if (cMg <= 0) {
@@ -581,6 +633,7 @@ export default function EdiblesClient() {
           gramsPerPiece: pectinGPerPc,
           citricMassFraction,
           lineWasteFraction: WORKBOOK_LINE_WASTE_FRAC,
+          mctCarrierPercent,
         });
         if (singlePlan.partAPectinMassFraction <= 0) {
           return {
@@ -612,6 +665,7 @@ export default function EdiblesClient() {
         citricMassFraction,
         extraMassFractions: extras.length ? extras : undefined,
         lineWasteFraction: WORKBOOK_LINE_WASTE_FRAC,
+        mctCarrierPercent,
       });
       if (multiPlan.partAPectinMassFraction <= 0) {
         return {
@@ -635,6 +689,7 @@ export default function EdiblesClient() {
     cMg,
     pectinMultiAdditivesForPlan,
     pectinExtraCsv,
+    pectinMctCarrierPct,
   ]);
 
   const projected = useMemo(() => {
@@ -734,6 +789,7 @@ export default function EdiblesClient() {
             gramsPerPiece: pectinGPerPc,
             citricMassFraction: WORKBOOK_CITRIC_MASS_FRAC,
             lineWasteFraction: WORKBOOK_LINE_WASTE_FRAC,
+            mctCarrierPercent: pectinPreview.singlePlan.mctCarrierPercent,
           },
           plan: pectinPreview.singlePlan,
           oilInputGrams: oilG,
@@ -1769,6 +1825,24 @@ export default function EdiblesClient() {
                     Multi additive
                   </button>
                 </div>
+                <label style={{ display: "block", marginBottom: 12, fontSize: 13 }}>
+                  <div style={{ color: "#94a3b8", marginBottom: 4 }}>
+                    MCT carrier % <span style={{ color: "#64748b", fontWeight: 600 }}>(optional)</span>
+                  </div>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.1}
+                    placeholder="e.g. 5"
+                    value={pectinMctCarrierPct}
+                    onChange={(e) => setPectinMctCarrierPct(e.target.value)}
+                    style={inputFull}
+                  />
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, lineHeight: 1.45 }}>
+                    Percent of calculated cannabis oil grams — not batch % and does not change dose or Part A. Leave blank
+                    for no MCT.
+                  </div>
+                </label>
                 <div
                   style={{
                     fontSize: 11,
@@ -1818,7 +1892,7 @@ export default function EdiblesClient() {
                             g: pectinPreview.singlePlan.gramsPartAPectin,
                           },
                           {
-                            label: "Additive",
+                            label: "Cannabis oil (additive)",
                             frac: pectinPreview.singlePlan.additiveMassFraction,
                             g: pectinPreview.singlePlan.gramsAdditive,
                           },
@@ -1861,6 +1935,11 @@ export default function EdiblesClient() {
                         <div style={{ textAlign: "right" }}>100.00%</div>
                         <div style={{ textAlign: "right" }}>{pectinPreview.singlePlan.gramsTotalCheck.toFixed(2)}</div>
                       </div>
+                      <PectinInfusedOilBlendPanel
+                        gramsCannabisOil={pectinPreview.singlePlan.gramsAdditive}
+                        gramsMctCarrier={pectinPreview.singlePlan.gramsMctCarrier}
+                        gramsTotalInfusedOilBlend={pectinPreview.singlePlan.gramsTotalInfusedOilBlend}
+                      />
                     </>
                   ) : pectinPreview.ok && "multiPlan" in pectinPreview && pectinPreview.multiPlan ? (
                     <>
@@ -1955,6 +2034,11 @@ export default function EdiblesClient() {
                         <div style={{ textAlign: "right" }}>100.00%</div>
                         <div style={{ textAlign: "right" }}>{pectinPreview.multiPlan.gramsByLine.total.toFixed(2)}</div>
                       </div>
+                      <PectinInfusedOilBlendPanel
+                        gramsCannabisOil={pectinPreview.multiPlan.gramsByLine.additives.reduce((a, b) => a + b, 0)}
+                        gramsMctCarrier={pectinPreview.multiPlan.gramsMctCarrier}
+                        gramsTotalInfusedOilBlend={pectinPreview.multiPlan.gramsTotalInfusedOilBlend}
+                      />
                     </>
                   ) : (
                     <div style={{ fontSize: 12, color: "#94a3b8" }}>
@@ -2032,19 +2116,31 @@ export default function EdiblesClient() {
                 )}
                 {pectinPreview.ok && "singlePlan" in pectinPreview && pectinPreview.singlePlan && (
                   <div style={{ fontSize: 12, color: "#86efac", marginBottom: 8, lineHeight: 1.5 }}>
-                    Preview — Part A: {pectinPreview.singlePlan.gramsPartAPectin.toFixed(2)} g · Additive (calc):{" "}
-                    {pectinPreview.singlePlan.gramsAdditive.toFixed(2)} g · Citric:{" "}
-                    {pectinPreview.singlePlan.gramsCitricSolution.toFixed(2)} g · Pieces after waste:{" "}
+                    Preview — Part A: {pectinPreview.singlePlan.gramsPartAPectin.toFixed(2)} g · Cannabis oil:{" "}
+                    {pectinPreview.singlePlan.gramsAdditive.toFixed(2)} g
+                    {pectinPreview.singlePlan.gramsMctCarrier > 0 ? (
+                      <>
+                        {" "}
+                        · MCT: {pectinPreview.singlePlan.gramsMctCarrier.toFixed(2)} g · Blend:{" "}
+                        {pectinPreview.singlePlan.gramsTotalInfusedOilBlend.toFixed(2)} g
+                      </>
+                    ) : null}{" "}
+                    · Citric: {pectinPreview.singlePlan.gramsCitricSolution.toFixed(2)} g · Pieces after waste:{" "}
                     {pectinPreview.singlePlan.piecesAfterLineWaste.toFixed(1)}
                   </div>
                 )}
                 {pectinPreview.ok && "multiPlan" in pectinPreview && pectinPreview.multiPlan && (
                   <div style={{ fontSize: 12, color: "#86efac", marginBottom: 8, lineHeight: 1.5 }}>
-                    Preview — Part A: {pectinPreview.multiPlan.gramsByLine.partAPectin.toFixed(2)} g · Additives (calc):{" "}
-                    {pectinPreview.multiPlan.gramsByLine.additives
-                      .map((x) => x.toFixed(2))
-                      .join(", ")}{" "}
-                    g · Citric: {pectinPreview.multiPlan.gramsByLine.citric.toFixed(2)} g · Pieces after waste:{" "}
+                    Preview — Part A: {pectinPreview.multiPlan.gramsByLine.partAPectin.toFixed(2)} g · Cannabis oil:{" "}
+                    {pectinPreview.multiPlan.gramsByLine.additives.reduce((a, b) => a + b, 0).toFixed(2)} g
+                    {pectinPreview.multiPlan.gramsMctCarrier > 0 ? (
+                      <>
+                        {" "}
+                        · MCT: {pectinPreview.multiPlan.gramsMctCarrier.toFixed(2)} g · Blend:{" "}
+                        {pectinPreview.multiPlan.gramsTotalInfusedOilBlend.toFixed(2)} g
+                      </>
+                    ) : null}{" "}
+                    · Citric: {pectinPreview.multiPlan.gramsByLine.citric.toFixed(2)} g · Pieces after waste:{" "}
                     {pectinPreview.multiPlan.piecesAfterLineWaste.toFixed(1)}
                   </div>
                 )}
