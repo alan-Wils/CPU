@@ -798,6 +798,40 @@ function CultivationScheduleTemplatesCard({
   );
 }
 
+function configSaveErrorDetailFromBody(body: unknown): string | null {
+  if (typeof body === "string") {
+    const t = body.trim();
+    return t ? t.slice(0, 400) : null;
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const obj = body as Record<string, unknown>;
+  for (const key of ["message", "error", "details"] as const) {
+    const v = obj[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+async function formatConfigSaveFailureMessage(res: Response): Promise<string> {
+  const statusPart = `${res.status}${res.statusText ? ` ${res.statusText}` : ""}`.trim();
+  let body: unknown = null;
+  try {
+    const text = await res.text();
+    if (text.trim()) {
+      try {
+        body = JSON.parse(text) as unknown;
+      } catch {
+        body = text;
+      }
+    }
+  } catch {
+    /* ignore body read errors */
+  }
+  const detail = configSaveErrorDetailFromBody(body);
+  if (detail) return `Could not save config: ${statusPart} — ${detail}`;
+  return `Could not save config: ${statusPart}`;
+}
+
 export default function ConfigPage() {
   const pathname = usePathname();
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
@@ -1113,7 +1147,7 @@ export default function ConfigPage() {
       if (companyId) {
         headers["X-Company-Id"] = companyId;
       }
-      const path = appendCompanyIdQuery("/api/config/full", companyId);
+      const savePath = appendCompanyIdQuery("/api/config", companyId);
       const payload = {
         ...config,
         sales: {
@@ -1132,14 +1166,21 @@ export default function ConfigPage() {
           ),
         },
       };
-      const res = await fetch(`${API_BASE_URL}${path}`, {
+      const res = await fetch(`${API_BASE_URL}${savePath}`, {
         method: "PUT",
         headers,
         body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
-        throw new Error("Could not save config");
+        const message = await formatConfigSaveFailureMessage(res);
+        console.error("[config] PUT save failed", {
+          status: res.status,
+          statusText: res.statusText,
+          path: savePath,
+          message,
+        });
+        throw new Error(message);
       }
 
       const data = await res.json();
@@ -1240,8 +1281,12 @@ export default function ConfigPage() {
         console.error("Cultivation schedule template sync failed:", e);
       });
     } catch (error) {
-      console.error(error);
-      alert("Could not save config");
+      console.error("[config] saveConfig error", error);
+      const message =
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : "Could not save config";
+      alert(message);
     } finally {
       setSaving(false);
     }
