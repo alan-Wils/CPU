@@ -15,8 +15,6 @@ export type TopBrandStripProps = {
   companyLogoMaxWidthPx?: number;
   nexbatchHeight?: number;
   linkNexbatchToHome?: boolean;
-  /** Purple/teal glow pulse on the NexBatch logo (login page). */
-  nexbatchLoginGlow?: boolean;
   /**
    * When true, removes the default bottom margin so a sibling (e.g. login slogan) can control spacing precisely.
    */
@@ -34,7 +32,6 @@ export default function TopBrandStrip({
   /** NexBatch wordmark height (px); company logo size is controlled only by `companyLogoMaxHeightPx`. */
   nexbatchHeight = 186,
   linkNexbatchToHome = true,
-  nexbatchLoginGlow = false,
   trimBottomSpacing = false,
 }: TopBrandStripProps) {
   const raw = (companyLogoConfiguredUrl || "").trim();
@@ -92,7 +89,6 @@ export default function TopBrandStrip({
         height={nexbatchHeight}
         maxWidth={Math.min(920, Math.round(nexbatchHeight * 6.2))}
         linkToHome={linkNexbatchToHome}
-        loginGlow={nexbatchLoginGlow}
       />
     </div>
   );

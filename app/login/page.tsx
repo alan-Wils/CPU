@@ -185,7 +185,6 @@ export default function LoginPage() {
           apiBaseUrl={API_BASE_URL}
           linkNexbatchToHome={false}
           nexbatchHeight={234}
-          nexbatchLoginGlow
         />
       </div>
       <div

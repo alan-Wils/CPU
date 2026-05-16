@@ -13,7 +13,7 @@ type BrandLogoProps = {
    * so it scales down inside narrow parents (e.g. login form) while staying large on wide screens.
    */
   fitWithinParent?: boolean;
-  /** Adds class on the root link for login-page CSS glow (see `globals.css`). */
+  /** Purple/teal pulse glow (see `globals.css`). Set false to disable. */
   loginGlow?: boolean;
 };
 
@@ -22,7 +22,7 @@ export default function BrandLogo({
   height = 44,
   maxWidth: maxWidthProp,
   fitWithinParent = false,
-  loginGlow = false,
+  loginGlow = true,
 }: BrandLogoProps) {
   const maxWidth = maxWidthProp ?? Math.min(520, Math.round(height * 5.5));
   const img = fitWithinParent ? (
