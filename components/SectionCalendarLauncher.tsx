@@ -95,6 +95,36 @@ const dayPanelStyle: CSSProperties = {
   boxShadow: "0 24px 64px rgba(0,0,0,0.65)",
 };
 
+/** Above day panel (z 10000) when confirming delete. */
+const deleteConfirmOverlayStyle: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(2, 6, 23, 0.88)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 10001,
+  padding: 20,
+};
+
+const deleteConfirmCardStyle: CSSProperties = {
+  background: "#0f172a",
+  color: "#e2e8f0",
+  border: "1px solid rgba(248, 113, 113, 0.45)",
+  borderRadius: 14,
+  padding: 18,
+  width: "100%",
+  maxWidth: 400,
+  boxShadow: "0 24px 64px rgba(0,0,0,0.65), 0 0 28px rgba(56, 189, 248, 0.1)",
+};
+
+const dangerButtonStyle: CSSProperties = {
+  ...buttonStyle,
+  borderColor: "#b91c1c",
+  background: "rgba(127, 29, 29, 0.35)",
+  color: "#fecaca",
+};
+
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function ymdWeekdaySun0(ymd: string): number {
@@ -164,6 +194,7 @@ export default function SectionCalendarLauncher({
   const [dayPanelYmd, setDayPanelYmd] = useState<string | null>(null);
   /** Expanded batch card in "This month" list (groupKey from `groupMonthEventsIntoBatchCards`). */
   const [expandedMonthBatchGroupKey, setExpandedMonthBatchGroupKey] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null);
 
   const suggestions = useMemo(() => dedupeTasks(taskSuggestions), [taskSuggestions]);
 
@@ -317,9 +348,19 @@ export default function SectionCalendarLauncher({
     }
   }
 
-  async function onDelete(id: string) {
+  function requestDelete(ev: SectionCalendarEventDto) {
     if (readOnly) return;
-    if (!window.confirm("Remove this scheduled item?")) return;
+    setPendingDelete({ id: ev.id, title: ev.title });
+  }
+
+  function cancelPendingDelete() {
+    setPendingDelete(null);
+  }
+
+  async function confirmPendingDelete() {
+    if (!pendingDelete || readOnly) return;
+    const id = pendingDelete.id;
+    setPendingDelete(null);
     setLoading(true);
     setError(null);
     try {
@@ -597,7 +638,7 @@ export default function SectionCalendarLauncher({
                               <button
                                 type="button"
                                 style={{ ...buttonStyle, borderColor: "#b91c1c", color: "#fecaca" }}
-                                onClick={() => void onDelete(ev.id)}
+                                onClick={() => requestDelete(ev)}
                               >
                                 Delete
                               </button>
@@ -831,7 +872,7 @@ export default function SectionCalendarLauncher({
                                           style={{ ...buttonStyle, borderColor: "#b91c1c", color: "#fecaca" }}
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            void onDelete(ev.id);
+                                            requestDelete(ev);
                                           }}
                                         >
                                           Delete
@@ -851,6 +892,46 @@ export default function SectionCalendarLauncher({
               </div>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {pendingDelete ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="schedule-delete-confirm-title"
+          style={deleteConfirmOverlayStyle}
+          onClick={cancelPendingDelete}
+        >
+          <motion.div
+            style={deleteConfirmCardStyle}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              id="schedule-delete-confirm-title"
+              style={{ margin: "0 0 8px", fontSize: 18, fontWeight: 800, color: "#fca5a5" }}
+            >
+              Remove scheduled item?
+            </h3>
+            <p style={{ margin: "0 0 16px", color: "#cbd5e1", fontSize: 14, lineHeight: 1.5 }}>
+              <span style={{ fontWeight: 800, color: "#f1f5f9" }}>{pendingDelete.title}</span>
+              {" "}
+              will be removed from the schedule. This cannot be undone.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+              <button type="button" style={buttonStyle} onClick={cancelPendingDelete} disabled={loading}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                style={dangerButtonStyle}
+                disabled={loading}
+                onClick={() => void confirmPendingDelete()}
+              >
+                {loading ? "Removing…" : "Remove"}
+              </button>
+            </div>
+          </motion.div>
         </div>
       ) : null}
     </>
