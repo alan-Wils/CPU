@@ -1987,8 +1987,11 @@ export default function EdiblesClient() {
                         <div style={{ textAlign: "right" }}>{pectinPreview.singlePlan.gramsTotalCheck.toFixed(2)}</div>
                       </div>
                       <PectinMctDosingSummary
-                        gramsCannabisOil={pectinPreview.singlePlan.gramsAdditive}
+                        gramsPartA={pectinPreview.singlePlan.gramsPartAPectin}
                         gramsMctCarrier={pectinPreview.singlePlan.gramsMctCarrier}
+                        finalDosingBatchGrams={pectinPreview.singlePlan.finalDosingBatchGrams}
+                        nominalPieces={pectinPreview.singlePlan.nominalPieces}
+                        gramsCannabisOil={pectinPreview.singlePlan.gramsAdditive}
                         gramsTotalInfusedOilBlend={pectinPreview.singlePlan.gramsTotalInfusedOilBlend}
                       />
                     </>
@@ -2086,8 +2089,11 @@ export default function EdiblesClient() {
                         <div style={{ textAlign: "right" }}>{pectinPreview.multiPlan.gramsByLine.total.toFixed(2)}</div>
                       </div>
                       <PectinMctDosingSummary
-                        gramsCannabisOil={pectinPreview.multiPlan.gramsByLine.additives.reduce((a, b) => a + b, 0)}
+                        gramsPartA={pectinPreview.multiPlan.gramsByLine.partAPectin}
                         gramsMctCarrier={pectinPreview.multiPlan.gramsMctCarrier}
+                        finalDosingBatchGrams={pectinPreview.multiPlan.finalDosingBatchGrams}
+                        nominalPieces={pectinPreview.multiPlan.nominalPieces}
+                        gramsCannabisOil={pectinPreview.multiPlan.gramsByLine.additives.reduce((a, b) => a + b, 0)}
                         gramsTotalInfusedOilBlend={pectinPreview.multiPlan.gramsTotalInfusedOilBlend}
                       />
                     </>
