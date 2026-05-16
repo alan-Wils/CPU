@@ -684,11 +684,12 @@ export default function EdiblesClient() {
     let targetPiecesInt: number;
     if (cProduct === "Gummies") {
       if (gummyBatchDrive === "partA") {
-        if (!gummyFormulaSizing.ok) {
-          setError(gummyFormulaSizing.error);
+        const sizing: GummyFormulaSizingResult = gummyFormulaSizing;
+        if (sizing.ok === false) {
+          setError(sizing.error);
           return;
         }
-        targetPiecesInt = Math.max(1, Math.floor(gummyFormulaSizing.nominalPiecesDisplay));
+        targetPiecesInt = Math.max(1, Math.floor(sizing.nominalPiecesDisplay));
       } else {
         targetPiecesInt = Math.floor(Number(cPieces));
       }
