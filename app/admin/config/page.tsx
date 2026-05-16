@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type FormEvent,
+  type SetStateAction,
+} from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Nav from "@/components/Nav";
@@ -56,6 +64,7 @@ import {
   SCHEDULE_TEMPLATE_TASK_CUSTOM,
 } from "@/lib/cultivationScheduleTemplateStaticTasks";
 import { syncCultivationSectionScheduleTemplates } from "@/lib/sectionCalendarApi";
+import { registerLegacyOilIntake } from "@/lib/extractionApi";
 
 type Strain = {
   id: string;
@@ -897,6 +906,18 @@ export default function ConfigPage() {
     unit: "",
   });
 
+  const [legacyOilCultivationBatchId, setLegacyOilCultivationBatchId] = useState("");
+  const [legacyOilStrain, setLegacyOilStrain] = useState("");
+  const [legacyOilStrainAcronym, setLegacyOilStrainAcronym] = useState("");
+  const [legacyOilOutputG, setLegacyOilOutputG] = useState("");
+  const [legacyOilExternalRef, setLegacyOilExternalRef] = useState("");
+  const [legacyOilNotes, setLegacyOilNotes] = useState("");
+  const [legacyOilProductType, setLegacyOilProductType] = useState("Live Resin Oil (Legacy intake)");
+  const [legacyOilCategory, setLegacyOilCategory] = useState<"LIVE" | "CURED_WAX">("LIVE");
+  const [legacyOilBusy, setLegacyOilBusy] = useState(false);
+  const [legacyOilError, setLegacyOilError] = useState<string | null>(null);
+  const [legacyOilSuccess, setLegacyOilSuccess] = useState<string | null>(null);
+
   const [packagingSupplyForm, setPackagingSupplyForm] = useState({
     name: "",
     cost: "",
@@ -1465,6 +1486,62 @@ export default function ConfigPage() {
         supplies: prev[section].supplies.filter((s) => s.id !== id),
       },
     }));
+  }
+
+  async function submitLegacyOilIntakeFromConfig(e: FormEvent) {
+    e.preventDefault();
+    setLegacyOilError(null);
+    setLegacyOilSuccess(null);
+    const grams = Number(legacyOilOutputG);
+    if (!Number.isFinite(grams) || grams <= 0) {
+      setLegacyOilError("Output (grams) must be a positive number.");
+      return;
+    }
+    const cult = legacyOilCultivationBatchId.trim();
+    const strain = legacyOilStrain.trim();
+    if (!cult && !strain) {
+      setLegacyOilError("Enter a NexBatch cultivation batch id, or a strain name to create a minimal link batch.");
+      return;
+    }
+    setLegacyOilBusy(true);
+    try {
+      const payload: {
+        cultivationBatchId?: string;
+        strain?: string;
+        strainAcronym?: string;
+        outputGrams: number;
+        productType: string;
+        productCategory: "LIVE" | "CURED_WAX";
+        externalReference?: string;
+        notes?: string;
+      } = {
+        outputGrams: grams,
+        productType: legacyOilProductType.trim() || "Live Resin Oil (Legacy intake)",
+        productCategory: legacyOilCategory,
+      };
+      if (cult) {
+        payload.cultivationBatchId = cult;
+      } else {
+        payload.strain = strain;
+        if (legacyOilStrainAcronym.trim()) payload.strainAcronym = legacyOilStrainAcronym.trim();
+      }
+      if (legacyOilExternalRef.trim()) payload.externalReference = legacyOilExternalRef.trim();
+      if (legacyOilNotes.trim()) payload.notes = legacyOilNotes.trim();
+      const { extractionRun } = await registerLegacyOilIntake(payload);
+      setLegacyOilSuccess(
+        `Registered extraction run ${extractionRun?.id ?? ""}. It is available for extraction packaging and edibles oil lists (operators may need to refresh).`,
+      );
+      setLegacyOilOutputG("");
+      setLegacyOilCultivationBatchId("");
+      setLegacyOilStrain("");
+      setLegacyOilStrainAcronym("");
+      setLegacyOilExternalRef("");
+      setLegacyOilNotes("");
+    } catch (err) {
+      setLegacyOilError(err instanceof Error ? err.message : "Could not register legacy oil.");
+    } finally {
+      setLegacyOilBusy(false);
+    }
   }
 
   function addVegRoom() {
@@ -5421,6 +5498,124 @@ export default function ConfigPage() {
             ))
           )}
         </div>
+        </CollapsibleConfigSubsection>
+
+        <CollapsibleConfigSubsection
+          title="Legacy oil intake"
+          summaryCollapsed={
+            <span style={{ color: "#94a3b8" }}>Oil completed outside NexBatch → extraction run</span>
+          }
+        >
+        <details style={{ marginBottom: 4, color: "#94a3b8", fontSize: 12 }}>
+          <summary style={{ cursor: "pointer", color: "#cbd5e1", fontWeight: 600 }}>
+            When to use this
+          </summary>
+          <p style={{ margin: "6px 0 0", lineHeight: 1.45 }}>
+            Registers a <strong>completed</strong> oil amount as an extraction run so it appears in extraction packaging
+            and edibles oil pickers. Link to an existing NexBatch cultivation batch id, or enter a strain name to create a
+            minimal link batch.
+          </p>
+        </details>
+
+        <form onSubmit={(e) => void submitLegacyOilIntakeFromConfig(e)}>
+          <div style={styles.grid}>
+            <label style={styles.label}>
+              NexBatch cultivation batch id
+              <input
+                style={styles.input}
+                placeholder="e.g. cuid from cultivation batch"
+                value={legacyOilCultivationBatchId}
+                onChange={(e) => setLegacyOilCultivationBatchId(e.target.value)}
+                disabled={legacyOilBusy}
+              />
+            </label>
+            <label style={styles.label}>
+              Strain (if no batch id)
+              <input
+                style={styles.input}
+                placeholder="Strain name"
+                value={legacyOilStrain}
+                onChange={(e) => setLegacyOilStrain(e.target.value)}
+                disabled={legacyOilBusy}
+              />
+            </label>
+            <label style={styles.label}>
+              Strain acronym (optional)
+              <input
+                style={styles.input}
+                placeholder="e.g. GSC"
+                value={legacyOilStrainAcronym}
+                onChange={(e) => setLegacyOilStrainAcronym(e.target.value)}
+                disabled={legacyOilBusy}
+              />
+            </label>
+            <label style={styles.label}>
+              Output (grams)
+              <input
+                style={styles.input}
+                inputMode="decimal"
+                placeholder="e.g. 1250"
+                value={legacyOilOutputG}
+                onChange={(e) => setLegacyOilOutputG(e.target.value)}
+                disabled={legacyOilBusy}
+              />
+            </label>
+            <label style={styles.label}>
+              Product type label
+              <input
+                style={styles.input}
+                value={legacyOilProductType}
+                onChange={(e) => setLegacyOilProductType(e.target.value)}
+                disabled={legacyOilBusy}
+              />
+            </label>
+            <label style={styles.label}>
+              Product category
+              <select
+                style={styles.input}
+                value={legacyOilCategory}
+                onChange={(e) => setLegacyOilCategory(e.target.value as "LIVE" | "CURED_WAX")}
+                disabled={legacyOilBusy}
+              >
+                <option value="LIVE">Live</option>
+                <option value="CURED_WAX">Cured wax</option>
+              </select>
+            </label>
+            <label style={styles.label}>
+              External reference (optional)
+              <input
+                style={styles.input}
+                placeholder="PO, lab id, vendor lot…"
+                value={legacyOilExternalRef}
+                onChange={(e) => setLegacyOilExternalRef(e.target.value)}
+                disabled={legacyOilBusy}
+              />
+            </label>
+          </div>
+          <label style={{ ...styles.label, marginTop: 12 }}>
+            Notes (optional)
+            <textarea
+              style={styles.textarea}
+              rows={3}
+              value={legacyOilNotes}
+              onChange={(e) => setLegacyOilNotes(e.target.value)}
+              disabled={legacyOilBusy}
+            />
+          </label>
+
+          {legacyOilError ? (
+            <p style={{ color: "#fca5a5", fontSize: 14, marginTop: 12, marginBottom: 0 }}>{legacyOilError}</p>
+          ) : null}
+          {legacyOilSuccess ? (
+            <p style={{ color: "#86efac", fontSize: 14, marginTop: 12, marginBottom: 0 }}>{legacyOilSuccess}</p>
+          ) : null}
+
+          <div style={{ ...styles.inline, marginTop: 14 }}>
+            <button type="submit" style={styles.saveButton} disabled={legacyOilBusy}>
+              {legacyOilBusy ? "Registering…" : "Register legacy oil run"}
+            </button>
+          </div>
+        </form>
         </CollapsibleConfigSubsection>
 
         <CollapsibleConfigSubsection
