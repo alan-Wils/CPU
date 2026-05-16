@@ -275,6 +275,25 @@ export const cultivationUpdateSchema = z.object({
     /** Serialized cultivation page state (tasks, METRC fields, stage labels, etc.). */
     cultivationUiState: z.union([jsonRecordSchema, z.null()]).optional()
 });
+
+const motherPlantRowSchema = z.object({
+    id: z.string().min(1).max(80),
+    strain: z.string().min(1).max(120),
+    acronym: z.string().max(40).optional(),
+    tag: z.string().max(80).optional(),
+    notes: z.string().max(2000).optional(),
+    location: z.string().max(200).optional(),
+    status: z.enum(["active", "retired"]),
+    sourceBatchId: z.string().min(1).max(80),
+    sourceStage: z.enum(["Clones", "Veg"]),
+    promotedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    createdAt: z.string().min(1).max(40),
+    updatedAt: z.string().min(1).max(40),
+});
+
+export const cultivationMotherPlantsPutSchema = z.object({
+    motherPlants: z.array(motherPlantRowSchema).max(5000),
+});
 export const checkUploadSchema = z.object({
     fileName: z.string().min(1).max(200).optional(),
     mimeType: z.enum(["image/jpeg", "image/jpg", "image/png", "image/webp"]),
@@ -671,4 +690,17 @@ export const conversationIdParamSchema = z.object({
 export const conversationMessageParamSchema = z.object({
     conversationId: z.string().cuid(),
     messageId: z.string().cuid(),
+});
+
+const usageProviderEnum = z.enum(["vercel", "railway", "neon", "resend", "cloudflare_r2", "ai"]);
+
+/** NexBatch portal — manual vendor MTD total when vendor APIs do not return invoice USD (e.g. Neon console). */
+export const vendorBillingManualOverrideSchema = z.object({
+    provider: usageProviderEnum,
+    /** Defaults to current UTC month (YYYY-MM). */
+    month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+    totalCostUsd: z.coerce.number().finite().min(0),
+    billingPeriodStart: z.string().datetime().optional(),
+    billingPeriodEnd: z.string().datetime().optional(),
+    rawUsageJson: z.record(z.string(), z.unknown()).optional(),
 });

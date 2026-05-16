@@ -23,3 +23,14 @@ export async function deleteCultivationBatch(batchId: string) {
     method: "DELETE",
   });
 }
+
+export async function loadMotherPlants(): Promise<{ motherPlants: unknown[] }> {
+  return apiRequest("/api/cultivation/mothers");
+}
+
+export async function saveMotherPlants(motherPlants: unknown[]) {
+  return apiRequest("/api/cultivation/mothers", {
+    method: "PUT",
+    body: { motherPlants },
+  });
+}

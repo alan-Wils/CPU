@@ -19,6 +19,9 @@ export const TASK_MOVE_TO_VEG = "Move to Veg";
 /** Veg → Flower transition (calendar anchor for flower-stage schedule templates). */
 export const TASK_MOVE_TO_FLOWER = "Move to Flower";
 
+/** Clone or Veg → company mother plant inventory. */
+export const TASK_PROMOTE_TO_MOTHER = "Promote to Mother";
+
 /** Legacy task name kept for log matching and backwards compatibility. */
 export const LEGACY_TASK_CLONE_TO_VEG = "Clone → Veg";
 

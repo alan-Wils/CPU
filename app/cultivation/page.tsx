@@ -32,7 +32,10 @@ import {
   createCultivationBatch,
   updateCultivationBatch,
   deleteCultivationBatch,
+  loadMotherPlants,
+  saveMotherPlants,
 } from "@/lib/cultivationApi";
+import { invalidateCompanyConfigClientCache } from "@/lib/configClient";
 import { resolveAbsorbedPlantsAndStageForUncombine } from "@/lib/cultivationMergeHelpers";
 import { apiRequest, API_BASE_URL } from "@/lib/api";
 import { fetchCachedCompanyConfig } from "@/lib/configClient";
@@ -103,7 +106,20 @@ import {
   TASK_CREATE_IMMATURE_PLANT_BATCH,
   TASK_MOVE_TO_VEG,
   TASK_MOVE_TO_VEG_ASSIGN_TAGS,
+  TASK_PROMOTE_TO_MOTHER,
 } from "@/lib/cultivationMetrcWorkflow";
+import {
+  applyPromotionToSourceBatch,
+  batchHasAssignedPlantTags,
+  buildMotherPlantsForPromotion,
+  countActiveMothers,
+  filterActiveMothers,
+  normalizeMotherPlants,
+  readPlantTagStrings,
+  validateUniqueMotherTags,
+  type MotherPlant,
+  type MotherPlantSourceStage,
+} from "@/lib/cultivationMotherPlants";
 
 /** `PREFIX-scopeId-1`, `-2`, … smallest positive integer not already used on any scanned row. */
 function nextSeriesBatchId(
@@ -417,6 +433,7 @@ const defaultCloneTasksWithMetrc = [
   "Combine Batches",
   TASK_CREATE_IMMATURE_PLANT_BATCH,
   TASK_MOVE_TO_VEG_ASSIGN_TAGS,
+  TASK_PROMOTE_TO_MOTHER,
 ];
 
 /** Clone tasks when METRC API integration is off — direct veg transition, no immature/tag workflow. */
@@ -427,6 +444,7 @@ const defaultCloneTasksNoMetrc = [
   "Fill Pots",
   "Combine Batches",
   TASK_MOVE_TO_VEG,
+  TASK_PROMOTE_TO_MOTHER,
 ];
 
 const defaultVegTasks = [
@@ -436,6 +454,7 @@ const defaultVegTasks = [
   "IPM",
   "Combine Batches",
   "Move to Flower",
+  TASK_PROMOTE_TO_MOTHER,
 ];
 
 const defaultFlowerTasks = [
@@ -1026,6 +1045,23 @@ export default function Cultivation() {
   const [showDryTaskWindow, setShowDryTaskWindow] = useState(false);
   const [showAddTaskWindow, setShowAddTaskWindow] = useState(false);
   const [selectedStage, setSelectedStage] = useState<StageModalKey>(null);
+  const [showMomsModal, setShowMomsModal] = useState(false);
+  const [motherPlants, setMotherPlants] = useState<MotherPlant[]>([]);
+  const [momsModalBusy, setMomsModalBusy] = useState(false);
+  const [momsShowRetired, setMomsShowRetired] = useState(false);
+  const [momsEditPlant, setMomsEditPlant] = useState<MotherPlant | null>(null);
+  const [momsEditStrain, setMomsEditStrain] = useState("");
+  const [momsEditTag, setMomsEditTag] = useState("");
+  const [momsEditLocation, setMomsEditLocation] = useState("");
+  const [momsEditNotes, setMomsEditNotes] = useState("");
+  /** Moms modal: null = list; "stage" | "batch" | "form" = add-mothers wizard. */
+  const [momsAddStep, setMomsAddStep] = useState<null | "stage" | "batch" | "form">(null);
+  const [momsAddSourceStage, setMomsAddSourceStage] = useState<MotherPlantSourceStage | null>(null);
+  const [momsAddBatchId, setMomsAddBatchId] = useState("");
+  const [momPromoteStartingTag, setMomPromoteStartingTag] = useState("");
+  const [momPromoteSelectedTags, setMomPromoteSelectedTags] = useState<string[]>([]);
+  const [momPromoteLocation, setMomPromoteLocation] = useState("");
+  const [momPromoteNotes, setMomPromoteNotes] = useState("");
   /** Veg/Flower stage modal: null = room picker when multiple rooms; otherwise selected room id or unassigned sentinel. */
   const [stageModalRoomId, setStageModalRoomId] = useState<string | null>(null);
   /** Veg/Flower room detail: collapsed bay cards; expand one bay to see table rows, then expand a table to see batch cards. */
@@ -1451,6 +1487,15 @@ export default function Cultivation() {
           );
         }
 
+        try {
+          const momsRes = await loadMotherPlants();
+          if (mounted && pollGen === cultivationPollGenRef.current) {
+            setMotherPlants(normalizeMotherPlants(momsRes?.motherPlants));
+          }
+        } catch (momsErr) {
+          console.error("Could not load mother plants:", momsErr);
+        }
+
         setSelectedBatch((current: any) => {
           if (current?.id) {
             const stillExists =
@@ -1814,6 +1859,22 @@ export default function Cultivation() {
     Veg: sumConfiguredRoomTargets(cultivationRooms.vegRooms),
     Flower: sumConfiguredRoomTargets(cultivationRooms.flowerRooms),
   } as const;
+
+  const activeMotherCount = useMemo(() => countActiveMothers(motherPlants), [motherPlants]);
+
+  const momsModalList = useMemo(() => {
+    return momsShowRetired ? motherPlants : filterActiveMothers(motherPlants);
+  }, [motherPlants, momsShowRetired]);
+
+  const momsAddBatchOptions = useMemo(() => {
+    if (!momsAddSourceStage) return [];
+    return activeBatchesByStage[momsAddSourceStage].filter((b: any) => num(b?.plants) > 0);
+  }, [momsAddSourceStage, activeBatchesByStage, refresh]);
+
+  const momsAddSelectedBatch = useMemo(() => {
+    if (!momsAddBatchId.trim()) return null;
+    return (s.cultivationBatches || []).find((b: any) => b?.id === momsAddBatchId) || null;
+  }, [momsAddBatchId, refresh]);
   const selectedStageRoomTargetSum =
     selectedStage === "Veg"
       ? stagePlantTargetTotals.Veg
@@ -2057,6 +2118,269 @@ export default function Cultivation() {
     setRefresh((n) => n + 1);
   }
 
+  function resetMomsAddWizard() {
+    setMomsAddStep(null);
+    setMomsAddSourceStage(null);
+    setMomsAddBatchId("");
+    setMomPromoteStartingTag("");
+    setMomPromoteSelectedTags([]);
+    setMomPromoteLocation("");
+    setMomPromoteNotes("");
+    setOutput("");
+  }
+
+  function openMomsModal() {
+    setShowMomsModal(true);
+    resetMomsAddWizard();
+    setMomsEditPlant(null);
+  }
+
+  function closeMomsModal() {
+    setShowMomsModal(false);
+    resetMomsAddWizard();
+    setMomsEditPlant(null);
+  }
+
+  type PromoteToMotherLab = {
+    peopleStr: string;
+    minutesStr: string;
+    totalLaborMinutes: number;
+    laborDetail: Record<string, unknown>;
+    outputSuffix: string;
+  };
+
+  async function commitPromoteToMotherFlow(input: {
+    sourceBatch: any;
+    sourceStage: MotherPlantSourceStage;
+    plantCount?: number;
+    selectedTags?: string[];
+    startingTag?: string;
+    promotedAt: string;
+    location?: string;
+    notes?: string;
+    lab?: PromoteToMotherLab | null;
+    closeTaskWindow?: boolean;
+  }): Promise<boolean> {
+    const source = s.cultivationBatches.find((b: any) => b?.id === input.sourceBatch?.id) || input.sourceBatch;
+    if (!source?.id) {
+      showNotice("Batch missing", "Source batch is no longer active — refresh and try again.");
+      return false;
+    }
+
+    const built = buildMotherPlantsForPromotion({
+      sourceBatch: source,
+      sourceStage: input.sourceStage,
+      plantCount: input.plantCount,
+      selectedTags: input.selectedTags,
+      startingTag: input.startingTag,
+      promotedAt: input.promotedAt,
+      location: input.location,
+      notes: input.notes,
+    });
+    if (!built.ok) {
+      showNotice("Cannot promote", built.error);
+      return false;
+    }
+
+    const newTags = built.mothers.map((m) => m.tag || "").filter(Boolean);
+    const tagCheck = validateUniqueMotherTags(motherPlants, newTags);
+    if (!tagCheck.ok) {
+      showNotice("Tag conflict", tagCheck.error);
+      return false;
+    }
+
+    const promotedCount = built.mothers.length;
+    const promotedTagList = built.mothers.map((m) => m.tag || "").filter(Boolean);
+    const batchSnapshot = JSON.parse(JSON.stringify(source));
+
+    applyPromotionToSourceBatch(source, promotedCount, promotedTagList);
+    if (input.sourceStage === "Clones") {
+      syncClonePlantsFromImmature(source);
+    }
+
+    const batchSynced = await saveRealCultivationBatch(source);
+    if (!batchSynced) {
+      Object.assign(source, batchSnapshot);
+      showNotice("Save failed", "Could not update the source batch on the server.");
+      return false;
+    }
+
+    const nextMothers = [...motherPlants, ...built.mothers];
+    try {
+      await saveMotherPlants(nextMothers);
+      invalidateCompanyConfigClientCache();
+      setMotherPlants(normalizeMotherPlants(nextMothers));
+    } catch (err) {
+      console.error(err);
+      Object.assign(source, batchSnapshot);
+      await saveRealCultivationBatch(source);
+      showNotice(
+        "Mother inventory failed",
+        "The batch was reverted because mother plants could not be saved. Try again.",
+      );
+      return false;
+    }
+
+    const lab = input.lab;
+    if (lab) {
+      const tagSummary =
+        promotedTagList.length > 0
+          ? promotedTagList.join(", ")
+          : `${promotedCount} plant${promotedCount === 1 ? "" : "s"}`;
+      const logEventTimeIso = logTimeIsoForStageMoveDate(input.promotedAt);
+      s.logs.unshift(
+        withLoggedBy({
+          area: "Cultivation",
+          batch: source.id,
+          task: TASK_PROMOTE_TO_MOTHER,
+          people: lab.peopleStr,
+          minutes: lab.minutesStr,
+          totalLaborMinutes: lab.totalLaborMinutes,
+          output: `${promotedCount} → mother | ${tagSummary}${lab.outputSuffix}`,
+          time: logEventTimeIso,
+          data: {
+            stageMoveDate: input.promotedAt,
+            promotedToMotherCount: promotedCount,
+            motherPlantIds: built.mothers.map((m) => m.id),
+            ...lab.laborDetail,
+            totalLaborMinutes: lab.totalLaborMinutes,
+          },
+        }),
+      );
+      try {
+        await createLog(s.logs[0]);
+      } catch (e) {
+        console.error("Could not sync promote-to-mother log:", e);
+      }
+    }
+
+    persistStore();
+    forceRefresh();
+    if (input.closeTaskWindow) {
+      setShowTaskWindow(false);
+      setPeople("");
+      setMinutes("");
+      setOutput("");
+      setMomPromoteSelectedTags([]);
+      setMomPromoteStartingTag("");
+      setMomPromoteLocation("");
+      setMomPromoteNotes("");
+    }
+    resetMomsAddWizard();
+    showNotice(
+      "Promoted to mothers",
+      `${promotedCount} plant${promotedCount === 1 ? "" : "s"} added to the mother inventory.`,
+    );
+    return true;
+  }
+
+  async function saveMotherPlantsList(next: MotherPlant[]): Promise<boolean> {
+    try {
+      await saveMotherPlants(next);
+      invalidateCompanyConfigClientCache();
+      setMotherPlants(normalizeMotherPlants(next));
+      return true;
+    } catch (err) {
+      console.error(err);
+      showNotice("Save failed", "Mother plants could not be saved to the server.");
+      return false;
+    }
+  }
+
+  async function handleMomsPromoteFromModal() {
+    if (!canWriteRecords) {
+      showReadOnlyNotice();
+      return;
+    }
+    if (!momsAddSourceStage || !momsAddSelectedBatch) {
+      showNotice("Select batch", "Choose a Clone or Veg batch to promote from.");
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(stageMoveDate.trim())) {
+      showNotice("Date invalid", "Pick a valid promoted date (YYYY-MM-DD).");
+      return;
+    }
+    setMomsModalBusy(true);
+    try {
+      const tagged = batchHasAssignedPlantTags(momsAddSelectedBatch);
+      await commitPromoteToMotherFlow({
+        sourceBatch: momsAddSelectedBatch,
+        sourceStage: momsAddSourceStage,
+        plantCount: tagged ? undefined : Number(output),
+        selectedTags: momPromoteSelectedTags.length > 0 ? [...momPromoteSelectedTags] : undefined,
+        startingTag: momPromoteStartingTag.trim() || undefined,
+        promotedAt: stageMoveDate.trim(),
+        location: momPromoteLocation.trim() || undefined,
+        notes: momPromoteNotes.trim() || undefined,
+        lab: null,
+        closeTaskWindow: false,
+      });
+    } finally {
+      setMomsModalBusy(false);
+    }
+  }
+
+  async function handleMomsSaveEdit() {
+    if (!momsEditPlant || !canWriteRecords) return;
+    const strain = momsEditStrain.trim();
+    if (!strain) {
+      showNotice("Strain required", "Enter a strain name for this mother plant.");
+      return;
+    }
+    const tag = momsEditTag.trim();
+    const others = motherPlants.filter((p) => p.id !== momsEditPlant.id);
+    if (tag) {
+      const tagCheck = validateUniqueMotherTags(others, [tag]);
+      if (!tagCheck.ok) {
+        showNotice("Tag conflict", tagCheck.error);
+        return;
+      }
+    }
+    const now = new Date().toISOString();
+    const updated: MotherPlant = {
+      ...momsEditPlant,
+      strain,
+      tag: tag || undefined,
+      location: momsEditLocation.trim() || undefined,
+      notes: momsEditNotes.trim() || undefined,
+      updatedAt: now,
+    };
+    setMomsModalBusy(true);
+    try {
+      const next = motherPlants.map((p) => (p.id === updated.id ? updated : p));
+      const ok = await saveMotherPlantsList(next);
+      if (ok) setMomsEditPlant(null);
+    } finally {
+      setMomsModalBusy(false);
+    }
+  }
+
+  async function handleMomsRetire(plant: MotherPlant) {
+    if (!canWriteRecords) {
+      showReadOnlyNotice();
+      return;
+    }
+    const now = new Date().toISOString();
+    const next = motherPlants.map((p) =>
+      p.id === plant.id ? { ...p, status: "retired" as const, updatedAt: now } : p,
+    );
+    setMomsModalBusy(true);
+    try {
+      await saveMotherPlantsList(next);
+    } finally {
+      setMomsModalBusy(false);
+    }
+  }
+
+  function openMomsEdit(plant: MotherPlant) {
+    setMomsEditPlant(plant);
+    setMomsEditStrain(plant.strain);
+    setMomsEditTag(plant.tag || "");
+    setMomsEditLocation(plant.location || "");
+    setMomsEditNotes(plant.notes || "");
+    setMomsAddStep(null);
+  }
+
   async function saveRealCultivationBatch(batch: any): Promise<boolean> {
     if (!batch?.id || !canWriteRecords) return false;
 
@@ -2230,7 +2554,8 @@ export default function Cultivation() {
     if (!selectedBatch) return true;
 
     const taskLabel = selectedTask ?? "";
-    const needsMoveDate = taskLabel === "Move to Flower" || isAnyMoveToVegTask(taskLabel);
+    const needsMoveDate =
+      taskLabel === "Move to Flower" || isAnyMoveToVegTask(taskLabel) || taskLabel === TASK_PROMOTE_TO_MOTHER;
     if (!needsMoveDate) return true;
 
     const md = stageMoveDate.trim();
@@ -6816,6 +7141,24 @@ export default function Cultivation() {
       }
     }
 
+    if (selectedTask === TASK_PROMOTE_TO_MOTHER) {
+      const bucket = stageBucketFromBatchStage(selectedBatch?.stage);
+      if (bucket !== "Clones" && bucket !== "Veg") {
+        showNotice("Invalid stage", "Promote to Mother is only available for Clone and Veg batches.");
+        setIsSavingTask(false);
+        return;
+      }
+      taskRequiredFields.push({ label: "Promoted date", value: stageMoveDate.trim() });
+      if (batchHasAssignedPlantTags(selectedBatch)) {
+        taskRequiredFields.push({
+          label: "METRC tag(s) to promote",
+          value: momPromoteSelectedTags.length > 0 ? momPromoteSelectedTags.join(",") : "",
+        });
+      } else {
+        taskRequiredFields.push({ label: "Plants to promote", value: output, positive: true });
+      }
+    }
+
     if (selectedTask === "Move to Flower") {
       taskRequiredFields.push(
         { label: "Plants Moved to Flower", value: output, positive: true },
@@ -6850,10 +7193,11 @@ export default function Cultivation() {
     if (
       (selectedTask === TASK_MOVE_TO_VEG_ASSIGN_TAGS ||
         selectedTask === TASK_MOVE_TO_VEG ||
-        selectedTask === "Move to Flower") &&
+        selectedTask === "Move to Flower" ||
+        selectedTask === TASK_PROMOTE_TO_MOTHER) &&
       !/^\d{4}-\d{2}-\d{2}$/.test(stageMoveDate.trim())
     ) {
-      showNotice("Move date invalid", "Pick a calendar date for when this batch actually moved.");
+      showNotice("Date invalid", "Pick a valid calendar date (YYYY-MM-DD).");
       setIsSavingTask(false);
       return;
     }
@@ -6924,6 +7268,28 @@ export default function Cultivation() {
         challengeWait = st === "challenge-wait";
       } finally {
         if (!challengeWait) setIsSavingTask(false);
+      }
+      return;
+    }
+
+    if (selectedTask === TASK_PROMOTE_TO_MOTHER) {
+      const bucket = stageBucketFromBatchStage(selectedBatch.stage) as MotherPlantSourceStage;
+      try {
+        const count = batchHasAssignedPlantTags(selectedBatch) ? undefined : Number(output);
+        await commitPromoteToMotherFlow({
+          sourceBatch: selectedBatch,
+          sourceStage: bucket,
+          plantCount: count,
+          selectedTags: momPromoteSelectedTags.length > 0 ? [...momPromoteSelectedTags] : undefined,
+          startingTag: momPromoteStartingTag.trim() || undefined,
+          promotedAt: stageMoveDate.trim(),
+          location: momPromoteLocation.trim() || undefined,
+          notes: momPromoteNotes.trim() || undefined,
+          lab,
+          closeTaskWindow: true,
+        });
+      } finally {
+        setIsSavingTask(false);
       }
       return;
     }
@@ -7366,6 +7732,38 @@ export default function Cultivation() {
     marginTop: 10,
   } as const;
 
+  const activeStageThreeColStyle = {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: 12,
+    marginTop: 10,
+  } as const;
+
+  const momsButtonStyle = {
+    ...buttonStyle,
+    alignSelf: "flex-start",
+    padding: "6px 10px",
+    fontSize: 12,
+    fontWeight: 800,
+    minHeight: 0,
+    background: "#1e293b",
+    border: "1px solid #475569",
+    color: "#e2e8f0",
+  } as const;
+
+  const stageCardButtonStyle = {
+    ...buttonStyle,
+    width: "100%",
+    minHeight: 86,
+    textAlign: "left" as const,
+    display: "flex",
+    flexDirection: "column" as const,
+    justifyContent: "center",
+    gap: 4,
+    background: "#0f172a",
+    border: "1px solid #334155",
+  } as const;
+
   const stageModalRoomPlantTarget =
     cultivationStageModalRoomConfig &&
     typeof cultivationStageModalRoomConfig.targetPlantCount === "number" &&
@@ -7596,47 +7994,75 @@ export default function Cultivation() {
         </div>
 
         <section style={cardStyle}>
-          <h3 style={sectionTitleStyle}>Active Cultivation Batches</h3>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 10,
+              marginBottom: 8,
+            }}
+          >
+            <h3 style={{ ...sectionTitleStyle, margin: 0, flex: 1, textAlign: "center" }}>
+              Active Cultivation Batches
+            </h3>
+            {activeBatches.length === 0 ? (
+              <button type="button" style={momsButtonStyle} onClick={() => openMomsModal()}>
+                Moms ({activeMotherCount})
+              </button>
+            ) : null}
+          </div>
 
           {activeBatches.length === 0 ? (
             <p style={{ textAlign: "center", color: "#cbd5e1" }}>No active cultivation batches.</p>
           ) : (
-            <div style={stageCardsWrapStyle}>
-              {stageOrder.map((stageName) => (
-                <button
-                  key={stageName}
-                  style={{
-                    ...buttonStyle,
-                    width: "100%",
-                    minHeight: 86,
-                    textAlign: "left",
-                    display: "flex",
-                    flexDirection: "column",
-                    justifyContent: "center",
-                    gap: 4,
-                    background: "#0f172a",
-                    border: "1px solid #334155",
-                  }}
-                  onClick={() => setSelectedStage(stageName)}
-                >
-                  <span style={{ fontWeight: 900, fontSize: 16 }}>{stageName}</span>
-                  <span style={{ color: "#cbd5e1", fontWeight: 700 }}>
-                    {activeBatchesByStage[stageName].length} Batches
-                  </span>
-                  <span style={{ color: "#93c5fd", fontWeight: 700 }}>
-                    {stagePlantTotals[stageName].toLocaleString()} plant
-                    {stagePlantTotals[stageName] === 1 ? "" : "s"}
-                    {typeof stagePlantTargetTotals[stageName] === "number" ? (
-                      <>
-                        {" "}
-                        <span style={{ color: "#64748b" }}>/</span>{" "}
-                        {stagePlantTargetTotals[stageName]!.toLocaleString()}{" "}
-                        <span style={{ color: "#94a3b8", fontWeight: 600 }}>target</span>
-                      </>
-                    ) : null}
-                  </span>
-                </button>
-              ))}
+            <div style={activeStageThreeColStyle}>
+              {stageOrder.map((stageName) => {
+                const stageCard = (
+                  <button
+                    key={`${stageName}-card`}
+                    type="button"
+                    style={stageCardButtonStyle}
+                    onClick={() => setSelectedStage(stageName)}
+                  >
+                    <span style={{ fontWeight: 900, fontSize: 16 }}>{stageName}</span>
+                    <span style={{ color: "#cbd5e1", fontWeight: 700 }}>
+                      {activeBatchesByStage[stageName].length} Batches
+                    </span>
+                    <span style={{ color: "#93c5fd", fontWeight: 700 }}>
+                      {stagePlantTotals[stageName].toLocaleString()} plant
+                      {stagePlantTotals[stageName] === 1 ? "" : "s"}
+                      {typeof stagePlantTargetTotals[stageName] === "number" ? (
+                        <>
+                          {" "}
+                          <span style={{ color: "#64748b" }}>/</span>{" "}
+                          {stagePlantTargetTotals[stageName]!.toLocaleString()}{" "}
+                          <span style={{ color: "#94a3b8", fontWeight: 600 }}>target</span>
+                        </>
+                      ) : null}
+                    </span>
+                  </button>
+                );
+                if (stageName === "Clones") {
+                  return (
+                    <div
+                      key={stageName}
+                      style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}
+                    >
+                      <button type="button" style={momsButtonStyle} onClick={() => openMomsModal()}>
+                        Moms ({activeMotherCount})
+                      </button>
+                      {stageCard}
+                    </div>
+                  );
+                }
+                return (
+                  <div key={stageName} style={{ minWidth: 0 }}>
+                    {stageCard}
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
@@ -8101,6 +8527,313 @@ export default function Cultivation() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+
+      {showMomsModal && (
+        <div style={modalOverlayStyle}>
+          <div style={{ ...modalStyle, maxWidth: 720 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 10,
+                marginBottom: 8,
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                {momsAddStep ? (
+                  <button
+                    type="button"
+                    style={buttonStyle}
+                    onClick={() => {
+                      if (momsAddStep === "form") {
+                        setMomsAddStep("batch");
+                        setMomPromoteSelectedTags([]);
+                      } else if (momsAddStep === "batch") {
+                        setMomsAddStep("stage");
+                        setMomsAddBatchId("");
+                      } else {
+                        resetMomsAddWizard();
+                      }
+                    }}
+                  >
+                    ← Back
+                  </button>
+                ) : null}
+              </div>
+              <button type="button" style={buttonStyle} onClick={() => closeMomsModal()}>
+                Close
+              </button>
+            </div>
+
+            <h2 style={{ textAlign: "center", marginTop: 0 }}>
+              Mother Plants ({activeMotherCount} active)
+            </h2>
+
+            {momsEditPlant ? (
+              <div style={formStyle}>
+                <p style={{ textAlign: "center", color: "#cbd5e1", marginTop: 0 }}>
+                  Edit <b>{momsEditPlant.id}</b>
+                </p>
+                <input
+                  style={inputStyle}
+                  placeholder="Strain"
+                  value={momsEditStrain}
+                  onChange={(e) => setMomsEditStrain(e.target.value)}
+                />
+                <input
+                  style={inputStyle}
+                  placeholder="METRC tag (optional)"
+                  value={momsEditTag}
+                  onChange={(e) => setMomsEditTag(e.target.value)}
+                />
+                <input
+                  style={inputStyle}
+                  placeholder="Location (optional)"
+                  value={momsEditLocation}
+                  onChange={(e) => setMomsEditLocation(e.target.value)}
+                />
+                <textarea
+                  style={{ ...inputStyle, minHeight: 64, resize: "vertical" as const }}
+                  placeholder="Notes (optional)"
+                  value={momsEditNotes}
+                  onChange={(e) => setMomsEditNotes(e.target.value)}
+                />
+                <div style={modalButtonRowStyle}>
+                  <button type="button" style={buttonStyle} onClick={() => setMomsEditPlant(null)}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    style={primaryButtonStyle}
+                    disabled={momsModalBusy}
+                    onClick={() => void handleMomsSaveEdit()}
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            ) : momsAddStep === "stage" ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                <p style={{ textAlign: "center", color: "#cbd5e1" }}>Promote from which stage?</p>
+                {(["Clones", "Veg"] as const).map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    style={{ ...rowStyle, cursor: "pointer", textAlign: "left" }}
+                    onClick={() => {
+                      setMomsAddSourceStage(st);
+                      setMomsAddStep("batch");
+                    }}
+                  >
+                    <b>{st}</b>
+                    <span style={{ color: "#94a3b8", marginLeft: 8 }}>
+                      ({activeBatchesByStage[st].filter((b: any) => num(b?.plants) > 0).length} batches)
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : momsAddStep === "batch" ? (
+              <div style={{ ...cappedScrollListStyle, display: "grid", gap: 8 }}>
+                {momsAddBatchOptions.length === 0 ? (
+                  <p style={{ color: "#cbd5e1", textAlign: "center" }}>No batches with plants in this stage.</p>
+                ) : (
+                  momsAddBatchOptions.map((b: any) => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      style={{ ...rowStyle, cursor: "pointer", textAlign: "left" }}
+                      onClick={() => {
+                        setMomsAddBatchId(String(b.id));
+                        setMomsAddStep("form");
+                        setOutput("");
+                        setMomPromoteSelectedTags([]);
+                        setMomPromoteStartingTag("");
+                        if (!stageMoveDate.trim()) {
+                          setStageMoveDate(getTodayYmdInCompanyTimezone());
+                        }
+                      }}
+                    >
+                      <b>{b.id}</b>
+                      <span style={{ color: "#94a3b8", marginLeft: 8 }}>
+                        {b.strain || "—"} · {num(b.plants)} plants
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : momsAddStep === "form" && momsAddSelectedBatch ? (
+              <div style={formStyle}>
+                <p style={{ textAlign: "center", color: "#cbd5e1", marginTop: 0 }}>
+                  From <b>{momsAddSelectedBatch.id}</b> ({momsAddSourceStage}) — {momsAddSelectedBatch.strain}
+                </p>
+                <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
+                  Promoted date
+                  <input
+                    style={inputStyle}
+                    type="date"
+                    value={stageMoveDate}
+                    onChange={(e) => setStageMoveDate(e.target.value)}
+                  />
+                </label>
+                {batchHasAssignedPlantTags(momsAddSelectedBatch) ? (
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <span style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 700 }}>Select METRC tag(s)</span>
+                    {readPlantTagStrings(momsAddSelectedBatch).map((tag) => {
+                      const checked = momPromoteSelectedTags.includes(tag);
+                      return (
+                        <label
+                          key={tag}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            color: "#cbd5e1",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setMomPromoteSelectedTags((prev) =>
+                                checked ? prev.filter((t) => t !== tag) : [...prev, tag],
+                              );
+                            }}
+                          />
+                          {tag}
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <>
+                    <input
+                      style={inputStyle}
+                      inputMode="numeric"
+                      placeholder="Number of plants to promote"
+                      value={output}
+                      onChange={(e) => setOutput(e.target.value)}
+                    />
+                    <input
+                      style={inputStyle}
+                      placeholder="Starting METRC tag (optional, for sequential tags)"
+                      value={momPromoteStartingTag}
+                      onChange={(e) => setMomPromoteStartingTag(e.target.value)}
+                    />
+                  </>
+                )}
+                <input
+                  style={inputStyle}
+                  placeholder="Location (optional)"
+                  value={momPromoteLocation}
+                  onChange={(e) => setMomPromoteLocation(e.target.value)}
+                />
+                <textarea
+                  style={{ ...inputStyle, minHeight: 64, resize: "vertical" as const }}
+                  placeholder="Notes (optional, applied to all new mothers)"
+                  value={momPromoteNotes}
+                  onChange={(e) => setMomPromoteNotes(e.target.value)}
+                />
+                <div style={modalButtonRowStyle}>
+                  <button type="button" style={buttonStyle} onClick={() => setMomsAddStep("batch")}>
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    style={primaryButtonStyle}
+                    disabled={momsModalBusy || !canWriteRecords}
+                    onClick={() => void handleMomsPromoteFromModal()}
+                  >
+                    Promote to mothers
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 8,
+                    justifyContent: "center",
+                    marginBottom: 10,
+                  }}
+                >
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#cbd5e1", fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={momsShowRetired}
+                      onChange={(e) => setMomsShowRetired(e.target.checked)}
+                    />
+                    Show retired
+                  </label>
+                  {canWriteRecords ? (
+                    <button
+                      type="button"
+                      style={primaryButtonStyle}
+                      onClick={() => {
+                        resetMomsAddWizard();
+                        setMomsAddStep("stage");
+                        if (!stageMoveDate.trim()) {
+                          setStageMoveDate(getTodayYmdInCompanyTimezone());
+                        }
+                      }}
+                    >
+                      + Add mothers
+                    </button>
+                  ) : null}
+                </div>
+                <div style={{ ...cappedScrollListStyle, display: "grid", gap: 8 }}>
+                  {momsModalList.length === 0 ? (
+                    <p style={{ textAlign: "center", color: "#cbd5e1" }}>No mother plants yet.</p>
+                  ) : (
+                    momsModalList.map((plant) => (
+                      <div key={plant.id} style={rowStyle}>
+                        <div style={{ flex: 1, lineHeight: 1.5 }}>
+                          <b>{plant.strain}</b>
+                          {plant.acronym ? (
+                            <span style={{ color: "#94a3b8", marginLeft: 6 }}>({plant.acronym})</span>
+                          ) : null}
+                          <br />
+                          <span style={{ color: "#93c5fd" }}>{plant.tag ? `Tag: ${plant.tag}` : "No tag"}</span>
+                          <br />
+                          <span style={{ color: "#94a3b8", fontSize: 13 }}>
+                            Promoted {plant.promotedAt} · from {plant.sourceBatchId} ({plant.sourceStage})
+                            {plant.status === "retired" ? " · retired" : ""}
+                          </span>
+                          {plant.location ? (
+                            <>
+                              <br />
+                              <span style={{ color: "#64748b", fontSize: 13 }}>Location: {plant.location}</span>
+                            </>
+                          ) : null}
+                        </div>
+                        {canWriteRecords && plant.status === "active" ? (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <button type="button" style={buttonStyle} onClick={() => openMomsEdit(plant)}>
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              style={buttonStyle}
+                              disabled={momsModalBusy}
+                              onClick={() => void handleMomsRetire(plant)}
+                            >
+                              Retire
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -8849,10 +9582,13 @@ export default function Cultivation() {
 
               {(selectedTask === TASK_MOVE_TO_VEG_ASSIGN_TAGS ||
                 selectedTask === TASK_MOVE_TO_VEG ||
-                selectedTask === "Move to Flower") && (
+                selectedTask === "Move to Flower" ||
+                selectedTask === TASK_PROMOTE_TO_MOTHER) && (
                 <>
                   <label style={{ display: "grid", gap: 6, color: "#e2e8f0", fontSize: 14 }}>
-                    Move date (when plants actually moved stages)
+                    {selectedTask === TASK_PROMOTE_TO_MOTHER
+                      ? "Promoted date (when plants became mothers)"
+                      : "Move date (when plants actually moved stages)"}
                     <input
                       style={inputStyle}
                       type="date"
@@ -8866,6 +9602,75 @@ export default function Cultivation() {
                   </p>
                 </>
               )}
+
+              {selectedTask === TASK_PROMOTE_TO_MOTHER &&
+                (selectedBatch?.stage === "Clone" || selectedBatch?.stage === "Veg") && (
+                  <>
+                    <p style={{ color: "#94a3b8", fontSize: 13, margin: 0, lineHeight: 1.5 }}>
+                      Promote plants from this batch into the company mother inventory. They are removed from the batch
+                      plant count (and METRC tag list when tags are assigned).
+                    </p>
+                    {batchHasAssignedPlantTags(selectedBatch) ? (
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <span style={{ color: "#e2e8f0", fontSize: 14, fontWeight: 700 }}>Select METRC tag(s)</span>
+                        {readPlantTagStrings(selectedBatch).map((tag) => {
+                          const checked = momPromoteSelectedTags.includes(tag);
+                          return (
+                            <label
+                              key={tag}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                color: "#cbd5e1",
+                                cursor: "pointer",
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  setMomPromoteSelectedTags((prev) =>
+                                    checked ? prev.filter((t) => t !== tag) : [...prev, tag],
+                                  );
+                                }}
+                              />
+                              {tag}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <>
+                        <input
+                          style={inputStyle}
+                          inputMode="numeric"
+                          placeholder="Number of plants to promote"
+                          value={output}
+                          onChange={(e) => setOutput(e.target.value)}
+                        />
+                        <input
+                          style={inputStyle}
+                          placeholder="Starting METRC tag (optional, for sequential tags)"
+                          value={momPromoteStartingTag}
+                          onChange={(e) => setMomPromoteStartingTag(e.target.value)}
+                        />
+                      </>
+                    )}
+                    <input
+                      style={inputStyle}
+                      placeholder="Location (optional)"
+                      value={momPromoteLocation}
+                      onChange={(e) => setMomPromoteLocation(e.target.value)}
+                    />
+                    <textarea
+                      style={{ ...inputStyle, minHeight: 64, resize: "vertical" as const }}
+                      placeholder="Notes (optional)"
+                      value={momPromoteNotes}
+                      onChange={(e) => setMomPromoteNotes(e.target.value)}
+                    />
+                  </>
+                )}
 
               {selectedTask === TASK_MOVE_TO_VEG && selectedBatch?.stage === "Clone" && (
                 <>

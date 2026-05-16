@@ -13,13 +13,17 @@ import { WorkflowService } from "../../services/workflowService.js";
 import { StoreService } from "../../services/storeService.js";
 import { TaskService } from "../../services/taskService.js";
 import { StrainMetricsService } from "../../services/strainMetricsService.js";
+import { ConfigService } from "../../services/configService.js";
 import { logInfo } from "../../lib/logger.js";
 import { AppError } from "../../errors/AppError.js";
+import { validate } from "../../middleware/validate.js";
+import { cultivationMotherPlantsPutSchema } from "../../validation/schemas.js";
 export const legacyCpuRouter = Router();
 const workflowService = new WorkflowService();
 const storeService = new StoreService();
 const taskService = new TaskService();
 const strainMetricsService = new StrainMetricsService();
+const configService = new ConfigService();
 function snapshotForStoreSave(snap) {
     return {
         cultivationBatches: snap.cultivationBatches ?? [],
@@ -653,6 +657,40 @@ legacyCpuRouter.patch("/logs/:taskLogId", asyncHandler(async (req, res) => {
     }
     res.json(taskRowToLegacyLog(updated));
 }));
+function readMotherPlantsFromCultivationConfig(value: unknown): unknown[] {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return [];
+    const mp = (value as Record<string, unknown>).motherPlants;
+    return Array.isArray(mp) ? mp : [];
+}
+
+legacyCpuRouter.get("/cultivation/mothers", asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const rows = await configService.list(companyId);
+    const cultRow = rows.find((r) => r.key === "cultivation");
+    const motherPlants = readMotherPlantsFromCultivationConfig(cultRow?.value);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({ motherPlants });
+}));
+
+legacyCpuRouter.put("/cultivation/mothers", requireRole(cultivationWriteRoles), validate({ body: cultivationMotherPlantsPutSchema }), asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as { motherPlants: unknown[] };
+    const rows = await configService.list(companyId);
+    const cultRow = rows.find((r) => r.key === "cultivation");
+    const prev = cultRow?.value && typeof cultRow.value === "object" && !Array.isArray(cultRow.value)
+        ? { ...(cultRow.value as Record<string, unknown>) }
+        : {};
+    const merged = { ...prev, motherPlants: body.motherPlants };
+    await configService.upsert({
+        companyId,
+        actorUserId: req.auth.userId,
+        key: "cultivation",
+        value: merged,
+    });
+    res.json({ motherPlants: body.motherPlants });
+}));
+
 legacyCpuRouter.get("/cultivation", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const rows = await prisma.cultivationBatch.findMany({
