@@ -4,6 +4,10 @@ export type EdibleOilOption = {
   extractionRunId: string;
   availableGrams: number;
   outputGrams: number;
+  /** Grams recorded on extraction packaging lots for this run (shared pool with edibles). */
+  packagingGrams: number;
+  /** Grams allocated to non-cancelled edible batches from this run. */
+  ediblesGrams: number;
   productType: string;
   strainLabel: string;
   finishedAt: string | null;
@@ -62,6 +66,12 @@ export async function fetchEdiblesDashboard(): Promise<EdibleDashboardJson> {
 
 export async function fetchEdiblesOilOptions(): Promise<{ options: EdibleOilOption[] }> {
   return apiRequest<{ options: EdibleOilOption[] }>("/api/edibles/extraction-oil-options");
+}
+
+export async function fetchEdibleOilOptionByRunId(extractionRunId: string): Promise<{ option: EdibleOilOption }> {
+  return apiRequest<{ option: EdibleOilOption }>(
+    `/api/edibles/extraction-oil-options/by-run/${encodeURIComponent(extractionRunId)}`,
+  );
 }
 
 export async function fetchEdiblesAnalytics(): Promise<Record<string, unknown>> {

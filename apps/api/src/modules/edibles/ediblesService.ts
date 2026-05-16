@@ -1,5 +1,10 @@
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../errors/AppError.js";
+import {
+  extractionRunProductTypeLabel,
+  getExtractionOilPoolBreakdown,
+  isLiveResinOilRun,
+} from "../../lib/extractionOilPool.js";
 import { AuditService } from "../../services/auditService.js";
 import { WorkflowService } from "../../services/workflowService.js";
 
@@ -21,31 +26,6 @@ export const EDIBLE_STAGES = [
 
 export const EDIBLE_PRODUCT_TYPES = ["Gummies", "Chocolates", "Syrups", "Capsules", "Tinctures"] as const;
 
-async function oilPoolAvailableGrams(companyId: string, extractionRunId: string): Promise<number> {
-  const run = await prisma.extractionRun.findFirst({
-    where: { id: extractionRunId, companyId, phase: "COMPLETED" },
-  });
-  if (!run) return 0;
-  const out = g(Number(run.outputGrams) || 0);
-  const [packAgg, edibleAgg] = await Promise.all([
-    prisma.packagingLot.aggregate({
-      where: { companyId, extractionRunId },
-      _sum: { netOutputGrams: true },
-    }),
-    prisma.edibleBatch.aggregate({
-      where: {
-        companyId,
-        extractionRunId,
-        status: { notIn: ["CANCELLED"] },
-      },
-      _sum: { oilInputGrams: true },
-    }),
-  ]);
-  const packUsed = g(Number(packAgg._sum.netOutputGrams ?? 0));
-  const edibleUsed = g(Number(edibleAgg._sum.oilInputGrams ?? 0));
-  return Math.max(0, g(out - packUsed - edibleUsed));
-}
-
 function batchNumberForToday(): string {
   const d = new Date();
   const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
@@ -65,21 +45,16 @@ export class EdiblesService {
     });
     const out = [];
     for (const run of runs) {
-      const avail = await oilPoolAvailableGrams(companyId, run.id);
-      if (avail <= 0.0001) continue;
-      const ui = (run.extractionUiState as Record<string, unknown> | null) ?? null;
-      const productType =
-        typeof ui?.productType === "string"
-          ? ui.productType
-          : typeof ui?.name === "string"
-            ? String(ui.name)
-            : run.productCategory === "LIVE"
-              ? "Live Resin"
-              : "Extract";
+      if (!isLiveResinOilRun(run)) continue;
+      const pool = await getExtractionOilPoolBreakdown(companyId, run.id);
+      if (!pool || pool.availableGrams <= 0.0001) continue;
+      const productType = extractionRunProductTypeLabel(run);
       out.push({
         extractionRunId: run.id,
-        availableGrams: avail,
-        outputGrams: g(Number(run.outputGrams) || 0),
+        availableGrams: pool.availableGrams,
+        outputGrams: pool.outputGrams,
+        packagingGrams: pool.packagingGrams,
+        ediblesGrams: pool.ediblesGrams,
         productType,
         strainLabel: run.cultivationBatch
           ? `${run.cultivationBatch.strainAcronym || ""}-${run.cultivationBatch.batchChainCode} · ${run.cultivationBatch.strain}`
@@ -88,6 +63,38 @@ export class EdiblesService {
       });
     }
     return out;
+  }
+
+  /** Resolve a single completed Live Resin oil run (e.g. pasted id); includes zero-availability rows for visibility. */
+  async resolveExtractionOilOption(companyId: string, extractionRunId: string) {
+    const run = await prisma.extractionRun.findFirst({
+      where: { id: extractionRunId, companyId },
+      include: {
+        cultivationBatch: { select: { strain: true, strainAcronym: true, batchChainCode: true } },
+      },
+    });
+    if (!run) throw new AppError("Extraction run not found", 404);
+    if (run.phase !== "COMPLETED") {
+      throw new AppError("Only completed extraction runs can supply the edible kitchen", 400);
+    }
+    if (!isLiveResinOilRun(run)) {
+      throw new AppError("Only Live Resin oil batches can supply the edible kitchen", 400);
+    }
+    const pool = await getExtractionOilPoolBreakdown(companyId, run.id);
+    if (!pool) throw new AppError("Extraction run not found", 404);
+    const productType = extractionRunProductTypeLabel(run);
+    return {
+      extractionRunId: run.id,
+      availableGrams: pool.availableGrams,
+      outputGrams: pool.outputGrams,
+      packagingGrams: pool.packagingGrams,
+      ediblesGrams: pool.ediblesGrams,
+      productType,
+      strainLabel: run.cultivationBatch
+        ? `${run.cultivationBatch.strainAcronym || ""}-${run.cultivationBatch.batchChainCode} · ${run.cultivationBatch.strain}`
+        : run.id,
+      finishedAt: run.finishedAt?.toISOString() ?? null,
+    };
   }
 
   async getDashboard(companyId: string) {
@@ -189,7 +196,17 @@ export class EdiblesService {
     if (!EDIBLE_PRODUCT_TYPES.includes(input.productType as (typeof EDIBLE_PRODUCT_TYPES)[number])) {
       throw new AppError(`Unsupported product type: ${input.productType}`, 400);
     }
-    const avail = await oilPoolAvailableGrams(companyId, input.extractionRunId);
+    const sourceRun = await prisma.extractionRun.findFirst({
+      where: { id: input.extractionRunId, companyId, phase: "COMPLETED" },
+    });
+    if (!sourceRun) {
+      throw new AppError("Extraction run not found or not completed", 404);
+    }
+    if (!isLiveResinOilRun(sourceRun)) {
+      throw new AppError("Only Live Resin oil batches can supply the edible kitchen", 400);
+    }
+    const pool = await getExtractionOilPoolBreakdown(companyId, input.extractionRunId);
+    const avail = pool?.availableGrams ?? 0;
     if (input.oilInputGrams <= 0 || g(input.oilInputGrams) > g(avail + 0.0001)) {
       throw new AppError(`Oil grams must be > 0 and ≤ available (${g(avail)} g) on this extraction run`, 400);
     }

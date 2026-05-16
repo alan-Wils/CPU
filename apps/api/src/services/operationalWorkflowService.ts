@@ -1,6 +1,7 @@
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../errors/AppError.js";
 import { aGradePopcornAvailable, isAgriculturallyCompleteForAutoStatus, productCategoryForSource } from "../domain/cultivationStateEngine.js";
+import { getExtractionOilPoolBreakdown } from "../lib/extractionOilPool.js";
 import { AuditService } from "./auditService.js";
 import { logDatabaseActivity } from "./usageEventRecord.js";
 import { Prisma } from "@prisma/client";
@@ -666,8 +667,14 @@ export class OperationalWorkflowService {
             throw new AppError("Extraction run missing for lot", 404);
         }
         const newNet = g(lot.netOutputGrams + input.netOutputGrams);
-        if (g(newNet) - g(run.outputGrams) > EPS) {
-            throw new AppError("Packaging would exceed available extraction output weight (terpenes excluded from cap)", 400);
+        const pool = await getExtractionOilPoolBreakdown(input.companyId, run.id);
+        if (!pool) {
+            throw new AppError("Extraction run missing or not completed", 404);
+        }
+        const packagingAfterWeigh = g(pool.packagingGrams + input.netOutputGrams);
+        const allocated = g(packagingAfterWeigh + pool.ediblesGrams);
+        if (allocated - pool.outputGrams > EPS) {
+            throw new AppError("Packaging would exceed shared oil pool (packaging + edible allocations vs extraction output; terpenes excluded from cap)", 400);
         }
         return prisma.packagingLot
             .update({

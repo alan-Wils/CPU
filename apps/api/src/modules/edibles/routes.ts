@@ -34,6 +34,7 @@ function requireEdiblesManager(req: any, res: any, next: any) {
 }
 
 const edibleBatchIdParam = z.object({ batchId: z.string().cuid() });
+const extractionRunLookupParam = z.object({ extractionRunId: z.string().cuid() });
 
 const createBatchSchema = z.object({
   sku: z.string().min(1).max(120),
@@ -148,6 +149,15 @@ ediblesRouter.get(
   asyncHandler(async (req, res) => {
     const rows = await service.listExtractionOilOptions(getScopedCompanyId(req));
     res.json({ options: rows });
+  }),
+);
+
+ediblesRouter.get(
+  "/extraction-oil-options/by-run/:extractionRunId",
+  validate({ params: extractionRunLookupParam }),
+  asyncHandler(async (req, res) => {
+    const row = await service.resolveExtractionOilOption(getScopedCompanyId(req), req.params.extractionRunId);
+    res.json({ option: row });
   }),
 );
 

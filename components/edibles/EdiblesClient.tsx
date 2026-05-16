@@ -8,6 +8,7 @@ import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
 import {
   createEdibleBatch,
   deleteEdibleBatch,
+  fetchEdibleOilOptionByRunId,
   fetchEdiblesDashboard,
   fetchEdiblesOilOptions,
   patchEdibleBatch,
@@ -266,6 +267,10 @@ export default function EdiblesClient() {
   const [stageFilter, setStageFilter] = useState<string | "ALL">("ALL");
   const [createOpen, setCreateOpen] = useState(false);
   const [oilOptions, setOilOptions] = useState<EdibleOilOption[]>([]);
+  /** Runs added by id (includes depleted runs not returned by the default list). */
+  const [manualOilExtras, setManualOilExtras] = useState<EdibleOilOption[]>([]);
+  const [addRunIdDraft, setAddRunIdDraft] = useState("");
+  const [addRunBusy, setAddRunBusy] = useState(false);
 
   const [cSku, setCSku] = useState("");
   const [cFlavor, setCFlavor] = useState("");
@@ -378,6 +383,24 @@ export default function EdiblesClient() {
     };
   }, [createOpen]);
 
+  const mergedOilOptions = useMemo(() => {
+    const byId = new Map<string, EdibleOilOption>();
+    for (const o of oilOptions) byId.set(o.extractionRunId, o);
+    for (const o of manualOilExtras) byId.set(o.extractionRunId, o);
+    return Array.from(byId.values()).sort((a, b) => {
+      const ta = a.finishedAt ? Date.parse(a.finishedAt) : 0;
+      const tb = b.finishedAt ? Date.parse(b.finishedAt) : 0;
+      return tb - ta;
+    });
+  }, [oilOptions, manualOilExtras]);
+
+  useEffect(() => {
+    if (!createOpen) {
+      setManualOilExtras([]);
+      setAddRunIdDraft("");
+    }
+  }, [createOpen]);
+
   const stageCounts = useMemo(() => {
     const m = new Map<string, number>();
     for (const s of EDIBLE_STAGES) m.set(s, 0);
@@ -394,7 +417,10 @@ export default function EdiblesClient() {
     return rows.filter((b) => b.stage === stageFilter);
   }, [dash, stageFilter]);
 
-  const selectedOil = useMemo(() => oilOptions.find((o) => o.extractionRunId === cRunId), [oilOptions, cRunId]);
+  const selectedOil = useMemo(
+    () => mergedOilOptions.find((o) => o.extractionRunId === cRunId),
+    [mergedOilOptions, cRunId],
+  );
 
   const derivedPotencyMgPerGram = useMemo(
     () => mgThcPerGramOilFromCoaMassFraction(cOilPotencyFrac),
@@ -626,6 +652,10 @@ export default function EdiblesClient() {
       setError("Select an extraction oil source.");
       return;
     }
+    if (!selectedOil) {
+      setError("Choose a Live Resin oil run from the list or add the extraction run id first.");
+      return;
+    }
     if (!cSku.trim() || !cFlavor.trim()) {
       setError("SKU and flavor are required.");
       return;
@@ -645,7 +675,7 @@ export default function EdiblesClient() {
       setError("Oil allocated (grams) must be a positive number.");
       return;
     }
-    if (selectedOil && oilG > selectedOil.availableGrams + 1e-6) {
+    if (oilG > selectedOil.availableGrams + 1e-6) {
       setError(
         `Oil grams (${oilG.toFixed(4)} g) cannot exceed available on this run (${selectedOil.availableGrams.toFixed(4)} g).`,
       );
@@ -653,10 +683,15 @@ export default function EdiblesClient() {
     }
     let targetPiecesInt: number;
     if (cProduct === "Gummies") {
-      targetPiecesInt =
-        gummyBatchDrive === "partA"
-          ? Math.max(1, Math.floor(gummyFormulaSizing.nominalPiecesDisplay))
-          : Math.floor(Number(cPieces));
+      if (gummyBatchDrive === "partA") {
+        if (!gummyFormulaSizing.ok) {
+          setError(gummyFormulaSizing.error);
+          return;
+        }
+        targetPiecesInt = Math.max(1, Math.floor(gummyFormulaSizing.nominalPiecesDisplay));
+      } else {
+        targetPiecesInt = Math.floor(Number(cPieces));
+      }
     } else {
       targetPiecesInt = Math.floor(Number(cPieces));
     }
@@ -764,7 +799,9 @@ export default function EdiblesClient() {
         }
       }
       const runLabel = selectedOil
-        ? `${selectedOil.strainLabel} — ${selectedOil.availableGrams.toFixed(2)} g avail · ${selectedOil.productType}`
+        ? `${selectedOil.strainLabel} — ${selectedOil.availableGrams.toFixed(2)} g avail · pkg ${selectedOil.packagingGrams.toFixed(
+            2,
+          )} g · kitchen ${selectedOil.ediblesGrams.toFixed(2)} g · ${selectedOil.productType}`
         : null;
       setCreatePrintSummary({
         created,
@@ -850,6 +887,34 @@ export default function EdiblesClient() {
     await refresh();
   }
 
+  async function onAddSourceRunById() {
+    const id = addRunIdDraft.trim();
+    if (!/^c[a-z0-9]{24}$/i.test(id)) {
+      setError("Enter a valid extraction run id (CUID).");
+      return;
+    }
+    if (mergedOilOptions.some((o) => o.extractionRunId === id)) {
+      setError("That run is already in the oil source list.");
+      return;
+    }
+    setAddRunBusy(true);
+    try {
+      const { option } = await fetchEdibleOilOptionByRunId(id);
+      setManualOilExtras((prev) => {
+        const m = new Map(prev.map((x) => [x.extractionRunId, x]));
+        m.set(option.extractionRunId, option);
+        return Array.from(m.values());
+      });
+      setCRunId(id);
+      setAddRunIdDraft("");
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load extraction run.");
+    } finally {
+      setAddRunBusy(false);
+    }
+  }
+
   const write = canWriteEdiblesOperations();
   const mgr = isEdiblesManagerRole();
 
@@ -913,6 +978,8 @@ export default function EdiblesClient() {
                 style={primaryBtn}
                 onClick={() => {
                   setCreatePrintSummary(null);
+                  setManualOilExtras([]);
+                  setAddRunIdDraft("");
                   setCreateOpen(true);
                 }}
               >
@@ -1542,16 +1609,48 @@ export default function EdiblesClient() {
               </div>
             )}
             <label style={{ display: "block", marginBottom: 10, fontSize: 13 }}>
-              <div style={{ color: "#94a3b8", marginBottom: 4 }}>Oil source (completed extraction)</div>
+              <div style={{ color: "#94a3b8", marginBottom: 4 }}>Oil source (Live Resin oil — completed extraction)</div>
               <select required value={cRunId} onChange={(e) => setCRunId(e.target.value)} style={inputFull}>
                 <option value="">Select run…</option>
-                {oilOptions.map((o) => (
+                {mergedOilOptions.map((o) => (
                   <option key={o.extractionRunId} value={o.extractionRunId}>
-                    {o.strainLabel} — {o.availableGrams.toFixed(2)} g avail · {o.productType}
+                    {o.strainLabel} — {o.availableGrams.toFixed(2)} g avail · pkg {o.packagingGrams.toFixed(2)} g · kitchen{" "}
+                    {o.ediblesGrams.toFixed(2)} g · {o.productType}
                   </option>
                 ))}
               </select>
             </label>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                alignItems: "flex-end",
+                marginBottom: 12,
+                fontSize: 13,
+              }}
+            >
+              <label style={{ flex: "1 1 220px", marginBottom: 0 }}>
+                <div style={{ color: "#94a3b8", marginBottom: 4 }}>Add source by extraction run id</div>
+                <input
+                  type="text"
+                  value={addRunIdDraft}
+                  onChange={(e) => setAddRunIdDraft(e.target.value)}
+                  placeholder="Paste CUID…"
+                  style={inputFull}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <button
+                type="button"
+                style={ghostBtn}
+                disabled={addRunBusy}
+                onClick={() => void onAddSourceRunById()}
+              >
+                {addRunBusy ? "Loading…" : "Add run"}
+              </button>
+            </div>
             {selectedOil && (
               <div
                 style={{
@@ -1563,8 +1662,12 @@ export default function EdiblesClient() {
                   marginBottom: 10,
                 }}
               >
-                <div>Run output: {selectedOil.outputGrams.toFixed(2)} g</div>
-                <div>Available after packaging + other edibles: {selectedOil.availableGrams.toFixed(2)} g</div>
+                <div>Extraction output: {selectedOil.outputGrams.toFixed(2)} g</div>
+                <div>Packaging weighed (all lots): {selectedOil.packagingGrams.toFixed(2)} g</div>
+                <div>Edible kitchen allocated (non-cancelled batches): {selectedOil.ediblesGrams.toFixed(2)} g</div>
+                <div style={{ color: "#fdba74", fontWeight: 700, marginTop: 6 }}>
+                  Remaining for new pulls: {selectedOil.availableGrams.toFixed(2)} g
+                </div>
               </div>
             )}
             <label style={{ display: "block", marginBottom: 10, fontSize: 13 }}>
