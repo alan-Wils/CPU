@@ -56,6 +56,8 @@ export {
   additiveMassFractionFromGoals,
   computeMctCarrierBlend,
   computeMctFromPartABase,
+  solveMctBaseFormulaMass,
+  type MctBaseFormulaSolution,
   estimatedGummyWeightGramsFromMoldMl,
   planPectinMultiAdditiveBatch,
   planPectinSingleAdditiveBatch,

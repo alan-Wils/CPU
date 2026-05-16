@@ -5,6 +5,7 @@ import {
   estimatedGummyWeightGramsFromMoldMl,
   planPectinMultiAdditiveBatch,
   planPectinSingleAdditiveBatch,
+  solveMctBaseFormulaMass,
 } from "./pectinMeltToMakeFormula.js";
 
 describe("pectinMeltToMakeFormula", () => {
@@ -41,7 +42,24 @@ describe("pectinMeltToMakeFormula", () => {
     expect(blend.gramsTotalInfusedOilBlend).toBeCloseTo(236, 2);
   });
 
-  it("single-additive MCT: doses from base + MCT mass (example 10,000g base @ 2%)", () => {
+  it("solveMctBaseFormulaMass: example 10,000g base @ 2% MCT", () => {
+    const solved = solveMctBaseFormulaMass({
+      basePartAGrams: 10_000,
+      mctCarrierPercent: 2,
+      activeNumeratorPerPiece: 10 / 0.7933,
+      totalTargetMgPerPiece: 10,
+      gramsPerPiece: 3.5,
+      citricMassFraction: 0.014,
+    });
+    expect(solved.gramsMctCarrier).toBeCloseTo(200, 2);
+    expect(solved.gramsCannabisOil).toBeCloseTo(37.39, 1);
+    expect(solved.finalFormulaMass).toBeCloseTo(10_382.75, 0);
+    expect(solved.nominalPieces).toBeCloseTo(2966.5, 0);
+    const mgPerPiece = (solved.gramsCannabisOil * 0.7933 * 1000) / solved.nominalPieces;
+    expect(mgPerPiece).toBeCloseTo(10, 2);
+  });
+
+  it("single-additive MCT: full formula mass includes oil and citric", () => {
     const plan = planPectinSingleAdditiveBatch({
       batchSizeGrams: 10_200,
       basePartAGrams: 10_000,
@@ -52,11 +70,12 @@ describe("pectinMeltToMakeFormula", () => {
     });
     expect(plan.gramsPartAPectin).toBe(10_000);
     expect(plan.gramsMctCarrier).toBeCloseTo(200, 2);
-    expect(plan.finalDosingBatchGrams).toBeCloseTo(10_200, 2);
-    expect(plan.nominalPieces).toBeCloseTo(10_200 / 3.5, 2);
-    const expectedOil = (plan.nominalPieces * 10) / (0.7933 * 1000);
-    expect(plan.gramsAdditive).toBeCloseTo(expectedOil, 1);
-    expect(plan.gramsTotalInfusedOilBlend).toBeCloseTo(expectedOil + 200, 1);
+    expect(plan.gramsAdditive).toBeCloseTo(37.39, 1);
+    expect(plan.finalDosingBatchGrams).toBeCloseTo(10_382.75, 0);
+    expect(plan.nominalPieces).toBeCloseTo(2966.5, 0);
+    expect(plan.gramsTotalInfusedOilBlend).toBeCloseTo(37.39 + 200, 0);
+    const mgPerPiece = (plan.gramsAdditive * 0.7933 * 1000) / plan.nominalPieces;
+    expect(mgPerPiece).toBeCloseTo(10, 2);
 
     const withoutMct = planPectinSingleAdditiveBatch({
       batchSizeGrams: 10_000,

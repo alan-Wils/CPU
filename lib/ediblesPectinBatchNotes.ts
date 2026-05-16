@@ -85,7 +85,7 @@ export function formatPectinReadableHeader(s: PectinMeltFormulaSnapshot): string
       `MCT carrier (${s.mctCarrierPercent ?? "?"}% of base): ${s.gramsMctCarrier.toFixed(2)} g`,
     );
     if (s.finalDosingBatchGrams != null) {
-      lines.push(`Final dosing batch (base + MCT): ${s.finalDosingBatchGrams.toFixed(2)} g`);
+      lines.push(`Final formula mass: ${s.finalDosingBatchGrams.toFixed(2)} g`);
     }
     if (s.totalActiveMgNeeded != null) {
       lines.push(`Total active mg needed: ${s.totalActiveMgNeeded.toFixed(2)} mg`);

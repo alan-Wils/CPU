@@ -205,7 +205,7 @@ function PectinMctDosingSummary(props: {
         <span style={{ fontWeight: 700 }}>{props.gramsMctCarrier.toFixed(2)} g</span>
       </div>
       <div style={rowStyle}>
-        <span>Final total batch (dosing mass)</span>
+        <span>Final formula mass</span>
         <span style={{ fontWeight: 700 }}>{props.finalDosingBatchGrams.toFixed(2)} g</span>
       </div>
       <div style={rowStyle}>
