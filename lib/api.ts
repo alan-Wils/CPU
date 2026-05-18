@@ -764,18 +764,28 @@ export type LeafLinkInventoryItemDto = {
 };
 
 export type LeafLinkInventoryDto = {
-  source: "leaflink";
-  items: LeafLinkInventoryItemDto[];
-  stats: {
+  source?: "leaflink";
+  /** Ultra-compact columnar list (default). Expand client-side via `expandLeafLinkInventoryDto`. */
+  v?: number;
+  compact?: boolean;
+  compactFieldCount?: number;
+  cols?: string;
+  r?: (string | number | null)[][];
+  rows?: (string | number | null)[][];
+  st?: [number, number, number, number];
+  ls?: number;
+  fc?: 0 | 1;
+  sm?: "cache" | "full" | "incremental";
+  rowCount?: number;
+  items?: LeafLinkInventoryItemDto[];
+  stats?: {
     totalSkus: number;
     totalInventoryUnits: number;
     totalInventoryValue: number;
     categoriesCount: number;
   };
-  lastSyncedAt: string;
-  /** Present when the API returned Postgres snapshot without calling LeafLink. */
+  lastSyncedAt?: string;
   fromCache?: boolean;
-  /** How rows were produced: cache hit, full catalog pull, or merged incremental delta. */
   syncMode?: "cache" | "full" | "incremental";
 };
 

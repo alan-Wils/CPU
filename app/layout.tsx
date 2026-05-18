@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
 import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
+import AnalyticsOverviewWarmHost from "@/components/AnalyticsOverviewWarmHost";
 import CompanyTimezoneSync from "@/components/CompanyTimezoneSync";
 import { PeerNotificationsProvider } from "@/components/PeerNotificationsContext";
 import TaskLiveNotificationHost from "@/components/TaskLiveNotificationHost";
@@ -54,6 +55,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col">
         <PeerNotificationsProvider>
+          <AnalyticsOverviewWarmHost />
           <CompanyTimezoneSync />
           <TaskLiveNotificationHost />
           {children}

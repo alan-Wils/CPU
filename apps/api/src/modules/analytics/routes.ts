@@ -12,7 +12,7 @@ import {
 } from "./buildCultivationStrainMetricPoints.js";
 import { buildAnalyticsOverview } from "./analyticsOverviewService.js";
 import { buildLiveOperationsDetail } from "./liveOperationsDetailService.js";
-import { memoizedRead, memoizedReadWithMeta } from "../../lib/requestMemoCache.js";
+import { memoizedRead, memoizedReadWithMeta, memoCacheRemainingMs } from "../../lib/requestMemoCache.js";
 import { logSlowRequestIfNeeded } from "../../lib/slowRequestLog.js";
 
 const storeService = new StoreService();
@@ -25,6 +25,50 @@ const analyticsReadRoles = [
 ];
 
 export const analyticsRouter = Router();
+
+function addUtcDaysYmd(ymd: string, delta: number): string {
+    const base = parseYmdStartUtc(ymd);
+    if (!Number.isFinite(base)) return ymd;
+    const d = new Date(base + delta * 86_400_000);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
+
+function inclusiveDayCount(fromYmd: string, toYmd: string): number {
+    const a = parseYmdStartUtc(fromYmd);
+    const b = parseYmdEndUtc(toYmd);
+    if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return 1;
+    return Math.max(1, Math.round((b - a) / 86_400_000) + 1);
+}
+
+function buildOverviewCacheKey(parts: {
+    companyId: string;
+    dateFrom: string;
+    dateTo: string;
+    facility: string | null;
+    department: string | null;
+}): string {
+    const facility = String(parts.facility ?? "").trim().toLowerCase();
+    const department =
+        !parts.department || parts.department === "all"
+            ? "all"
+            : String(parts.department).trim().toLowerCase();
+    return `analytics:overview:v2:${parts.companyId}:${parts.dateFrom}:${parts.dateTo}:${facility}:${department}`;
+}
+
+function syntheticOverviewSubCacheHits(dateFrom: string, dateTo: string): Record<string, boolean> {
+    const days = inclusiveDayCount(dateFrom, dateTo);
+    const prevToYmd = addUtcDaysYmd(dateFrom, -1);
+    const prevFromYmd = addUtcDaysYmd(dateFrom, -days);
+    return {
+        prismaCore: true,
+        llInventoryValue: true,
+        [`llOrders:${dateFrom}:${dateTo}`]: true,
+        [`llOrders:${prevFromYmd}:${prevToYmd}`]: true,
+    };
+}
 
 analyticsRouter.get(
     "/cultivation-strain-metrics",
@@ -111,7 +155,8 @@ analyticsRouter.get(
         const dateFrom = String(req.query.from ?? "").trim();
         const dateTo = String(req.query.to ?? "").trim();
         const facility = String(req.query.facility ?? "").trim() || null;
-        const department = String(req.query.department ?? "").trim().toLowerCase() || null;
+        const departmentRaw = String(req.query.department ?? "").trim().toLowerCase();
+        const department = departmentRaw && departmentRaw !== "all" ? departmentRaw : null;
         const fromMs = parseYmdStartUtc(dateFrom);
         const toMs = parseYmdEndUtc(dateTo);
         if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
@@ -121,10 +166,15 @@ analyticsRouter.get(
             throw new AppError("from must be on or before to", 400);
         }
         const auth = req.auth as { platformRole?: string | null } | undefined;
-        const deptKey = department === "all" ? null : department;
-        const cacheKey = `analytics:overview:${companyId}:${dateFrom}:${dateTo}:${facility ?? ""}:${deptKey ?? ""}`;
-        const ttlMs = Number.parseInt(String(process.env.ANALYTICS_OVERVIEW_CACHE_TTL_MS ?? "90000"), 10);
-        const cacheTtl = Number.isFinite(ttlMs) && ttlMs >= 15_000 ? ttlMs : 90_000;
+        const cacheKey = buildOverviewCacheKey({
+            companyId,
+            dateFrom,
+            dateTo,
+            facility,
+            department,
+        });
+        const ttlMs = Number.parseInt(String(process.env.ANALYTICS_OVERVIEW_CACHE_TTL_MS ?? "180000"), 10);
+        const cacheTtl = Number.isFinite(ttlMs) && ttlMs >= 30_000 ? ttlMs : 180_000;
 
         const dbStarted = Date.now();
         const { value: built, cacheHit, inflightJoined } = await memoizedReadWithMeta(cacheKey, cacheTtl, () =>
@@ -133,12 +183,16 @@ analyticsRouter.get(
                 dateFrom,
                 dateTo,
                 facility,
-                department: deptKey,
+                department: department ?? "all",
                 platformRole: auth?.platformRole ?? null,
             }),
         );
         const dbMs = cacheHit ? 0 : Date.now() - dbStarted;
         const out = built.overview;
+        const subCacheHits = cacheHit
+            ? syntheticOverviewSubCacheHits(dateFrom, dateTo)
+            : built.subCacheHits;
+        const ttlRemainingMs = memoCacheRemainingMs(cacheKey);
         const serStarted = Date.now();
         const body = JSON.stringify(out);
         const serializeMs = Date.now() - serStarted;
@@ -150,9 +204,13 @@ analyticsRouter.get(
             payloadBytes: Buffer.byteLength(body, "utf8"),
             cacheHit,
             inflightJoined,
-            extra: { subCacheHits: built.subCacheHits },
+            extra: {
+                cacheKey,
+                subCacheHits,
+                ttlRemainingMs,
+            },
         });
-        res.setHeader("Cache-Control", "private, max-age=30");
+        res.setHeader("Cache-Control", `private, max-age=${Math.min(120, Math.floor(cacheTtl / 1000))}`);
         res.type("json").send(body);
     }),
 );

@@ -152,7 +152,7 @@ async function buildAnalyticsOverviewBody(
 
   const laborStages = laborStageFromDepartment(department);
 
-  const leafLinkAnalyticsTtl = 90_000;
+  const leafLinkAnalyticsTtl = 180_000;
   const loadLeafLinkOrdersAnalytics = async (from: string, to: string) => {
     const key = `leaflink:orders-analytics:${companyId}:${from}:${to}`;
     const hit = await memoizedReadWithMeta(key, leafLinkAnalyticsTtl, () =>
@@ -162,10 +162,11 @@ async function buildAnalyticsOverviewBody(
     return hit.value;
   };
 
-  const facilityTrim = String(facility || "").trim();
-  const deptKey = department === "all" ? "" : String(department || "");
-  const prismaCoreKey = `analytics:prisma-core:${companyId}:${dateFrom}:${dateTo}:${facilityTrim}:${deptKey}`;
-  const prismaCoreTtl = 90_000;
+  const facilityTrim = String(facility || "").trim().toLowerCase();
+  const deptKey =
+    !department || department === "all" ? "all" : String(department).trim().toLowerCase();
+  const prismaCoreKey = `analytics:prisma-core:v2:${companyId}:${dateFrom}:${dateTo}:${facilityTrim}:${deptKey}`;
+  const prismaCoreTtl = 180_000;
 
   const { value: prismaCore, cacheHit: prismaCoreHit } = await memoizedReadWithMeta(prismaCoreKey, prismaCoreTtl, async () => {
     const batchWhere: Prisma.CultivationBatchWhereInput = {
@@ -346,8 +347,8 @@ async function buildAnalyticsOverviewBody(
   ]);
 
   const { value: inventoryValue, cacheHit: llInvValueHit } = await memoizedReadWithMeta(
-    `analytics:ll-inv-value:${companyId}`,
-    120_000,
+    `analytics:ll-inv-value:v2:${companyId}`,
+    180_000,
     async () => {
       try {
         const snap = await leafLinkInventoryService.readPersistedInventory(companyId);

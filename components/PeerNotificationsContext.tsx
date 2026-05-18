@@ -22,6 +22,7 @@ import {
   clearPeerNotifyInboxClientCache,
   fetchPeerNotifyInboxDeduped,
   getPeerNotifyInboxClientStats,
+  peekPeerNotifyInboxCache,
 } from "@/lib/peerNotifyInboxClient";
 import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
 import { useVisibilityPolling } from "@/lib/useVisibilityPolling";
@@ -32,8 +33,8 @@ export type { PeerNotificationKind, PeerNotificationItem };
 const MAX_ITEMS = 60;
 /** Lightweight unread badge — full inbox loads when the bell opens. */
 const UNREAD_POLL_MS = 60_000;
-/** Full inbox refetch at most every 3 minutes unless forced (bell open). */
-const INBOX_STALE_MS = 3 * 60_000;
+/** Full inbox refetch at most every 5 minutes unless forced (bell open). */
+const INBOX_STALE_MS = 5 * 60_000;
 
 function skipInboxPollingPath(pathname: string | null): boolean {
   const p = String(pathname || "");
@@ -61,9 +62,12 @@ type PeerNotificationsContextValue = {
 
 const PeerNotificationsContext = createContext<PeerNotificationsContextValue | null>(null);
 
-async function fetchInboxOrEmpty(force?: boolean): Promise<PeerNotificationItem[]> {
+async function fetchInboxOrEmpty(
+  force: boolean | undefined,
+  caller: string,
+): Promise<PeerNotificationItem[]> {
   try {
-    const out = await fetchPeerNotifyInboxDeduped(() => fetchPeerNotifyInbox(), { force });
+    const out = await fetchPeerNotifyInboxDeduped(() => fetchPeerNotifyInbox(), { force, caller });
     return (out.items || []).slice(0, MAX_ITEMS);
   } catch {
     return [];
@@ -118,22 +122,27 @@ export function PeerNotificationsProvider({ children }: { children: ReactNode })
     }
   }, []);
 
-  const loadFullInbox = useCallback(async (opts?: { force?: boolean }) => {
+  const loadFullInbox = useCallback(async (opts?: { force?: boolean; caller?: string }) => {
     if (!isLoggedIn()) return;
     const force = Boolean(opts?.force);
+    const caller = String(opts?.caller ?? "PeerNotificationsContext");
     const now = Date.now();
     if (
       !force &&
       inboxLoadedRef.current &&
       now - lastInboxFetchAtRef.current < INBOX_STALE_MS
     ) {
+      const peek = peekPeerNotifyInboxCache();
+      if (peek?.length) {
+        applySerializedIfDifferent(peek.slice(0, MAX_ITEMS) as PeerNotificationItem[], serializedRef, setItems);
+      }
       return;
     }
-    const next = await fetchInboxOrEmpty(force);
+    const next = await fetchInboxOrEmpty(force, caller);
     lastInboxFetchAtRef.current = Date.now();
     inboxLoadedRef.current = true;
     if (typeof process !== "undefined" && process.env.NODE_ENV !== "production") {
-      console.debug("[peerNotifyInbox] loadFullInbox", { force, ...getPeerNotifyInboxClientStats() });
+      console.debug("[peerNotifyInbox] loadFullInbox", { caller, force, ...getPeerNotifyInboxClientStats() });
     }
     applySerializedIfDifferent(next, serializedRef, setItems);
     setUnreadCount(next.filter((x) => !x.read).length);
@@ -149,7 +158,6 @@ export function PeerNotificationsProvider({ children }: { children: ReactNode })
       setUnreadCount(0);
       return;
     }
-    inboxLoadedRef.current = false;
     void pollUnreadCount();
   }, [authTick, pollUnreadCount]);
 

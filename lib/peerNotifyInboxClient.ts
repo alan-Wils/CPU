@@ -26,17 +26,27 @@ export function getPeerNotifyInboxClientStats(): {
   fetchCount: number;
   cacheHitCount: number;
   inflightJoinCount: number;
+  lastFetchAgeMs: number | null;
 } {
-  return { fetchCount, cacheHitCount, inflightJoinCount };
+  return {
+    fetchCount,
+    cacheHitCount,
+    inflightJoinCount,
+    lastFetchAgeMs: cachedAt > 0 ? Date.now() - cachedAt : null,
+  };
 }
 
-function logInboxClientDebug(event: string, extra?: Record<string, unknown>): void {
+function logInboxClientDebug(
+  event: string,
+  extra?: Record<string, unknown>,
+): void {
   if (typeof process !== "undefined" && process.env.NODE_ENV === "production") return;
   if (typeof console === "undefined" || !console.debug) return;
   console.debug("[peerNotifyInbox]", event, {
     fetchCount,
     cacheHitCount,
     inflightJoinCount,
+    lastFetchAgeMs: cachedAt > 0 ? Date.now() - cachedAt : null,
     ...extra,
   });
 }
@@ -46,23 +56,26 @@ function logInboxClientDebug(event: string, extra?: Record<string, unknown>): vo
  */
 export async function fetchPeerNotifyInboxDeduped(
   loader: () => Promise<{ items: PeerNotificationItemDto[]; updatedAt?: string }>,
-  opts?: { force?: boolean },
+  opts?: { force?: boolean; caller?: string },
 ): Promise<{ items: PeerNotificationItemDto[]; updatedAt?: string }> {
   const force = Boolean(opts?.force);
+  const caller = String(opts?.caller ?? "unknown");
   const now = Date.now();
+  const lastFetchAgeMs = cachedAt > 0 ? now - cachedAt : null;
+
   if (!force && cachedItems && now - cachedAt < INBOX_CACHE_MS) {
     cacheHitCount += 1;
-    logInboxClientDebug("cache_hit");
+    logInboxClientDebug("cache_hit", { caller, force, cacheHit: true, inflightJoined: false, lastFetchAgeMs });
     return { items: cachedItems, updatedAt: new Date(cachedAt).toISOString() };
   }
   if (!force && inflight) {
     inflightJoinCount += 1;
-    logInboxClientDebug("inflight_join");
+    logInboxClientDebug("inflight_join", { caller, force, cacheHit: false, inflightJoined: true, lastFetchAgeMs });
     const items = await inflight;
     return { items, updatedAt: new Date(cachedAt).toISOString() };
   }
   fetchCount += 1;
-  logInboxClientDebug("network_fetch", { force });
+  logInboxClientDebug("network_fetch", { caller, force, cacheHit: false, inflightJoined: false, lastFetchAgeMs });
   inflight = loader()
     .then((out) => {
       cachedItems = Array.isArray(out.items) ? out.items : [];

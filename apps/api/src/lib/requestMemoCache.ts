@@ -58,3 +58,11 @@ export function invalidateMemoPrefix(prefix: string): void {
     if (k.startsWith(prefix)) cache.delete(k);
   }
 }
+
+/** Milliseconds until cache entry expires; null if missing or expired. */
+export function memoCacheRemainingMs(key: string): number | null {
+  const hit = cache.get(key);
+  if (!hit) return null;
+  const remaining = hit.expiresAt - Date.now();
+  return remaining > 0 ? remaining : null;
+}

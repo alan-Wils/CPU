@@ -1,72 +1,77 @@
 import { describe, expect, it } from "vitest";
-import { leafLinkInventoryItemToListRow, leafLinkInventoryToListResponse } from "./leafLinkInventoryListDto.js";
+import {
+  leafLinkInventoryToUltraCompactResponse,
+  LEAFLINK_INVENTORY_COMPACT_FIELD_COUNT,
+} from "./leafLinkInventoryListDto.js";
 import type { LeafLinkInventoryItem, LeafLinkInventoryResponse } from "../services/leaflinkService.js";
 
-describe("leafLinkInventoryListDto", () => {
-  it("omits imageUrl and heavy optional fields from list rows", () => {
-    const item: LeafLinkInventoryItem = {
-      id: "p1",
-      productName: "Test",
-      sku: "SKU",
-      strain: "S",
-      category: "Edibles",
-      productType: "Gummy",
-      subcategory: "Gummy",
-      brand: "B",
-      availableQuantity: 10,
-      reservedQuantity: 2,
-      totalQuantity: 12,
-      unit: "each",
-      packageSize: "10pk",
-      price: 5,
-      status: "Available",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      imageUrl: "https://cdn.example.com/very/long/path/to/image.jpg",
-      sourcePackageGroup: "PKG-1",
-      listingActive: true,
-      wholesaleAvailable: true,
-    };
-    const row = leafLinkInventoryItemToListRow(item);
-    expect(row).not.toHaveProperty("imageUrl");
-    expect(row).not.toHaveProperty("reservedQuantity");
-    expect(row.hasImage).toBe(true);
-    expect(row.id).toBe("p1");
-  });
+function sampleItem(overrides: Partial<LeafLinkInventoryItem> = {}): LeafLinkInventoryItem {
+  return {
+    id: "p1",
+    productName: "Test Product Name",
+    sku: "SKU-001",
+    strain: "GUAV",
+    category: "Edibles",
+    productType: "Gummy",
+    subcategory: "Gummy",
+    brand: "Brand",
+    availableQuantity: 10,
+    unit: "each",
+    packageSize: "10pk",
+    price: 12.5,
+    status: "Available",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    imageUrl: "https://cdn.example.com/very/long/path/to/image.jpg",
+    sourcePackageGroup: "PKG-1",
+    ...overrides,
+  };
+}
 
-  it("maps full response to compact list payload", () => {
+describe("leafLinkInventoryListDto", () => {
+  it("produces columnar compact payload much smaller than verbose objects", () => {
+    const items = Array.from({ length: 500 }, (_, i) =>
+      sampleItem({ id: `id-${i}`, productName: `Product ${i}` }),
+    );
     const full: LeafLinkInventoryResponse = {
       source: "leaflink",
-      items: [
-        {
-          id: "a",
-          productName: "A",
-          sku: "",
-          strain: "",
-          category: "",
-          productType: "",
-          subcategory: "",
-          brand: "",
-          availableQuantity: 1,
-          unit: "",
-          packageSize: "",
-          price: null,
-          status: "",
-          updatedAt: "",
-          imageUrl: "",
-          sourcePackageGroup: "",
-        },
-      ],
+      items,
       stats: {
-        totalSkus: 1,
-        totalInventoryUnits: 1,
-        totalInventoryValue: 0,
-        categoriesCount: 0,
+        totalSkus: 500,
+        totalInventoryUnits: 5000,
+        totalInventoryValue: 12000,
+        categoriesCount: 8,
       },
       lastSyncedAt: "2026-01-01T00:00:00.000Z",
     };
-    const list = leafLinkInventoryToListResponse(full);
-    expect(list.items).toHaveLength(1);
-    expect(list.stats.totalSkus).toBe(1);
-    expect(list.source).toBe("leaflink");
+
+    const verbose = JSON.stringify({
+      items: items.map((x) => ({
+        id: x.id,
+        productName: x.productName,
+        sku: x.sku,
+        strain: x.strain,
+        category: x.category,
+        productType: x.productType,
+        subcategory: x.subcategory,
+        brand: x.brand,
+        availableQuantity: x.availableQuantity,
+        unit: x.unit,
+        packageSize: x.packageSize,
+        price: x.price,
+        status: x.status,
+        updatedAt: x.updatedAt,
+        sourcePackageGroup: x.sourcePackageGroup,
+      })),
+      stats: full.stats,
+      lastSyncedAt: full.lastSyncedAt,
+    });
+
+    const compact = leafLinkInventoryToUltraCompactResponse(full);
+    const compactJson = JSON.stringify(compact);
+
+    expect(compact.v).toBe(1);
+    expect(compact.r).toHaveLength(500);
+    expect(Buffer.byteLength(compactJson, "utf8")).toBeLessThanOrEqual(60_500);
+    expect(Buffer.byteLength(compactJson, "utf8")).toBeLessThan(Buffer.byteLength(verbose, "utf8") * 0.45);
   });
 });

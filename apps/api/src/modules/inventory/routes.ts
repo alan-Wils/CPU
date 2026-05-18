@@ -4,7 +4,10 @@ import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { requireRole, requireRoleOrAppPermission } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
-import { leafLinkInventoryToListResponse } from "../../lib/leafLinkInventoryListDto.js";
+import {
+  leafLinkInventoryToUltraCompactResponse,
+  LEAFLINK_INVENTORY_COMPACT_FIELD_COUNT,
+} from "../../lib/leafLinkInventoryListDto.js";
 import { logSlowRequestIfNeeded } from "../../lib/slowRequestLog.js";
 import { invalidateLeafLinkInventoryResponseCache } from "../../lib/leaflinkCredentialsCache.js";
 import { memoizedReadWithMeta, invalidateMemoPrefix } from "../../lib/requestMemoCache.js";
@@ -96,9 +99,15 @@ inventoryRouter.get(
       actorUserId,
     });
 
-    const payload = detail ? full : leafLinkInventoryToListResponse(full);
+    const payload = detail ? full : leafLinkInventoryToUltraCompactResponse(full);
     const body = JSON.stringify(payload);
-    const rowCount = Array.isArray(payload.items) ? payload.items.length : 0;
+    const rowCount = detail
+      ? Array.isArray((payload as { items?: unknown[] }).items)
+        ? (payload as { items: unknown[] }).items.length
+        : 0
+      : Array.isArray((payload as { r?: unknown[] }).r)
+        ? (payload as { r: unknown[] }).r.length
+        : 0;
 
     logSlowRequestIfNeeded({
       label: "GET /api/inventory/leaflink",
@@ -107,7 +116,10 @@ inventoryRouter.get(
       rowCount,
       cacheHit,
       inflightJoined,
-      extra: { detail },
+      extra: {
+        detail,
+        compactFieldCount: detail ? undefined : LEAFLINK_INVENTORY_COMPACT_FIELD_COUNT,
+      },
     });
 
     res.setHeader("Cache-Control", refresh ? "private, no-store" : "private, max-age=60");

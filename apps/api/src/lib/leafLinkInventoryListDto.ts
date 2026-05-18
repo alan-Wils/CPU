@@ -1,6 +1,88 @@
 import type { LeafLinkInventoryItem, LeafLinkInventoryResponse } from "../services/leaflinkService.js";
 
-/** Compact list row for GET /api/inventory/leaflink (detail via ?detail=1 or GET …/:id). */
+/** Column order for ultra-compact list payloads (no per-row JSON keys). */
+export const LEAFLINK_INVENTORY_COMPACT_COLS = [
+  "i",
+  "n",
+  "s",
+  "st",
+  "c",
+  "sc",
+  "b",
+  "q",
+  "u",
+  "pk",
+  "$",
+  "x",
+  "t",
+  "g",
+] as const;
+
+export const LEAFLINK_INVENTORY_COMPACT_FIELD_COUNT = LEAFLINK_INVENTORY_COMPACT_COLS.length;
+
+/** Minimal wire shape for list GET (expanded client-side). */
+export type LeafLinkInventoryUltraCompactResponseDto = {
+  v: 1;
+  r: (string | number | null)[][];
+  st: [number, number, number, number];
+  ls: number;
+  fc?: 0 | 1;
+  sm?: LeafLinkInventoryResponse["syncMode"];
+};
+
+function capStr(value: unknown, max: number): string {
+  const s = String(value ?? "").trim();
+  if (s.length <= max) return s;
+  return s.slice(0, max);
+}
+
+function updatedAtUnixSec(iso: string): number {
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+}
+
+function itemToCompactRow(item: LeafLinkInventoryItem): (string | number | null)[] {
+  const sub = capStr(item.subcategory || item.productType, 24);
+  const price = item.price == null ? null : Math.round(Number(item.price) * 100) / 100;
+  return [
+    capStr(item.id, 48),
+    capStr(item.productName, 44),
+    capStr(item.sku, 32),
+    capStr(item.strain, 16),
+    capStr(item.category, 20),
+    sub,
+    capStr(item.brand, 20),
+    Number(item.availableQuantity) || 0,
+    capStr(item.unit, 8),
+    capStr(item.packageSize, 16),
+    price,
+    capStr(item.status, 16),
+    updatedAtUnixSec(item.updatedAt),
+    capStr(item.sourcePackageGroup, 24),
+  ];
+}
+
+export function leafLinkInventoryToUltraCompactResponse(
+  full: LeafLinkInventoryResponse,
+): LeafLinkInventoryUltraCompactResponseDto {
+  const rows = full.items.map(itemToCompactRow);
+  const ls = updatedAtUnixSec(full.lastSyncedAt) || Math.floor(Date.now() / 1000);
+  return {
+    v: 1,
+    r: rows,
+    st: [
+      full.stats.totalSkus,
+      full.stats.totalInventoryUnits,
+      Math.round(full.stats.totalInventoryValue),
+      full.stats.categoriesCount,
+    ],
+    ls,
+    ...(full.fromCache ? { fc: 1 as const } : {}),
+    ...(full.syncMode ? { sm: full.syncMode } : {}),
+  };
+}
+
+/** @deprecated Legacy object list — use {@link leafLinkInventoryToUltraCompactResponse}. */
 export type LeafLinkInventoryListItemDto = {
   id: string;
   productName: string;
@@ -18,15 +100,6 @@ export type LeafLinkInventoryListItemDto = {
   updatedAt: string;
   sourcePackageGroup: string;
   hasImage: boolean;
-};
-
-export type LeafLinkInventoryListResponseDto = {
-  source: "leaflink";
-  items: LeafLinkInventoryListItemDto[];
-  stats: LeafLinkInventoryResponse["stats"];
-  lastSyncedAt: string;
-  fromCache?: boolean;
-  syncMode?: LeafLinkInventoryResponse["syncMode"];
 };
 
 export function leafLinkInventoryItemToListRow(item: LeafLinkInventoryItem): LeafLinkInventoryListItemDto {
@@ -47,16 +120,5 @@ export function leafLinkInventoryItemToListRow(item: LeafLinkInventoryItem): Lea
     updatedAt: item.updatedAt,
     sourcePackageGroup: item.sourcePackageGroup,
     hasImage: Boolean(String(item.imageUrl || "").trim()),
-  };
-}
-
-export function leafLinkInventoryToListResponse(full: LeafLinkInventoryResponse): LeafLinkInventoryListResponseDto {
-  return {
-    source: full.source,
-    items: full.items.map(leafLinkInventoryItemToListRow),
-    stats: full.stats,
-    lastSyncedAt: full.lastSyncedAt,
-    fromCache: full.fromCache,
-    syncMode: full.syncMode,
   };
 }

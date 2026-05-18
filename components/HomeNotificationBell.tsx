@@ -34,10 +34,13 @@ export default function HomeNotificationBell() {
   /** Horizontal nudge so the panel stays inside the visual viewport (phones in any orientation). */
   const [panelShiftX, setPanelShiftX] = useState(0);
 
+  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (!open) return;
-    void loadFullInbox({ force: false });
-    markAllRead();
+    if (open && !wasOpenRef.current) {
+      void loadFullInbox({ force: false, caller: "HomeNotificationBell" });
+      markAllRead();
+    }
+    wasOpenRef.current = open;
   }, [open, loadFullInbox, markAllRead]);
 
   useLayoutEffect(() => {
