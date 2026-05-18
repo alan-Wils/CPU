@@ -3,17 +3,32 @@ import { prisma } from "../config/prisma.js";
 
 const g = (n: number) => Number(Number(n).toFixed(4));
 
+/** Table missing until `20260521120000_edible_oil_reservations` is applied on Postgres. */
+export function isEdibleOilReservationTableMissing(err: unknown): boolean {
+  const e = err as { code?: string; meta?: { table?: string; modelName?: string } };
+  return (
+    e?.code === "P2021" &&
+    (String(e.meta?.table ?? "").includes("EdibleOilReservation") ||
+      e.meta?.modelName === "EdibleOilReservation")
+  );
+}
+
 /** Sum of ACTIVE reservation grams for one extraction run. */
 export async function sumActiveReservedGrams(
   companyId: string,
   extractionRunId: string,
   db: Prisma.TransactionClient | typeof prisma = prisma,
 ): Promise<number> {
-  const agg = await db.edibleOilReservation.aggregate({
-    where: { companyId, extractionRunId, status: "ACTIVE" },
-    _sum: { reservedGrams: true },
-  });
-  return g(Number(agg._sum.reservedGrams ?? 0));
+  try {
+    const agg = await db.edibleOilReservation.aggregate({
+      where: { companyId, extractionRunId, status: "ACTIVE" },
+      _sum: { reservedGrams: true },
+    });
+    return g(Number(agg._sum.reservedGrams ?? 0));
+  } catch (err) {
+    if (isEdibleOilReservationTableMissing(err)) return 0;
+    throw err;
+  }
 }
 
 /**
@@ -28,10 +43,16 @@ export async function consumeReservationsForOilUse(
   let remaining = g(oilGrams);
   if (remaining <= 0) return;
 
-  const rows = await db.edibleOilReservation.findMany({
+  let rows: Awaited<ReturnType<typeof db.edibleOilReservation.findMany>>;
+  try {
+    rows = await db.edibleOilReservation.findMany({
     where: { companyId, extractionRunId, status: "ACTIVE" },
-    orderBy: { createdAt: "asc" },
-  });
+      orderBy: { createdAt: "asc" },
+    });
+  } catch (err) {
+    if (isEdibleOilReservationTableMissing(err)) return;
+    throw err;
+  }
 
   for (const row of rows) {
     if (remaining <= 0.0001) break;

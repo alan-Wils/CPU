@@ -1,6 +1,9 @@
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../errors/AppError.js";
-import { consumeReservationsForOilUse } from "../../lib/edibleOilReservations.js";
+import {
+  consumeReservationsForOilUse,
+  isEdibleOilReservationTableMissing,
+} from "../../lib/edibleOilReservations.js";
 import {
   extractionRunMarketBatchCode,
   extractionRunProductTypeLabel,
@@ -110,9 +113,9 @@ export class EdiblesService {
   }
 
   async listOilReservations(companyId: string) {
-    const rows = await prisma.edibleOilReservation.findMany({
-      where: { companyId, status: "ACTIVE" },
-      orderBy: { createdAt: "desc" },
+    const query = {
+      where: { companyId, status: "ACTIVE" as const },
+      orderBy: { createdAt: "desc" as const },
       take: 200,
       include: {
         extractionRun: {
@@ -124,7 +127,14 @@ export class EdiblesService {
           },
         },
       },
-    });
+    };
+    let rows;
+    try {
+      rows = await prisma.edibleOilReservation.findMany(query);
+    } catch (err) {
+      if (isEdibleOilReservationTableMissing(err)) return [];
+      throw err;
+    }
     return rows.map((r) => {
       const marketBatchCode = extractionRunMarketBatchCode(r.extractionRun);
       const productType = extractionRunProductTypeLabel(r.extractionRun);

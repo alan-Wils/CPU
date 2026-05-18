@@ -409,14 +409,36 @@ export default function EdiblesClient() {
     if (typeof document !== "undefined" && document.hidden) return;
     try {
       setError(null);
-      const [d, res, opts] = await Promise.all([
+      const [dashRes, resRes, optsRes] = await Promise.allSettled([
         fetchEdiblesDashboard(),
         fetchEdiblesOilReservations(),
         fetchEdiblesOilOptions(),
       ]);
-      setDash(d);
-      setOilReservations(res.reservations || []);
-      setReserveOilOptions(opts.options || []);
+      if (dashRes.status === "fulfilled") {
+        setDash(dashRes.value);
+      } else {
+        throw dashRes.reason;
+      }
+      setOilReservations(
+        resRes.status === "fulfilled" ? resRes.value.reservations || [] : [],
+      );
+      setReserveOilOptions(
+        optsRes.status === "fulfilled" ? optsRes.value.options || [] : [],
+      );
+      if (resRes.status === "rejected" || optsRes.status === "rejected") {
+        const msg =
+          (resRes.status === "rejected" && resRes.reason instanceof Error
+            ? resRes.reason.message
+            : "") ||
+          (optsRes.status === "rejected" && optsRes.reason instanceof Error
+            ? optsRes.reason.message
+            : "");
+        if (msg.includes("database is not on the latest schema") || msg.includes("503")) {
+          setError(
+            "Oil reservations are not available until the production database migration runs. Redeploy the API or run prisma migrate deploy.",
+          );
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load edibles");
     }

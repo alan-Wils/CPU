@@ -10,4 +10,4 @@ builder = "nixpacks"
 [deploy]
 # Run migrations once per deploy (not on every replica). API containers only start the server.
 releaseCommand = "node scripts/prisma-migrate-deploy-production.mjs"
-startCommand = "node dist/server.js"
+startCommand = "node scripts/start-production.mjs"
