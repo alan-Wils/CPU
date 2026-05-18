@@ -203,8 +203,8 @@ model Company {
   usageEvents                 UsageEvent[]
   nexbatchCompanyUsageLogs    NexbatchCompanyUsageLog[]
 
-  leafLinkStoredOrders    LeafLinkStoredOrder[]
-  integrationSyncStates IntegrationSyncState[]
+  leafLinkStoredOrders     LeafLinkStoredOrder[]
+  integrationSyncStates  IntegrationSyncState[]
 
   serviceSettings CompanyServiceSettings?
 
@@ -838,8 +838,8 @@ model ExtractionRun {
   supplyUsed  String?
 
   biomassLines ExtractionBiomassInput[] @relation("RunBiomass")
-  packagingLots         PackagingLot[]
-  edibleBatches         EdibleBatch[]
+  packagingLots       PackagingLot[]
+  edibleBatches       EdibleBatch[]
   edibleOilReservations EdibleOilReservation[]
 
   /// Rich extraction UI state (tasks, labels, workflow); merged with columns on read.
