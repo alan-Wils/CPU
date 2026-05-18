@@ -89,6 +89,15 @@ export class StoreService {
      * Subset of the company store for analytics (dry flower + source-related arrays only).
      * Falls back to `load()` on SQLite or if the JSON slice query fails.
      */
+    /** Legacy store `sourceBatches` only — for list endpoints (not full snapshot). */
+    async loadSourceBatchesStoreSlice(companyId: string) {
+        const sliced = await this.repo.getSourceBatchesStoreSlice(companyId);
+        if (sliced)
+            return sliced;
+        const full = await this.load(companyId);
+        return Array.isArray(full.sourceBatches) ? full.sourceBatches : [];
+    }
+
     async loadAnalyticsDryFlowerSourceSlices(companyId: string) {
         const sliced = await this.repo.getAnalyticsStoreSliceArrays(companyId);
         if (sliced)

@@ -17,6 +17,11 @@ import { ConfigService } from "../../services/configService.js";
 import { logInfo } from "../../lib/logger.js";
 import { memoizedReadWithMeta, invalidateMemoPrefix } from "../../lib/requestMemoCache.js";
 import { logSlowRequestIfNeeded } from "../../lib/slowRequestLog.js";
+import { taskLogToListRow } from "../../lib/taskLogListDto.js";
+import {
+    prismaSourcePackageToListRow,
+    storeSourceBatchToListRow,
+} from "../../lib/sourceBatchListDto.js";
 import { AppError } from "../../errors/AppError.js";
 import { validate } from "../../middleware/validate.js";
 import { cultivationMotherPlantsPutSchema } from "../../validation/schemas.js";
@@ -510,7 +515,7 @@ legacyCpuRouter.get("/logs", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const rawTake = req.query.take ?? req.query.limit;
     const parsed = typeof rawTake === "string" ? Number.parseInt(rawTake, 10) : Number(rawTake);
-    const take = Number.isFinite(parsed) ? Math.min(500, Math.max(1, Math.floor(parsed))) : 75;
+    const take = Number.isFinite(parsed) ? Math.min(500, Math.max(1, Math.floor(parsed))) : 50;
     const compact =
         String(req.query.compact ?? "1").trim() !== "0"
         && String(req.query.compact ?? "").trim() !== "false";
@@ -531,7 +536,9 @@ legacyCpuRouter.get("/logs", asyncHandler(async (req, res) => {
     });
     const hasMore = rows.length > take;
     const page = hasMore ? rows.slice(0, take) : rows;
-    const items = page.map((r) => taskRowToLegacyLog(r, { compact }));
+    const items = compact
+        ? page.map((r) => taskLogToListRow(r))
+        : page.map((r) => taskRowToLegacyLog(r, { compact: false }));
     const nextCursor = hasMore && page.length ? page[page.length - 1].createdAt.toISOString() : null;
 
     res.setHeader("Cache-Control", "private, max-age=20");
@@ -1155,15 +1162,14 @@ legacyCpuRouter.get("/source-batches", asyncHandler(async (req, res) => {
     const ttlMs = 20_000;
     const dbStarted = Date.now();
     const { value: items, cacheHit, inflightJoined } = await memoizedReadWithMeta(cacheKey, ttlMs, async () => {
-        const snap = await storeService.load(companyId);
-        const fromStore = Array.isArray(snap.sourceBatches) ? snap.sourceBatches : [];
         const pkgWhere = { sourceChain: { companyId } };
         const pkgOrder = { createdAt: "desc" as const };
+        const pkgTake = summary ? 120 : 300;
         const pkgRows = summary
             ? await prisma.sourcePackage.findMany({
                 where: pkgWhere,
                 orderBy: pkgOrder,
-                take: 200,
+                take: pkgTake,
                 select: {
                     id: true,
                     canonicalName: true,
@@ -1180,21 +1186,42 @@ legacyCpuRouter.get("/source-batches", asyncHandler(async (req, res) => {
                 where: pkgWhere,
                 include: { sourceChain: { include: { cultivationBatch: true } } },
                 orderBy: pkgOrder,
-                take: 300,
+                take: pkgTake,
             });
-        const derived = pkgRows.map((p) => mapSourcePackageToLegacyBatch(p, { summary }));
+        const derived = summary
+            ? pkgRows.map((p) => prismaSourcePackageToListRow(p))
+            : pkgRows.map((p) => mapSourcePackageToLegacyBatch(p, { summary: false }));
         const byId = new Map();
         for (const row of derived)
             byId.set(String(row.id), row);
-        for (const row of fromStore) {
-            const id = String(row?.id || "").trim();
-            if (!id)
-                continue;
-            if (byId.has(id))
-                continue;
-            if (isLikelyPrismaSourcePackageId(id))
-                continue;
-            byId.set(id, summary ? mapStoreSourceBatchSummary(row) : row);
+        if (summary) {
+            const fromStore = await storeService.loadSourceBatchesStoreSlice(companyId);
+            let legacyAdded = 0;
+            const legacyCap = 60;
+            for (const row of fromStore) {
+                if (legacyAdded >= legacyCap)
+                    break;
+                const id = String(
+                    row && typeof row === "object" ? (row as { id?: unknown }).id || "" : "",
+                ).trim();
+                if (!id || byId.has(id) || isLikelyPrismaSourcePackageId(id))
+                    continue;
+                const mapped = storeSourceBatchToListRow(row);
+                if (!mapped)
+                    continue;
+                byId.set(id, mapped);
+                legacyAdded++;
+            }
+        }
+        else {
+            const snap = await storeService.load(companyId);
+            const fromStore = Array.isArray(snap.sourceBatches) ? snap.sourceBatches : [];
+            for (const row of fromStore) {
+                const id = String(row?.id || "").trim();
+                if (!id || byId.has(id) || isLikelyPrismaSourcePackageId(id))
+                    continue;
+                byId.set(id, row);
+            }
         }
         return [...byId.values()].filter((row) => Boolean(row?.id));
     });

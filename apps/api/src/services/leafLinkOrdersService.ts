@@ -2404,12 +2404,6 @@ export class LeafLinkOrdersService {
     }
 
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
-    logInfo("[LEAFLINK] credentials_resolved", {
-      companyId,
-      authSource: creds.source,
-      fromDb: creds.source === "db",
-      fromEnv: creds.source === "env",
-    });
     const baseConfigured = Boolean(creds.apiKey && (creds.companyId || creds.companySlug));
 
     if (!creds.integrationEnabled || !baseConfigured) {

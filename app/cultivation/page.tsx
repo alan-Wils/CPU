@@ -51,7 +51,7 @@ import { isActiveExtractionSourceBatch } from "@/lib/sourceBatchActive";
 import {
   createLog,
   deleteLog as deleteTaskLogRemote,
-  getAllLogs,
+  getLogsForBatchPurge,
   patchLog,
 } from "@/lib/logsApi";
 import {
@@ -2114,23 +2114,31 @@ export default function Cultivation() {
     return [...out].sort((a, b) => a.localeCompare(b));
   }, [cloneTasks, vegTasks, flowerTasks, cultivationScheduleTemplateTitles]);
 
+  const templateSyncFp = useMemo(
+    () => buildCultivationTemplateFingerprint(cultivationScheduleTemplates),
+    [cultivationScheduleTemplates],
+  );
+  const templateSyncStartedRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!canWriteRecords) return;
-    const fp = buildCultivationTemplateFingerprint(cultivationScheduleTemplates);
-    if (!fp && cultivationScheduleTemplates.length === 0) return;
-    if (shouldSkipCultivationTemplateSync(fp)) return;
+    if (!templateSyncFp && cultivationScheduleTemplates.length === 0) return;
+    if (shouldSkipCultivationTemplateSync(templateSyncFp)) return;
+    if (templateSyncStartedRef.current === templateSyncFp) return;
+    templateSyncStartedRef.current = templateSyncFp;
     const t = window.setTimeout(() => {
-      void syncCultivationSectionScheduleTemplates({ templateFingerprint: fp })
+      void syncCultivationSectionScheduleTemplates({ templateFingerprint: templateSyncFp })
         .then((out) => {
-          if (!out.skipped) markCultivationTemplateSyncDone(fp);
-          else markCultivationTemplateSyncDone(fp);
+          markCultivationTemplateSyncDone(templateSyncFp);
+          if (out.skipped) return;
         })
         .catch((e) => {
+          templateSyncStartedRef.current = null;
           console.error("Cultivation schedule template sync failed:", e);
         });
     }, 1200);
     return () => window.clearTimeout(t);
-  }, [canWriteRecords, cultivationScheduleTemplates]);
+  }, [canWriteRecords, templateSyncFp, cultivationScheduleTemplates.length]);
 
   function forceRefresh() {
     persistStore();
@@ -2442,7 +2450,7 @@ export default function Cultivation() {
   async function purgeBackendLogsForBatch(batchId: string) {
     if (!batchId) return;
     try {
-      const logs = await getAllLogs();
+      const logs = await getLogsForBatchPurge();
       const rows = Array.isArray(logs) ? logs : [];
       const targets = rows.filter((log: any) => {
         if (!log || typeof log !== "object") return false;
