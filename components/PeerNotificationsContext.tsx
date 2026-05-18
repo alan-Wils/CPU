@@ -53,7 +53,7 @@ type PeerNotificationsContextValue = {
   hasUnread: boolean;
   unreadCount: number;
   /** Fetch full inbox (dropdown open). */
-  loadFullInbox: () => Promise<void>;
+  loadFullInbox: (opts?: { force?: boolean; caller?: string }) => Promise<void>;
   emitTask: (payload: { logId: string; message: string }) => void;
   emitOrder: (payload: { orderId: string; message: string }) => void;
   markAllRead: () => void;

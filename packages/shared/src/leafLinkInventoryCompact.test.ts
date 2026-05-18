@@ -50,6 +50,34 @@ describe("leafLinkInventoryCompact schema", () => {
     expect(payload.fromCache).toBe(true);
   });
 
+  it("skips invalid compact rows without zeroing the whole list", () => {
+    const good = encodeLeafLinkInventoryCompactRow({
+      id: "ok",
+      productName: "Good",
+      sku: "SKU",
+      strain: "",
+      category: "Edibles",
+      productType: "Gummy",
+      subcategory: "Gummy",
+      brand: "",
+      availableQuantity: 5,
+      unit: "ea",
+      packageSize: "",
+      price: 10,
+      status: "Available",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sourcePackageGroup: "",
+    });
+    const { payload, diagnostics } = expandLeafLinkInventoryWire({
+      v: LEAFLINK_INVENTORY_COMPACT_VERSION,
+      r: [good, ["too", "short"] as unknown as typeof good, good],
+      st: [2, 10, 50, 1],
+      ls: 1_700_000_000,
+    });
+    expect(payload.items).toHaveLength(2);
+    expect(diagnostics.schemaMismatch).toBe(false);
+  });
+
   it("decodes legacy items[] object rows", () => {
     const { payload } = expandLeafLinkInventoryWire({
       source: "leaflink",

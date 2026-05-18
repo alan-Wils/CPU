@@ -215,10 +215,6 @@ export function diagnoseLeafLinkInventoryDecode(raw: unknown): LeafLinkInventory
         decoded.push(decodeLeafLinkInventoryCompactRow(row));
       } else if (isLeafLinkInventoryObjectRow(row)) {
         decoded.push(decodeLeafLinkInventoryObjectRow(row));
-      } else {
-        schemaMismatch = true;
-        schemaMismatchReason = `Row ${i} is not a compact array (len ${LEAFLINK_INVENTORY_COMPACT_FIELD_COUNT}) or object`;
-        break;
       }
     }
   } else if (legacyItemsCount > 0) {
@@ -273,7 +269,10 @@ export function expandLeafLinkInventoryWire(
   const diagnostics = diagnoseLeafLinkInventoryDecode(raw);
   const wire = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
 
-  if (diagnostics.schemaMismatch) {
+  if (
+    diagnostics.wireVersion != null &&
+    diagnostics.wireVersion !== LEAFLINK_INVENTORY_COMPACT_VERSION
+  ) {
     return {
       payload: {
         source: "leaflink",

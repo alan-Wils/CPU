@@ -14,7 +14,9 @@ import {
   fetchLeafLinkInventoryDeduped,
   leafLinkListRowToUiDto,
   peekLeafLinkInventoryClientCache,
+  type LeafLinkInventoryPipelineDebug,
 } from "@/lib/leafLinkInventoryClient";
+import { expandLeafLinkInventoryDto } from "@/lib/leafLinkInventoryCompact";
 import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
 import { fetchCachedCompanyConfig } from "@/lib/configClient";
 import {
@@ -59,9 +61,9 @@ export default function InventoryPage() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [subcategoryFilter, setSubcategoryFilter] = useState("all");
   const [brandFilter, setBrandFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("Available");
-  /** Default: only rows with quantity available for sale (matches typical “available” inventory). */
-  const [availabilityFilter, setAvailabilityFilter] = useState<"in_stock" | "all">("in_stock");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [availabilityFilter, setAvailabilityFilter] = useState<"in_stock" | "all">("all");
+  const [pipelineDebug, setPipelineDebug] = useState<LeafLinkInventoryPipelineDebug | null>(null);
   const [sortBy, setSortBy] = useState<"name" | "qty" | "price" | "updated">("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(1);
@@ -165,12 +167,19 @@ export default function InventoryPage() {
   }
 
   function applyInventoryDto(out: Awaited<ReturnType<typeof fetchLeafLinkInventoryDeduped>>) {
-    const rows = (out.items || []).map((row) => leafLinkListRowToUiDto(row));
+    const expanded =
+      Array.isArray(out.items) && out.items.length > 0
+        ? out
+        : expandLeafLinkInventoryDto(out);
+    const rows = (expanded.items || []).map((row) => leafLinkListRowToUiDto(row));
     setItems(rows);
-    setLastSync(out.lastSyncedAt || new Date().toISOString());
-    setFromCache(Boolean(out.fromCache));
-    setSyncMode((out.syncMode as "" | "cache" | "full" | "incremental") || "");
+    setLastSync(expanded.lastSyncedAt || new Date().toISOString());
+    setFromCache(Boolean(expanded.fromCache));
+    setSyncMode((expanded.syncMode as "" | "cache" | "full" | "incremental") || "");
     setPage(1);
+    if (out.pipeline) {
+      setPipelineDebug({ ...out.pipeline, normalizedRowCount: rows.length, filteredRowCount: null });
+    }
   }
 
   async function loadInventory(opts?: { refresh?: boolean }) {
@@ -298,7 +307,21 @@ export default function InventoryPage() {
   const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const pageGroups = packageGroups.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const stats = useMemo(() => {
+  const loadedStats = useMemo(() => {
+    const totalInventoryUnits = items.reduce((sum, x) => sum + (Number(x.availableQuantity) || 0), 0);
+    const totalInventoryValue = items.reduce((sum, x) => sum + ((x.price || 0) * (x.availableQuantity || 0)), 0);
+    const categoriesCount = new Set(
+      items.map((x) => resolveInventoryCategoryLabel((x.category || "").trim(), categoryLabels)).filter(Boolean),
+    ).size;
+    return {
+      totalSkus: items.length,
+      totalInventoryUnits,
+      totalInventoryValue,
+      categoriesCount,
+    };
+  }, [items, categoryLabels]);
+
+  const filteredStats = useMemo(() => {
     const totalInventoryUnits = filtered.reduce((sum, x) => sum + (Number(x.availableQuantity) || 0), 0);
     const totalInventoryValue = filtered.reduce((sum, x) => sum + ((x.price || 0) * (x.availableQuantity || 0)), 0);
     const categoriesCount = new Set(
@@ -311,6 +334,21 @@ export default function InventoryPage() {
       categoriesCount,
     };
   }, [filtered, categoryLabels]);
+
+  const filtersNarrowResults =
+    filtered.length !== items.length ||
+    statusFilter !== "all" ||
+    availabilityFilter !== "all" ||
+    categoryFilter !== "all" ||
+    subcategoryFilter !== "all" ||
+    brandFilter !== "all" ||
+    query.trim().length > 0;
+
+  useEffect(() => {
+    setPipelineDebug((prev) =>
+      prev ? { ...prev, filteredRowCount: filtered.length } : prev,
+    );
+  }, [filtered.length]);
 
   return (
     <PageAccessGate permission="page.inventory">
@@ -361,11 +399,49 @@ export default function InventoryPage() {
           {error ? <div style={errorStyle}>{error}</div> : null}
 
           <section style={statsGridStyle}>
-            <StatCard label="Total SKUs" value={String(stats.totalSkus)} />
-            <StatCard label="Total Inventory Units" value={String(stats.totalInventoryUnits)} />
-            <StatCard label="Total Inventory Value" value={usd(stats.totalInventoryValue)} />
-            <StatCard label="Categories Count" value={String(stats.categoriesCount)} />
+            <StatCard
+              label="Total SKUs (loaded)"
+              value={String(loadedStats.totalSkus)}
+              hint={
+                filtersNarrowResults
+                  ? `${filteredStats.totalSkus} match current filters`
+                  : undefined
+              }
+            />
+            <StatCard
+              label={filtersNarrowResults ? "Inventory units (filtered)" : "Total inventory units"}
+              value={String(filteredStats.totalInventoryUnits)}
+              hint={
+                filtersNarrowResults && loadedStats.totalInventoryUnits !== filteredStats.totalInventoryUnits
+                  ? `${loadedStats.totalInventoryUnits} loaded total`
+                  : undefined
+              }
+            />
+            <StatCard
+              label={filtersNarrowResults ? "Inventory value (filtered)" : "Total inventory value"}
+              value={usd(filteredStats.totalInventoryValue)}
+              hint={
+                filtersNarrowResults && loadedStats.totalInventoryValue !== filteredStats.totalInventoryValue
+                  ? `${usd(loadedStats.totalInventoryValue)} loaded total`
+                  : undefined
+              }
+            />
+            <StatCard
+              label={filtersNarrowResults ? "Categories (filtered)" : "Categories count"}
+              value={String(filteredStats.categoriesCount)}
+              hint={
+                filtersNarrowResults && loadedStats.categoriesCount !== filteredStats.categoriesCount
+                  ? `${loadedStats.categoriesCount} in full catalog`
+                  : undefined
+              }
+            />
           </section>
+
+          {pipelineDebug ? (
+            <section style={pipelineDebugStyle}>
+              <InventoryPipelineDebugPanel pipeline={pipelineDebug} loading={loading} />
+            </section>
+          ) : null}
 
           <section style={panelStyle}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
@@ -784,11 +860,50 @@ function InventoryProductRow({
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+function InventoryPipelineDebugPanel({
+  pipeline,
+  loading,
+}: {
+  pipeline: LeafLinkInventoryPipelineDebug;
+  loading: boolean;
+}) {
+  return (
+    <div>
+      <div style={{ color: "#7dd3fc", fontSize: 12, fontWeight: 800, marginBottom: 8 }}>
+        Inventory pipeline (debug){loading ? " — loading…" : ""}
+      </div>
+      <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: "#94a3b8", lineHeight: 1.6 }}>
+        API wire rows: {pipeline.wireRowCount}
+        <br />
+        Decoded items: {pipeline.decodedRowCount}
+        <br />
+        Normalized items: {pipeline.normalizedRowCount}
+        <br />
+        Filtered items: {pipeline.filteredRowCount == null ? "—" : pipeline.filteredRowCount}
+        <br />
+        First decoded: sku={pipeline.firstDecodedSku || "—"} name={pipeline.firstDecodedName || "—"} status=
+        {pipeline.firstDecodedStatus || "—"} qty={pipeline.firstDecodedQuantity}
+        {pipeline.schemaMismatch ? (
+          <>
+            <br />
+            <span style={{ color: "#fca5a5" }}>
+              Schema: {pipeline.schemaMismatchReason || "mismatch"}
+            </span>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div style={statCardStyle}>
       <div style={{ color: "#94a3b8", fontSize: 13 }}>{label}</div>
       <div style={{ color: "#f8fafc", fontWeight: 900, fontSize: 28 }}>{value}</div>
+      {hint ? (
+        <div style={{ color: "#64748b", fontSize: 11, marginTop: 6, lineHeight: 1.35 }}>{hint}</div>
+      ) : null}
     </div>
   );
 }
@@ -831,6 +946,13 @@ const statsGridStyle: React.CSSProperties = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
   gap: 12,
+  marginBottom: 16,
+};
+const pipelineDebugStyle: React.CSSProperties = {
+  background: "rgba(8,47,73,0.35)",
+  border: "1px solid rgba(56,189,248,0.25)",
+  borderRadius: 12,
+  padding: "10px 14px",
   marginBottom: 16,
 };
 const statCardStyle: React.CSSProperties = {
