@@ -13,9 +13,9 @@ export function parseSourcePackageIdsInput(text: string): string[] {
 
 export function sourcePackageIdsFromBatch(batch: any): string[] {
   if (Array.isArray(batch?.extractionSources) && batch.extractionSources.length > 0) {
-    const ids = batch.extractionSources
+    const ids: string[] = batch.extractionSources
       .map((r: any) => String(r?.sourceId ?? "").trim())
-      .filter((id) => id.length > 0);
+      .filter((id: string) => id.length > 0);
     if (ids.length > 0) return [...new Set(ids)];
   }
 
