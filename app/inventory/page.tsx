@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Nav from "@/components/Nav";
@@ -14,7 +14,6 @@ import {
   fetchLeafLinkInventoryDeduped,
   leafLinkListRowToUiDto,
   peekLeafLinkInventoryClientCache,
-  type LeafLinkInventoryPipelineDebug,
 } from "@/lib/leafLinkInventoryClient";
 import { expandLeafLinkInventoryDto } from "@/lib/leafLinkInventoryCompact";
 import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
@@ -61,9 +60,8 @@ export default function InventoryPage() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [subcategoryFilter, setSubcategoryFilter] = useState("all");
   const [brandFilter, setBrandFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("Available");
   const [availabilityFilter, setAvailabilityFilter] = useState<"in_stock" | "all">("all");
-  const [pipelineDebug, setPipelineDebug] = useState<LeafLinkInventoryPipelineDebug | null>(null);
   const [sortBy, setSortBy] = useState<"name" | "qty" | "price" | "updated">("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(1);
@@ -71,7 +69,7 @@ export default function InventoryPage() {
   const [fromCache, setFromCache] = useState(false);
   const [syncMode, setSyncMode] = useState<"" | "cache" | "full" | "incremental">("");
   const [categoryLabels, setCategoryLabels] = useState<CategoryLabelOverride[]>([]);
-  /** Grouped view: which source-package rows are expanded (same table as thead — no nested table shift). */
+  /** Grouped view: which source-package rows are expanded (same table as thead â€” no nested table shift). */
   const [openSourcePackages, setOpenSourcePackages] = useState<Record<string, boolean>>({});
   const [exportColumns, setExportColumns] = useState<InventoryExportColumnId[]>(() => [...EXPORT_COLUMN_PRESET]);
   const [exportColumnPrefsMessage, setExportColumnPrefsMessage] = useState("");
@@ -177,9 +175,6 @@ export default function InventoryPage() {
     setFromCache(Boolean(expanded.fromCache));
     setSyncMode((expanded.syncMode as "" | "cache" | "full" | "incremental") || "");
     setPage(1);
-    if (out.pipeline) {
-      setPipelineDebug({ ...out.pipeline, normalizedRowCount: rows.length, filteredRowCount: null });
-    }
   }
 
   async function loadInventory(opts?: { refresh?: boolean }) {
@@ -337,18 +332,12 @@ export default function InventoryPage() {
 
   const filtersNarrowResults =
     filtered.length !== items.length ||
-    statusFilter !== "all" ||
+    statusFilter !== "Available" ||
     availabilityFilter !== "all" ||
     categoryFilter !== "all" ||
     subcategoryFilter !== "all" ||
     brandFilter !== "all" ||
     query.trim().length > 0;
-
-  useEffect(() => {
-    setPipelineDebug((prev) =>
-      prev ? { ...prev, filteredRowCount: filtered.length } : prev,
-    );
-  }, [filtered.length]);
 
   return (
     <PageAccessGate permission="page.inventory">
@@ -361,7 +350,7 @@ export default function InventoryPage() {
               <p style={{ color: "#94a3b8", marginTop: 10, marginBottom: 0 }}>
                 Live available-for-sale inventory synced from LeafLink via backend company-scoped credentials. Category
                 display names can be overridden under{" "}
-                <b style={{ color: "#cbd5e1" }}>Admin → Company Config → Sales → LeafLink category names</b>.{" "}
+                <b style={{ color: "#cbd5e1" }}>Admin â†’ Company Config â†’ Sales â†’ LeafLink category names</b>.{" "}
                 <span style={{ color: "#64748b" }}>
                   Total inventory value uses each line&apos;s wholesale/unit price from LeafLink when present; run{" "}
                   <b style={{ color: "#94a3b8" }}>Sync / Refresh</b> after catalog changes.
@@ -436,12 +425,6 @@ export default function InventoryPage() {
               }
             />
           </section>
-
-          {pipelineDebug ? (
-            <section style={pipelineDebugStyle}>
-              <InventoryPipelineDebugPanel pipeline={pipelineDebug} loading={loading} />
-            </section>
-          ) : null}
 
           <section style={panelStyle}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
@@ -519,14 +502,14 @@ export default function InventoryPage() {
               >
                 <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", minHeight: 40 }}>
                   <span style={{ color: "#64748b", fontSize: 12 }}>
-                    {loading ? "Loading…" : `${filtered.length} SKU${filtered.length === 1 ? "" : "s"} match current filters`}
+                    {loading ? "Loadingâ€¦" : `${filtered.length} SKU${filtered.length === 1 ? "" : "s"} match current filters`}
                   </span>
                 </div>
                 <details style={exportDetailsStyle}>
                   <summary style={exportSummaryStyle}>Export current filter</summary>
                   <div style={{ marginTop: 12 }}>
                     <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 6 }}>
-                      Columns on Excel and print — default is <b style={{ color: "#cbd5e1" }}>Product</b> and{" "}
+                      Columns on Excel and print â€” default is <b style={{ color: "#cbd5e1" }}>Product</b> and{" "}
                       <b style={{ color: "#cbd5e1" }}>Qty</b>. Check others, then{" "}
                       <b style={{ color: "#cbd5e1" }}>Save column preferences</b> to remember on this browser.
                     </div>
@@ -662,12 +645,12 @@ export default function InventoryPage() {
                     </button>
                   </div>
                   <p style={{ color: "#64748b", fontSize: 11, marginTop: 10, marginBottom: 0, maxWidth: 520, lineHeight: 1.45 }}>
-                    Logo (Admin → Company Config → Sales) is embedded into the printable sheet when the browser can
+                    Logo (Admin â†’ Company Config â†’ Sales) is embedded into the printable sheet when the browser can
                     fetch it (HTTPS / CORS). Excel still has no embedded image.
                   </p>
                   {filtered.length === 0 && !loading ? (
                     <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 8, maxWidth: 320 }}>
-                      Nothing to export yet — widen filters or sync inventory from LeafLink.
+                      Nothing to export yet â€” widen filters or sync inventory from LeafLink.
                     </div>
                   ) : null}
                 </details>
@@ -747,10 +730,10 @@ export default function InventoryPage() {
                                     }}
                                     aria-expanded={Boolean(openSourcePackages[g.key])}
                                   >
-                                    <span aria-hidden>{openSourcePackages[g.key] ? "▼ " : "▶ "}</span>
+                                    <span aria-hidden>{openSourcePackages[g.key] ? "â–¼ " : "â–¶ "}</span>
                                     Source package <span style={{ color: "#e2e8f0" }}>{g.key}</span>
                                     <span style={{ color: "#94a3b8", fontWeight: 600, marginLeft: 8 }}>
-                                      —
+                                      â€”
                                       {g.rows.length === 1
                                         ? " 1 SKU"
                                         : ` ${g.rows.length} sizes / SKUs`}
@@ -841,60 +824,25 @@ function InventoryProductRow({
           <div>
             <div style={{ color: "#e2e8f0", fontWeight: 700 }}>{row.productName || "Unnamed product"}</div>
             <div style={{ color: "#64748b", fontSize: nested ? 11 : 12 }}>
-              {row.brand || "—"} · {(row.subcategory || row.productType) || "—"}
+              {row.brand || "â€”"} Â· {(row.subcategory || row.productType) || "â€”"}
             </div>
           </div>
         </div>
       </td>
-      <td style={pad}>{row.sku || "—"}</td>
-      <td style={pad}>{row.strain || "—"}</td>
-      <td style={pad}>{categoryDisplay || "—"}</td>
-      <td style={pad}>{(row.subcategory || row.productType || "—").trim() || "—"}</td>
+      <td style={pad}>{row.sku || "â€”"}</td>
+      <td style={pad}>{row.strain || "â€”"}</td>
+      <td style={pad}>{categoryDisplay || "â€”"}</td>
+      <td style={pad}>{(row.subcategory || row.productType || "â€”").trim() || "â€”"}</td>
       <td style={pad}>
         {row.availableQuantity} {row.unit || ""}
       </td>
-      <td style={pad}>{row.packageSize || "—"}</td>
-      <td style={pad}>{row.price == null ? "—" : usd(row.price)}</td>
-      <td style={pad}>{row.status || "—"}</td>
+      <td style={pad}>{row.packageSize || "â€”"}</td>
+      <td style={pad}>{row.price == null ? "â€”" : usd(row.price)}</td>
+      <td style={pad}>{row.status || "â€”"}</td>
     </tr>
   );
 }
 
-function InventoryPipelineDebugPanel({
-  pipeline,
-  loading,
-}: {
-  pipeline: LeafLinkInventoryPipelineDebug;
-  loading: boolean;
-}) {
-  return (
-    <div>
-      <div style={{ color: "#7dd3fc", fontSize: 12, fontWeight: 800, marginBottom: 8 }}>
-        Inventory pipeline (debug){loading ? " — loading…" : ""}
-      </div>
-      <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: "#94a3b8", lineHeight: 1.6 }}>
-        API wire rows: {pipeline.wireRowCount}
-        <br />
-        Decoded items: {pipeline.decodedRowCount}
-        <br />
-        Normalized items: {pipeline.normalizedRowCount}
-        <br />
-        Filtered items: {pipeline.filteredRowCount == null ? "—" : pipeline.filteredRowCount}
-        <br />
-        First decoded: sku={pipeline.firstDecodedSku || "—"} name={pipeline.firstDecodedName || "—"} status=
-        {pipeline.firstDecodedStatus || "—"} qty={pipeline.firstDecodedQuantity}
-        {pipeline.schemaMismatch ? (
-          <>
-            <br />
-            <span style={{ color: "#fca5a5" }}>
-              Schema: {pipeline.schemaMismatchReason || "mismatch"}
-            </span>
-          </>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -946,13 +894,6 @@ const statsGridStyle: React.CSSProperties = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
   gap: 12,
-  marginBottom: 16,
-};
-const pipelineDebugStyle: React.CSSProperties = {
-  background: "rgba(8,47,73,0.35)",
-  border: "1px solid rgba(56,189,248,0.25)",
-  borderRadius: 12,
-  padding: "10px 14px",
   marginBottom: 16,
 };
 const statCardStyle: React.CSSProperties = {

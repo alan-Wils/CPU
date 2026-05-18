@@ -5,44 +5,6 @@ import {
   diagnoseLeafLinkInventoryDecode,
 } from "@/lib/leafLinkInventoryCompact";
 
-export type LeafLinkInventoryPipelineDebug = {
-  wireRowCount: number;
-  decodedRowCount: number;
-  normalizedRowCount: number;
-  filteredRowCount: number | null;
-  firstDecodedSku: string;
-  firstDecodedName: string;
-  firstDecodedStatus: string;
-  firstDecodedQuantity: number;
-  schemaMismatch: boolean;
-  schemaMismatchReason: string | null;
-};
-
-export type LeafLinkInventoryDedupedResult = LeafLinkInventoryDto & {
-  pipeline?: LeafLinkInventoryPipelineDebug;
-};
-
-function buildPipelineDebug(
-  raw: LeafLinkInventoryDto,
-  expanded: LeafLinkInventoryDto,
-): LeafLinkInventoryPipelineDebug {
-  const diag = diagnoseLeafLinkInventoryDecode(raw);
-  const first = diag.firstDecodedRow;
-  const decodedRowCount = (expanded.items || []).length;
-  return {
-    wireRowCount: countWireInventoryRows(raw),
-    decodedRowCount,
-    normalizedRowCount: decodedRowCount,
-    filteredRowCount: null,
-    firstDecodedSku: first?.sku ?? "",
-    firstDecodedName: first?.productName ?? "",
-    firstDecodedStatus: first?.status ?? "",
-    firstDecodedQuantity: first?.availableQuantity ?? 0,
-    schemaMismatch: diag.schemaMismatch,
-    schemaMismatchReason: diag.schemaMismatchReason,
-  };
-}
-
 const LIST_CACHE_MS = 3 * 60_000;
 
 let cached: LeafLinkInventoryDto | null = null;
@@ -85,7 +47,7 @@ export type FetchLeafLinkInventoryDedupedOptions = {
 export async function fetchLeafLinkInventoryDeduped(
   loader: () => Promise<LeafLinkInventoryDto>,
   opts?: FetchLeafLinkInventoryDedupedOptions,
-): Promise<LeafLinkInventoryDedupedResult> {
+): Promise<LeafLinkInventoryDto> {
   const refresh = Boolean(opts?.refresh);
   const now = Date.now();
   if (!refresh && cachedExpanded && (cachedExpanded.items || []).length && now - cachedAt < LIST_CACHE_MS) {
@@ -129,10 +91,7 @@ export async function fetchLeafLinkInventoryDeduped(
       cachedExpanded = expanded;
       cachedAt = Date.now();
     }
-    return {
-      ...expanded,
-      pipeline: buildPipelineDebug(raw, expanded),
-    };
+    return expanded;
   })().finally(() => {
     inflight = null;
   });
