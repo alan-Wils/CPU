@@ -33,19 +33,32 @@ function unixSecToIso(sec: number): string {
   return new Date(sec * 1000).toISOString();
 }
 
+function isUltraCompactWire(raw: LeafLinkInventoryDto): boolean {
+  const wire = raw as { v?: number; r?: unknown; items?: unknown };
+  return wire.v === 1 || Array.isArray(wire.r);
+}
+
 /** Expands GET /api/inventory/leaflink ultra-compact columnar payload into UI DTOs. */
 export function expandLeafLinkInventoryDto(raw: LeafLinkInventoryDto): LeafLinkInventoryDto {
+  if (!isUltraCompactWire(raw)) {
+    if (Array.isArray(raw.items) && raw.items.length > 0) {
+      return { ...raw, source: raw.source ?? "leaflink", items: raw.items };
+    }
+    return { ...raw, source: raw.source ?? "leaflink", items: raw.items ?? [] };
+  }
+
   const wire = raw as LeafLinkInventoryDto & {
     v?: number;
     r?: (string | number | null)[][];
+    rows?: (string | number | null)[][];
     st?: [number, number, number, number];
     ls?: number;
     fc?: 0 | 1;
     sm?: LeafLinkInventoryDto["syncMode"];
   };
-  const rows = wire.r ?? raw.rows;
-  if ((!raw.compact && wire.v !== 1) || !Array.isArray(rows)) {
-    return raw;
+  const rows = wire.r ?? wire.rows ?? raw.rows;
+  if (!Array.isArray(rows)) {
+    return { ...raw, source: raw.source ?? "leaflink", items: raw.items ?? [] };
   }
   const statsTuple = wire.st;
   const items: LeafLinkInventoryItemDto[] = rows.map((row) => {
