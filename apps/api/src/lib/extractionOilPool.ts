@@ -66,3 +66,47 @@ export async function getExtractionOilPoolBreakdown(
   const availableGrams = Math.max(0, g(out - packagingGrams - ediblesGrams));
   return { outputGrams: out, packagingGrams, ediblesGrams, availableGrams };
 }
+
+/** Human label from extraction UI (e.g. BLUE.051526). */
+export function extractionRunMarketBatchCode(run: { extractionUiState: unknown }): string | null {
+  const ui = (run.extractionUiState as Record<string, unknown> | null) ?? null;
+  const code = typeof ui?.marketBatchCode === "string" ? ui.marketBatchCode.trim() : "";
+  return code || null;
+}
+
+/** Attach shared oil-pool fields so packaging SPA reflects edible kitchen allocation. */
+export async function enrichLegacyPackagingRowsWithOilPool(
+  companyId: string,
+  rows: Record<string, unknown>[],
+): Promise<Record<string, unknown>[]> {
+  const runIds = [
+    ...new Set(
+      rows
+        .map((r) =>
+          String(r.extractionRunId || r.extractionBatchId || r.sourceBatchId || "").trim(),
+        )
+        .filter(Boolean),
+    ),
+  ];
+  const pools = new Map<string, ExtractionOilPoolBreakdown>();
+  await Promise.all(
+    runIds.map(async (runId) => {
+      const pool = await getExtractionOilPoolBreakdown(companyId, runId);
+      if (pool) pools.set(runId, pool);
+    }),
+  );
+  return rows.map((row) => {
+    const runId = String(
+      row.extractionRunId || row.extractionBatchId || row.sourceBatchId || "",
+    ).trim();
+    const pool = pools.get(runId);
+    if (!pool) return row;
+    return {
+      ...row,
+      oilPoolOutputGrams: pool.outputGrams,
+      oilPoolPackagingGrams: pool.packagingGrams,
+      ediblesAllocatedGrams: pool.ediblesGrams,
+      oilPoolAvailableGrams: pool.availableGrams,
+    };
+  });
+}

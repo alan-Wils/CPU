@@ -1167,6 +1167,10 @@ export default function EdiblesClient() {
                     <span style={{ color: "#64748b" }}>Pieces</span>
                     <div style={{ fontWeight: 700 }}>{b.targetPieces}</div>
                   </div>
+                  <div style={{ gridColumn: "span 2" }}>
+                    <span style={{ color: "#64748b" }}>Oil source</span>
+                    <div style={{ fontWeight: 700 }}>{b.extractionRunLabel || "—"}</div>
+                  </div>
                   <div>
                     <span style={{ color: "#64748b" }}>Oil in</span>
                     <div style={{ fontWeight: 700 }}>{Number(b.oilInputGrams).toFixed(2)} g</div>

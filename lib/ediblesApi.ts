@@ -9,6 +9,7 @@ export type EdibleOilOption = {
   /** Grams allocated to non-cancelled edible batches from this run. */
   ediblesGrams: number;
   productType: string;
+  marketBatchCode?: string | null;
   strainLabel: string;
   finishedAt: string | null;
 };
@@ -29,6 +30,8 @@ export type EdibleDashboardBatch = {
   totalMgInput: number;
   wasteGrams: number;
   extractionRunId: string;
+  /** Live Resin oil source label (e.g. BLUE.051526). */
+  extractionRunLabel?: string | null;
   notes: string | null;
   startDate: string | null;
   completedDate: string | null;

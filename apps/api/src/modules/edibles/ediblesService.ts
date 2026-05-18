@@ -1,6 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../errors/AppError.js";
 import {
+  extractionRunMarketBatchCode,
   extractionRunProductTypeLabel,
   getExtractionOilPoolBreakdown,
   isLiveResinOilRun,
@@ -49,6 +50,7 @@ export class EdiblesService {
       const pool = await getExtractionOilPoolBreakdown(companyId, run.id);
       if (!pool || pool.availableGrams <= 0.0001) continue;
       const productType = extractionRunProductTypeLabel(run);
+      const marketBatchCode = extractionRunMarketBatchCode(run);
       out.push({
         extractionRunId: run.id,
         availableGrams: pool.availableGrams,
@@ -56,9 +58,12 @@ export class EdiblesService {
         packagingGrams: pool.packagingGrams,
         ediblesGrams: pool.ediblesGrams,
         productType,
-        strainLabel: run.cultivationBatch
-          ? `${run.cultivationBatch.strainAcronym || ""}-${run.cultivationBatch.batchChainCode} · ${run.cultivationBatch.strain}`
-          : run.id,
+        marketBatchCode,
+        strainLabel: marketBatchCode
+          ? `${marketBatchCode} · ${run.cultivationBatch?.strain || productType}`
+          : run.cultivationBatch
+            ? `${run.cultivationBatch.strainAcronym || ""}-${run.cultivationBatch.batchChainCode} · ${run.cultivationBatch.strain}`
+            : run.id,
         finishedAt: run.finishedAt?.toISOString() ?? null,
       });
     }
@@ -83,6 +88,7 @@ export class EdiblesService {
     const pool = await getExtractionOilPoolBreakdown(companyId, run.id);
     if (!pool) throw new AppError("Extraction run not found", 404);
     const productType = extractionRunProductTypeLabel(run);
+    const marketBatchCode = extractionRunMarketBatchCode(run);
     return {
       extractionRunId: run.id,
       availableGrams: pool.availableGrams,
@@ -90,9 +96,12 @@ export class EdiblesService {
       packagingGrams: pool.packagingGrams,
       ediblesGrams: pool.ediblesGrams,
       productType,
-      strainLabel: run.cultivationBatch
-        ? `${run.cultivationBatch.strainAcronym || ""}-${run.cultivationBatch.batchChainCode} · ${run.cultivationBatch.strain}`
-        : run.id,
+      marketBatchCode,
+      strainLabel: marketBatchCode
+        ? `${marketBatchCode} · ${run.cultivationBatch?.strain || productType}`
+        : run.cultivationBatch
+          ? `${run.cultivationBatch.strainAcronym || ""}-${run.cultivationBatch.batchChainCode} · ${run.cultivationBatch.strain}`
+          : run.id,
       finishedAt: run.finishedAt?.toISOString() ?? null,
     };
   }
@@ -104,7 +113,13 @@ export class EdiblesService {
       take: 200,
       include: {
         extractionRun: {
-          select: { id: true, outputGrams: true, productCategory: true },
+          select: {
+            id: true,
+            outputGrams: true,
+            productCategory: true,
+            extractionUiState: true,
+            packagingLots: { select: { id: true }, orderBy: { updatedAt: "desc" }, take: 1 },
+          },
         },
         qaTests: { orderBy: { createdAt: "desc" }, take: 1 },
         packagingLot: { select: { id: true, sku: true, status: true } },
@@ -150,6 +165,10 @@ export class EdiblesService {
         totalMgInput: b.totalMgInput,
         wasteGrams: b.wasteGrams,
         extractionRunId: b.extractionRunId,
+        extractionRunLabel:
+          extractionRunMarketBatchCode(b.extractionRun) ||
+          b.extractionRun.packagingLots[0]?.id ||
+          b.extractionRunId,
         notes: b.notes,
         startDate: b.startDate?.toISOString() ?? null,
         completedDate: b.completedDate?.toISOString() ?? null,

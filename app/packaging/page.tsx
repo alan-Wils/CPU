@@ -461,11 +461,27 @@ export default function Packaging() {
     return getPackageableGrams(batch);
   }
 
+  function getEdiblesAllocatedGrams(batch: any) {
+    return num(batch?.ediblesAllocatedGrams);
+  }
+
   function getPackagedGrams(batch: any) {
-    return num(batch?.packagedGrams);
+    return (
+      num(batch?.packagedGrams) +
+      num(batch?.netOutputGrams) +
+      getEdiblesAllocatedGrams(batch)
+    );
   }
 
   function getRemainingGrams(batch: any) {
+    const poolAvail = num(batch?.oilPoolAvailableGrams);
+    if (
+      batch?.oilPoolAvailableGrams != null ||
+      batch?.ediblesAllocatedGrams != null ||
+      batch?.oilPoolOutputGrams != null
+    ) {
+      return Math.max(poolAvail, 0);
+    }
     return Math.max(getPackageableGrams(batch) - getPackagedGrams(batch), 0);
   }
 
@@ -1432,8 +1448,12 @@ export default function Packaging() {
                     : ""}{" "}
                   | Available to
                   Package: {getFinalGrams(b) || "—"}g | Packaged:{" "}
-                  {getPackagedGrams(b) || 0}g | Remaining:{" "}
-                  {getRemainingGrams(b) || "—"}g | Yield: {b.yieldPercentage || "—"} |
+                  {getPackagedGrams(b) || 0}g
+                  {getEdiblesAllocatedGrams(b) > 0
+                    ? ` (incl. ${getEdiblesAllocatedGrams(b)}g edibles)`
+                    : ""}{" "}
+                  | Remaining: {getRemainingGrams(b) || "—"}g | Yield:{" "}
+                  {b.yieldPercentage || "—"} |
                   Status: {b.status || "Ready"}
                 </div>
 

@@ -23,6 +23,7 @@ import {
     storeSourceBatchToListRow,
 } from "../../lib/sourceBatchListDto.js";
 import { AppError } from "../../errors/AppError.js";
+import { enrichLegacyPackagingRowsWithOilPool } from "../../lib/extractionOilPool.js";
 import { validate } from "../../middleware/validate.js";
 import { cultivationMotherPlantsPutSchema } from "../../validation/schemas.js";
 export const legacyCpuRouter = Router();
@@ -1046,7 +1047,8 @@ legacyCpuRouter.get("/packaging", asyncHandler(async (req, res) => {
             byId.set(id, mergeRecord(asUiRecord(prev), row));
         }
     }
-    res.json([...byId.values()]);
+    const enriched = await enrichLegacyPackagingRowsWithOilPool(companyId, [...byId.values()]);
+    res.json(enriched);
 }));
 legacyCpuRouter.post("/packaging", requireRole(packagingWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
