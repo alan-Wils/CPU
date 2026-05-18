@@ -59,9 +59,17 @@ import {
 import {
   EXTRACTION_UI_STAGE_META,
   EXTRACTION_UI_STAGE_ORDER,
+  extractionUiStageFromBatch,
   groupExtractionBatchesByUiStage,
   type ExtractionUiStageKey,
 } from "@/lib/extractionBatchUiStage";
+import {
+  isExtractionBatchActiveForCombine,
+  mergeExtractionSourceRows,
+  rebuildExtractionBatchSourceSummary,
+  resolveAbsorbedBiomassForUncombine,
+  subtractExtractionSourceRows,
+} from "@/lib/extractionMergeHelpers";
 import { buildTaskChallengeAttachment } from "@/lib/taskChallengePayload";
 import {
   formatLogDisplayTime,
@@ -94,6 +102,7 @@ const productTypes = [
 const extractionTasks = [
   "Pack Socks Start",
   "Pack Socks Stop",
+  "Combine Batches",
   "Print Batch Label",
   "Run Extraction",
   "Start Purge",
@@ -508,6 +517,7 @@ export default function Extraction() {
   if (!s.sourceBatches) s.sourceBatches = [];
   if (!s.completedSourceBatches) s.completedSourceBatches = [];
   if (!s.extractionBatches) s.extractionBatches = [];
+  if (!s.completedExtractionBatches) s.completedExtractionBatches = [];
   if (!s.packagingBatches) s.packagingBatches = [];
   if (!s.logs) s.logs = [];
 
@@ -563,6 +573,9 @@ export default function Extraction() {
   );
 
   const [selectedTask, setSelectedTask] = useState(extractionTasks[0]);
+  const [combinePartnerBatchId, setCombinePartnerBatchId] = useState("");
+  const [combineNotes, setCombineNotes] = useState("");
+  const [uncombineBusyPartnerId, setUncombineBusyPartnerId] = useState("");
 
   const [packSockTechCount, setPackSockTechCount] = useState("1");
   const [packSockTechNames, setPackSockTechNames] = useState<string[]>([""]);
@@ -1136,6 +1149,10 @@ export default function Extraction() {
       return getTestingStatus(batch) === "Test Passed" && !finished;
     }
 
+    if (task === "Combine Batches") {
+      return isExtractionBatchActiveForCombine(batch);
+    }
+
     if (extractionCustomTaskLabels.has(task)) {
       const hasRun = hasCompletedTask(batch, "Run Extraction");
       const fin = hasCompletedTask(batch, "Finish Batch");
@@ -1572,6 +1589,8 @@ export default function Extraction() {
     setDraftFinishBatchName("");
     setDraftFinishBatchCode("");
     setFinishBatchManualName("");
+    setCombinePartnerBatchId("");
+    setCombineNotes("");
   }
 
   async function generateAiProductNames() {
@@ -1615,6 +1634,8 @@ export default function Extraction() {
     setDraftFinishBatchName("");
     setDraftFinishBatchCode("");
     setFinishBatchManualName("");
+    setCombinePartnerBatchId("");
+    setCombineNotes("");
     setSelectedTask(getDefaultTaskForBatch(b));
     setShowTaskModal(true);
   }
@@ -1769,7 +1790,164 @@ export default function Extraction() {
     return requireFields([{ label: "Product Type", value: type }]);
   }
 
+  function finalizeMergedPartnerExtractionBatch(
+    absorbed: any,
+    survivorId: string,
+    snapshot: {
+      biomassAbsorbed: number;
+      sourcesSnapshot: any[];
+      statusBeforeMerge: string;
+      uiStageBeforeMerge: ExtractionUiStageKey;
+    },
+  ) {
+    absorbed.mergedIntoSnapshot = {
+      survivorBatchId: survivorId,
+      biomassAbsorbed: snapshot.biomassAbsorbed,
+      sourcesSnapshot: snapshot.sourcesSnapshot.map((r: any) => ({ ...r })),
+      statusBeforeMerge: snapshot.statusBeforeMerge,
+      uiStageBeforeMerge: snapshot.uiStageBeforeMerge,
+    };
+    absorbed.status = "Merged - Complete";
+    absorbed.mergedIntoBatchId = survivorId;
+    absorbed.completedAt = nowIsoForLog();
+    const idx = s.extractionBatches.findIndex((b: any) => b?.id === absorbed.id);
+    if (idx >= 0) {
+      s.extractionBatches.splice(idx, 1);
+    }
+    if (!s.completedExtractionBatches.some((b: any) => b?.id === absorbed.id)) {
+      s.completedExtractionBatches.unshift(absorbed);
+    }
+  }
+
+  function promptUncombineMergedPartner(survivor: any, partnerIdRaw: string) {
+    if (!requireWriteAccess("uncombine extraction batches")) return;
+    if (uncombineBusyPartnerId) return;
+
+    const sid = String(survivor?.id || "");
+    const pid = String(partnerIdRaw || "").trim();
+    if (!sid || !pid) return;
+
+    const idList = Array.isArray(survivor.combinedFromBatchIds)
+      ? survivor.combinedFromBatchIds.map((x: any) => String(x))
+      : [];
+    if (!idList.includes(pid)) {
+      showNotice("Uncombine failed", "That batch is not listed as merged into this survivor.");
+      return;
+    }
+
+    const previewIdx = s.completedExtractionBatches.findIndex((b: any) => b?.id === pid);
+    const partnerPreview = previewIdx >= 0 ? s.completedExtractionBatches[previewIdx] : null;
+    if (!partnerPreview || String(partnerPreview.mergedIntoBatchId || "") !== sid) {
+      showNotice(
+        "Uncombine failed",
+        "The absorbed batch could not be found as a merged record. Try refreshing.",
+      );
+      return;
+    }
+
+    const resolved = resolveAbsorbedBiomassForUncombine(partnerPreview, s.logs, sid, pid);
+    if (!resolved) {
+      showNotice(
+        "Uncombine failed",
+        "Could not resolve biomass — merge snapshot or Combine Batches log entry is missing.",
+      );
+      return;
+    }
+
+    showConfirm(
+      "Uncombine batches?",
+      `Restore ${pid} (${resolved.biomassLbs.toFixed(2)} lbs biomass) as its own batch and subtract that biomass from survivor ${sid}?`,
+      () => {
+        void (async () => {
+          setUncombineBusyPartnerId(pid);
+          try {
+            const idxPartner = Array.isArray(survivor.combinedFromBatchIds)
+              ? survivor.combinedFromBatchIds.findIndex((x: any) => String(x) === pid)
+              : -1;
+            if (idxPartner < 0) {
+              showNotice("Uncombine failed", "The merged-batch list changed. Refresh and retry.");
+              return;
+            }
+
+            const refreshedDoneIdx = s.completedExtractionBatches.findIndex((b: any) => b?.id === pid);
+            const pRestore =
+              refreshedDoneIdx >= 0 ? s.completedExtractionBatches[refreshedDoneIdx] : null;
+            if (!pRestore || String(pRestore.mergedIntoBatchId || "") !== sid) {
+              showNotice("Uncombine failed", "Partner batch no longer matches. Refresh and retry.");
+              return;
+            }
+
+            survivor.combinedFromBatchIds.splice(idxPartner, 1);
+            if (survivor.combinedFromBatchIds.length === 0) {
+              delete survivor.combinedFromBatchIds;
+            }
+
+            const survivorSources = Array.isArray(survivor.sources) ? survivor.sources : [];
+            const restoredSources = subtractExtractionSourceRows(survivorSources, resolved.sources);
+            rebuildExtractionBatchSourceSummary(survivor, restoredSources);
+
+            delete pRestore.mergedIntoSnapshot;
+            pRestore.mergedIntoBatchId = undefined;
+            pRestore.status = resolved.statusBeforeMerge;
+            delete pRestore.completedAt;
+
+            if (Array.isArray(resolved.sources) && resolved.sources.length > 0) {
+              pRestore.sources = resolved.sources.map((r: any) => ({ ...r }));
+              rebuildExtractionBatchSourceSummary(pRestore, pRestore.sources);
+            }
+
+            s.completedExtractionBatches.splice(refreshedDoneIdx, 1);
+            s.extractionBatches.unshift(pRestore);
+
+            saveLog({
+              area: "Extraction",
+              batch: sid,
+              task: "Uncombine Batches",
+              output: `Restored ${pid} (${resolved.biomassLbs.toFixed(2)} lbs) from survivor ${sid}`,
+              source: survivor.source,
+              loggedBy: getLoggedBy(),
+              data: {
+                uncombineBatches: true,
+                survivorBatchId: sid,
+                restoredBatchId: pid,
+                biomassRestored: resolved.biomassLbs,
+              },
+              time: nowIsoForLog(),
+            });
+
+            forceRefresh();
+            setViewBatch((cur: any) => (cur?.id === sid ? { ...survivor } : cur));
+            setSelectedExt((cur: any) => (cur?.id === sid ? { ...survivor } : cur));
+
+            showSyncMessageNotice("Uncombine saved locally. Syncing to server...");
+            let ok = await updateExtractionBatch(sid, survivor);
+            ok = (await updateExtractionBatch(pid, pRestore)) && ok;
+            showSyncMessageNotice(
+              ok ? "Uncombine synced to server." : "Uncombine saved locally — server sync failed.",
+            );
+          } catch (error) {
+            console.error("Uncombine extraction batches failed:", error);
+            showNotice(
+              "Uncombine failed",
+              error instanceof Error ? error.message : "Could not sync uncombine to the server.",
+            );
+          } finally {
+            setUncombineBusyPartnerId("");
+          }
+        })();
+      },
+      "This reverses a Combine Batches merge when the partner batch was absorbed into this survivor.",
+    );
+  }
+
   function validateTaskForm() {
+    if (selectedTask === "Combine Batches") {
+      if (!requireFields([{ label: "Partner batch", value: combinePartnerBatchId }])) {
+        return false;
+      }
+      return true;
+    }
+
     if (selectedTask === "Pack Socks Start") {
       if (
         !requireFields([
@@ -2185,6 +2363,12 @@ export default function Extraction() {
   }
 
   function buildTaskData() {
+    if (selectedTask === "Combine Batches") {
+      return {
+        notes: combineNotes.trim(),
+      };
+    }
+
     if (selectedTask === "Pack Socks Start") {
       return {
         startedAt: new Date().toISOString(),
@@ -2376,6 +2560,150 @@ export default function Extraction() {
         `This task is not allowed yet.`,
         `Next required task: ${getNextAllowedTask(selectedExt)}.`
       );
+      return;
+    }
+
+    if (selectedTask === "Combine Batches") {
+      if (!validateTaskForm()) return;
+      setIsSavingTask(true);
+
+      const pid = combinePartnerBatchId.trim();
+      const partnerIdx = s.extractionBatches.findIndex((b: any) => b?.id === pid);
+      const partner = partnerIdx >= 0 ? s.extractionBatches[partnerIdx] : null;
+
+      if (!partner) {
+        showNotice("Merge failed", "Partner batch not found in active extraction batches.");
+        setIsSavingTask(false);
+        return;
+      }
+      if (partner.id === selectedExt.id) {
+        showNotice("Merge failed", "Select a different batch to merge.");
+        setIsSavingTask(false);
+        return;
+      }
+      if (!isExtractionBatchActiveForCombine(partner)) {
+        showNotice("Merge failed", "That batch is already finished or merged.");
+        setIsSavingTask(false);
+        return;
+      }
+
+      const stageA = extractionUiStageFromBatch(selectedExt);
+      const stageB = extractionUiStageFromBatch(partner);
+      if (stageA !== stageB) {
+        showNotice(
+          "Merge failed",
+          `Both batches must be in the same workflow stage (${EXTRACTION_UI_STAGE_META[stageA].label}).`,
+        );
+        setIsSavingTask(false);
+        return;
+      }
+
+      const survivorSources = Array.isArray(selectedExt.sources) ? selectedExt.sources : [];
+      const partnerSources = Array.isArray(partner.sources) ? partner.sources : [];
+      const mergedSources = mergeExtractionSourceRows(survivorSources, partnerSources);
+      const mergedSourceObjects = mergedSources
+        .map((row: any) => getSource(row.sourceId))
+        .filter(Boolean);
+      if (getAllowedProductsFromSources(mergedSourceObjects.length ? mergedSourceObjects : mergedSources).length === 0) {
+        showNotice(
+          "Merge failed",
+          "Combining these batches would mix Fresh Frozen and Dry Trim source material.",
+        );
+        setIsSavingTask(false);
+        return;
+      }
+
+      const priorSurvivorBiomass = num(selectedExt.totalBiomassUsed);
+      const priorPartnerBiomass = num(partner.totalBiomassUsed);
+      const combinedBiomass = +mergedSources
+        .reduce((sum, row) => sum + num(row?.amountUsed), 0)
+        .toFixed(2);
+      const notes = combineNotes.trim();
+      const survivorId = selectedExt.id;
+      const partnerId = partner.id;
+
+      if (!Array.isArray(selectedExt.combinedFromBatchIds)) {
+        selectedExt.combinedFromBatchIds = [];
+      }
+      selectedExt.combinedFromBatchIds.push(partnerId);
+      rebuildExtractionBatchSourceSummary(selectedExt, mergedSources);
+
+      const survivorOutput = `Merged ${partnerId} (${priorPartnerBiomass} lbs) into ${survivorId} — total biomass now ${combinedBiomass} lbs${
+        notes ? `. Notes: ${notes}` : ""
+      }`;
+      const partnerOutput = `Merged into survivor ${survivorId} (${priorSurvivorBiomass} + ${priorPartnerBiomass} = ${combinedBiomass} lbs on survivor)${
+        notes ? `. Notes: ${notes}` : ""
+      }`;
+
+      const mergeData = {
+        combineBatches: true,
+        survivorBatchId: survivorId,
+        absorbedBatchId: partnerId,
+        biomassBeforeSurvivor: priorSurvivorBiomass,
+        biomassBeforePartner: priorPartnerBiomass,
+        biomassAfterCombine: combinedBiomass,
+        uiStageBucket: stageA,
+        notes,
+      };
+
+      const loggedBy = getLoggedBy();
+      const loggedAt = nowIsoForLog();
+
+      saveLog({
+        area: "Extraction",
+        batch: partnerId,
+        task: "Combine Batches",
+        output: partnerOutput,
+        source: partner.source,
+        linkedBatch: survivorId,
+        loggedBy,
+        data: { ...mergeData, loggedBy, loggedAt, loggedAtIso: new Date().toISOString() },
+        time: loggedAt,
+      });
+
+      saveLog({
+        area: "Extraction",
+        batch: survivorId,
+        task: "Combine Batches",
+        output: survivorOutput,
+        source: selectedExt.source,
+        linkedBatch: partnerId,
+        loggedBy,
+        data: { ...mergeData, loggedBy, loggedAt, loggedAtIso: new Date().toISOString() },
+        time: loggedAt,
+      });
+
+      finalizeMergedPartnerExtractionBatch(partner, survivorId, {
+        biomassAbsorbed: priorPartnerBiomass,
+        sourcesSnapshot: partnerSources.map((r: any) => ({ ...r })),
+        statusBeforeMerge: String(partner.status || "Ready For Pack Socks Start"),
+        uiStageBeforeMerge: stageB,
+      });
+
+      setCombinePartnerBatchId("");
+      setCombineNotes("");
+      const localSnapshot = { ...selectedExt };
+      setSelectedExt(localSnapshot);
+      resetTaskForm();
+      setShowTaskModal(false);
+      forceRefresh();
+
+      try {
+        showSyncMessageNotice("Merge saved locally. Syncing to server...");
+        let ok = await updateExtractionBatch(survivorId, localSnapshot);
+        ok = (await updateExtractionBatch(partnerId, partner)) && ok;
+        showSyncMessageNotice(
+          ok ? "Merge synced to server." : "Merge saved locally — server sync failed (check connectivity).",
+        );
+      } catch (error) {
+        console.error("Could not sync extraction merge:", error);
+        showNotice(
+          "Backend Save Failed",
+          "The merge was saved locally, but the server update failed.",
+        );
+      } finally {
+        setIsSavingTask(false);
+      }
       return;
     }
 
@@ -2860,6 +3188,26 @@ export default function Extraction() {
 
   const allowedCreateProducts = getAllowedCreateProducts();
   const allowedRunProducts = getAllowedRunProducts();
+
+  const combinePartnerOptions = selectedExt
+    ? s.extractionBatches.filter((b: any) => {
+        if (!b?.id || b.id === selectedExt.id) return false;
+        if (!isExtractionBatchActiveForCombine(b)) return false;
+        if (extractionUiStageFromBatch(b) !== extractionUiStageFromBatch(selectedExt)) {
+          return false;
+        }
+        const merged = mergeExtractionSourceRows(
+          Array.isArray(selectedExt.sources) ? selectedExt.sources : [],
+          Array.isArray(b.sources) ? b.sources : [],
+        );
+        const mergedSourceObjects = merged
+          .map((row: any) => getSource(row.sourceId))
+          .filter(Boolean);
+        return (
+          getAllowedProductsFromSources(mergedSourceObjects.length ? mergedSourceObjects : merged).length > 0
+        );
+      })
+    : [];
 
   const extractionBatchesByStage = groupExtractionBatchesByUiStage(s.extractionBatches);
   const visibleExtractionBatches = selectedExtractionStage
@@ -3437,6 +3785,40 @@ export default function Extraction() {
                     </option>
                   ))}
                 </select>
+
+                {selectedTask === "Combine Batches" && (
+                  <>
+                    <p style={{ color: "#94a3b8", margin: 0, lineHeight: 1.5 }}>
+                      Merge another active extraction batch in the same workflow stage into this survivor.
+                      Biomass and source rows are combined; the partner batch is marked complete and moved to
+                      merged history.
+                    </p>
+                    <select
+                      style={inputStyle}
+                      value={combinePartnerBatchId}
+                      onChange={(e) => setCombinePartnerBatchId(e.target.value)}
+                    >
+                      <option value="">Select partner batch…</option>
+                      {combinePartnerOptions.map((b: any) => (
+                        <option key={b.id} value={b.id}>
+                          {b.marketBatchCode || b.id} — {num(b.totalBiomassUsed).toFixed(2)} lbs
+                          {b.sourceBlendLabel ? ` · ${b.sourceBlendLabel}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    {combinePartnerOptions.length === 0 ? (
+                      <p style={{ color: "#64748b", margin: 0, fontSize: 13 }}>
+                        No other active batches in this stage with a compatible source mix.
+                      </p>
+                    ) : null}
+                    <input
+                      style={inputStyle}
+                      placeholder="Notes (optional)"
+                      value={combineNotes}
+                      onChange={(e) => setCombineNotes(e.target.value)}
+                    />
+                  </>
+                )}
 
                 {selectedTask === "Pack Socks Start" && (
                   <>
@@ -4418,6 +4800,44 @@ export default function Extraction() {
                     <p style={{ color: "#cbd5e1" }}>
                       <b>Blend:</b> {viewBatch.sourceBlendLabel}
                     </p>
+                  ) : null}
+
+                  {Array.isArray(viewBatch.combinedFromBatchIds) &&
+                  viewBatch.combinedFromBatchIds.length > 0 ? (
+                    <div
+                      style={{
+                        marginTop: 14,
+                        padding: 12,
+                        borderRadius: 10,
+                        background: "rgba(15,23,42,0.65)",
+                        border: "1px solid rgba(56,189,248,0.35)",
+                      }}
+                    >
+                      <p style={{ margin: "0 0 10px", fontSize: 13, color: "#94a3b8" }}>
+                        This batch absorbed others via <b>Combine Batches</b>. Uncombine restores a partner
+                        as its own active batch.
+                      </p>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {viewBatch.combinedFromBatchIds.map((mergedId: string) => (
+                          <button
+                            key={mergedId}
+                            type="button"
+                            style={buttonStyle}
+                            disabled={Boolean(uncombineBusyPartnerId)}
+                            onClick={() =>
+                              promptUncombineMergedPartner(
+                                s.extractionBatches.find((b: any) => b.id === viewBatch.id) || viewBatch,
+                                mergedId,
+                              )
+                            }
+                          >
+                            {uncombineBusyPartnerId === mergedId
+                              ? "Restoring…"
+                              : `Uncombine ${mergedId}`}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   ) : null}
                 </>
               )}
