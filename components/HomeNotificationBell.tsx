@@ -36,7 +36,7 @@ export default function HomeNotificationBell() {
 
   useEffect(() => {
     if (!open) return;
-    void loadFullInbox();
+    void loadFullInbox({ force: true });
     markAllRead();
   }, [open, loadFullInbox, markAllRead]);
 

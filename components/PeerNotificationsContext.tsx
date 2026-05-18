@@ -18,6 +18,7 @@ import {
   replacePeerNotifyInbox,
 } from "@/lib/api";
 import { CPU_AUTH_CHANGED_EVENT, isLoggedIn } from "@/lib/auth";
+import { clearPeerNotifyInboxClientCache, fetchPeerNotifyInboxDeduped } from "@/lib/peerNotifyInboxClient";
 import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
 import { useVisibilityPolling } from "@/lib/useVisibilityPolling";
 import type { PeerNotificationKind, PeerNotificationItem } from "@/lib/peerNotificationsTypes";
@@ -27,6 +28,8 @@ export type { PeerNotificationKind, PeerNotificationItem };
 const MAX_ITEMS = 60;
 /** Lightweight unread badge — full inbox loads when the bell opens. */
 const UNREAD_POLL_MS = 60_000;
+/** Full inbox refetch at most every 3 minutes unless forced (bell open). */
+const INBOX_STALE_MS = 3 * 60_000;
 
 function skipInboxPollingPath(pathname: string | null): boolean {
   const p = String(pathname || "");
@@ -54,9 +57,9 @@ type PeerNotificationsContextValue = {
 
 const PeerNotificationsContext = createContext<PeerNotificationsContextValue | null>(null);
 
-async function fetchInboxOrEmpty(): Promise<PeerNotificationItem[]> {
+async function fetchInboxOrEmpty(force?: boolean): Promise<PeerNotificationItem[]> {
   try {
-    const out = await fetchPeerNotifyInbox();
+    const out = await fetchPeerNotifyInboxDeduped(() => fetchPeerNotifyInbox(), { force });
     return (out.items || []).slice(0, MAX_ITEMS);
   } catch {
     return [];
@@ -81,6 +84,7 @@ export function PeerNotificationsProvider({ children }: { children: ReactNode })
   const [authTick, setAuthTick] = useState(0);
   const serializedRef = useRef("");
   const inboxLoadedRef = useRef(false);
+  const lastInboxFetchAtRef = useRef(0);
 
   useEffect(() => {
     function bump() {
@@ -94,6 +98,12 @@ export function PeerNotificationsProvider({ children }: { children: ReactNode })
     };
   }, []);
 
+  useEffect(() => {
+    const onTenant = () => clearPeerNotifyInboxClientCache();
+    window.addEventListener(CPU_TENANT_CHANGED_EVENT, onTenant);
+    return () => window.removeEventListener(CPU_TENANT_CHANGED_EVENT, onTenant);
+  }, []);
+
   const pollUnreadCount = useCallback(async () => {
     if (!isLoggedIn()) return;
     try {
@@ -104,9 +114,19 @@ export function PeerNotificationsProvider({ children }: { children: ReactNode })
     }
   }, []);
 
-  const loadFullInbox = useCallback(async () => {
+  const loadFullInbox = useCallback(async (opts?: { force?: boolean }) => {
     if (!isLoggedIn()) return;
-    const next = await fetchInboxOrEmpty();
+    const force = Boolean(opts?.force);
+    const now = Date.now();
+    if (
+      !force &&
+      inboxLoadedRef.current &&
+      now - lastInboxFetchAtRef.current < INBOX_STALE_MS
+    ) {
+      return;
+    }
+    const next = await fetchInboxOrEmpty(force);
+    lastInboxFetchAtRef.current = now;
     inboxLoadedRef.current = true;
     applySerializedIfDifferent(next, serializedRef, setItems);
     setUnreadCount(next.filter((x) => !x.read).length);
@@ -116,6 +136,8 @@ export function PeerNotificationsProvider({ children }: { children: ReactNode })
     if (!isLoggedIn()) {
       serializedRef.current = "";
       inboxLoadedRef.current = false;
+      lastInboxFetchAtRef.current = 0;
+      clearPeerNotifyInboxClientCache();
       setItems([]);
       setUnreadCount(0);
       return;
@@ -129,7 +151,7 @@ export function PeerNotificationsProvider({ children }: { children: ReactNode })
   useVisibilityPolling({
     enabled: pollingEnabled,
     intervalMs: UNREAD_POLL_MS,
-    refreshOnVisible: true,
+    refreshOnVisible: false,
     onPoll: pollUnreadCount,
   });
 

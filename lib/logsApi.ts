@@ -16,8 +16,12 @@ export async function createLog(payload: {
   });
 }
 
-export async function getAllLogs() {
-  return apiRequest("/api/logs");
+/** Batch purge / filter — needs `data` snapshots (not list DTO). */
+export async function getLogsForBatchPurge() {
+  const out = await apiRequest<{ items?: unknown[] } | unknown[]>(
+    "/api/logs?take=500&compact=0&paginated=true",
+  );
+  return Array.isArray(out) ? out : out?.items ?? [];
 }
 
 export async function deleteLog(id: string) {

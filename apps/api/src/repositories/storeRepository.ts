@@ -24,6 +24,28 @@ export class StoreRepository extends TenantRepository {
      * Postgres-only: read only the JSON arrays needed for cultivation strain analytics from `CompanyConfig`,
      * avoiding loading the full company store blob into the API process (and smaller Neon result sets).
      */
+    /** Postgres JSON slice: legacy `sourceBatches` array only (avoids full company store blob). */
+    async getSourceBatchesStoreSlice(companyId: string): Promise<unknown[] | null> {
+        const url = String(process.env.DATABASE_URL || "");
+        if (url.startsWith("file:"))
+            return null;
+        try {
+            const rows = await this.db.$queryRaw<Array<{ src: unknown }>>`
+        SELECT COALESCE(("valueJson"::jsonb -> 'sourceBatches'), '[]'::jsonb) AS src
+        FROM "CompanyConfig"
+        WHERE "companyId" = ${companyId}::uuid AND "key" = ${STORE_KEY}
+        LIMIT 1
+      `;
+            const row = rows[0];
+            if (!row)
+                return null;
+            return asJsonArray(row.src);
+        }
+        catch {
+            return null;
+        }
+    }
+
     async getAnalyticsStoreSliceArrays(companyId: string): Promise<AnalyticsStoreSliceArrays | null> {
         const url = String(process.env.DATABASE_URL || "");
         if (url.startsWith("file:"))

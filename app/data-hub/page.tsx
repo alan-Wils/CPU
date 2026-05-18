@@ -848,7 +848,7 @@ export default function DataHub() {
           loadSourceBatches(),
           loadExtractionBatches(),
           loadPackagingBatches(),
-          getLogs(undefined, { take: 250, compact: true }),
+          getLogs(undefined, { take: 100, compact: true }),
         ]);
 
         if (!mounted) return;

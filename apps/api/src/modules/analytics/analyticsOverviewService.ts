@@ -8,6 +8,7 @@ import {
   sumLeafLinkInventoryValueUsd,
   type LeafLinkInventoryItem,
 } from "../../services/leaflinkService.js";
+import { memoizedRead } from "../../lib/requestMemoCache.js";
 import { LeafLinkOrdersService, type OrdersAnalyticsDto } from "../../services/leafLinkOrdersService.js";
 
 const companyServices = new CompanyServiceSettingsService();
@@ -138,6 +139,12 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
 
   const laborStages = laborStageFromDepartment(department);
 
+  const leafLinkAnalyticsTtl = 90_000;
+  const loadLeafLinkOrdersAnalytics = (from: string, to: string) =>
+    memoizedRead(`leaflink:orders-analytics:${companyId}:${from}:${to}`, leafLinkAnalyticsTtl, () =>
+      ordersService.getOrdersAnalytics(companyId, { dateFrom: from, dateTo: to }),
+    );
+
   const facilityTrim = String(facility || "").trim();
   const batchWhere: Prisma.CultivationBatchWhereInput = {
     companyId,
@@ -261,8 +268,8 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
       select: { createdAt: true, total: true },
       take: 8000,
     }),
-    ordersService.getOrdersAnalytics(companyId, { dateFrom, dateTo }),
-    ordersService.getOrdersAnalytics(companyId, { dateFrom: prevFromYmd, dateTo: prevToYmd }),
+    loadLeafLinkOrdersAnalytics(dateFrom, dateTo),
+    loadLeafLinkOrdersAnalytics(prevFromYmd, prevToYmd),
     prisma.marketplaceOrder.aggregate({
       where: {
         sellerCompanyId: companyId,

@@ -182,10 +182,26 @@ export class LeafLinkService {
       key: LEAFLINK_CONFIG_KEY,
       value: next,
     });
+    const { invalidateLeafLinkCredentialsCache } = await import("../lib/leaflinkCredentialsCache.js");
+    invalidateLeafLinkCredentialsCache(companyId);
     return this.getSafeConfig(companyId);
   }
 
   async resolveRuntimeCredentials(
+    companyId: string,
+    opts?: { source?: "auto" | LeafLinkCredentialSource },
+  ): Promise<LeafLinkResolvedCredentials> {
+    const requestedSource = opts?.source ?? "auto";
+    if (requestedSource === "auto") {
+      const { cachedLeafLinkCredentials } = await import("../lib/leaflinkCredentialsCache.js");
+      return cachedLeafLinkCredentials(companyId, () =>
+        this.resolveRuntimeCredentialsUncached(companyId, opts),
+      );
+    }
+    return this.resolveRuntimeCredentialsUncached(companyId, opts);
+  }
+
+  private async resolveRuntimeCredentialsUncached(
     companyId: string,
     opts?: { source?: "auto" | LeafLinkCredentialSource },
   ): Promise<LeafLinkResolvedCredentials> {

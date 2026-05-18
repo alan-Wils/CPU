@@ -106,15 +106,22 @@ function batchEligible(ui: Record<string, unknown>): boolean {
   return true;
 }
 
+/** Matches SPA `buildCultivationTemplateFingerprint` — used for session skip checks. */
+export function buildCultivationTemplateOnlyFingerprint(
+  templates: readonly { id: string; stage: string; daysFromStageStart: number; title: string }[],
+): string {
+  return templates
+    .map((t) => `${t.id}|${t.stage}|${t.daysFromStageStart}|${t.title}`)
+    .sort()
+    .join("\n");
+}
+
 export function buildCultivationTemplateSyncFingerprint(parts: {
   templates: readonly { id: string; stage: string; daysFromStageStart: number; title: string }[];
   batchCount: number;
   storeUpdatedAt: string | null;
 }): string {
-  const tpl = parts.templates
-    .map((t) => `${t.id}|${t.stage}|${t.daysFromStageStart}|${t.title}`)
-    .sort()
-    .join("\n");
+  const tpl = buildCultivationTemplateOnlyFingerprint(parts.templates);
   const raw = `tpl:${tpl}#b:${parts.batchCount}#s:${parts.storeUpdatedAt ?? ""}`;
   return createHash("sha256").update(raw).digest("hex").slice(0, 32);
 }
@@ -178,14 +185,28 @@ export async function syncCultivationSectionCalendarFromTemplates(input: {
     storeUpdatedAt: storeUpdatedAt || null,
   });
 
+  const templateOnlyFp = buildCultivationTemplateOnlyFingerprint(
+    templates.map((t) => ({
+      id: t.id,
+      stage: t.stage,
+      daysFromStageStart: t.daysFromStageStart,
+      title: t.title,
+    })),
+  );
   const clientFp = String(input.templateFingerprint ?? "").trim();
-  if (!input.force && clientFp && clientFp === fingerprint) {
+  if (!input.force && clientFp && clientFp === templateOnlyFp) {
     logInfo("[CULT_CAL] sync_templates_skipped", {
       companyId: `${companyId.slice(0, 8)}…`,
       reason: "templates_current",
-      fingerprint,
+      templateFingerprint: templateOnlyFp.slice(0, 48),
     });
-    return { upserted: 0, deletedOrphans: 0, skipped: true, reason: "templates_current", fingerprint };
+    return {
+      upserted: 0,
+      deletedOrphans: 0,
+      skipped: true,
+      reason: "templates_current",
+      fingerprint: templateOnlyFp,
+    };
   }
 
   const batchIdSet = new Set(batches.map((b) => b.id));
