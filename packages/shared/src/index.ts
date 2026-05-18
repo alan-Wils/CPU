@@ -69,6 +69,22 @@ export {
   type PectinSingleAdditivePlan,
 } from "./pectinMeltToMakeFormula.js";
 
+export {
+  LEAFLINK_INVENTORY_COMPACT_VERSION,
+  LEAFLINK_INVENTORY_COMPACT_COLS,
+  LEAFLINK_INVENTORY_COMPACT_FIELD_COUNT,
+  LEAFLINK_INVENTORY_COMPACT_COL_INDEX,
+  countWireInventoryRows,
+  decodeLeafLinkInventoryCompactRow,
+  diagnoseLeafLinkInventoryDecode,
+  encodeLeafLinkInventoryCompactRow,
+  expandLeafLinkInventoryWire,
+  isUltraCompactInventoryWire,
+  type LeafLinkInventoryCompactWire,
+  type LeafLinkInventoryDecodeDiagnostics,
+  type LeafLinkInventoryExpandedPayload,
+} from "./leafLinkInventoryCompact.js";
+
 export const ROLE_PERMISSIONS: Record<AppRole, string[]> = {
   OWNER: ["*"],
   ADMIN: ["users.manage", "workflow.manage", "audit.read", "finance.read", "config.manage"],

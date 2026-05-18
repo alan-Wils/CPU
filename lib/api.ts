@@ -810,9 +810,15 @@ export type LeafLinkConfigUpsertInput = {
   recordedByStaffId?: number | null;
 };
 
-export async function fetchLeafLinkInventory(companyId?: string, opts?: { refresh?: boolean }) {
-  const q = opts?.refresh ? "?refresh=1" : "";
-  return apiRequest<LeafLinkInventoryDto>(`/api/inventory/leaflink${q}`, { companyId });
+export async function fetchLeafLinkInventory(
+  companyId?: string,
+  opts?: { refresh?: boolean; detail?: boolean },
+) {
+  const params = new URLSearchParams();
+  if (opts?.refresh) params.set("refresh", "1");
+  if (opts?.detail) params.set("detail", "1");
+  const q = params.toString();
+  return apiRequest<LeafLinkInventoryDto>(`/api/inventory/leaflink${q ? `?${q}` : ""}`, { companyId });
 }
 
 export async function fetchLeafLinkInventoryProductDetail(productId: string, companyId?: string) {

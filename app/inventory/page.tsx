@@ -32,6 +32,7 @@ import {
   type InventoryExportColumnId,
 } from "@/lib/inventoryExport";
 import { groupInventoryBySourcePackage } from "@/lib/leafLinkInventoryDisplay";
+import { inventoryStatusMatchesFilter } from "@/lib/leafLinkInventoryFilters";
 import { resolveInventoryCategoryLabel, type CategoryLabelOverride } from "@/lib/productCategoryLabels";
 
 function usd(n: number): string {
@@ -185,6 +186,7 @@ export default function InventoryPage() {
     try {
       const out = await fetchLeafLinkInventoryDeduped(() => fetchLeafLinkInventory(undefined, { refresh }), {
         refresh,
+        fetchDetailFallback: () => fetchLeafLinkInventory(undefined, { refresh, detail: true }),
       });
       if (!(out.items || []).length && !refresh) {
         throw new Error("Inventory list was empty after sync. Try Refresh to pull from LeafLink again.");
@@ -259,11 +261,7 @@ export default function InventoryPage() {
         if (sub !== subcategoryFilter.trim().toLowerCase()) return false;
       }
       if (brandFilter !== "all" && row.brand !== brandFilter) return false;
-      if (statusFilter !== "all") {
-        const a = (row.status || "").trim().toLowerCase();
-        const b = statusFilter.trim().toLowerCase();
-        if (a !== b) return false;
-      }
+      if (!inventoryStatusMatchesFilter(row.status || "", statusFilter)) return false;
       if (!q) return true;
       return [
         row.productName,
@@ -604,7 +602,15 @@ export default function InventoryPage() {
               <div style={{ marginTop: 18, color: "#93c5fd", fontWeight: 700 }}>Loading inventory...</div>
             ) : filtered.length === 0 ? (
               <div style={{ marginTop: 18, color: "#94a3b8" }}>
-                No inventory found. Sync now, verify LeafLink credentials, or adjust filters.
+                {items.length > 0 ? (
+                  <>
+                    {items.length} SKU{items.length === 1 ? "" : "s"} loaded from LeafLink, but none match the current
+                    filters (status &quot;{statusFilter}&quot;, availability &quot;{availabilityFilter}&quot;). Try
+                    Status: All or Availability: All products.
+                  </>
+                ) : (
+                  <>No inventory found. Sync now, verify LeafLink credentials, or adjust filters.</>
+                )}
               </div>
             ) : (
               <>
