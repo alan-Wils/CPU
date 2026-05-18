@@ -10,20 +10,34 @@ type CacheEntry<T> = {
 const cache = new Map<string, CacheEntry<unknown>>();
 const inflight = new Map<string, Promise<unknown>>();
 
+export type MemoizedReadMeta = {
+  cacheHit: boolean;
+  inflightJoined: boolean;
+};
+
 export async function memoizedRead<T>(
   key: string,
   ttlMs: number,
   loader: () => Promise<T>,
 ): Promise<T> {
+  const { value } = await memoizedReadWithMeta(key, ttlMs, loader);
+  return value;
+}
+
+export async function memoizedReadWithMeta<T>(
+  key: string,
+  ttlMs: number,
+  loader: () => Promise<T>,
+): Promise<{ value: T; cacheHit: boolean; inflightJoined: boolean }> {
   const now = Date.now();
   const hit = cache.get(key);
   if (hit && hit.expiresAt > now) {
-    return hit.value as T;
+    return { value: hit.value as T, cacheHit: true, inflightJoined: false };
   }
 
   const pending = inflight.get(key);
   if (pending) {
-    return (await pending) as T;
+    return { value: (await pending) as T, cacheHit: false, inflightJoined: true };
   }
 
   const p = loader()
@@ -36,7 +50,7 @@ export async function memoizedRead<T>(
     });
 
   inflight.set(key, p);
-  return (await p) as T;
+  return { value: (await p) as T, cacheHit: false, inflightJoined: false };
 }
 
 export function invalidateMemoPrefix(prefix: string): void {

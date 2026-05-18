@@ -181,7 +181,7 @@ export async function loadBackendStore(options?: LoadBackendStoreOptions) {
  */
 export async function hydrateTaskLogsFromApi(opts?: { take?: number }) {
   try {
-    const raw = await getLogs(undefined, { take: opts?.take ?? 200, compact: true });
+    const raw = await getLogs(undefined, { take: opts?.take ?? 75, compact: true });
     const rows = Array.isArray(raw) ? raw : (raw as { items?: unknown[] })?.items ?? [];
     (store as any).logs = Array.isArray(rows) ? rows : [];
     hydrateDryFlowerBatchesFromLogSnapshots(store, locallyDeletedDryFlowerBatchIds);

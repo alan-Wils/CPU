@@ -774,6 +774,7 @@ model CultivationBatch {
   updatedAt DateTime @updatedAt
 
   @@index([companyId])
+  @@index([companyId, updatedAt])
   @@index([autoStatus])
 }
 
@@ -846,6 +847,8 @@ model ExtractionRun {
   finishedAt DateTime?
 
   @@index([companyId, phase])
+  @@index([companyId, createdAt])
+  @@index([companyId, finishedAt])
   @@index([cultivationBatchId])
 }
 
@@ -897,6 +900,8 @@ model PackagingLot {
   finishedAt DateTime?
 
   @@index([companyId])
+  @@index([companyId, createdAt])
+  @@index([companyId, finishedAt])
   @@index([extractionRunId])
   @@index([status])
 }
@@ -947,6 +952,7 @@ model EdibleBatch {
   @@unique([companyId, batchNumber])
   @@index([companyId, stage])
   @@index([companyId, status])
+  @@index([companyId, createdAt])
   @@index([extractionRunId])
 }
 
@@ -972,7 +978,9 @@ model EdibleTaskLog {
   createdAt DateTime @default(now())
 
   @@index([companyId, createdAt])
+  @@index([companyId, completedAt])
   @@index([edibleBatchId, createdAt])
+  @@index([edibleBatchId, completedAt])
 }
 
 model EdibleIngredient {
@@ -1026,6 +1034,8 @@ model LaborEntry {
   createdAt  DateTime      @default(now())
 
   @@index([companyId])
+  @@index([companyId, createdAt])
+  @@index([companyId, stage, createdAt])
   @@index([userId])
   @@index([cultivationBatchId])
 }
@@ -1070,6 +1080,7 @@ model TaskLog {
   createdAt   DateTime      @default(now())
 
   @@index([companyId, createdAt])
+  @@index([companyId, stage, createdAt])
 }
 
 /// Per-section scheduled tasks (company timezone `dateYmd`); not workflow TaskLog completions.

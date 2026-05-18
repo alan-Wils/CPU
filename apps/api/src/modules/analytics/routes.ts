@@ -12,7 +12,7 @@ import {
 } from "./buildCultivationStrainMetricPoints.js";
 import { buildAnalyticsOverview } from "./analyticsOverviewService.js";
 import { buildLiveOperationsDetail } from "./liveOperationsDetailService.js";
-import { memoizedRead } from "../../lib/requestMemoCache.js";
+import { memoizedRead, memoizedReadWithMeta } from "../../lib/requestMemoCache.js";
 import { logSlowRequestIfNeeded } from "../../lib/slowRequestLog.js";
 
 const storeService = new StoreService();
@@ -127,7 +127,7 @@ analyticsRouter.get(
         const cacheTtl = Number.isFinite(ttlMs) && ttlMs >= 15_000 ? ttlMs : 90_000;
 
         const dbStarted = Date.now();
-        const out = await memoizedRead(cacheKey, cacheTtl, () =>
+        const { value: out, cacheHit, inflightJoined } = await memoizedReadWithMeta(cacheKey, cacheTtl, () =>
             buildAnalyticsOverview({
                 companyId,
                 dateFrom,
@@ -147,6 +147,8 @@ analyticsRouter.get(
             dbMs,
             serializeMs,
             payloadBytes: Buffer.byteLength(body, "utf8"),
+            cacheHit,
+            inflightJoined,
         });
         res.setHeader("Cache-Control", "private, max-age=30");
         res.type("json").send(body);

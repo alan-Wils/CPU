@@ -1,7 +1,13 @@
 import { apiRequest } from "@/lib/api";
 
-export async function loadSourceBatches() {
-  return apiRequest("/api/source-batches");
+export async function loadSourceBatches(opts?: { summary?: boolean }) {
+  const summary = opts?.summary !== false;
+  const q = summary ? "?summary=1" : "?summary=0";
+  return apiRequest(`/api/source-batches${q}`);
+}
+
+export async function loadSourceBatchDetail(batchId: string) {
+  return apiRequest(`/api/source-batches/${encodeURIComponent(batchId)}`);
 }
 
 export async function createSourceBatch(batch: any) {

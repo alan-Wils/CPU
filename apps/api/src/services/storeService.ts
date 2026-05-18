@@ -1,4 +1,5 @@
 import { AppError } from "../errors/AppError.js";
+import { invalidateMemoPrefix } from "../lib/requestMemoCache.js";
 import { StoreRepository } from "../repositories/storeRepository.js";
 import { AuditService } from "./auditService.js";
 const DEFAULT_STORE = {
@@ -75,6 +76,8 @@ export class StoreService {
             entityId: row.id,
             after: { updatedAt: row.updatedAt }
         });
+        invalidateMemoPrefix(`store:snapshot:${companyId}:`);
+        invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
         return { ...normalized, _meta: { updatedAt: row.updatedAt.toISOString() } };
     }
     async getVersion(companyId) {

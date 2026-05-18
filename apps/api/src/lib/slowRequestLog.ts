@@ -6,6 +6,9 @@ export type SlowRequestParts = {
   dbMs?: number;
   serializeMs?: number;
   payloadBytes?: number;
+  cacheHit?: boolean;
+  inflightJoined?: boolean;
+  rowCount?: number;
   extra?: Record<string, unknown>;
 };
 
@@ -22,6 +25,9 @@ export function logSlowRequestIfNeeded(parts: SlowRequestParts): void {
     dbMs: parts.dbMs,
     serializeMs: parts.serializeMs,
     payloadBytes: parts.payloadBytes,
+    cacheHit: parts.cacheHit,
+    inflightJoined: parts.inflightJoined,
+    rowCount: parts.rowCount,
     ...parts.extra,
   });
 }

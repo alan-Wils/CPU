@@ -4,6 +4,8 @@ import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { validate } from "../../middleware/validate.js";
 import { z } from "zod";
 import { StoreService } from "../../services/storeService.js";
+import { memoizedReadWithMeta, invalidateMemoPrefix } from "../../lib/requestMemoCache.js";
+import { logSlowRequestIfNeeded } from "../../lib/slowRequestLog.js";
 const storePayloadSchema = z.object({
     cultivationBatches: z.array(z.unknown()).default([]),
     completedCultivationBatches: z.array(z.unknown()).default([]),
@@ -25,17 +27,34 @@ storeRouter.get("/version", asyncHandler(async (req, res) => {
     res.json(version);
 }));
 storeRouter.get("/", asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
     const includeLogs =
         String(req.query.includeLogs ?? "").trim() === "1"
         || String(req.query.include ?? "").split(",").map((s) => s.trim()).includes("logs");
-    const data = await service.load(getScopedCompanyId(req), { includeLogs });
+    const cacheKey = `store:snapshot:${companyId}:${includeLogs ? "logs" : "nologs"}`;
+    const dbStarted = Date.now();
+    const { value: data, cacheHit, inflightJoined } = await memoizedReadWithMeta(cacheKey, 15_000, () =>
+        service.load(companyId, { includeLogs }),
+    );
+    const dbMs = Date.now() - dbStarted;
+    const body = JSON.stringify(data);
+    logSlowRequestIfNeeded({
+        label: "GET /api/store",
+        companyId,
+        dbMs,
+        payloadBytes: Buffer.byteLength(body, "utf8"),
+        cacheHit,
+        inflightJoined,
+    });
     res.setHeader("Cache-Control", "private, max-age=15");
-    res.json(data);
+    res.type("json").send(body);
 }));
 const saveStack = [
     validate({ body: storePayloadSchema }),
     asyncHandler(async (req, res) => {
-        const data = await service.save(getScopedCompanyId(req), req.auth.userId, req.body);
+        const companyId = getScopedCompanyId(req);
+        const data = await service.save(companyId, req.auth.userId, req.body);
+        invalidateMemoPrefix(`store:snapshot:${companyId}:`);
         res.json(data);
     })
 ];

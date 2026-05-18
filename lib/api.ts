@@ -471,7 +471,7 @@ export async function getLogs(
   companyId?: string,
   opts?: { take?: number; cursor?: string; paginated?: boolean; compact?: boolean },
 ): Promise<unknown[] | TaskLogsPageDto> {
-  const take = opts?.take != null ? Math.min(500, Math.max(1, Math.floor(opts.take))) : 150;
+  const take = opts?.take != null ? Math.min(500, Math.max(1, Math.floor(opts.take))) : 75;
   const q = new URLSearchParams();
   q.set("take", String(take));
   if (opts?.cursor) q.set("cursor", opts.cursor);
@@ -480,6 +480,11 @@ export async function getLogs(
   return apiRequest(`/api/logs?${q.toString()}`, {
     companyId,
   });
+}
+
+/** Full task log row (compact list omits large `data` blobs). */
+export async function getLogById(taskLogId: string, companyId?: string) {
+  return apiRequest(`/api/logs/${encodeURIComponent(taskLogId)}`, { companyId });
 }
 
 export async function saveLog(
