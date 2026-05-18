@@ -102,6 +102,26 @@ export async function enrichLegacyPackagingRowsWithOilPool(
       row.extractionRunId || row.extractionBatchId || row.sourceBatchId || "",
     ).trim();
     const pool = pools.get(runId);
+    const ov = row.packagingPoolOverrides as Record<string, unknown> | undefined;
+    if (ov?.enabled) {
+      const packageable = g(Number(ov.packageableGrams ?? row.packageableGrams ?? row.finalOilGrams ?? 0));
+      const packaged = g(Number(ov.packagedGrams ?? row.packagedGrams ?? 0));
+      const edibles = g(Number(ov.ediblesAllocatedGrams ?? 0));
+      const reserved = g(Number(ov.ediblesReservedGrams ?? 0));
+      const available = Math.max(packageable - packaged - edibles - reserved, 0);
+      return {
+        ...row,
+        packageableGrams: packageable,
+        finalOilGrams: packageable,
+        packagedGrams: packaged,
+        ediblesAllocatedGrams: edibles,
+        ediblesReservedGrams: reserved,
+        oilPoolOutputGrams: packageable,
+        oilPoolPackagingGrams: packaged,
+        oilPoolAvailableGrams: available,
+        packagingPoolOverrides: ov,
+      };
+    }
     if (!pool) return row;
     return {
       ...row,

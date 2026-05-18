@@ -55,6 +55,13 @@ const BASE_PACKAGING_TASKS = [
   "Finish Package",
 ];
 
+const EXTRACTION_PRODUCT_TYPES = [
+  "Live Resin Oil",
+  "Live Resin Dabbable",
+  "Live Resin Oil (Edible)",
+  "Cured Wax",
+];
+
 const TEST_TYPES = [
   "Metals",
   "Microbial",
@@ -283,17 +290,29 @@ export default function Packaging() {
 
   const [canDeleteRecords, setCanDeleteRecords] = useState(false);
   const [canEditSourcePackages, setCanEditSourcePackages] = useState(false);
+  const [canEditPackagingBatch, setCanEditPackagingBatch] = useState(false);
   const [canWriteRecords, setCanWriteRecords] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [editSourcePackagesDraft, setEditSourcePackagesDraft] = useState("");
   const [editSourcePackagesSaving, setEditSourcePackagesSaving] = useState(false);
+  const [editPackagingModalOpen, setEditPackagingModalOpen] = useState(false);
+  const [editPackagingSaving, setEditPackagingSaving] = useState(false);
+  const [editPbMarketCode, setEditPbMarketCode] = useState("");
+  const [editPbName, setEditPbName] = useState("");
+  const [editPbProductType, setEditPbProductType] = useState("");
+  const [editPbBlendLabel, setEditPbBlendLabel] = useState("");
+  const [editPbPackageableGrams, setEditPbPackageableGrams] = useState("");
+  const [editPbPackagedGrams, setEditPbPackagedGrams] = useState("");
+  const [editPbEdiblesReserved, setEditPbEdiblesReserved] = useState("");
+  const [editPbEdiblesKitchen, setEditPbEdiblesKitchen] = useState("");
 
   useEffect(() => {
     const role = String(getAuthUser()?.role || "").toUpperCase();
     setCanDeleteRecords(role === "OWNER" || role === "ADMIN" || role === "MANAGER");
-    setCanEditSourcePackages(
-      role === "OWNER" || role === "ADMIN" || role === "MANAGER" || role === "OPERATIONS_MANAGER",
-    );
+    const canManage =
+      role === "OWNER" || role === "ADMIN" || role === "MANAGER" || role === "OPERATIONS_MANAGER";
+    setCanEditSourcePackages(canManage);
+    setCanEditPackagingBatch(canManage);
     setCanWriteRecords(hasPackagingWriteAccess());
 
     let active = true;
@@ -693,6 +712,159 @@ export default function Packaging() {
     setUnits("");
     setPackagedBy("");
     setNotes("");
+  }
+
+  function openEditPackagingBatch(batch: any) {
+    if (!batch?.id || !canEditPackagingBatch) return;
+    const row = s.packagingBatches.find((b: any) => b.id === batch.id) || batch;
+    const ov = row.packagingPoolOverrides as Record<string, unknown> | undefined;
+    const useOverrides = Boolean(ov?.enabled);
+    setEditPbMarketCode(String(row.marketBatchCode ?? ""));
+    setEditPbName(String(row.name ?? row.type ?? row.productType ?? ""));
+    setEditPbProductType(String(row.productType || row.type || EXTRACTION_PRODUCT_TYPES[0]));
+    setEditPbBlendLabel(String(row.sourceBlendLabel ?? ""));
+    setEditPbPackageableGrams(
+      String(useOverrides ? ov?.packageableGrams ?? getFinalGrams(row) : getFinalGrams(row) || ""),
+    );
+    setEditPbPackagedGrams(
+      String(useOverrides ? ov?.packagedGrams ?? getPhysicalPackagedGrams(row) : getPhysicalPackagedGrams(row) || ""),
+    );
+    setEditPbEdiblesReserved(
+      String(
+        useOverrides
+          ? ov?.ediblesReservedGrams ?? getEdiblesReservedGrams(row)
+          : getEdiblesReservedGrams(row) || "",
+      ),
+    );
+    setEditPbEdiblesKitchen(
+      String(
+        useOverrides
+          ? ov?.ediblesAllocatedGrams ?? getEdiblesAllocatedGrams(row)
+          : getEdiblesAllocatedGrams(row) || "",
+      ),
+    );
+    setEditSourcePackagesDraft(formatSourcePackageIdsForInput(row));
+    setEditPackagingModalOpen(true);
+    if (selected?.id !== row.id) {
+      selectBatch(row);
+    }
+  }
+
+  function closeEditPackagingBatchModal() {
+    if (editPackagingSaving) return;
+    setEditPackagingModalOpen(false);
+  }
+
+  async function savePackagingBatchEdits() {
+    if (!canEditPackagingBatch || !selected?.id) return;
+
+    if (!requireField(editPbName, "Batch / product name")) return;
+    if (!requireField(editPbProductType, "Product type")) return;
+    if (!requireField(editPbPackageableGrams, "Available to package (g)")) return;
+
+    const packageable = num(editPbPackageableGrams);
+    const packaged = num(editPbPackagedGrams);
+    const reserved = num(editPbEdiblesReserved);
+    const kitchen = num(editPbEdiblesKitchen);
+
+    if (packageable <= 0) {
+      showNotice("Invalid amount", "Available to package must be greater than 0 grams.");
+      return;
+    }
+    if (packaged < 0 || reserved < 0 || kitchen < 0) {
+      showNotice("Invalid amount", "Gram amounts cannot be negative.");
+      return;
+    }
+    if (packaged + reserved + kitchen > packageable + 0.0001) {
+      showNotice(
+        "Totals do not balance",
+        "Packaged + kitchen used + reserved cannot exceed available to package.",
+      );
+      return;
+    }
+
+    const row = s.packagingBatches.find((b: any) => b.id === selected.id) || selected;
+    const payload: any = {
+      ...row,
+      marketBatchCode: editPbMarketCode.trim(),
+      name: editPbName.trim(),
+      productType: editPbProductType.trim(),
+      type: editPbProductType.trim(),
+      sourceBlendLabel: editPbBlendLabel.trim(),
+      finalOilGrams: packageable,
+      packageableGrams: packageable,
+      totalFinalGrams: packageable + num(row.extraTerpsGrams),
+      packagedGrams: packaged,
+      packagingPoolOverrides: {
+        enabled: true,
+        packageableGrams: packageable,
+        packagedGrams: packaged,
+        ediblesReservedGrams: reserved,
+        ediblesAllocatedGrams: kitchen,
+      },
+    };
+
+    const sourceIds = parseSourcePackageIdsInput(editSourcePackagesDraft);
+    if (sourceIds.length > 0) {
+      Object.assign(payload, applySourcePackageIdsToBatch(payload, sourceIds));
+    }
+
+    setEditPackagingSaving(true);
+    try {
+      await updatePackagingBatch(payload.id, payload);
+      Object.assign(row, payload);
+      setSelected({ ...payload });
+
+      const exId = String(payload.extractionBatchId || payload.sourceBatchId || "").trim();
+      if (exId && exId !== payload.id) {
+        try {
+          const extractionList = await loadExtractionBatches().catch(() => []);
+          const exRow = (extractionList as any[]).find((b) => b?.id === exId);
+          if (exRow) {
+            const exPayload: any = {
+              ...exRow,
+              marketBatchCode: payload.marketBatchCode,
+              name: payload.name,
+              productType: payload.productType,
+              sourceBlendLabel: payload.sourceBlendLabel,
+              finalOilGrams: packageable,
+              totalFinalGrams: packageable + num(exRow.extraTerpsGrams),
+            };
+            if (sourceIds.length > 0) {
+              Object.assign(exPayload, applySourcePackageIdsToBatch(exPayload, sourceIds));
+            }
+            await updateExtractionBatch(exId, exPayload);
+          }
+        } catch (exErr) {
+          console.warn("Packaging: could not sync batch edit to extraction run:", exErr);
+        }
+      }
+
+      await addBackendLog({
+        area: "Packaging",
+        batch: payload.id,
+        task: "Packaging Batch Updated",
+        output: `Updated ${packagingBatchPublicLabel(payload)} — ${packageable}g avail, ${packaged}g packaged, ${kitchen}g kitchen, ${reserved}g reserved`,
+        loggedBy: getLoggedBy(),
+        data: {
+          packagingPoolOverrides: payload.packagingPoolOverrides,
+          marketBatchCode: payload.marketBatchCode,
+        },
+        time: nowIsoForLog(),
+      });
+
+      setEditPackagingModalOpen(false);
+      forceRefresh();
+      showSyncMessageNotice("Packaging batch saved.");
+    } catch (error) {
+      console.error("Could not save packaging batch edits:", error);
+      showNotice(
+        "Save failed",
+        error instanceof Error ? error.message : "Could not update this packaging batch.",
+      );
+    } finally {
+      setEditPackagingSaving(false);
+    }
   }
 
   async function saveSourcePackagesForSelected() {
@@ -1528,7 +1700,20 @@ export default function Packaging() {
                 </div>
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {canEditPackagingBatch && (
+                    <button
+                      type="button"
+                      style={blueButtonStyle}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openEditPackagingBatch(b);
+                      }}
+                    >
+                      Edit
+                    </button>
+                  )}
                   <button
+                    type="button"
                     style={historyButtonStyle}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -1540,6 +1725,7 @@ export default function Packaging() {
 
                   {canDeleteRecords && (
                     <button
+                      type="button"
                       style={deleteButtonStyle}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -1582,57 +1768,32 @@ export default function Packaging() {
             <p style={{ color: "#94a3b8" }}>Select an extraction batch to package.</p>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
-              <input
-                style={inputStyle}
-                value={
-                  selected.marketBatchCode
-                    ? `${packagingBatchPublicLabel(selected)} (run ${selected.id})`
-                    : selected.id || ""
-                }
-                readOnly
-              />
-
-              {canEditSourcePackages ? (
-                <div style={{ display: "grid", gap: 8 }}>
-                  <label style={{ fontSize: 13, color: "#94a3b8" }}>
-                    Source packages{" "}
-                    <span style={{ color: "#64748b" }}>
-                      (material tags, e.g. FF-BLUE.051526 — not the product label)
-                    </span>
-                  </label>
-                  <textarea
-                    style={{
-                      ...inputStyle,
-                      minHeight: 72,
-                      resize: "vertical",
-                      fontFamily: "inherit",
-                    }}
-                    value={editSourcePackagesDraft}
-                    onChange={(e) => setEditSourcePackagesDraft(e.target.value)}
-                    placeholder="FF-BLUE.051526, FF-OG.051526"
-                    disabled={editSourcePackagesSaving}
-                  />
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                    <button
-                      type="button"
-                      style={blueButtonStyle}
-                      disabled={editSourcePackagesSaving}
-                      onClick={() => void saveSourcePackagesForSelected()}
-                    >
-                      {editSourcePackagesSaving ? "Saving…" : "Save source packages"}
-                    </button>
-                    <span style={{ fontSize: 12, color: "#64748b" }}>
-                      Shown on batch cards: {packagingSourceMaterialLabel(selected)}
-                    </span>
-                  </div>
-                </div>
-              ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                 <input
-                  style={inputStyle}
-                  value={`Source packages: ${packagingSourceMaterialLabel(selected)}`}
+                  style={{ ...inputStyle, flex: "1 1 200px" }}
+                  value={
+                    selected.marketBatchCode
+                      ? `${packagingBatchPublicLabel(selected)} (run ${selected.id})`
+                      : selected.id || ""
+                  }
                   readOnly
                 />
-              )}
+                {canEditPackagingBatch ? (
+                  <button
+                    type="button"
+                    style={blueButtonStyle}
+                    onClick={() => openEditPackagingBatch(selected)}
+                  >
+                    Edit batch
+                  </button>
+                ) : null}
+              </div>
+
+              <input
+                style={inputStyle}
+                value={`Source packages: ${packagingSourceMaterialLabel(selected)}`}
+                readOnly
+              />
 
               <input
                 style={inputStyle}
@@ -2058,6 +2219,136 @@ export default function Packaging() {
           )}
         </div>
       </div>
+
+      {editPackagingModalOpen && selected && (
+        <div style={modalOverlayStyle} onClick={closeEditPackagingBatchModal}>
+          <div
+            style={modalStyle}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-labelledby="edit-packaging-batch-title"
+          >
+            <h2 id="edit-packaging-batch-title" style={{ marginTop: 0 }}>
+              Edit packaging batch
+            </h2>
+            <p style={{ color: "#94a3b8", marginTop: 0, fontSize: 13 }}>
+              Update the batch card: name, product type, available grams, packaged, kitchen used, and reserved.
+            </p>
+            <div style={{ display: "grid", gap: 10, marginTop: 16 }}>
+              <input
+                style={inputStyle}
+                placeholder="Market batch code"
+                value={editPbMarketCode}
+                onChange={(e) => setEditPbMarketCode(e.target.value)}
+                disabled={editPackagingSaving}
+              />
+              <input
+                style={inputStyle}
+                placeholder="Batch / product name"
+                value={editPbName}
+                onChange={(e) => setEditPbName(e.target.value)}
+                disabled={editPackagingSaving}
+              />
+              <select
+                style={inputStyle}
+                value={editPbProductType}
+                onChange={(e) => setEditPbProductType(e.target.value)}
+                disabled={editPackagingSaving}
+              >
+                {[...new Set([...EXTRACTION_PRODUCT_TYPES, editPbProductType].filter(Boolean))].map(
+                  (pt) => (
+                    <option key={pt} value={pt}>
+                      {pt}
+                    </option>
+                  ),
+                )}
+              </select>
+              <input
+                style={inputStyle}
+                placeholder="Blend label"
+                value={editPbBlendLabel}
+                onChange={(e) => setEditPbBlendLabel(e.target.value)}
+                disabled={editPackagingSaving}
+              />
+              <input
+                style={inputStyle}
+                type="number"
+                step="0.01"
+                min="0.01"
+                placeholder="Available to package (g)"
+                value={editPbPackageableGrams}
+                onChange={(e) => setEditPbPackageableGrams(e.target.value)}
+                disabled={editPackagingSaving}
+              />
+              <input
+                style={inputStyle}
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="Already packaged (g)"
+                value={editPbPackagedGrams}
+                onChange={(e) => setEditPbPackagedGrams(e.target.value)}
+                disabled={editPackagingSaving}
+              />
+              <input
+                style={inputStyle}
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="Reserved for edibles (g)"
+                value={editPbEdiblesReserved}
+                onChange={(e) => setEditPbEdiblesReserved(e.target.value)}
+                disabled={editPackagingSaving}
+              />
+              <input
+                style={inputStyle}
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="Kitchen used (g)"
+                value={editPbEdiblesKitchen}
+                onChange={(e) => setEditPbEdiblesKitchen(e.target.value)}
+                disabled={editPackagingSaving}
+              />
+              <details style={{ fontSize: 13, color: "#94a3b8" }}>
+                <summary style={{ cursor: "pointer" }}>Source material tags (optional)</summary>
+                <textarea
+                  style={{
+                    ...inputStyle,
+                    minHeight: 64,
+                    width: "100%",
+                    boxSizing: "border-box",
+                    marginTop: 8,
+                    fontFamily: "inherit",
+                  }}
+                  value={editSourcePackagesDraft}
+                  onChange={(e) => setEditSourcePackagesDraft(e.target.value)}
+                  placeholder="FF-BLUE.051526, FF-OG.051526"
+                  disabled={editPackagingSaving}
+                />
+              </details>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+              <button
+                type="button"
+                style={greenButtonStyle}
+                disabled={editPackagingSaving}
+                onClick={() => void savePackagingBatchEdits()}
+              >
+                {editPackagingSaving ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                style={buttonStyle}
+                disabled={editPackagingSaving}
+                onClick={closeEditPackagingBatchModal}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {notificationModal.open && (
         <div style={modalOverlayStyle}>
