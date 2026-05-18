@@ -11,11 +11,10 @@ Railway **only runs the Node API** from `apps/api` (see `railway.toml`). It does
 3. **Settings** → **Root directory:** `apps/api`
 4. **Settings** → **Build** (or watch Nixpacks use `railway.toml`):
    - **Build command:** `npm install && npm run build`
-5. **Settings** → **Deploy**:
-   - **Start command:** Leave blank to use repo `apps/api/railway.toml` (`prisma migrate deploy` then `node dist/server.js`) so migrations always run on boot. If you override Start in the dashboard, paste the same command as in that file.
-   - Optionally set **Custom release command** instead:  
-     `npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma`  
-     (If you use only a release command, you can set **Start command** back to `node dist/server.js`.)
+5. **Settings** → **Deploy** (repo `railway.toml`):
+   - **Release command:** `node scripts/prisma-migrate-deploy-production.mjs` — runs **once per deploy** (not per replica).
+   - **Start command:** `node dist/server.js` — API only; **do not** chain `prisma migrate deploy` here (avoids P1002 advisory lock fights on Neon).
+   - Set **`RUN_PRISMA_MIGRATIONS=false`** on any extra replicas/workers that must not migrate. The primary API service can omit it (release command runs migrations).
 
 ## 2. Environment variables (paste in Variables)
 
@@ -25,7 +24,8 @@ Use values from your secrets manager, **not** committed files. Example shape is 
 |------|---------------------------|
 | `NODE_ENV` | `production` |
 | `PORT` | `4000` (or Railway’s assigned `PORT` — if Railway injects `PORT`, prefer the injected value in Variables) |
-| `DATABASE_URL` | Neon connection string with `?sslmode=require`. If you see **503 `DATABASE_QUERY_ERROR`** or persistent **500** on Prisma queries while `/health/ready` is OK, try Neon’s **direct** (non-pooler) URL for the API, or follow [Prisma + Neon pooled connections](https://www.prisma.io/docs/guides/database/neon#use-the-neon-serverless-driver-with-prisma) — poolers can break prepared statements. |
+| `DATABASE_URL` | Neon **pooler** connection string (`…-pooler.….neon.tech`) with `?sslmode=require` for runtime API traffic. |
+| `DIRECT_DATABASE_URL` | Neon **direct** host (no `-pooler`) for migrations only. If unset, the release migrate script derives it from `DATABASE_URL`. |
 | `JWT_SECRET` | 32+ random bytes, e.g. `openssl rand -base64 48` |
 | `JWT_EXPIRES_IN` | `15m` |
 | `CORS_ORIGIN` | Your Vercel app origin, e.g. `https://…vercel.app` (comma-separated for several origins; **never** `*` in production) |
@@ -42,10 +42,10 @@ Use values from your secrets manager, **not** committed files. Example shape is 
 
 ```bash
 cd apps/api
-npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma
+npm run prisma:migrate:deploy
 ```
 
-Same command as the **Custom release command** in Railway. Run locally with `DATABASE_URL` pointed at staging Neon to debug migration issues.
+Uses direct Neon + `PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK=1` for that process only. Railway runs the same script as **release command** once per deploy.
 
 ## 4. Verify staging
 

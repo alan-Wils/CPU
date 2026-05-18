@@ -97,7 +97,7 @@ export function errorMiddleware(err, req, res, _next) {
                     details: {
                         prismaCode: code,
                         prismaMeta: meta,
-                        operatorHint: "From apps/api with DATABASE_URL set: npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma",
+                        operatorHint: "From apps/api with DATABASE_URL set: npm run prisma:migrate:deploy (uses DIRECT_DATABASE_URL + release-style migrate)",
                     },
                 },
             });

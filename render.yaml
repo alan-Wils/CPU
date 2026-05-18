@@ -7,7 +7,7 @@ services:
     runtime: node
     # Monorepo: install from repo root so workspace package @cpu/shared resolves (not from npm registry).
     buildCommand: npm install && npm run build --workspace @cpu/shared && npm run build --workspace @cpu/api
-    preDeployCommand: cd apps/api && npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma
+    preDeployCommand: cd apps/api && node scripts/prisma-migrate-deploy-production.mjs
     startCommand: cd apps/api && npm run start
     healthCheckPath: /health/live
     envVars:
@@ -16,6 +16,8 @@ services:
       - key: PORT
         value: "4000"
       - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_DATABASE_URL
         sync: false
       - key: JWT_SECRET
         generateValue: true

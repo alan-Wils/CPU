@@ -19,7 +19,7 @@ This document describes how to run the **full stack** in a real staging environm
 ## 1. PostgreSQL migration (Prisma)
 
 - **Local:** SQLite in `prisma/schema.prisma` + `prisma db push` (`npm run prisma:push`). Do not run `prisma migrate` against the SQLite schema (see `apps/api/prisma/README.md` and P3019 note).
-- **Staging/production:** `prisma/schema.postgresql.prisma` (synced from `schema.prisma`) + `prisma/migrations` + `npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma`.
+- **Staging/production:** `prisma/schema.postgresql.prisma` (synced from `schema.prisma`) + `prisma/migrations` + `npm run prisma:migrate:deploy` (direct Neon + advisory lock disabled for that run only).
 
 **After you change models:**
 
@@ -34,12 +34,14 @@ This document describes how to run the **full stack** in a real staging environm
 
 ```bash
 cd apps/api
-npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma
+npm run prisma:migrate:deploy
 ```
 
-`DATABASE_URL` must be the only place the DB is chosen (no hardcoded connection strings in code). The API `build` script runs `prisma generate` against the **PostgreSQL** schema so the client matches Neon.
+Use **Neon pooler** in `DATABASE_URL` for the API at runtime. Set **`DIRECT_DATABASE_URL`** to the non-`-pooler` host for migrations (or let the script derive it). Run migrations **once per deploy** (Railway `releaseCommand` / Render `preDeployCommand`), not on every replica start.
 
-**Why `prisma` is in `dependencies`:** the CLI must be present when the host runs `npx prisma migrate deploy` in production (some installs omit `devDependencies`).
+`DATABASE_URL` must be the only place the DB is chosen (no hardcoded connection strings in code). The API `build` script runs `prisma generate` against the **PostgreSQL** schema so the client matches Neon. Config lives in `prisma.config.ts` (not `package.json#prisma`).
+
+**Why `prisma` is in `dependencies`:** the CLI must be present when the host runs migrate deploy in production (some installs omit `devDependencies`).
 
 ---
 
@@ -99,11 +101,9 @@ For a typical workspace setup, see `package.json` at repo root. Adjust Vercel �
 1. New **Empty** or **GitHub** project; add a **Node** service.
 2. **Root directory:** `apps/api`.
 3. **Build command:** `npm install && npm run build`.
-4. **Start command:** `node dist/server.js` (see `apps/api/railway.toml` and `Procfile`).
-5. **Release / pre-deploy:** `npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma` (set in the Railway “Deploy” / “Custom” section, or `release` in `Procfile` if your stack runs it). For a **single** instance, an alternative is one-line start:  
-   `npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma && node dist/server.js`  
-   (avoid multiple concurrent replicas all running migrate without coordination).
-6. **Variables:** paste from `apps/api/.env.staging.example` with real `DATABASE_URL` and `JWT_SECRET`.
+4. **Start command:** `node dist/server.js` only (see `apps/api/railway.toml`).
+5. **Release command:** `node scripts/prisma-migrate-deploy-production.mjs` — runs **once per deploy**, not per replica. Do **not** chain migrate into start (avoids Neon pooler advisory-lock timeouts when scaling).
+6. **Variables:** `DATABASE_URL` (pooler), `DIRECT_DATABASE_URL` (direct host, optional if derivable), `JWT_SECRET`, and `RUN_PRISMA_MIGRATIONS=false` on any extra replicas.
 
 ### Render
 
@@ -123,9 +123,9 @@ Log streaming: use Railway/Render process logs. Structured logs from the app go 
 ## 5. Neon (database)
 
 1. Create a Neon project; choose region near your API.
-2. **Connection string:** use the **transaction** (pooled) or **direct** URL as needed; add `?sslmode=require` if not already present.
-3. Paste into the API as `DATABASE_URL` on Railway/Render.
-4. **Migrations:** run `prisma migrate deploy` in the release step (or once via CLI from a trusted machine) before serving traffic.
+2. **Connection strings:** pooler URL → `DATABASE_URL` (API runtime); direct URL → `DIRECT_DATABASE_URL` (migrations). Add `?sslmode=require` if missing.
+3. Paste both on Railway/Render (or set only `DATABASE_URL` and let the migrate script strip `-pooler` for deploy).
+4. **Migrations:** `npm run prisma:migrate:deploy` in the release/preDeploy step only.
 5. **Backups:** Neon Pro includes PITR; on Free tier, schedule periodic `pg_dump` from CI or a trusted runner and store in encrypted object storage. Document owner approval for RPO/RTO.
 6. **Restore:** new Neon branch from backup, or `pg_restore` / SQL replay per Neon docs.
 7. **Owner / admin access:** all multi-tenancy is **company-scoped in the app layer**; DB credentials are superuser on the database — restrict Neon console access, enable MFA, and do not share `DATABASE_URL` in chat. **Recovery:** if locked out, use Neon’s SQL console (with a new secure password) only from trusted networks; the app’s **OWNER** / **bootstrap** email flows are product-level (see your existing admin routes).
@@ -194,7 +194,7 @@ npm run dev
 npx prisma generate --schema=prisma/schema.postgresql.prisma
 
 # API — apply migrations to Neon / Postgres (staging/prod, release job)
-npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma
+npm run prisma:migrate:deploy
 
 # Web — local
 cd apps/web

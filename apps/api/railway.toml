@@ -8,4 +8,6 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "npx prisma migrate deploy --schema=prisma/schema.postgresql.prisma && node dist/server.js"
+# Run migrations once per deploy (not on every replica). API containers only start the server.
+releaseCommand = "node scripts/prisma-migrate-deploy-production.mjs"
+startCommand = "node dist/server.js"

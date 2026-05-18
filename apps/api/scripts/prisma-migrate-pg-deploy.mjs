@@ -1,19 +1,8 @@
-/**
- * Loads `apps/api/.env` with override so a bad `DATABASE_URL` in the shell
- * (e.g. PowerShell leftovers) does not win over the file.
- */
-import dotenv from "dotenv";
+/** @deprecated Use prisma-migrate-deploy-production.mjs — kept as alias for docs/scripts. */
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
 
-const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-dotenv.config({ path: path.join(apiRoot, ".env"), override: true });
-
-const result = spawnSync(
-  "npx",
-  ["prisma", "migrate", "deploy", "--schema=prisma/schema.postgresql.prisma"],
-  { stdio: "inherit", cwd: apiRoot, shell: true }
-);
-
-process.exit(result.status === null ? 1 : result.status);
+const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "prisma-migrate-deploy-production.mjs");
+const r = spawnSync(process.execPath, [script], { stdio: "inherit", shell: false });
+process.exit(r.status === null ? 1 : r.status);

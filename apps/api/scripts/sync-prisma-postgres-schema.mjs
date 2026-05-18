@@ -24,8 +24,9 @@ raw = raw.replace(/^(\s*\/\/[^\n]*\n)+/m, "");
 const body = raw.replace(
   /datasource db\s*\{[^}]*\}/s,
   `datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
 }`
 );
 
