@@ -191,9 +191,13 @@ sectionCalendarRouter.post(
             throw new AppError("Invalid authentication context", 401, "AUTH_INVALID");
         const { userId, role, permissions } = authPayload(req);
         assertWrite("cultivation", role, permissions);
+        const body = req.body && typeof req.body === "object" ? req.body : {};
         const out = await syncCultivationSectionCalendarFromTemplates({
             companyId,
             actorUserId: userId,
+            force: Boolean(body.force),
+            templateFingerprint:
+                typeof body.templateFingerprint === "string" ? body.templateFingerprint : null,
         });
         res.json(out);
     }),

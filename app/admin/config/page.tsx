@@ -64,6 +64,7 @@ import {
   scheduleTemplateTitleSelectValue,
   SCHEDULE_TEMPLATE_TASK_CUSTOM,
 } from "@/lib/cultivationScheduleTemplateStaticTasks";
+import { clearCultivationTemplateSyncSession } from "@/lib/cultivationTemplateSyncSession";
 import { syncCultivationSectionScheduleTemplates } from "@/lib/sectionCalendarApi";
 import { registerLegacyOilIntake } from "@/lib/extractionApi";
 
@@ -1280,7 +1281,8 @@ export default function ConfigPage() {
       syncCompanyTimezoneFromConfigPayload(data);
       setSaveErrorModalOpen(false);
       setSaveSuccessModalOpen(true);
-      void syncCultivationSectionScheduleTemplates().catch((e) => {
+      clearCultivationTemplateSyncSession();
+      void syncCultivationSectionScheduleTemplates({ force: true }).catch((e) => {
         console.error("Cultivation schedule template sync failed:", e);
       });
     } catch (error) {

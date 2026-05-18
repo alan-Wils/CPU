@@ -15,6 +15,8 @@ import { TaskService } from "../../services/taskService.js";
 import { StrainMetricsService } from "../../services/strainMetricsService.js";
 import { ConfigService } from "../../services/configService.js";
 import { logInfo } from "../../lib/logger.js";
+import { memoizedReadWithMeta, invalidateMemoPrefix } from "../../lib/requestMemoCache.js";
+import { logSlowRequestIfNeeded } from "../../lib/slowRequestLog.js";
 import { AppError } from "../../errors/AppError.js";
 import { validate } from "../../middleware/validate.js";
 import { cultivationMotherPlantsPutSchema } from "../../validation/schemas.js";
@@ -39,24 +41,42 @@ function snapshotForStoreSave(snap) {
         logs: snap.logs ?? []
     };
 }
-function mapSourcePackageToLegacyBatch(p) {
+const SOURCE_BATCH_TYPE_MAP = {
+    A_GRADE_FLOWER: "A Grade Flower",
+    POPCORN: "Popcorn",
+    DRY_TRIM: "Dry Trim",
+    FRESH_FROZEN: "Fresh Frozen",
+};
+function mapSourcePackageToLegacyBatch(p, opts) {
+    const summary = Boolean(opts && opts.summary);
     const batch = p.sourceChain?.cultivationBatch;
-    const typeMap = {
-        A_GRADE_FLOWER: "A Grade Flower",
-        POPCORN: "Popcorn",
-        DRY_TRIM: "Dry Trim",
-        FRESH_FROZEN: "Fresh Frozen"
-    };
-    return {
+    const base = {
         id: p.id,
         name: p.canonicalName,
-        type: typeMap[p.role] || p.role,
+        type: SOURCE_BATCH_TYPE_MAP[p.role] || p.role,
         source: p.sourceChain.cultivationBatchId,
         strain: batch?.strain ?? "",
         status: "Available for Extraction",
+    };
+    return {
+        ...base,
         amount: "",
         grams: 0,
-        bundles: 0
+        bundles: 0,
+    };
+}
+function mapStoreSourceBatchSummary(row) {
+    const r = row && typeof row === "object" ? row : {};
+    return {
+        id: String(r.id || "").trim(),
+        name: String(r.name ?? r.id ?? "").trim(),
+        type: String(r.type ?? "").trim(),
+        source: String(r.source ?? "").trim(),
+        strain: String(r.strain ?? "").trim(),
+        status: String(r.status ?? "").trim(),
+        ...(r.amount !== undefined && r.amount !== null ? { amount: String(r.amount) } : {}),
+        ...(r.grams !== undefined && r.grams !== null ? { grams: Number(r.grams) || 0 } : {}),
+        ...(r.bundles !== undefined && r.bundles !== null ? { bundles: Number(r.bundles) || 0 } : {}),
     };
 }
 function isLikelyPrismaSourcePackageId(id) {
@@ -122,22 +142,28 @@ function taskRowToLegacyLog(row, opts) {
                 (typeof data.linkedBatch === "string" && data.linkedBatch
                     ? data.linkedBatch
                     : undefined);
-            return {
+            const out: Record<string, unknown> = {
                 id: row.id,
                 actorUserId: row.actorUserId,
                 area: parsed.area ?? "System",
                 batch: parsed.batch ?? row.referenceId ?? "",
                 task: parsed.task ?? "Log",
-                output: parsed.output ?? "",
+                output: compact ? "" : (parsed.output ?? ""),
                 people: data.people ?? "",
                 minutes: String(data.minutes ?? row.minutes ?? ""),
-                data: { ...data, loggedAt: data.loggedAt ?? row.createdAt.toISOString(), loggedAtIso },
                 source: src,
                 linkedBatch: linked,
                 time: row.createdAt.toISOString(),
                 loggedAt: row.createdAt.toISOString(),
-                loggedAtIso
+                loggedAtIso,
             };
+            if (!compact) {
+                out.data = { ...data, loggedAt: data.loggedAt ?? row.createdAt.toISOString(), loggedAtIso };
+            }
+            else if (Object.keys(data).length > 0) {
+                out.data = data;
+            }
+            return out;
         }
     }
     catch {
@@ -484,7 +510,7 @@ legacyCpuRouter.get("/logs", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const rawTake = req.query.take ?? req.query.limit;
     const parsed = typeof rawTake === "string" ? Number.parseInt(rawTake, 10) : Number(rawTake);
-    const take = Number.isFinite(parsed) ? Math.min(500, Math.max(1, Math.floor(parsed))) : 150;
+    const take = Number.isFinite(parsed) ? Math.min(500, Math.max(1, Math.floor(parsed))) : 75;
     const compact =
         String(req.query.compact ?? "1").trim() !== "0"
         && String(req.query.compact ?? "").trim() !== "false";
@@ -513,32 +539,57 @@ legacyCpuRouter.get("/logs", asyncHandler(async (req, res) => {
         res.json({ items, nextCursor, hasMore });
         return;
     }
-    res.json(items);
+    const body = JSON.stringify(items);
+    logSlowRequestIfNeeded({
+        label: "GET /api/logs",
+        companyId,
+        payloadBytes: Buffer.byteLength(body, "utf8"),
+        rowCount: items.length,
+        extra: { compact, paginated },
+    });
+    res.type("json").send(body);
 }));
 /** Compact latest task log for realtime “peer task” UI toasts (SPA poll). */
 legacyCpuRouter.get("/logs/latest-live", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
+    const cacheKey = `legacy:logs:latest-live:${companyId}`;
+    const payload = await memoizedReadWithMeta(cacheKey, 4_000, async () => {
+        const row = await prisma.taskLog.findFirst({
+            where: { companyId },
+            orderBy: { createdAt: "desc" },
+        });
+        if (!row)
+            return null;
+        const legacy = taskRowToLegacyLog(row, { compact: true });
+        const actor = await prisma.user.findUnique({
+            where: { id: row.actorUserId },
+            select: { email: true },
+        });
+        return {
+            id: row.id,
+            createdAt: row.createdAt.toISOString(),
+            actorUserId: row.actorUserId,
+            actorEmail: actor?.email ?? null,
+            area: legacy.area,
+            task: legacy.task,
+        };
+    });
+    res.setHeader("Cache-Control", "private, max-age=3");
+    res.json(payload.value);
+}));
+/** Full task log payload (list endpoint defaults to compact rows). */
+legacyCpuRouter.get("/logs/:taskLogId", asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const taskLogId = String(req.params.taskLogId || "").trim();
+    if (!taskLogId)
+        throw new AppError("Invalid task log id", 400);
     const row = await prisma.taskLog.findFirst({
-        where: { companyId },
-        orderBy: { createdAt: "desc" }
+        where: { id: taskLogId, companyId },
     });
-    if (!row) {
-        res.json(null);
-        return;
-    }
-    const legacy = taskRowToLegacyLog(row, {});
-    const actor = await prisma.user.findUnique({
-        where: { id: row.actorUserId },
-        select: { email: true }
-    });
-    res.json({
-        id: row.id,
-        createdAt: row.createdAt.toISOString(),
-        actorUserId: row.actorUserId,
-        actorEmail: actor?.email ?? null,
-        area: legacy.area,
-        task: legacy.task
-    });
+    if (!row)
+        throw new AppError("Task log not found", 404);
+    res.setHeader("Cache-Control", "private, max-age=30");
+    res.json(taskRowToLegacyLog(row, {}));
 }));
 /** SPA `lib/logsApi.deleteAllLogs` — must be registered before `DELETE /logs/:id`. */
 legacyCpuRouter.delete("/logs/all/clear", asyncHandler(async (req, res) => {
@@ -1097,30 +1148,90 @@ const sourceBatchWriteRoles = [
 ];
 legacyCpuRouter.get("/source-batches", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
+    const summary =
+        String(req.query.summary ?? "1").trim() !== "0"
+        && String(req.query.summary ?? "").trim() !== "false";
+    const cacheKey = `legacy:source-batches:${companyId}:${summary ? "sum" : "full"}`;
+    const ttlMs = 20_000;
+    const dbStarted = Date.now();
+    const { value: items, cacheHit, inflightJoined } = await memoizedReadWithMeta(cacheKey, ttlMs, async () => {
+        const snap = await storeService.load(companyId);
+        const fromStore = Array.isArray(snap.sourceBatches) ? snap.sourceBatches : [];
+        const pkgWhere = { sourceChain: { companyId } };
+        const pkgOrder = { createdAt: "desc" as const };
+        const pkgRows = summary
+            ? await prisma.sourcePackage.findMany({
+                where: pkgWhere,
+                orderBy: pkgOrder,
+                take: 200,
+                select: {
+                    id: true,
+                    canonicalName: true,
+                    role: true,
+                    sourceChain: {
+                        select: {
+                            cultivationBatchId: true,
+                            cultivationBatch: { select: { strain: true } },
+                        },
+                    },
+                },
+            })
+            : await prisma.sourcePackage.findMany({
+                where: pkgWhere,
+                include: { sourceChain: { include: { cultivationBatch: true } } },
+                orderBy: pkgOrder,
+                take: 300,
+            });
+        const derived = pkgRows.map((p) => mapSourcePackageToLegacyBatch(p, { summary }));
+        const byId = new Map();
+        for (const row of derived)
+            byId.set(String(row.id), row);
+        for (const row of fromStore) {
+            const id = String(row?.id || "").trim();
+            if (!id)
+                continue;
+            if (byId.has(id))
+                continue;
+            if (isLikelyPrismaSourcePackageId(id))
+                continue;
+            byId.set(id, summary ? mapStoreSourceBatchSummary(row) : row);
+        }
+        return [...byId.values()].filter((row) => Boolean(row?.id));
+    });
+    const dbMs = Date.now() - dbStarted;
+    const body = JSON.stringify(items);
+    logSlowRequestIfNeeded({
+        label: "GET /api/source-batches",
+        companyId,
+        dbMs,
+        payloadBytes: Buffer.byteLength(body, "utf8"),
+        rowCount: items.length,
+        cacheHit,
+        inflightJoined,
+        extra: { summary },
+    });
+    res.setHeader("Cache-Control", "private, max-age=20");
+    res.type("json").send(body);
+}));
+legacyCpuRouter.get("/source-batches/:id", asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const id = String(req.params.id || "").trim();
+    if (!id)
+        throw new AppError("Source batch id is required", 400);
+    const pkg = await prisma.sourcePackage.findFirst({
+        where: { id, sourceChain: { companyId } },
+        include: { sourceChain: { include: { cultivationBatch: true } } },
+    });
+    if (pkg) {
+        res.json(mapSourcePackageToLegacyBatch(pkg, { summary: false }));
+        return;
+    }
     const snap = await storeService.load(companyId);
     const fromStore = Array.isArray(snap.sourceBatches) ? snap.sourceBatches : [];
-    const pkgRows = await prisma.sourcePackage.findMany({
-        where: { sourceChain: { companyId } },
-        include: { sourceChain: { include: { cultivationBatch: true } } },
-        orderBy: { createdAt: "desc" },
-        take: 300
-    });
-    const derived = pkgRows.map(mapSourcePackageToLegacyBatch);
-    const byId = new Map();
-    for (const row of derived)
-        byId.set(String(row.id), row);
-    for (const row of fromStore) {
-        const id = String(row?.id || "").trim();
-        if (!id)
-            continue;
-        if (byId.has(id))
-            continue;
-        // Do not resurrect stale DB-style ids from legacy CompanyStore snapshots.
-        if (isLikelyPrismaSourcePackageId(id))
-            continue;
-        byId.set(id, row);
-    }
-    res.json([...byId.values()].filter((row) => Boolean(row?.id)));
+    const hit = fromStore.find((b) => String(b?.id || "").trim() === id);
+    if (!hit)
+        throw new AppError("Source batch not found", 404);
+    res.json(hit);
 }));
 legacyCpuRouter.post("/source-batches", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
@@ -1139,6 +1250,7 @@ legacyCpuRouter.post("/source-batches", requireRole(sourceBatchWriteRoles), asyn
         current.unshift(body);
     base.sourceBatches = current;
     await storeService.save(companyId, req.auth.userId, base);
+    invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
     logInfo("[WORKFLOW_FIX] legacy_source_batch_saved", { entityType: "LegacySourceBatch", entityId: id });
     res.status(201).json(body);
 }));
@@ -1156,6 +1268,7 @@ legacyCpuRouter.put("/source-batches/:id", requireRole(sourceBatchWriteRoles), a
     current[idx] = { ...current[idx], ...body, id: current[idx].id };
     base.sourceBatches = current;
     await storeService.save(companyId, req.auth.userId, base);
+    invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
     res.json(current[idx]);
 }));
 legacyCpuRouter.delete("/source-batches/:id", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
@@ -1179,6 +1292,7 @@ legacyCpuRouter.delete("/source-batches/:id", requireRole(sourceBatchWriteRoles)
             throw error;
     }
     await storeService.save(companyId, req.auth.userId, base);
+    invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
     logInfo("[WORKFLOW_FIX] legacy_source_batch_deleted", { entityType: "LegacySourceBatch", entityId: id });
     res.json({ ok: true });
 }));

@@ -13,6 +13,8 @@ import { requireRole } from "../../middleware/rbac.js";
 import { AppError } from "../../errors/AppError.js";
 import { requestPublicOrigin } from "../../lib/requestPublicOrigin.js";
 import { prisma } from "../../config/prisma.js";
+import { memoizedReadWithMeta } from "../../lib/requestMemoCache.js";
+import { logSlowRequestIfNeeded } from "../../lib/slowRequestLog.js";
 import {
     mergeConfigRowsToMap,
     scrubMergedConfigForHttp,
@@ -89,28 +91,44 @@ configRouter.get("/permissions", asyncHandler(async (req, res) => {
 
 configRouter.get("/basic", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
-    const merged = await readMergedConfig(companyId);
-    const [co, svc] = await Promise.all([
-        prisma.company.findUnique({
-            where: { id: companyId },
-            select: { id: true, name: true, slug: true },
-        }),
-        prisma.companyServiceSettings.findUnique({ where: { companyId } }),
-    ]);
-    if (!co) {
-        throw new AppError("Company not found", 404);
-    }
-    const services = svc
-        ? {
-            productionEnabled: svc.productionEnabled,
-            salesSellerEnabled: svc.salesSellerEnabled,
-            salesBuyerEnabled: svc.salesBuyerEnabled,
-            leafLinkInventorySyncEnabled: svc.leafLinkInventorySyncEnabled,
+    const cacheKey = `config:basic:${companyId}`;
+    const dbStarted = Date.now();
+    const { value: body, cacheHit, inflightJoined } = await memoizedReadWithMeta(cacheKey, 20_000, async () => {
+        const merged = await readMergedConfig(companyId);
+        const [co, svc] = await Promise.all([
+            prisma.company.findUnique({
+                where: { id: companyId },
+                select: { id: true, name: true, slug: true },
+            }),
+            prisma.companyServiceSettings.findUnique({ where: { companyId } }),
+        ]);
+        if (!co) {
+            throw new AppError("Company not found", 404);
         }
-        : null;
-    const body = buildBasicConfigView(merged, co, services);
-    logConfigTopLevelSizesDev(body as MergedCompanyConfig, "GET /api/config/basic");
-    sendJson(res, body, "private, max-age=15");
+        const services = svc
+            ? {
+                productionEnabled: svc.productionEnabled,
+                salesSellerEnabled: svc.salesSellerEnabled,
+                salesBuyerEnabled: svc.salesBuyerEnabled,
+                leafLinkInventorySyncEnabled: svc.leafLinkInventorySyncEnabled,
+            }
+            : null;
+        const view = buildBasicConfigView(merged, co, services);
+        logConfigTopLevelSizesDev(view as MergedCompanyConfig, "GET /api/config/basic");
+        return view;
+    });
+    const dbMs = Date.now() - dbStarted;
+    const serialized = JSON.stringify(body);
+    logSlowRequestIfNeeded({
+        label: "GET /api/config/basic",
+        companyId,
+        dbMs,
+        payloadBytes: Buffer.byteLength(serialized, "utf8"),
+        cacheHit,
+        inflightJoined,
+    });
+    res.setHeader("Cache-Control", "private, max-age=15");
+    res.type("json").send(serialized);
 }));
 
 configRouter.get("/cultivation", asyncHandler(async (req, res) => {

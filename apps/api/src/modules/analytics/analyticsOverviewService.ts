@@ -159,6 +159,7 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     marketplaceSellerOrdersInRange,
     ordersCurrent,
     ordersPrev,
+    prevNexAgg,
   ] = await Promise.all([
     prisma.cultivationBatch.findMany({
       where: batchWhere,
@@ -262,6 +263,17 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     }),
     ordersService.getOrdersAnalytics(companyId, { dateFrom, dateTo }),
     ordersService.getOrdersAnalytics(companyId, { dateFrom: prevFromYmd, dateTo: prevToYmd }),
+    prisma.marketplaceOrder.aggregate({
+      where: {
+        sellerCompanyId: companyId,
+        createdAt: {
+          gte: new Date(parseYmdStartUtc(prevFromYmd)),
+          lte: new Date(parseYmdEndUtc(prevToYmd)),
+        },
+        status: { in: ["FULFILLED", "ACCEPTED"] },
+      },
+      _sum: { total: true },
+    }),
   ]);
 
   const edibleBatchesAll = await prisma.edibleBatch.findMany({
@@ -332,17 +344,6 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
   const nexbatchForTotals = sellerWorkspaceOn ? nexbatchSellerRevenue : 0;
   const totalRevenue = leafLinkRevenue + nexbatchForTotals;
   const prevLeaf = leafLinkPrev;
-  const prevNexAgg = await prisma.marketplaceOrder.aggregate({
-    where: {
-      sellerCompanyId: companyId,
-      createdAt: {
-        gte: new Date(parseYmdStartUtc(prevFromYmd)),
-        lte: new Date(parseYmdEndUtc(prevToYmd)),
-      },
-      status: { in: ["FULFILLED", "ACCEPTED"] },
-    },
-    _sum: { total: true },
-  });
   const prevNex = prevNexAgg._sum.total ?? 0;
   const prevNexForTotals = sellerWorkspaceOn ? prevNex : 0;
   const totalRevenuePrev = prevLeaf + prevNexForTotals;

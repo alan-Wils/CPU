@@ -63,13 +63,24 @@ export async function deleteSectionCalendarEvent(id: string): Promise<{ ok: bool
   });
 }
 
-/** Upserts cultivation section calendar rows from Admin schedule templates + batch anchors + store logs. */
-export async function syncCultivationSectionScheduleTemplates(): Promise<{
+export type CultivationTemplateSyncResult = {
   upserted: number;
   deletedOrphans: number;
-}> {
+  skipped?: boolean;
+  reason?: string;
+  fingerprint?: string;
+};
+
+/** Upserts cultivation section calendar rows from Admin schedule templates + batch anchors + store logs. */
+export async function syncCultivationSectionScheduleTemplates(opts?: {
+  force?: boolean;
+  templateFingerprint?: string;
+}): Promise<CultivationTemplateSyncResult> {
   return apiRequest("/api/section-calendar/cultivation/sync-templates", {
     method: "POST",
-    body: {},
+    body: {
+      force: Boolean(opts?.force),
+      templateFingerprint: opts?.templateFingerprint ?? undefined,
+    },
   });
 }

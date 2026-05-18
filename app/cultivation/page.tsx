@@ -6,6 +6,11 @@ import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import SectionCalendarLauncher from "@/components/SectionCalendarLauncher";
 import { normalizeCultivationScheduleTemplateList } from "@/lib/cultivationSectionScheduleTemplates";
+import {
+  buildCultivationTemplateFingerprint,
+  markCultivationTemplateSyncDone,
+  shouldSkipCultivationTemplateSync,
+} from "@/lib/cultivationTemplateSyncSession";
 import { syncCultivationSectionScheduleTemplates } from "@/lib/sectionCalendarApi";
 import {
   canDeleteRecords as userCanDeleteWorkflow,
@@ -1027,6 +1032,9 @@ export default function Cultivation() {
     extractCustomTasksRewardDefsFromCompanyConfig({}),
   );
   const [cultivationScheduleTemplateTitles, setCultivationScheduleTemplateTitles] = useState<string[]>([]);
+  const [cultivationScheduleTemplates, setCultivationScheduleTemplates] = useState<
+    { id: string; stage: string; daysFromStageStart: number; title: string }[]
+  >([]);
   /** null until decided for this save attempt; set before completing save after optional challenge modal. */
   const cultivationChallengeOptInRef = useRef<boolean | null>(null);
   type MoveToVegChallengeLab = {
@@ -1381,6 +1389,14 @@ export default function Cultivation() {
           (data.cultivation as { scheduleTemplates?: unknown } | undefined)?.scheduleTemplates,
         );
         setCultivationScheduleTemplateTitles(scheduleTpl.map((x) => x.title));
+        setCultivationScheduleTemplates(
+          scheduleTpl.map((x) => ({
+            id: x.id,
+            stage: x.stage,
+            daysFromStageStart: x.daysFromStageStart,
+            title: x.title,
+          })),
+        );
         const co = data.company && typeof data.company === "object" ? data.company : null;
         const met = co?.metrc && typeof co.metrc === "object" ? co.metrc : null;
         const metrcOn =
@@ -2100,13 +2116,21 @@ export default function Cultivation() {
 
   useEffect(() => {
     if (!canWriteRecords) return;
+    const fp = buildCultivationTemplateFingerprint(cultivationScheduleTemplates);
+    if (!fp && cultivationScheduleTemplates.length === 0) return;
+    if (shouldSkipCultivationTemplateSync(fp)) return;
     const t = window.setTimeout(() => {
-      void syncCultivationSectionScheduleTemplates().catch((e) => {
-        console.error("Cultivation schedule template sync failed:", e);
-      });
+      void syncCultivationSectionScheduleTemplates({ templateFingerprint: fp })
+        .then((out) => {
+          if (!out.skipped) markCultivationTemplateSyncDone(fp);
+          else markCultivationTemplateSyncDone(fp);
+        })
+        .catch((e) => {
+          console.error("Cultivation schedule template sync failed:", e);
+        });
     }, 1200);
     return () => window.clearTimeout(t);
-  }, [canWriteRecords, refresh]);
+  }, [canWriteRecords, cultivationScheduleTemplates]);
 
   function forceRefresh() {
     persistStore();
@@ -2389,9 +2413,6 @@ export default function Cultivation() {
       if (updated && typeof updated === "object") {
         Object.assign(batch, updated);
       }
-      void syncCultivationSectionScheduleTemplates().catch((e) => {
-        console.error("Cultivation schedule template sync failed:", e);
-      });
       return true;
     } catch (error) {
       console.error("Could not update real cultivation table:", error);

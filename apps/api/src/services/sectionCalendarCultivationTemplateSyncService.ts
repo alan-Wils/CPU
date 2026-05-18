@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { prisma } from "../config/prisma.js";
+import { logInfo } from "../lib/logger.js";
 import { ConfigService } from "./configService.js";
 import { StoreService } from "./storeService.js";
 import { addDaysYmdApi } from "../lib/cultivationScheduleTemplateMath.js";
@@ -104,10 +106,33 @@ function batchEligible(ui: Record<string, unknown>): boolean {
   return true;
 }
 
+export function buildCultivationTemplateSyncFingerprint(parts: {
+  templates: readonly { id: string; stage: string; daysFromStageStart: number; title: string }[];
+  batchCount: number;
+  storeUpdatedAt: string | null;
+}): string {
+  const tpl = parts.templates
+    .map((t) => `${t.id}|${t.stage}|${t.daysFromStageStart}|${t.title}`)
+    .sort()
+    .join("\n");
+  const raw = `tpl:${tpl}#b:${parts.batchCount}#s:${parts.storeUpdatedAt ?? ""}`;
+  return createHash("sha256").update(raw).digest("hex").slice(0, 32);
+}
+
+export type CultivationTemplateSyncOutput = {
+  upserted: number;
+  deletedOrphans: number;
+  skipped?: boolean;
+  reason?: string;
+  fingerprint?: string;
+};
+
 export async function syncCultivationSectionCalendarFromTemplates(input: {
   companyId: string;
   actorUserId: string;
-}): Promise<{ upserted: number; deletedOrphans: number }> {
+  force?: boolean;
+  templateFingerprint?: string | null;
+}): Promise<CultivationTemplateSyncOutput> {
   const { companyId, actorUserId } = input;
   const configService = new ConfigService();
   const storeService = new StoreService();
@@ -137,6 +162,31 @@ export async function syncCultivationSectionCalendarFromTemplates(input: {
     where: { companyId },
     select: { id: true, cultivationUiState: true },
   });
+
+  const storeUpdatedAt =
+    snap && typeof snap === "object" && "_meta" in snap
+      ? String((snap as { _meta?: { updatedAt?: string | null } })._meta?.updatedAt ?? "")
+      : null;
+  const fingerprint = buildCultivationTemplateSyncFingerprint({
+    templates: templates.map((t) => ({
+      id: t.id,
+      stage: t.stage,
+      daysFromStageStart: t.daysFromStageStart,
+      title: t.title,
+    })),
+    batchCount: batches.length,
+    storeUpdatedAt: storeUpdatedAt || null,
+  });
+
+  const clientFp = String(input.templateFingerprint ?? "").trim();
+  if (!input.force && clientFp && clientFp === fingerprint) {
+    logInfo("[CULT_CAL] sync_templates_skipped", {
+      companyId: `${companyId.slice(0, 8)}…`,
+      reason: "templates_current",
+      fingerprint,
+    });
+    return { upserted: 0, deletedOrphans: 0, skipped: true, reason: "templates_current", fingerprint };
+  }
 
   const batchIdSet = new Set(batches.map((b) => b.id));
   let upserted = 0;
@@ -278,5 +328,11 @@ export async function syncCultivationSectionCalendarFromTemplates(input: {
     }
   }
 
-  return { upserted, deletedOrphans };
+  logInfo("[CULT_CAL] sync_templates_completed", {
+    companyId: `${companyId.slice(0, 8)}…`,
+    upserted,
+    deletedOrphans,
+    fingerprint,
+  });
+  return { upserted, deletedOrphans, fingerprint };
 }
