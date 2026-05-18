@@ -228,8 +228,9 @@ model Company {
   facilityPartRequests                FacilityPartRequest[]
   facilityLocations                 FacilityLocation[]
 
-  edibleBatches      EdibleBatch[]
-  edibleTaskLogs     EdibleTaskLog[]
+  edibleBatches           EdibleBatch[]
+  edibleTaskLogs          EdibleTaskLog[]
+  edibleOilReservations   EdibleOilReservation[]
 
   employeeSamples EmployeeSample[]
 
@@ -588,8 +589,9 @@ model User {
   marketplaceOrdersCreated MarketplaceOrder[]
   conversationMessagesSent ConversationMessage[]
 
-  edibleBatchesCreated EdibleBatch[] @relation("EdibleBatchCreatedBy")
-  edibleTaskLogsCreated EdibleTaskLog[] @relation("EdibleTaskLogCreatedBy")
+  edibleBatchesCreated         EdibleBatch[]            @relation("EdibleBatchCreatedBy")
+  edibleTaskLogsCreated        EdibleTaskLog[]          @relation("EdibleTaskLogCreatedBy")
+  edibleOilReservationsCreated EdibleOilReservation[]   @relation("EdibleOilReservationCreatedBy")
 
   employeeSamplesReceived EmployeeSample[] @relation("EmployeeSampleEmployee")
   employeeSamplesCreated  EmployeeSample[] @relation("EmployeeSampleCreatedBy")
@@ -836,8 +838,9 @@ model ExtractionRun {
   supplyUsed  String?
 
   biomassLines ExtractionBiomassInput[] @relation("RunBiomass")
-  packagingLots PackagingLot[]
-  edibleBatches  EdibleBatch[]
+  packagingLots         PackagingLot[]
+  edibleBatches         EdibleBatch[]
+  edibleOilReservations EdibleOilReservation[]
 
   /// Rich extraction UI state (tasks, labels, workflow); merged with columns on read.
   extractionUiState Json?
@@ -954,6 +957,32 @@ model EdibleBatch {
   @@index([companyId, status])
   @@index([companyId, createdAt])
   @@index([extractionRunId])
+}
+
+/// Kitchen hold on Live Resin oil before an edible batch is created (reduces shared pool availability).
+model EdibleOilReservation {
+  id              String        @id @default(cuid())
+  companyId       String
+  company         Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  extractionRunId String
+  extractionRun   ExtractionRun @relation(fields: [extractionRunId], references: [id], onDelete: Restrict)
+
+  reservedGrams Float
+  label         String?
+  notes         String?
+  /// ACTIVE = holding oil; RELEASED = manually cancelled; CONSUMED = fully applied to edible batches.
+  status        String @default("ACTIVE")
+
+  createdById String
+  createdBy   User   @relation("EdibleOilReservationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  releasedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([companyId, extractionRunId])
+  @@index([companyId, status])
+  @@index([extractionRunId, status])
 }
 
 model EdibleTaskLog {
