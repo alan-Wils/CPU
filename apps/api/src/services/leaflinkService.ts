@@ -1188,17 +1188,28 @@ export function normalizeLeafLinkInventoryRows(raw: unknown): LeafLinkInventoryI
   return out;
 }
 
-export async function fetchJsonWithRetry(url: string, init: RequestInit, timeoutMs: number): Promise<unknown> {
+export type FetchJsonWithRetryOptions = {
+  authContext?: import("../lib/leafLinkAuthPolicy.js").LeafLinkFetchAuthContext;
+};
+
+export async function fetchJsonWithRetry(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  opts?: FetchJsonWithRetryOptions,
+): Promise<unknown> {
   let lastErr: unknown;
   for (let i = 0; i < 2; i += 1) {
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      logInfo("[LEAFLINK] request_start", {
-        url,
-        method: init.method || "GET",
-        attempt: i + 1,
-      });
+      if (i === 0) {
+        logInfo("[LEAFLINK] request_start", {
+          url: url.slice(0, 220),
+          method: init.method || "GET",
+          authMode: opts?.authContext?.authMode,
+        });
+      }
       const res = await fetch(url, { ...init, signal: ctrl.signal });
       const text = await res.text();
       const contentType = String(res.headers.get("content-type") || "").toLowerCase();
@@ -1207,20 +1218,27 @@ export async function fetchJsonWithRetry(url: string, init: RequestInit, timeout
       const isJsonByBody = trimmed.startsWith("{") || trimmed.startsWith("[");
       const isJson = isJsonByHeader || isJsonByBody;
       const isHtml = contentType.includes("text/html") || /^<(?:!doctype|html|head|body)\b/i.test(trimmed);
-      logInfo("[LEAFLINK] response_meta", {
-        url,
-        status: res.status,
-        contentType,
-        isJson,
-        isHtml,
-      });
       if (!res.ok) {
         if (res.status >= 500 && i === 0) {
           lastErr = new AppError("LeafLink temporary server error. Retrying.", 502, "LEAFLINK_TEMPORARY");
           continue;
         }
         if (res.status === 401 || res.status === 403) {
-          throw new AppError("LeafLink credentials are invalid for this company.", 401, "LEAFLINK_INVALID_CREDENTIALS");
+          let parsedBody: unknown = null;
+          if (isJson && trimmed) {
+            try {
+              parsedBody = JSON.parse(trimmed);
+            } catch {
+              parsedBody = null;
+            }
+          }
+          if (opts?.authContext) {
+            const { throwClassifiedLeafLinkAuthError } = await import("../lib/leafLinkAuthPolicy.js");
+            throwClassifiedLeafLinkAuthError(res.status, parsedBody, opts.authContext);
+          }
+          const { classifyLeafLinkAuthHttpError } = await import("../lib/leafLinkAuthPolicy.js");
+          const classified = classifyLeafLinkAuthHttpError(res.status, parsedBody, url);
+          throw new AppError(classified.message, classified.httpStatus, classified.code);
         }
         if (isHtml) {
           throw new AppError(
@@ -1282,17 +1300,20 @@ export async function fetchJsonWithRetry(url: string, init: RequestInit, timeout
       if (isAbort) {
         throw new AppError("LeafLink request timed out.", 504, "LEAFLINK_TIMEOUT");
       }
+      const code = error instanceof AppError ? error.code : "";
+      const { isLeafLinkAuthFallbackCode } = await import("../lib/leafLinkAuthPolicy.js");
+      if (isLeafLinkAuthFallbackCode(code)) {
+        throw error;
+      }
       const isFinalAttempt = i === 1;
-      const logPayload = {
-        url,
-        attempt: i + 1,
-        finalAttempt: isFinalAttempt,
-        error: error instanceof Error ? error.message : String(error),
-      };
-      logInfo(
-        isFinalAttempt ? "[LEAFLINK] request_attempt_failed_final" : "[LEAFLINK] request_attempt_failed_retrying",
-        logPayload,
-      );
+      if (isFinalAttempt) {
+        logInfo("[LEAFLINK] request_attempt_failed_final", {
+          url: url.slice(0, 220),
+          attempt: i + 1,
+          error: error instanceof Error ? error.message : String(error),
+          reasonCode: code || undefined,
+        });
+      }
       if (i === 1) throw error;
     } finally {
       clearTimeout(timeout);
@@ -1332,7 +1353,9 @@ async function fetchLeafLinkInventoryFromApi(
       if (modifiedGte) u = appendModifiedGteFilter(u, modifiedGte);
       return u;
     });
-  const authCandidates = buildLeafLinkAuthCandidates(creds);
+  const tenantKey = (await import("../lib/leafLinkAuthPolicy.js")).leafLinkTenantKey(creds);
+  const allAuth = buildLeafLinkAuthCandidates(creds);
+  let fallbackAttempts = 0;
 
   let payload: unknown = null;
   let usedEndpoint = "";
@@ -1340,6 +1363,11 @@ async function fetchLeafLinkInventoryFromApi(
   let successInit: RequestInit | null = null;
   let lastErr: unknown = null;
   outer: for (const endpoint of endpointCandidates) {
+    const authCandidates = (await import("../lib/leafLinkAuthPolicy.js")).orderedLeafLinkAuthCandidates(
+      allAuth,
+      tenantKey,
+      endpoint,
+    );
     for (const authValue of authCandidates) {
       const authMode = leafLinkAuthMode(authValue);
       const leafLinkInit: RequestInit = {
@@ -1347,28 +1375,42 @@ async function fetchLeafLinkInventoryFromApi(
         headers: buildLeafLinkHeaders(creds, authValue),
       };
       try {
-        payload = await fetchJsonWithRetry(endpoint, leafLinkInit, 15_000);
+        payload = await fetchJsonWithRetry(endpoint, leafLinkInit, 15_000, {
+          authContext: { tenantKey, authMode, endpoint },
+        });
         usedEndpoint = endpoint;
         usedAuthMode = authMode;
         successInit = leafLinkInit;
-        break outer;
-      } catch (error) {
-        lastErr = error;
-        const code = error instanceof AppError ? error.code : "";
-        if (
-          code === "LEAFLINK_INVALID_CREDENTIALS" ||
-          code === "LEAFLINK_REQUEST_FAILED" ||
-          code === "LEAFLINK_NON_JSON_RESPONSE" ||
-          code === "LEAFLINK_HTML_ERROR"
-        ) {
-          logInfo("[LEAFLINK] auth_fallback_attempt", {
+        (await import("../lib/leafLinkAuthPolicy.js")).markLeafLinkAuthComboSucceeded(
+          tenantKey,
+          endpoint,
+          authValue,
+          authMode,
+        );
+        if (fallbackAttempts > 0) {
+          logInfo("[LEAFLINK] auth_fallback_succeeded", {
             companyId: creds.companyId || null,
             authSource,
             authMode,
             endpoint: endpoint.slice(0, 220),
-            fallbackTriggered: true,
+            fallbackUsed: true,
+            fallbackSucceeded: true,
+            fallbackAttempts,
+          });
+        }
+        break outer;
+      } catch (error) {
+        lastErr = error;
+        const code = error instanceof AppError ? error.code : "";
+        const { isLeafLinkAuthFallbackCode, logLeafLinkAuthFallback } = await import("../lib/leafLinkAuthPolicy.js");
+        if (isLeafLinkAuthFallbackCode(code)) {
+          fallbackAttempts += 1;
+          logLeafLinkAuthFallback({
+            tenantKey,
+            authMode,
+            endpoint,
             reasonCode: code || "UNKNOWN",
-            reason: error instanceof Error ? error.message : String(error),
+            fallbackUsed: fallbackAttempts > 0,
           });
           continue;
         }

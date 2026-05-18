@@ -299,7 +299,6 @@ const MAX_QUALIFYING_ORDERS_IN_PAYLOAD = 8000;
 const MAX_LINE_ITEMS_TO_TRUST_SUM = 120;
 /** Max Postgres rows hydrated for the Orders list when `refresh=false`. Must stay ≤ prisma cap in leafLinkOrdersStorePrimitives. */
 const STORED_ORDERS_LIST_SCAN_LIMIT = 25_000;
-const preferredLeafLinkAuthByTenant = new Map<string, string>();
 
 /** User-entered invoice field may list several refs separated by comma, semicolon, or newline. */
 export function splitInvoiceNumberTokens(raw: string | undefined): string[] {
@@ -357,6 +356,20 @@ function lookbackCutoffIso(days: number): string {
   const d = new Date();
   d.setUTCDate(d.getUTCDate() - days);
   return d.toISOString();
+}
+
+/** After a successful sync, narrow incremental pulls to recent window + overlap (not full lookback every time). */
+function incrementalSyncCreatedOnGteIso(
+  lookbackDays: number,
+  lastSuccessfulSyncAt: string | null | undefined,
+): string {
+  const lookbackIso = lookbackCutoffIso(lookbackDays);
+  const lastOk = cleanString(lastSuccessfulSyncAt);
+  if (!lastOk) return lookbackIso;
+  const overlapMs = Date.parse(lastOk) - 2 * 86_400_000;
+  if (!Number.isFinite(overlapMs)) return lookbackIso;
+  const overlapIso = new Date(overlapMs).toISOString();
+  return overlapIso > lookbackIso ? overlapIso : lookbackIso;
 }
 
 function orderInstantMs(summary: LeafLinkOrderSummaryDto): number {
@@ -1491,11 +1504,20 @@ async function leafLinkAuthedGet(
   authSource: LeafLinkCredentialSource,
   timeoutMs: number,
 ): Promise<{ url: string; authMode: string; body: unknown }> {
-  const authCandidates = orderedAuthCandidatesForTenant(creds);
-  const tenantKey = authTenantKey(creds);
+  const {
+    leafLinkTenantKey,
+    orderedLeafLinkAuthCandidates,
+    markLeafLinkAuthComboSucceeded,
+    isLeafLinkAuthFallbackCode,
+    logLeafLinkAuthFallback,
+  } = await import("../lib/leafLinkAuthPolicy.js");
+  const tenantKey = leafLinkTenantKey(creds);
+  const allAuth = buildLeafLinkAuthCandidates(creds);
   let lastErr: unknown;
+  let fallbackAttempts = 0;
   for (const url of urls) {
     if (!url) continue;
+    const authCandidates = orderedLeafLinkAuthCandidates(allAuth, tenantKey, url);
     for (const authValue of authCandidates) {
       const authMode = leafLinkAuthMode(authValue);
       const init: RequestInit = {
@@ -1511,42 +1533,33 @@ async function leafLinkAuthedGet(
             companyId: creds.companyId || null,
           });
         }
-        const body = await fetchJsonWithRetry(url, init, timeoutMs);
-        preferredLeafLinkAuthByTenant.set(tenantKey, authValue);
+        const body = await fetchJsonWithRetry(url, init, timeoutMs, {
+          authContext: { tenantKey, authMode, endpoint: url },
+        });
+        markLeafLinkAuthComboSucceeded(tenantKey, url, authValue, authMode);
+        if (fallbackAttempts > 0) {
+          logInfo("[LEAFLINK] auth_fallback_succeeded", {
+            companyId: creds.companyId || null,
+            authMode,
+            endpoint: url.slice(0, 160),
+            fallbackUsed: true,
+            fallbackSucceeded: true,
+            fallbackAttempts,
+          });
+        }
         return { url, authMode, body };
       }
       catch (err) {
         lastErr = err;
         const code = err instanceof AppError ? err.code : "";
-        const preferred = preferredLeafLinkAuthByTenant.get(tenantKey);
-        if (
-          preferred
-          && preferred === authValue
-          && (
-            code === "LEAFLINK_INVALID_CREDENTIALS"
-            || code === "LEAFLINK_REQUEST_FAILED"
-            || code === "LEAFLINK_HTML_ERROR"
-            || code === "LEAFLINK_NON_JSON_RESPONSE"
-            || code === "LEAFLINK_TEMPORARY"
-          )
-        ) {
-          preferredLeafLinkAuthByTenant.delete(tenantKey);
-        }
-        if (
-          code === "LEAFLINK_INVALID_CREDENTIALS"
-          || code === "LEAFLINK_REQUEST_FAILED"
-          || code === "LEAFLINK_HTML_ERROR"
-          || code === "LEAFLINK_NON_JSON_RESPONSE"
-          || code === "LEAFLINK_TEMPORARY"
-        ) {
-          logInfo("[LEAFLINK] orders_fallback_attempt", {
-            companyId: creds.companyId || null,
-            authSource,
+        if (isLeafLinkAuthFallbackCode(code)) {
+          fallbackAttempts += 1;
+          logLeafLinkAuthFallback({
+            tenantKey,
             authMode,
-            fallbackTriggered: true,
-            url: url.slice(0, 160),
+            endpoint: url,
             reasonCode: code || "UNKNOWN",
-            reason: err instanceof Error ? err.message : String(err),
+            fallbackUsed: fallbackAttempts > 0,
           });
           continue;
         }
@@ -1566,11 +1579,20 @@ async function leafLinkAuthedRequest(
   method: "POST" | "PATCH",
   body: Record<string, unknown>,
 ): Promise<{ url: string; authMode: string; body: unknown }> {
-  const authCandidates = orderedAuthCandidatesForTenant(creds);
-  const tenantKey = authTenantKey(creds);
+  const {
+    leafLinkTenantKey,
+    orderedLeafLinkAuthCandidates,
+    markLeafLinkAuthComboSucceeded,
+    isLeafLinkAuthFallbackCode,
+    logLeafLinkAuthFallback,
+  } = await import("../lib/leafLinkAuthPolicy.js");
+  const tenantKey = leafLinkTenantKey(creds);
+  const allAuth = buildLeafLinkAuthCandidates(creds);
   let lastErr: unknown;
+  let fallbackAttempts = 0;
   for (const url of urls) {
     if (!url) continue;
+    const authCandidates = orderedLeafLinkAuthCandidates(allAuth, tenantKey, url);
     for (const authValue of authCandidates) {
       const authMode = leafLinkAuthMode(authValue);
       const init: RequestInit = {
@@ -1586,41 +1608,32 @@ async function leafLinkAuthedRequest(
           companyId: creds.companyId || null,
           method,
         });
-        const json = await fetchJsonWithRetry(url, init, timeoutMs);
-        preferredLeafLinkAuthByTenant.set(tenantKey, authValue);
+        const json = await fetchJsonWithRetry(url, init, timeoutMs, {
+          authContext: { tenantKey, authMode, endpoint: url },
+        });
+        markLeafLinkAuthComboSucceeded(tenantKey, url, authValue, authMode);
+        if (fallbackAttempts > 0) {
+          logInfo("[LEAFLINK] auth_fallback_succeeded", {
+            companyId: creds.companyId || null,
+            authMode,
+            endpoint: url.slice(0, 160),
+            fallbackUsed: true,
+            fallbackSucceeded: true,
+            fallbackAttempts,
+          });
+        }
         return { url, authMode, body: json };
       } catch (err) {
         lastErr = err;
         const code = err instanceof AppError ? err.code : "";
-        const preferred = preferredLeafLinkAuthByTenant.get(tenantKey);
-        if (
-          preferred
-          && preferred === authValue
-          && (
-            code === "LEAFLINK_INVALID_CREDENTIALS"
-            || code === "LEAFLINK_REQUEST_FAILED"
-            || code === "LEAFLINK_HTML_ERROR"
-            || code === "LEAFLINK_NON_JSON_RESPONSE"
-            || code === "LEAFLINK_TEMPORARY"
-          )
-        ) {
-          preferredLeafLinkAuthByTenant.delete(tenantKey);
-        }
-        if (
-          code === "LEAFLINK_INVALID_CREDENTIALS"
-          || code === "LEAFLINK_REQUEST_FAILED"
-          || code === "LEAFLINK_HTML_ERROR"
-          || code === "LEAFLINK_NON_JSON_RESPONSE"
-          || code === "LEAFLINK_TEMPORARY"
-        ) {
-          logInfo("[LEAFLINK] orders_write_fallback_attempt", {
-            companyId: creds.companyId || null,
-            authSource,
+        if (isLeafLinkAuthFallbackCode(code)) {
+          fallbackAttempts += 1;
+          logLeafLinkAuthFallback({
+            tenantKey,
             authMode,
-            fallbackTriggered: true,
-            url: url.slice(0, 160),
+            endpoint: url,
             reasonCode: code || "UNKNOWN",
-            reason: err instanceof Error ? err.message : String(err),
+            fallbackUsed: fallbackAttempts > 0,
           });
           continue;
         }
@@ -1702,7 +1715,8 @@ async function resolvePaymentRecorderStaffId(
   creds: LeafLinkResolvedCredentials,
   authSource: LeafLinkCredentialSource,
 ): Promise<number> {
-  const cacheKey = `${authTenantKey(creds)}|paymentRecorder`;
+  const { leafLinkTenantKey } = await import("../lib/leafLinkAuthPolicy.js");
+  const cacheKey = `${leafLinkTenantKey(creds)}|paymentRecorder`;
   const cached = paymentRecorderStaffIdCache.get(cacheKey);
   if (cached != null && cached > 0)
     return cached;
@@ -1861,17 +1875,6 @@ function leafLinkPagedHasMore(opts: {
 const LIST_CACHE_TTL_MS = 45_000;
 const listCaches = new Map<string, { at: number; payload: LeafLinkOrdersListDto }>();
 
-function authTenantKey(creds: LeafLinkRuntimeCredentials): string {
-  return `${cleanString(creds.baseUrl)}|${cleanString(creds.companyId || creds.companySlug || "global")}`;
-}
-
-function orderedAuthCandidatesForTenant(creds: LeafLinkRuntimeCredentials): string[] {
-  const all = buildLeafLinkAuthCandidates(creds);
-  const preferred = preferredLeafLinkAuthByTenant.get(authTenantKey(creds));
-  if (!preferred || !all.includes(preferred))
-    return all;
-  return [preferred, ...all.filter((v) => v !== preferred)];
-}
 
 function cacheKey(parts: Record<string, string | number | boolean | undefined>): string {
   return JSON.stringify(parts);
@@ -2094,6 +2097,8 @@ export class LeafLinkOrdersService {
       createdOnGteIso?: string;
       /** LeafLink `created_on__lte` (ISO 8601). */
       createdOnLteIso?: string;
+      /** LeafLink `modified__gte` when supported (incremental delta). */
+      modifiedGteIso?: string;
     },
   ): Promise<{
     rows: { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }[];
@@ -2110,10 +2115,13 @@ export class LeafLinkOrdersService {
     searchParams.set("ordering", ordering);
     const gte = cleanString(input.createdOnGteIso);
     const lte = cleanString(input.createdOnLteIso);
+    const modGte = cleanString(input.modifiedGteIso);
     if (gte)
       searchParams.set("created_on__gte", gte);
     if (lte)
       searchParams.set("created_on__lte", lte);
+    if (modGte)
+      searchParams.set("modified__gte", modGte);
     const urls = buildOrdersListUrlCandidates(base, creds, searchParams);
     const { body } = await leafLinkAuthedGet(urls, creds, creds.source, 20_000);
     const { list, totalCount: apiTotal, next } = parseLeafLinkOrdersListEnvelope(body);
@@ -2197,6 +2205,7 @@ export class LeafLinkOrdersService {
     const maxPages = isIncremental ? leafLinkOrderSyncMaxPages() : leafLinkOrdersFullSyncMaxPages();
     const maxRows = isIncremental ? leafLinkOrderSyncMaxRows() : Number.MAX_SAFE_INTEGER;
     const lookbackDays = leafLinkOrderSyncLookbackDays();
+    const priorSyncState = isIncremental ? await getLeafLinkOrdersSyncState(companyId) : null;
     const cutoffIso = isIncremental ? lookbackCutoffIso(lookbackDays) : null;
     const cutoffMs = cutoffIso ? Date.parse(cutoffIso) : 0;
 
@@ -2214,8 +2223,15 @@ export class LeafLinkOrdersService {
 
     const createdOnGteIso =
       cleanString(opts.filters?.createdOnGteIso)
-      || (isIncremental && cutoffIso ? cutoffIso : "");
+      || (isIncremental
+        ? incrementalSyncCreatedOnGteIso(lookbackDays, priorSyncState?.lastSuccessfulLeafLinkOrderSyncAt)
+        : "");
     const createdOnLteIso = cleanString(opts.filters?.createdOnLteIso);
+    const cursorUpdated = cleanString(priorSyncState?.cursor?.lastLeafLinkOrderUpdatedAt);
+    const modifiedGteIso =
+      isIncremental && cursorUpdated
+        ? new Date(Math.max(0, Date.parse(cursorUpdated) - 86_400_000)).toISOString()
+        : undefined;
 
     const creds = opts.reuseCreds ?? await this.leafLinkService.resolveRuntimeCredentials(companyId);
     if (!opts.reuseCreds) {
@@ -2254,6 +2270,10 @@ export class LeafLinkOrdersService {
       cutoffIso,
       createdOnGteIso: createdOnGteIso || null,
       createdOnLteIso: createdOnLteIso || null,
+      modifiedGteIso: modifiedGteIso || null,
+      incrementalSync: isIncremental,
+      historicalBackfill: !isIncremental,
+      syncWindowDays: isIncremental ? lookbackDays : null,
     });
 
     for (let page = 1; page <= maxPages; page++) {
@@ -2263,6 +2283,7 @@ export class LeafLinkOrdersService {
         ordering: "-created_on",
         createdOnGteIso: createdOnGteIso || undefined,
         createdOnLteIso: createdOnLteIso || undefined,
+        modifiedGteIso,
       });
 
       if (leafLinkSyncDebugEnabled()) {
@@ -2325,6 +2346,7 @@ export class LeafLinkOrdersService {
     logInfo(`[LEAFLINK] ${logTag}_finished`, {
       companyId,
       mode: opts.mode,
+      pagesFetched: pagesPulled,
       pagesPulled,
       rowsFetched,
       rowsCreated,
@@ -2336,6 +2358,9 @@ export class LeafLinkOrdersService {
       hitPageCap,
       hitRowCap,
       cutoffIso,
+      incrementalSync: isIncremental,
+      historicalBackfill: !isIncremental,
+      syncWindowDays: isIncremental ? lookbackDays : null,
     });
 
     return {

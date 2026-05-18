@@ -105,10 +105,18 @@ export class LeafLinkConnectionService {
     }
 
     const urls = buildOrdersProbeCandidates(creds.baseUrl, creds.companyId, creds.companySlug);
-    const authCandidates = buildLeafLinkAuthCandidates(creds);
+    const allAuth = buildLeafLinkAuthCandidates(creds);
+    const {
+      leafLinkTenantKey,
+      orderedLeafLinkAuthCandidates,
+      markLeafLinkAuthComboSucceeded,
+      isLeafLinkAuthFallbackCode,
+    } = await import("../lib/leafLinkAuthPolicy.js");
+    const tenantKey = leafLinkTenantKey(creds);
     const failures: LeafLinkProbeFailure[] = [];
 
     for (const endpoint of urls) {
+      const authCandidates = orderedLeafLinkAuthCandidates(allAuth, tenantKey, endpoint);
       for (const authValue of authCandidates) {
         const authMode = leafLinkAuthMode(authValue);
         try {
@@ -119,7 +127,9 @@ export class LeafLinkConnectionService {
               headers: buildLeafLinkHeaders(creds, authValue),
             },
             15_000,
+            { authContext: { tenantKey, authMode, endpoint } },
           );
+          markLeafLinkAuthComboSucceeded(tenantKey, endpoint, authValue, authMode);
           logInfo("[LEAFLINK] test_connection_success", {
             companyId: input.companyId,
             authSource: creds.source,
@@ -140,6 +150,7 @@ export class LeafLinkConnectionService {
           };
         } catch (error) {
           const code = error instanceof AppError ? error.code : "UNKNOWN";
+          if (!isLeafLinkAuthFallbackCode(code)) throw error;
           failures.push({
             endpoint: endpoint.slice(0, 220),
             authMode,
