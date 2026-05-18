@@ -1,5 +1,6 @@
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../errors/AppError.js";
+import { consumeReservationsForOilUse } from "../../lib/edibleOilReservations.js";
 import {
   extractionRunMarketBatchCode,
   extractionRunProductTypeLabel,
@@ -57,6 +58,7 @@ export class EdiblesService {
         outputGrams: pool.outputGrams,
         packagingGrams: pool.packagingGrams,
         ediblesGrams: pool.ediblesGrams,
+        reservedGrams: pool.reservedGrams,
         productType,
         marketBatchCode,
         strainLabel: marketBatchCode
@@ -95,6 +97,7 @@ export class EdiblesService {
       outputGrams: pool.outputGrams,
       packagingGrams: pool.packagingGrams,
       ediblesGrams: pool.ediblesGrams,
+      reservedGrams: pool.reservedGrams,
       productType,
       marketBatchCode,
       strainLabel: marketBatchCode
@@ -104,6 +107,119 @@ export class EdiblesService {
           : run.id,
       finishedAt: run.finishedAt?.toISOString() ?? null,
     };
+  }
+
+  async listOilReservations(companyId: string) {
+    const rows = await prisma.edibleOilReservation.findMany({
+      where: { companyId, status: "ACTIVE" },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      include: {
+        extractionRun: {
+          select: {
+            id: true,
+            extractionUiState: true,
+            productCategory: true,
+            cultivationBatch: { select: { strain: true } },
+          },
+        },
+      },
+    });
+    return rows.map((r) => {
+      const marketBatchCode = extractionRunMarketBatchCode(r.extractionRun);
+      const productType = extractionRunProductTypeLabel(r.extractionRun);
+      return {
+        id: r.id,
+        extractionRunId: r.extractionRunId,
+        reservedGrams: g(r.reservedGrams),
+        label: r.label,
+        notes: r.notes,
+        status: r.status,
+        extractionRunLabel: marketBatchCode
+          ? `${marketBatchCode} · ${r.extractionRun.cultivationBatch?.strain || productType}`
+          : r.extractionRunId,
+        marketBatchCode,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      };
+    });
+  }
+
+  async createOilReservation(
+    companyId: string,
+    actorUserId: string,
+    input: {
+      extractionRunId: string;
+      reservedGrams: number;
+      label?: string | null;
+      notes?: string | null;
+    },
+  ) {
+    const sourceRun = await prisma.extractionRun.findFirst({
+      where: { id: input.extractionRunId, companyId, phase: "COMPLETED" },
+    });
+    if (!sourceRun) {
+      throw new AppError("Extraction run not found or not completed", 404);
+    }
+    if (!isLiveResinOilRun(sourceRun)) {
+      throw new AppError("Only Live Resin oil batches can be reserved for the edible kitchen", 400);
+    }
+    const grams = g(input.reservedGrams);
+    if (grams <= 0) {
+      throw new AppError("Reserved grams must be greater than zero", 400);
+    }
+    const pool = await getExtractionOilPoolBreakdown(companyId, input.extractionRunId);
+    const avail = pool?.availableGrams ?? 0;
+    if (grams > g(avail + 0.0001)) {
+      throw new AppError(
+        `Cannot reserve ${grams} g — only ${g(avail)} g available on this extraction run (after packaging, kitchen use, and existing reservations)`,
+        400,
+      );
+    }
+    const row = await prisma.edibleOilReservation.create({
+      data: {
+        companyId,
+        extractionRunId: input.extractionRunId,
+        reservedGrams: grams,
+        label: input.label?.trim() || null,
+        notes: input.notes?.trim() || null,
+        status: "ACTIVE",
+        createdById: actorUserId,
+      },
+    });
+    await audit.logAction({
+      companyId,
+      actorUserId,
+      action: "edible.oil_reservation.create",
+      entityType: "EdibleOilReservation",
+      entityId: row.id,
+      after: { extractionRunId: row.extractionRunId, reservedGrams: row.reservedGrams },
+    });
+    return row;
+  }
+
+  async releaseOilReservation(companyId: string, actorUserId: string, reservationId: string) {
+    const existing = await prisma.edibleOilReservation.findFirst({
+      where: { id: reservationId, companyId },
+    });
+    if (!existing) throw new AppError("Oil reservation not found", 404);
+    if (existing.status !== "ACTIVE") {
+      throw new AppError("Only active reservations can be released", 400);
+    }
+    const row = await prisma.edibleOilReservation.update({
+      where: { id: reservationId },
+      data: { status: "RELEASED", releasedAt: new Date() },
+    });
+    await audit.logAction({
+      companyId,
+      actorUserId,
+      action: "edible.oil_reservation.release",
+      entityType: "EdibleOilReservation",
+      entityId: row.id,
+      before: { status: existing.status, reservedGrams: existing.reservedGrams },
+      after: { status: row.status },
+    });
+    return { ok: true };
   }
 
   async getDashboard(companyId: string) {
@@ -254,6 +370,7 @@ export class EdiblesService {
         startDate: new Date(),
       },
     });
+    await consumeReservationsForOilUse(companyId, input.extractionRunId, row.oilInputGrams);
     await audit.logAction({
       companyId,
       actorUserId,

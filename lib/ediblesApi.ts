@@ -8,6 +8,8 @@ export type EdibleOilOption = {
   packagingGrams: number;
   /** Grams allocated to non-cancelled edible batches from this run. */
   ediblesGrams: number;
+  /** Grams held by active kitchen reservations on this run. */
+  reservedGrams: number;
   productType: string;
   marketBatchCode?: string | null;
   strainLabel: string;
@@ -67,8 +69,40 @@ export async function fetchEdiblesDashboard(): Promise<EdibleDashboardJson> {
   return apiRequest<EdibleDashboardJson>("/api/edibles/dashboard");
 }
 
+export type EdibleOilReservation = {
+  id: string;
+  extractionRunId: string;
+  reservedGrams: number;
+  label: string | null;
+  notes: string | null;
+  status: string;
+  extractionRunLabel: string;
+  marketBatchCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export async function fetchEdiblesOilOptions(): Promise<{ options: EdibleOilOption[] }> {
   return apiRequest<{ options: EdibleOilOption[] }>("/api/edibles/extraction-oil-options");
+}
+
+export async function fetchEdiblesOilReservations(): Promise<{ reservations: EdibleOilReservation[] }> {
+  return apiRequest<{ reservations: EdibleOilReservation[] }>("/api/edibles/oil-reservations");
+}
+
+export async function createEdibleOilReservation(body: {
+  extractionRunId: string;
+  reservedGrams: number;
+  label?: string | null;
+  notes?: string | null;
+}) {
+  return apiRequest("/api/edibles/oil-reservations", { method: "POST", body });
+}
+
+export async function releaseEdibleOilReservation(reservationId: string) {
+  return apiRequest(`/api/edibles/oil-reservations/${encodeURIComponent(reservationId)}`, {
+    method: "DELETE",
+  });
 }
 
 export async function fetchEdibleOilOptionByRunId(extractionRunId: string): Promise<{ option: EdibleOilOption }> {

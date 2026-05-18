@@ -35,6 +35,14 @@ function requireEdiblesManager(req: any, res: any, next: any) {
 
 const edibleBatchIdParam = z.object({ batchId: z.string().cuid() });
 const extractionRunLookupParam = z.object({ extractionRunId: z.string().cuid() });
+const oilReservationIdParam = z.object({ reservationId: z.string().cuid() });
+
+const createOilReservationSchema = z.object({
+  extractionRunId: z.string().cuid(),
+  reservedGrams: z.number().positive().max(1_000_000),
+  label: z.string().max(200).optional().nullable(),
+  notes: z.string().max(2000).optional().nullable(),
+});
 
 const createBatchSchema = z.object({
   sku: z.string().min(1).max(120),
@@ -162,6 +170,40 @@ ediblesRouter.get(
   asyncHandler(async (req, res) => {
     const row = await service.resolveExtractionOilOption(getScopedCompanyId(req), req.params.extractionRunId);
     res.json({ option: row });
+  }),
+);
+
+ediblesRouter.get(
+  "/oil-reservations",
+  asyncHandler(async (req, res) => {
+    const reservations = await service.listOilReservations(getScopedCompanyId(req));
+    res.json({ reservations });
+  }),
+);
+
+ediblesRouter.post(
+  "/oil-reservations",
+  validate({ body: createOilReservationSchema }),
+  asyncHandler(async (req, res) => {
+    const row = await service.createOilReservation(
+      getScopedCompanyId(req),
+      req.auth.userId,
+      req.body,
+    );
+    res.status(201).json(row);
+  }),
+);
+
+ediblesRouter.delete(
+  "/oil-reservations/:reservationId",
+  validate({ params: oilReservationIdParam }),
+  asyncHandler(async (req, res) => {
+    const out = await service.releaseOilReservation(
+      getScopedCompanyId(req),
+      req.auth.userId,
+      req.params.reservationId,
+    );
+    res.json(out);
   }),
 );
 

@@ -7,11 +7,14 @@ import { getAuthUser } from "@/lib/auth";
 import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
 import {
   createEdibleBatch,
+  createEdibleOilReservation,
   deleteEdibleBatch,
   fetchEdibleOilOptionByRunId,
   fetchEdiblesDashboard,
   fetchEdiblesOilOptions,
+  fetchEdiblesOilReservations,
   patchEdibleBatch,
+  releaseEdibleOilReservation,
   postEdibleQa,
   postEdibleQaManagerReview,
   postEdibleTaskLog,
@@ -20,6 +23,7 @@ import {
   type EdibleDashboardBatch,
   type EdibleDashboardJson,
   type EdibleOilOption,
+  type EdibleOilReservation,
 } from "@/lib/ediblesApi";
 import {
   buildSnapshotFromMulti,
@@ -388,6 +392,13 @@ export default function EdiblesClient() {
   const [mgrNotes, setMgrNotes] = useState("");
   const [mgrFail, setMgrFail] = useState("");
 
+  const [oilReservations, setOilReservations] = useState<EdibleOilReservation[]>([]);
+  const [reserveOilOptions, setReserveOilOptions] = useState<EdibleOilOption[]>([]);
+  const [reserveRunId, setReserveRunId] = useState("");
+  const [reserveGrams, setReserveGrams] = useState("");
+  const [reserveLabel, setReserveLabel] = useState("");
+  const [reserveBusy, setReserveBusy] = useState(false);
+
   useEffect(() => {
     const bump = () => setTenantEpoch((n) => n + 1);
     window.addEventListener(CPU_TENANT_CHANGED_EVENT, bump);
@@ -398,8 +409,14 @@ export default function EdiblesClient() {
     if (typeof document !== "undefined" && document.hidden) return;
     try {
       setError(null);
-      const d = await fetchEdiblesDashboard();
+      const [d, res, opts] = await Promise.all([
+        fetchEdiblesDashboard(),
+        fetchEdiblesOilReservations(),
+        fetchEdiblesOilOptions(),
+      ]);
       setDash(d);
+      setOilReservations(res.reservations || []);
+      setReserveOilOptions(opts.options || []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load edibles");
     }
@@ -487,6 +504,51 @@ export default function EdiblesClient() {
     () => mergedOilOptions.find((o) => o.extractionRunId === cRunId),
     [mergedOilOptions, cRunId],
   );
+
+  const selectedReserveOil = useMemo(
+    () => reserveOilOptions.find((o) => o.extractionRunId === reserveRunId),
+    [reserveOilOptions, reserveRunId],
+  );
+
+  async function onReserveOil(e: React.FormEvent) {
+    e.preventDefault();
+    if (!reserveRunId) {
+      setError("Select a Live Resin oil batch to reserve.");
+      return;
+    }
+    const grams = Number(reserveGrams);
+    if (!Number.isFinite(grams) || grams <= 0) {
+      setError("Enter a valid reservation weight in grams.");
+      return;
+    }
+    setReserveBusy(true);
+    try {
+      await createEdibleOilReservation({
+        extractionRunId: reserveRunId,
+        reservedGrams: grams,
+        label: reserveLabel.trim() || null,
+      });
+      setReserveGrams("");
+      setReserveLabel("");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reserve oil.");
+    } finally {
+      setReserveBusy(false);
+    }
+  }
+
+  async function onReleaseReservation(id: string) {
+    setReserveBusy(true);
+    try {
+      await releaseEdibleOilReservation(id);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not release reservation.");
+    } finally {
+      setReserveBusy(false);
+    }
+  }
 
   const derivedPotencyMgPerGram = useMemo(
     () => mgThcPerGramOilFromCoaMassFraction(cOilPotencyFrac),
@@ -1075,6 +1137,115 @@ export default function EdiblesClient() {
               <div style={{ fontSize: 26, fontWeight: 900, marginTop: 8 }}>{v}</div>
             </div>
           ))}
+        </div>
+
+
+        <div style={{ ...cardStyle, marginBottom: 18 }}>
+          <h2 style={{ marginTop: 0 }}>Reserve Live Resin oil</h2>
+          <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.5, maxWidth: 720 }}>
+            Hold grams from a completed Live Resin oil run for upcoming gummy or edible production. Reservations
+            reduce what packaging can claim and appear on the packaging batch card.
+          </p>
+          {write ? (
+            <form onSubmit={onReserveOil} style={{ display: "grid", gap: 10, marginTop: 14 }}>
+              <select
+                style={inputFull}
+                value={reserveRunId}
+                onChange={(e) => setReserveRunId(e.target.value)}
+                required
+              >
+                <option value="">Select oil batch…</option>
+                {reserveOilOptions.map((o) => (
+                  <option key={o.extractionRunId} value={o.extractionRunId}>
+                    {o.strainLabel} — {o.availableGrams.toFixed(2)} g avail
+                    {o.reservedGrams > 0 ? ` · ${o.reservedGrams.toFixed(2)} g reserved` : ""}
+                  </option>
+                ))}
+              </select>
+              {selectedReserveOil ? (
+                <div style={{ fontSize: 13, color: "#cbd5e1" }}>
+                  Output {selectedReserveOil.outputGrams.toFixed(2)} g · packaging{" "}
+                  {selectedReserveOil.packagingGrams.toFixed(2)} g · kitchen used{" "}
+                  {selectedReserveOil.ediblesGrams.toFixed(2)} g · reserved{" "}
+                  {selectedReserveOil.reservedGrams.toFixed(2)} g ·{" "}
+                  <span style={{ color: "#fdba74", fontWeight: 700 }}>
+                    {selectedReserveOil.availableGrams.toFixed(2)} g available to reserve
+                  </span>
+                </div>
+              ) : null}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <input
+                  style={inputFull}
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  placeholder="Grams to reserve"
+                  value={reserveGrams}
+                  onChange={(e) => setReserveGrams(e.target.value)}
+                  required
+                />
+                <input
+                  style={inputFull}
+                  placeholder="Label (optional, e.g. Watermelon run)"
+                  value={reserveLabel}
+                  onChange={(e) => setReserveLabel(e.target.value)}
+                />
+              </div>
+              <div>
+                <button type="submit" style={primaryBtn} disabled={reserveBusy}>
+                  {reserveBusy ? "Saving…" : "Reserve oil"}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <p style={{ color: "#94a3b8", marginBottom: 0 }}>Read-only — you cannot create reservations.</p>
+          )}
+          <div style={{ marginTop: 18 }}>
+            <div style={{ fontWeight: 800, marginBottom: 10 }}>Active reservations</div>
+            {oilReservations.length === 0 ? (
+              <p style={{ color: "#64748b", margin: 0 }}>No oil reserved yet.</p>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {oilReservations.map((r) => (
+                  <div
+                    key={r.id}
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      background: "rgba(15,23,42,0.65)",
+                      border: "1px solid rgba(251,146,60,0.35)",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 800 }}>{r.extractionRunLabel}</div>
+                      <div style={{ fontSize: 13, color: "#cbd5e1", marginTop: 4 }}>
+                        {r.reservedGrams.toFixed(2)} g reserved
+                        {r.label ? ` · ${r.label}` : ""}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                        {new Date(r.createdAt).toLocaleString()}
+                      </div>
+                    </div>
+                    {write && (
+                      <button
+                        type="button"
+                        style={ghostBtn}
+                        disabled={reserveBusy}
+                        onClick={() => void onReleaseReservation(r.id)}
+                      >
+                        Release
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         <div style={{ ...cardStyle, marginBottom: 18 }}>

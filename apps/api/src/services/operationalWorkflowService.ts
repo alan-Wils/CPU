@@ -757,9 +757,9 @@ export class OperationalWorkflowService {
             throw new AppError("Extraction run missing or not completed", 404);
         }
         const packagingAfterWeigh = g(pool.packagingGrams + input.netOutputGrams);
-        const allocated = g(packagingAfterWeigh + pool.ediblesGrams);
+        const allocated = g(packagingAfterWeigh + pool.ediblesGrams + pool.reservedGrams);
         if (allocated - pool.outputGrams > EPS) {
-            throw new AppError("Packaging would exceed shared oil pool (packaging + edible allocations vs extraction output; terpenes excluded from cap)", 400);
+            throw new AppError("Packaging would exceed shared oil pool (packaging + edible kitchen use + reservations vs extraction output; terpenes excluded from cap)", 400);
         }
         return prisma.packagingLot
             .update({

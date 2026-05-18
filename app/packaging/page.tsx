@@ -465,12 +465,16 @@ export default function Packaging() {
     return num(batch?.ediblesAllocatedGrams);
   }
 
+  function getEdiblesReservedGrams(batch: any) {
+    return num(batch?.ediblesReservedGrams);
+  }
+
+  function getPhysicalPackagedGrams(batch: any) {
+    return num(batch?.packagedGrams) + num(batch?.netOutputGrams);
+  }
+
   function getPackagedGrams(batch: any) {
-    return (
-      num(batch?.packagedGrams) +
-      num(batch?.netOutputGrams) +
-      getEdiblesAllocatedGrams(batch)
-    );
+    return getPhysicalPackagedGrams(batch) + getEdiblesAllocatedGrams(batch);
   }
 
   function getRemainingGrams(batch: any) {
@@ -478,11 +482,15 @@ export default function Packaging() {
     if (
       batch?.oilPoolAvailableGrams != null ||
       batch?.ediblesAllocatedGrams != null ||
+      batch?.ediblesReservedGrams != null ||
       batch?.oilPoolOutputGrams != null
     ) {
       return Math.max(poolAvail, 0);
     }
-    return Math.max(getPackageableGrams(batch) - getPackagedGrams(batch), 0);
+    return Math.max(
+      getPackageableGrams(batch) - getPhysicalPackagedGrams(batch) - getEdiblesAllocatedGrams(batch) - getEdiblesReservedGrams(batch),
+      0,
+    );
   }
 
   function getPackageSetPackagedGrams(batch: any) {
@@ -1448,9 +1456,12 @@ export default function Packaging() {
                     : ""}{" "}
                   | Available to
                   Package: {getFinalGrams(b) || "—"}g | Packaged:{" "}
-                  {getPackagedGrams(b) || 0}g
+                  {getPhysicalPackagedGrams(b) || 0}g
+                  {getEdiblesReservedGrams(b) > 0
+                    ? ` | Reserved for edibles: ${getEdiblesReservedGrams(b)}g`
+                    : ""}
                   {getEdiblesAllocatedGrams(b) > 0
-                    ? ` (incl. ${getEdiblesAllocatedGrams(b)}g edibles)`
+                    ? ` | Kitchen used: ${getEdiblesAllocatedGrams(b)}g`
                     : ""}{" "}
                   | Remaining: {getRemainingGrams(b) || "—"}g | Yield:{" "}
                   {b.yieldPercentage || "—"} |
@@ -1550,7 +1561,19 @@ export default function Packaging() {
 
               <input
                 style={inputStyle}
-                value={`Already Packaged: ${getPackagedGrams(selected) || 0}g`}
+                value={`Already Packaged: ${getPhysicalPackagedGrams(selected) || 0}g`}
+                readOnly
+              />
+
+              <input
+                style={inputStyle}
+                value={`Reserved for edibles: ${getEdiblesReservedGrams(selected) || 0}g`}
+                readOnly
+              />
+
+              <input
+                style={inputStyle}
+                value={`Kitchen used: ${getEdiblesAllocatedGrams(selected) || 0}g`}
                 readOnly
               />
 

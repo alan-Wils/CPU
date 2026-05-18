@@ -1,4 +1,5 @@
 import { prisma } from "../config/prisma.js";
+import { computeOilPoolAvailableGrams, sumActiveReservedGrams } from "./edibleOilReservations.js";
 
 const g = (n: number) => Number(Number(n).toFixed(4));
 
@@ -6,6 +7,7 @@ export type ExtractionOilPoolBreakdown = {
   outputGrams: number;
   packagingGrams: number;
   ediblesGrams: number;
+  reservedGrams: number;
   availableGrams: number;
 };
 
@@ -35,8 +37,7 @@ export function isLiveResinOilRun(run: { extractionUiState: unknown; productCate
 }
 
 /**
- * Shared ledger: extraction output minus all packaging lot net weights and non-cancelled edible oil inputs.
- * Used by edible batch create and extraction packaging weigh-ins.
+ * Shared ledger: extraction output minus packaging, edible batch oil, and active kitchen reservations.
  */
 export async function getExtractionOilPoolBreakdown(
   companyId: string,
@@ -47,7 +48,7 @@ export async function getExtractionOilPoolBreakdown(
   });
   if (!run) return null;
   const out = g(Number(run.outputGrams) || 0);
-  const [packAgg, edibleAgg] = await Promise.all([
+  const [packAgg, edibleAgg, reservedGrams] = await Promise.all([
     prisma.packagingLot.aggregate({
       where: { companyId, extractionRunId },
       _sum: { netOutputGrams: true },
@@ -60,11 +61,12 @@ export async function getExtractionOilPoolBreakdown(
       },
       _sum: { oilInputGrams: true },
     }),
+    sumActiveReservedGrams(companyId, extractionRunId),
   ]);
   const packagingGrams = g(Number(packAgg._sum.netOutputGrams ?? 0));
   const ediblesGrams = g(Number(edibleAgg._sum.oilInputGrams ?? 0));
-  const availableGrams = Math.max(0, g(out - packagingGrams - ediblesGrams));
-  return { outputGrams: out, packagingGrams, ediblesGrams, availableGrams };
+  const availableGrams = computeOilPoolAvailableGrams(out, packagingGrams, ediblesGrams, reservedGrams);
+  return { outputGrams: out, packagingGrams, ediblesGrams, reservedGrams, availableGrams };
 }
 
 /** Human label from extraction UI (e.g. BLUE.051526). */
@@ -106,6 +108,7 @@ export async function enrichLegacyPackagingRowsWithOilPool(
       oilPoolOutputGrams: pool.outputGrams,
       oilPoolPackagingGrams: pool.packagingGrams,
       ediblesAllocatedGrams: pool.ediblesGrams,
+      ediblesReservedGrams: pool.reservedGrams,
       oilPoolAvailableGrams: pool.availableGrams,
     };
   });
