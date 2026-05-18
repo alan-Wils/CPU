@@ -182,8 +182,10 @@ export class LeafLinkService {
       key: LEAFLINK_CONFIG_KEY,
       value: next,
     });
-    const { invalidateLeafLinkCredentialsCache } = await import("../lib/leaflinkCredentialsCache.js");
+    const { invalidateLeafLinkCredentialsCache, invalidateLeafLinkInventoryResponseCache } =
+      await import("../lib/leaflinkCredentialsCache.js");
     invalidateLeafLinkCredentialsCache(companyId);
+    invalidateLeafLinkInventoryResponseCache(companyId);
     return this.getSafeConfig(companyId);
   }
 
@@ -1455,6 +1457,22 @@ export class LeafLinkInventoryService {
   configService = new ConfigService();
   configRepo = new ConfigRepository();
 
+  /** Postgres snapshot only — no LeafLink HTTP (used by analytics + detail lookups). */
+  async readPersistedInventory(companyId: string): Promise<LeafLinkPersistedInventory | null> {
+    return this.loadPersistedInventory(companyId);
+  }
+
+  async findPersistedInventoryItem(
+    companyId: string,
+    productId: string,
+  ): Promise<LeafLinkInventoryItem | null> {
+    const id = String(productId || "").trim();
+    if (!id) return null;
+    const snap = await this.loadPersistedInventory(companyId);
+    if (!snap?.items?.length) return null;
+    return snap.items.find((x) => x.id === id) ?? null;
+  }
+
   private async loadPersistedInventory(companyId: string): Promise<LeafLinkPersistedInventory | null> {
     const row = await this.configRepo.getConfigRaw(companyId, LEAFLINK_INVENTORY_CACHE_KEY);
     if (!row?.valueJson) return null;
@@ -1483,6 +1501,8 @@ export class LeafLinkInventoryService {
       key: LEAFLINK_INVENTORY_CACHE_KEY,
       value,
     });
+    const { invalidateLeafLinkInventoryResponseCache } = await import("../lib/leaflinkCredentialsCache.js");
+    invalidateLeafLinkInventoryResponseCache(companyId);
   }
 
   private responseFromItems(

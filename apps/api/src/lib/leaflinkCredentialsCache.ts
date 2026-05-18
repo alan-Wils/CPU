@@ -17,3 +17,7 @@ export async function cachedLeafLinkCredentials(
 export function invalidateLeafLinkCredentialsCache(companyId: string): void {
   invalidateMemoPrefix(leafLinkCredentialsCacheKey(companyId));
 }
+
+export function invalidateLeafLinkInventoryResponseCache(companyId: string): void {
+  invalidateMemoPrefix(`leaflink:inventory:${companyId}:`);
+}

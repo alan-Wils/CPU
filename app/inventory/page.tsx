@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import {
@@ -9,6 +9,12 @@ import {
   getSelectedCompanyId,
   type LeafLinkInventoryItemDto,
 } from "@/lib/api";
+import {
+  clearLeafLinkInventoryClientCache,
+  fetchLeafLinkInventoryDeduped,
+  leafLinkListRowToUiDto,
+} from "@/lib/leafLinkInventoryClient";
+import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
 import { fetchCachedCompanyConfig } from "@/lib/configClient";
 import {
   clampInventoryLogoMaxHeightPx,
@@ -38,6 +44,8 @@ function usd(n: number): string {
 
 const PAGE_SIZE = 50;
 const EXPORT_COLUMNS_STORAGE_KEY = "cpu.inventory.exportColumns";
+/** Avoid remount/refocus refetch within this window (server also caches ~2 min). */
+const INVENTORY_CLIENT_STALE_MS = 3 * 60_000;
 
 /** LeafLink-style listing states; keeps the status dropdown valid before first sync. */
 const LEAFLINK_STATUS_PRESETS = ["Archived", "Available", "Internal", "Unavailable"] as const;
@@ -68,6 +76,16 @@ export default function InventoryPage() {
   const [printBrandingLogoUrl, setPrintBrandingLogoUrl] = useState("");
   const [printBrandingLogoMaxWidthPx, setPrintBrandingLogoMaxWidthPx] = useState(160);
   const [printBrandingLogoMaxHeightPx, setPrintBrandingLogoMaxHeightPx] = useState(0);
+  const lastInventoryFetchAtRef = useRef(0);
+
+  useEffect(() => {
+    const onTenant = () => {
+      clearLeafLinkInventoryClientCache();
+      lastInventoryFetchAtRef.current = 0;
+    };
+    window.addEventListener(CPU_TENANT_CHANGED_EVENT, onTenant);
+    return () => window.removeEventListener(CPU_TENANT_CHANGED_EVENT, onTenant);
+  }, []);
 
   useEffect(() => {
     try {
@@ -150,11 +168,20 @@ export default function InventoryPage() {
   }
 
   async function loadInventory(opts?: { refresh?: boolean }) {
+    const refresh = Boolean(opts?.refresh);
+    const now = Date.now();
+    if (!refresh && lastInventoryFetchAtRef.current > 0 && now - lastInventoryFetchAtRef.current < INVENTORY_CLIENT_STALE_MS) {
+      return;
+    }
     setLoading(true);
     setError("");
     try {
-      const out = await fetchLeafLinkInventory(undefined, opts);
-      setItems(out.items || []);
+      const out = await fetchLeafLinkInventoryDeduped(() => fetchLeafLinkInventory(undefined, { refresh }), {
+        refresh,
+      });
+      const rows = (out.items || []).map((row) => leafLinkListRowToUiDto(row));
+      lastInventoryFetchAtRef.current = Date.now();
+      setItems(rows);
       setLastSync(out.lastSyncedAt || new Date().toISOString());
       setFromCache(Boolean(out.fromCache));
       setSyncMode((out.syncMode as "" | "cache" | "full" | "incremental") || "");

@@ -756,7 +756,9 @@ export type LeafLinkInventoryItemDto = {
   price: number | null;
   status: string;
   updatedAt: string;
-  imageUrl: string;
+  imageUrl?: string;
+  /** Compact list rows omit imageUrl; true when detail endpoint has an image. */
+  hasImage?: boolean;
   /** Batch/source key when multiple SKUs share one package (see API leaflink normalize). */
   sourcePackageGroup?: string;
 };
@@ -801,6 +803,11 @@ export type LeafLinkConfigUpsertInput = {
 export async function fetchLeafLinkInventory(companyId?: string, opts?: { refresh?: boolean }) {
   const q = opts?.refresh ? "?refresh=1" : "";
   return apiRequest<LeafLinkInventoryDto>(`/api/inventory/leaflink${q}`, { companyId });
+}
+
+export async function fetchLeafLinkInventoryProductDetail(productId: string, companyId?: string) {
+  const id = encodeURIComponent(String(productId || "").trim());
+  return apiRequest<{ item: LeafLinkInventoryItemDto }>(`/api/inventory/leaflink/${id}`, { companyId });
 }
 
 export async function fetchLeafLinkConfig(companyId?: string) {

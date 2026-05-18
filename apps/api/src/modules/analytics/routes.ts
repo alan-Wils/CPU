@@ -127,7 +127,7 @@ analyticsRouter.get(
         const cacheTtl = Number.isFinite(ttlMs) && ttlMs >= 15_000 ? ttlMs : 90_000;
 
         const dbStarted = Date.now();
-        const { value: out, cacheHit, inflightJoined } = await memoizedReadWithMeta(cacheKey, cacheTtl, () =>
+        const { value: built, cacheHit, inflightJoined } = await memoizedReadWithMeta(cacheKey, cacheTtl, () =>
             buildAnalyticsOverview({
                 companyId,
                 dateFrom,
@@ -137,7 +137,8 @@ analyticsRouter.get(
                 platformRole: auth?.platformRole ?? null,
             }),
         );
-        const dbMs = Date.now() - dbStarted;
+        const dbMs = cacheHit ? 0 : Date.now() - dbStarted;
+        const out = built.overview;
         const serStarted = Date.now();
         const body = JSON.stringify(out);
         const serializeMs = Date.now() - serStarted;
@@ -149,6 +150,7 @@ analyticsRouter.get(
             payloadBytes: Buffer.byteLength(body, "utf8"),
             cacheHit,
             inflightJoined,
+            extra: { subCacheHits: built.subCacheHits },
         });
         res.setHeader("Cache-Control", "private, max-age=30");
         res.type("json").send(body);

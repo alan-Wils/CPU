@@ -18,7 +18,11 @@ import {
   replacePeerNotifyInbox,
 } from "@/lib/api";
 import { CPU_AUTH_CHANGED_EVENT, isLoggedIn } from "@/lib/auth";
-import { clearPeerNotifyInboxClientCache, fetchPeerNotifyInboxDeduped } from "@/lib/peerNotifyInboxClient";
+import {
+  clearPeerNotifyInboxClientCache,
+  fetchPeerNotifyInboxDeduped,
+  getPeerNotifyInboxClientStats,
+} from "@/lib/peerNotifyInboxClient";
 import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
 import { useVisibilityPolling } from "@/lib/useVisibilityPolling";
 import type { PeerNotificationKind, PeerNotificationItem } from "@/lib/peerNotificationsTypes";
@@ -126,8 +130,11 @@ export function PeerNotificationsProvider({ children }: { children: ReactNode })
       return;
     }
     const next = await fetchInboxOrEmpty(force);
-    lastInboxFetchAtRef.current = now;
+    lastInboxFetchAtRef.current = Date.now();
     inboxLoadedRef.current = true;
+    if (typeof process !== "undefined" && process.env.NODE_ENV !== "production") {
+      console.debug("[peerNotifyInbox] loadFullInbox", { force, ...getPeerNotifyInboxClientStats() });
+    }
     applySerializedIfDifferent(next, serializedRef, setItems);
     setUnreadCount(next.filter((x) => !x.read).length);
   }, []);

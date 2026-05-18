@@ -6,9 +6,8 @@ import {
   LeafLinkInventoryService,
   leafLinkInventoryRowsForPageDefaultTotals,
   sumLeafLinkInventoryValueUsd,
-  type LeafLinkInventoryItem,
 } from "../../services/leaflinkService.js";
-import { memoizedRead } from "../../lib/requestMemoCache.js";
+import { memoizedReadWithMeta } from "../../lib/requestMemoCache.js";
 import { LeafLinkOrdersService, type OrdersAnalyticsDto } from "../../services/leafLinkOrdersService.js";
 
 const companyServices = new CompanyServiceSettingsService();
@@ -125,7 +124,21 @@ function mpSellerUsdByDay(rows: { createdAt: Date; total: unknown }[]): Map<stri
   return m;
 }
 
-export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
+export type AnalyticsOverviewBuildResult = {
+  overview: Record<string, unknown>;
+  subCacheHits: Record<string, boolean>;
+};
+
+export async function buildAnalyticsOverview(input: AnalyticsOverviewInput): Promise<AnalyticsOverviewBuildResult> {
+  const subCacheHits: Record<string, boolean> = {};
+  const overview = await buildAnalyticsOverviewBody(input, subCacheHits);
+  return { overview, subCacheHits };
+}
+
+async function buildAnalyticsOverviewBody(
+  input: AnalyticsOverviewInput,
+  subCacheHits: Record<string, boolean>,
+) {
   const { companyId, dateFrom, dateTo, facility, department, platformRole } = input;
   const services = await companyServices.getOrCreate(companyId);
   /** When false, analytics excludes NexBatch seller marketplace $ and seller order counts from blended KPIs. */
@@ -140,34 +153,40 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
   const laborStages = laborStageFromDepartment(department);
 
   const leafLinkAnalyticsTtl = 90_000;
-  const loadLeafLinkOrdersAnalytics = (from: string, to: string) =>
-    memoizedRead(`leaflink:orders-analytics:${companyId}:${from}:${to}`, leafLinkAnalyticsTtl, () =>
+  const loadLeafLinkOrdersAnalytics = async (from: string, to: string) => {
+    const key = `leaflink:orders-analytics:${companyId}:${from}:${to}`;
+    const hit = await memoizedReadWithMeta(key, leafLinkAnalyticsTtl, () =>
       ordersService.getOrdersAnalytics(companyId, { dateFrom: from, dateTo: to }),
     );
-
-  const facilityTrim = String(facility || "").trim();
-  const batchWhere: Prisma.CultivationBatchWhereInput = {
-    companyId,
-    ...(facilityTrim ? { room: { contains: facilityTrim } } : {}),
+    subCacheHits[`llOrders:${from}:${to}`] = hit.cacheHit;
+    return hit.value;
   };
 
-  const [
-    batches,
-    extractionRuns,
-    packagingLots,
-    laborEntriesRange,
-    laborToday,
-    taskLogsRecent,
-    marketplaceSellerAgg,
-    sellerOrderCount,
-    marketplaceBuyerAgg,
-    buyerOrderCount,
-    leafLinkInventoryItems,
-    marketplaceSellerOrdersInRange,
-    ordersCurrent,
-    ordersPrev,
-    prevNexAgg,
-  ] = await Promise.all([
+  const facilityTrim = String(facility || "").trim();
+  const deptKey = department === "all" ? "" : String(department || "");
+  const prismaCoreKey = `analytics:prisma-core:${companyId}:${dateFrom}:${dateTo}:${facilityTrim}:${deptKey}`;
+  const prismaCoreTtl = 90_000;
+
+  const { value: prismaCore, cacheHit: prismaCoreHit } = await memoizedReadWithMeta(prismaCoreKey, prismaCoreTtl, async () => {
+    const batchWhere: Prisma.CultivationBatchWhereInput = {
+      companyId,
+      ...(facilityTrim ? { room: { contains: facilityTrim } } : {}),
+    };
+
+    const [
+      batches,
+      extractionRuns,
+      packagingLots,
+      laborEntriesRange,
+      laborToday,
+      taskLogsRecent,
+      marketplaceSellerAgg,
+      sellerOrderCount,
+      marketplaceBuyerAgg,
+      buyerOrderCount,
+      marketplaceSellerOrdersInRange,
+      prevNexAgg,
+    ] = await Promise.all([
     prisma.cultivationBatch.findMany({
       where: batchWhere,
       select: {
@@ -248,17 +267,6 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
         createdAt: { gte: new Date(fromMs), lte: new Date(toMs) },
       },
     }),
-    (async (): Promise<LeafLinkInventoryItem[]> => {
-      try {
-        const inv = await leafLinkInventoryService.fetchAvailableInventory(companyId, {
-          refresh: false,
-          actorUserId: "system",
-        });
-        return inv.items;
-      } catch {
-        return [];
-      }
-    })(),
     prisma.marketplaceOrder.findMany({
       where: {
         sellerCompanyId: companyId,
@@ -268,8 +276,6 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
       select: { createdAt: true, total: true },
       take: 8000,
     }),
-    loadLeafLinkOrdersAnalytics(dateFrom, dateTo),
-    loadLeafLinkOrdersAnalytics(prevFromYmd, prevToYmd),
     prisma.marketplaceOrder.aggregate({
       where: {
         sellerCompanyId: companyId,
@@ -281,24 +287,79 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
       },
       _sum: { total: true },
     }),
+    ]);
+
+    const edibleBatchesAll = await prisma.edibleBatch.findMany({
+      where: { companyId },
+      select: {
+        id: true,
+        stage: true,
+        status: true,
+        oilInputGrams: true,
+        wasteGrams: true,
+        totalMgInput: true,
+        expectedYield: true,
+        actualYield: true,
+        targetPieces: true,
+        createdAt: true,
+      },
+      take: 8000,
+    });
+
+    return {
+      batches,
+      extractionRuns,
+      packagingLots,
+      laborEntriesRange,
+      laborToday,
+      taskLogsRecent,
+      marketplaceSellerAgg,
+      sellerOrderCount,
+      marketplaceBuyerAgg,
+      buyerOrderCount,
+      marketplaceSellerOrdersInRange,
+      prevNexAgg,
+      edibleBatchesAll,
+    };
+  });
+  subCacheHits.prismaCore = prismaCoreHit;
+
+  const {
+    batches,
+    extractionRuns,
+    packagingLots,
+    laborEntriesRange,
+    laborToday,
+    taskLogsRecent,
+    marketplaceSellerAgg,
+    sellerOrderCount,
+    marketplaceBuyerAgg,
+    buyerOrderCount,
+    marketplaceSellerOrdersInRange,
+    prevNexAgg,
+    edibleBatchesAll,
+  } = prismaCore;
+
+  const [ordersCurrent, ordersPrev] = await Promise.all([
+    loadLeafLinkOrdersAnalytics(dateFrom, dateTo),
+    loadLeafLinkOrdersAnalytics(prevFromYmd, prevToYmd),
   ]);
 
-  const edibleBatchesAll = await prisma.edibleBatch.findMany({
-    where: { companyId },
-    select: {
-      id: true,
-      stage: true,
-      status: true,
-      oilInputGrams: true,
-      wasteGrams: true,
-      totalMgInput: true,
-      expectedYield: true,
-      actualYield: true,
-      targetPieces: true,
-      createdAt: true,
+  const { value: inventoryValue, cacheHit: llInvValueHit } = await memoizedReadWithMeta(
+    `analytics:ll-inv-value:${companyId}`,
+    120_000,
+    async () => {
+      try {
+        const snap = await leafLinkInventoryService.readPersistedInventory(companyId);
+        return sumLeafLinkInventoryValueUsd(
+          leafLinkInventoryRowsForPageDefaultTotals(snap?.items ?? []),
+        );
+      } catch {
+        return 0;
+      }
     },
-    take: 8000,
-  });
+  );
+  subCacheHits.llInventoryValue = llInvValueHit;
 
   let plantsVeg = 0;
   let plantsFlower = 0;
@@ -359,10 +420,6 @@ export async function buildAnalyticsOverview(input: AnalyticsOverviewInput) {
     ordersCurrent.ordersIncluded + (sellerWorkspaceOn ? sellerOrderCount : 0) + buyerOrderCount;
   const activeBatches =
     activeCultivationBatches + extractionInProgress + packagingInProgress + ediblesActiveKitchen;
-
-  const inventoryValue = sumLeafLinkInventoryValueUsd(
-    leafLinkInventoryRowsForPageDefaultTotals(leafLinkInventoryItems),
-  );
 
   const laborCostRange = laborEntriesRange.reduce((s, e) => s + (Number(e.totalCost) || 0), 0);
   const laborCostToday = laborToday.reduce((s, e) => s + (Number(e.totalCost) || 0), 0);
