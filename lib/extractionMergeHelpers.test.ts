@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  extractionBatchBiomassLbs,
   findExtractionCombineMergeDataForPair,
   isExtractionBatchActiveForCombine,
   mergeExtractionSourceRows,
   rebuildExtractionBatchSourceSummary,
   resolveAbsorbedBiomassForUncombine,
+  setExtractionBatchTotalBiomassLbs,
   subtractExtractionSourceRows,
 } from "@/lib/extractionMergeHelpers";
 
@@ -69,6 +71,18 @@ describe("extractionMergeHelpers", () => {
     expect(findExtractionCombineMergeDataForPair(logs, "SUV", "ABS")).toMatchObject({
       biomassBeforePartner: 8,
     });
+  });
+
+  it("extractionBatchBiomassLbs reads totalBiomassUsed or amount string", () => {
+    expect(extractionBatchBiomassLbs({ totalBiomassUsed: 42 })).toBe(42);
+    expect(extractionBatchBiomassLbs({ amount: "12.5 lbs" })).toBe(12.5);
+  });
+
+  it("setExtractionBatchTotalBiomassLbs updates lbs fields", () => {
+    const batch: any = {};
+    setExtractionBatchTotalBiomassLbs(batch, 25);
+    expect(batch.totalBiomassUsed).toBe(25);
+    expect(batch.amount).toBe("25 lbs");
   });
 
   it("resolveAbsorbedBiomassForUncombine prefers snapshot", () => {

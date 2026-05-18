@@ -99,6 +99,23 @@ export function subtractExtractionSourceRows(survivor: any[], partner: any[]): a
   return Array.from(map.values());
 }
 
+/** Read total biomass in lbs from batch fields. */
+export function extractionBatchBiomassLbs(batch: any): number {
+  const direct = num(batch?.totalBiomassUsed);
+  if (direct > 0) return direct;
+  const amt = String(batch?.amount ?? "");
+  const match = amt.match(/([\d.]+)/);
+  return match ? num(match[1]) : 0;
+}
+
+/** Set total biomass on a batch (lbs string + inputGrams estimate). */
+export function setExtractionBatchTotalBiomassLbs(batch: any, totalLbs: number) {
+  const lbs = +Math.max(0, totalLbs).toFixed(2);
+  batch.totalBiomassUsed = lbs;
+  batch.amount = `${lbs} lbs`;
+  batch.inputGrams = +(lbs * 453.592).toFixed(2);
+}
+
 export function rebuildExtractionBatchSourceSummary(batch: any, sources: any[]) {
   const rows = Array.isArray(sources) ? sources : [];
   const totalBiomassUsed = +rows

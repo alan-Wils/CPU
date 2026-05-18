@@ -64,10 +64,12 @@ import {
   type ExtractionUiStageKey,
 } from "@/lib/extractionBatchUiStage";
 import {
+  extractionBatchBiomassLbs,
   isExtractionBatchActiveForCombine,
   mergeExtractionSourceRows,
   rebuildExtractionBatchSourceSummary,
   resolveAbsorbedBiomassForUncombine,
+  setExtractionBatchTotalBiomassLbs,
   subtractExtractionSourceRows,
 } from "@/lib/extractionMergeHelpers";
 import { buildTaskChallengeAttachment } from "@/lib/taskChallengePayload";
@@ -574,8 +576,24 @@ export default function Extraction() {
 
   const [selectedTask, setSelectedTask] = useState(extractionTasks[0]);
   const [combinePartnerBatchId, setCombinePartnerBatchId] = useState("");
+  const [combineSurvivorLbs, setCombineSurvivorLbs] = useState("");
+  const [combinePartnerLbs, setCombinePartnerLbs] = useState("");
   const [combineNotes, setCombineNotes] = useState("");
   const [uncombineBusyPartnerId, setUncombineBusyPartnerId] = useState("");
+
+  useEffect(() => {
+    if (selectedTask !== "Combine Batches" || !selectedExt) return;
+    const lbs = extractionBatchBiomassLbs(selectedExt);
+    setCombineSurvivorLbs(lbs > 0 ? String(lbs) : "");
+  }, [selectedTask, selectedExt?.id]);
+
+  useEffect(() => {
+    if (selectedTask !== "Combine Batches" || !combinePartnerBatchId.trim()) return;
+    const partner = s.extractionBatches.find((b: any) => b?.id === combinePartnerBatchId.trim());
+    if (!partner) return;
+    const lbs = extractionBatchBiomassLbs(partner);
+    setCombinePartnerLbs(lbs > 0 ? String(lbs) : "");
+  }, [selectedTask, combinePartnerBatchId]);
 
   const [packSockTechCount, setPackSockTechCount] = useState("1");
   const [packSockTechNames, setPackSockTechNames] = useState<string[]>([""]);
@@ -1590,6 +1608,8 @@ export default function Extraction() {
     setDraftFinishBatchCode("");
     setFinishBatchManualName("");
     setCombinePartnerBatchId("");
+    setCombineSurvivorLbs("");
+    setCombinePartnerLbs("");
     setCombineNotes("");
   }
 
@@ -1882,9 +1902,14 @@ export default function Extraction() {
               delete survivor.combinedFromBatchIds;
             }
 
+            const priorSurvivorLbs = extractionBatchBiomassLbs(survivor);
             const survivorSources = Array.isArray(survivor.sources) ? survivor.sources : [];
             const restoredSources = subtractExtractionSourceRows(survivorSources, resolved.sources);
             rebuildExtractionBatchSourceSummary(survivor, restoredSources);
+            setExtractionBatchTotalBiomassLbs(
+              survivor,
+              Math.max(0, priorSurvivorLbs - resolved.biomassLbs),
+            );
 
             delete pRestore.mergedIntoSnapshot;
             pRestore.mergedIntoBatchId = undefined;
@@ -1943,6 +1968,12 @@ export default function Extraction() {
   function validateTaskForm() {
     if (selectedTask === "Combine Batches") {
       if (!requireFields([{ label: "Partner batch", value: combinePartnerBatchId }])) {
+        return false;
+      }
+      if (!requirePositiveNumber("This batch total (lbs)", combineSurvivorLbs)) {
+        return false;
+      }
+      if (!requirePositiveNumber("Partner batch total (lbs)", combinePartnerLbs)) {
         return false;
       }
       return true;
@@ -2365,6 +2396,8 @@ export default function Extraction() {
   function buildTaskData() {
     if (selectedTask === "Combine Batches") {
       return {
+        survivorLbs: num(combineSurvivorLbs),
+        partnerLbs: num(combinePartnerLbs),
         notes: combineNotes.trim(),
       };
     }
@@ -2613,11 +2646,9 @@ export default function Extraction() {
         return;
       }
 
-      const priorSurvivorBiomass = num(selectedExt.totalBiomassUsed);
-      const priorPartnerBiomass = num(partner.totalBiomassUsed);
-      const combinedBiomass = +mergedSources
-        .reduce((sum, row) => sum + num(row?.amountUsed), 0)
-        .toFixed(2);
+      const priorSurvivorBiomass = num(combineSurvivorLbs);
+      const priorPartnerBiomass = num(combinePartnerLbs);
+      const combinedBiomass = +(priorSurvivorBiomass + priorPartnerBiomass).toFixed(2);
       const notes = combineNotes.trim();
       const survivorId = selectedExt.id;
       const partnerId = partner.id;
@@ -2627,6 +2658,7 @@ export default function Extraction() {
       }
       selectedExt.combinedFromBatchIds.push(partnerId);
       rebuildExtractionBatchSourceSummary(selectedExt, mergedSources);
+      setExtractionBatchTotalBiomassLbs(selectedExt, combinedBiomass);
 
       const survivorOutput = `Merged ${partnerId} (${priorPartnerBiomass} lbs) into ${survivorId} — total biomass now ${combinedBiomass} lbs${
         notes ? `. Notes: ${notes}` : ""
@@ -2681,6 +2713,8 @@ export default function Extraction() {
       });
 
       setCombinePartnerBatchId("");
+      setCombineSurvivorLbs("");
+      setCombinePartnerLbs("");
       setCombineNotes("");
       const localSnapshot = { ...selectedExt };
       setSelectedExt(localSnapshot);
@@ -3790,9 +3824,19 @@ export default function Extraction() {
                   <>
                     <p style={{ color: "#94a3b8", margin: 0, lineHeight: 1.5 }}>
                       Merge another active extraction batch in the same workflow stage into this survivor.
-                      Biomass and source rows are combined; the partner batch is marked complete and moved to
-                      merged history.
+                      Enter the total weight (lbs) for each batch; source rows are linked and the partner is
+                      marked complete.
                     </p>
+                    <input
+                      style={inputStyle}
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      placeholder="This batch total (lbs)"
+                      value={combineSurvivorLbs}
+                      onChange={(e) => setCombineSurvivorLbs(e.target.value)}
+                      required
+                    />
                     <select
                       style={inputStyle}
                       value={combinePartnerBatchId}
@@ -3801,14 +3845,34 @@ export default function Extraction() {
                       <option value="">Select partner batch…</option>
                       {combinePartnerOptions.map((b: any) => (
                         <option key={b.id} value={b.id}>
-                          {b.marketBatchCode || b.id} — {num(b.totalBiomassUsed).toFixed(2)} lbs
+                          {b.marketBatchCode || b.id}
                           {b.sourceBlendLabel ? ` · ${b.sourceBlendLabel}` : ""}
+                          {extractionBatchBiomassLbs(b) > 0
+                            ? ` (${extractionBatchBiomassLbs(b).toFixed(2)} lbs on file)`
+                            : ""}
                         </option>
                       ))}
                     </select>
                     {combinePartnerOptions.length === 0 ? (
                       <p style={{ color: "#64748b", margin: 0, fontSize: 13 }}>
                         No other active batches in this stage with a compatible source mix.
+                      </p>
+                    ) : null}
+                    <input
+                      style={inputStyle}
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      placeholder="Partner batch total (lbs)"
+                      value={combinePartnerLbs}
+                      onChange={(e) => setCombinePartnerLbs(e.target.value)}
+                      disabled={!combinePartnerBatchId.trim()}
+                      required
+                    />
+                    {num(combineSurvivorLbs) > 0 && num(combinePartnerLbs) > 0 ? (
+                      <p style={{ color: "#cbd5e1", margin: 0, fontSize: 13 }}>
+                        Combined total:{" "}
+                        <b>{(num(combineSurvivorLbs) + num(combinePartnerLbs)).toFixed(2)} lbs</b>
                       </p>
                     ) : null}
                     <input
