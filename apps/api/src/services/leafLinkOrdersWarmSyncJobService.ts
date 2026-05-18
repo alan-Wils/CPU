@@ -27,7 +27,7 @@ export async function runLeafLinkOrdersWarmSyncJob(): Promise<LeafLinkOrdersWarm
   for (const { id: companyId } of companies) {
     companiesExamined += 1;
     try {
-      const r = await svc.syncOrdersWarm(companyId);
+      const r = await svc.syncOrdersWarm(companyId, "cron_warm_sync");
       if (r.integrationEnabled && r.configured)
         companiesEligible += 1;
       totalPagesPulled += r.pagesPulled;

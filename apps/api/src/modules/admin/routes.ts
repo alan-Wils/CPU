@@ -23,8 +23,10 @@ import { NexbatchCompanyUsageLogService } from "../../services/nexbatchCompanyUs
 import { requireEmployeeSampleAccess } from "../../middleware/employeeSampleAccess.js";
 import { EmployeeSampleService } from "../../services/employeeSampleService.js";
 import { AppError } from "../../errors/AppError.js";
+import { LeafLinkOrdersService } from "../../services/leafLinkOrdersService.js";
 
 export const adminRouter = Router();
+const leafLinkOrdersService = new LeafLinkOrdersService();
 const adminService = new AdminService();
 const usageCostService = new UsageCostService();
 const vendorBillingSyncService = new VendorBillingSyncService();
@@ -42,6 +44,36 @@ function parseEmployeeSampleTransferDate(raw: string): Date {
     }
     return d;
 }
+const leafLinkFullRebuildSchema = z.object({
+    confirmFullRebuild: z.literal(true),
+});
+
+adminRouter.post(
+    "/leaflink/orders/full-rebuild",
+    asyncHandler((req, res, next) => {
+        const pr = String((req.auth as { platformRole?: string | null })?.platformRole || "");
+        if (pr === "nexbatch_admin" || pr === "owner") {
+            next();
+            return;
+        }
+        if (req.auth && ["OWNER", "ADMIN"].includes(req.auth.role)) {
+            next();
+            return;
+        }
+        res.status(403).json({ message: "Forbidden" });
+    }),
+    validate({ body: leafLinkFullRebuildSchema }),
+    asyncHandler(async (req, res) => {
+        const body = req.body as z.infer<typeof leafLinkFullRebuildSchema>;
+        if (!body.confirmFullRebuild) {
+            throw new AppError("confirmFullRebuild must be true.", 400, "LEAFLINK_FULL_REBUILD_NOT_CONFIRMED");
+        }
+        const companyId = getScopedCompanyId(req);
+        const out = await leafLinkOrdersService.syncOrdersFullRebuild(companyId);
+        res.json(out);
+    }),
+);
+
 adminRouter.get(
     "/companies/:companyId/usage-costs",
     requirePlatformRoles(["nexbatch_admin", "owner"]),

@@ -493,7 +493,6 @@ export class CashLogService {
             matchInput,
         );
         if (!linkedOrders.length && refresh) {
-            await this.leafLinkOrdersService.syncOrdersWarm(companyId);
             linkedOrders = await this.leafLinkOrdersService.findPaymentMatchCandidatesIncludingPaidForCheck(
                 companyId,
                 matchInput,

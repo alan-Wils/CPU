@@ -476,10 +476,14 @@ export default function OrdersAnalyticsPage() {
               </p>
             ) : null}
 
-            {data && data.ordersIncluded === 0 && data.configured && data.integrationEnabled && !loading ? (
+            {data?.noCachedMessage && !loading ? (
+              <p style={{ color: "#fbbf24", marginBottom: 12 }}>{data.noCachedMessage}</p>
+            ) : null}
+
+            {data && data.ordersIncluded === 0 && data.configured && data.integrationEnabled && !loading && !data.noCachedMessage ? (
               <p style={{ color: "#94a3b8" }}>
-                No saved orders fall in this UTC range with a parseable date. Widen From/To or sync on the{' '}
-                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Orders</strong> page first.
+                No saved orders fall in this UTC range with a parseable date. Widen From/To or run{' '}
+                <strong style={{ fontWeight: 700, color: "#cbd5e1" }}>Refresh Recent LeafLink Orders</strong> on the Orders page.
               </p>
             ) : null}
 
@@ -496,7 +500,7 @@ export default function OrdersAnalyticsPage() {
                   ? ` · newest save ${fmtShortDate(data.storedSnapshotMaxUpdatedAt)}`
                   : ""}
                 .
-                {data.storedRowsInRange === 0 ? " Run Multi-page sync on Orders if counts look stale." : ""}{" "}
+                {data.storedRowsInRange === 0 ? " Run Refresh Recent LeafLink Orders on the Orders page if counts look stale." : ""}{" "}
                 {data.ordersIncluded > 0
                   ? `${data.ordersIncluded} order(s) in range · ${data.customers.length} customer(s) · chart days match this window`
                   : data.storedRowsInRange > 0

@@ -202,7 +202,8 @@ model Company {
   usageEvents                 UsageEvent[]
   nexbatchCompanyUsageLogs    NexbatchCompanyUsageLog[]
 
-  leafLinkStoredOrders LeafLinkStoredOrder[]
+  leafLinkStoredOrders     LeafLinkStoredOrder[]
+  integrationSyncStates  IntegrationSyncState[]
 
   serviceSettings CompanyServiceSettings?
 
@@ -1179,6 +1180,28 @@ model LeafLinkStoredOrder {
 
   @@unique([companyId, leafLinkKey])
   @@index([companyId, createdOn])
+}
+
+/// Per-company integration sync cursor, lock, and last-run stats (e.g. LeafLink orders incremental sync).
+model IntegrationSyncState {
+  id               String    @id @default(cuid())
+  companyId        String
+  company          Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  provider         String
+  resource         String
+  lastSuccessAt    DateTime?
+  cursorJson       String?
+  lockStartedAt    DateTime?
+  lockOwner        String?
+  lastMode         String?
+  lastPagesPulled  Int?
+  lastRowsPersisted Int?
+  lastError        String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([companyId, provider, resource])
+  @@index([companyId, provider])
 }
 
 model CheckCapture {

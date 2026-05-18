@@ -871,6 +871,28 @@ export type LeafLinkOrdersSyncDto = {
   lastFetchedAt: string;
   syncComplete?: boolean;
   hitPageCap?: boolean;
+  skipped?: boolean;
+  reason?: string;
+  mode?: "incremental" | "manual_full_rebuild";
+  rowsCreated?: number;
+  rowsUpdated?: number;
+  rowsSkippedUnchanged?: number;
+  stoppedReason?: string;
+  durationMs?: number;
+  cutoffIso?: string | null;
+};
+
+export type LeafLinkOrdersSyncStatusDto = {
+  lastSuccessfulLeafLinkOrderSyncAt: string | null;
+  lastSyncMode: string | null;
+  lastSyncPagesPulled: number | null;
+  lastSyncRowsPersisted: number | null;
+  lastSyncError: string | null;
+  cursor: {
+    lastLeafLinkOrderCreatedAt?: string | null;
+    lastLeafLinkOrderUpdatedAt?: string | null;
+  } | null;
+  syncInProgress: boolean;
 };
 
 export async function fetchLeafLinkOrdersList(
@@ -913,6 +935,13 @@ export async function syncLeafLinkOrders(companyId?: string) {
   return apiRequest<LeafLinkOrdersSyncDto>(
     "/api/orders/sync",
     { method: "POST", companyId },
+  );
+}
+
+export async function fetchLeafLinkOrdersSyncStatus(companyId?: string) {
+  return apiRequest<LeafLinkOrdersSyncStatusDto>(
+    "/api/orders/sync-status",
+    companyId ? { companyId } : {},
   );
 }
 
@@ -980,6 +1009,7 @@ export type OrdersAnalyticsDto = {
   filteredByLeafLinkCurrentCustomerStatus: boolean;
   /** Always 0 — retained for older clients. */
   leafLinkCurrentCustomerCount: number;
+  noCachedMessage?: string | null;
 };
 
 export async function fetchOrdersAnalytics(

@@ -8,10 +8,12 @@ import PageAccessGate from "@/components/PageAccessGate";
 import {
   fetchLeafLinkOrderDetail,
   fetchLeafLinkOrdersList,
+  fetchLeafLinkOrdersSyncStatus,
   getSelectedCompanyId,
   syncLeafLinkOrders,
   type LeafLinkOrderCardDto,
   type LeafLinkOrderSummaryDto,
+  type LeafLinkOrdersSyncStatusDto,
 } from "@/lib/api";
 
 function usd(n: number | null | undefined): string {
@@ -507,6 +509,7 @@ export default function OrdersPage() {
   const [listPayload, setListPayload] = useState<Awaited<ReturnType<typeof fetchLeafLinkOrdersList>> | null>(null);
 
   const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<LeafLinkOrdersSyncStatusDto | null>(null);
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailKey, setDetailKey] = useState<string>("");
@@ -559,8 +562,19 @@ export default function OrdersPage() {
   }, [loadList]);
 
   const onRefresh = useCallback(() => {
-    void loadList({ refresh: true });
+    void loadList();
   }, [loadList]);
+
+  const loadSyncStatus = useCallback(async () => {
+    try {
+      const cid = getSelectedCompanyId().trim();
+      const st = await fetchLeafLinkOrdersSyncStatus(cid || undefined);
+      setSyncStatus(st);
+    }
+    catch {
+      setSyncStatus(null);
+    }
+  }, []);
 
   const onWarmSync = useCallback(async () => {
     setSyncing(true);
@@ -568,7 +582,8 @@ export default function OrdersPage() {
     try {
       const cid = getSelectedCompanyId().trim();
       await syncLeafLinkOrders(cid || undefined);
-      await loadList({ refresh: true });
+      await loadSyncStatus();
+      await loadList();
     }
     catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Sync failed.");
@@ -576,18 +591,21 @@ export default function OrdersPage() {
     finally {
       setSyncing(false);
     }
-  }, [loadList]);
+  }, [loadList, loadSyncStatus]);
+
+  useEffect(() => {
+    void loadSyncStatus();
+  }, [loadSyncStatus]);
 
   useEffect(() => {
     let cancelled = false;
     let lightInFlight = false;
-    let fullInFlight = false;
 
     const runLightPoll = async () => {
       if (cancelled || lightInFlight || document.hidden) return;
       lightInFlight = true;
       try {
-        await loadList({ refresh: false, silent: true });
+        await loadList({ silent: true });
       }
       catch {
         // Keep polling alive even if one attempt fails.
@@ -597,35 +615,13 @@ export default function OrdersPage() {
       }
     };
 
-    const runFullSync = async () => {
-      if (cancelled || fullInFlight || document.hidden) return;
-      fullInFlight = true;
-      setSyncing(true);
-      try {
-        const cid = getSelectedCompanyId().trim();
-        await syncLeafLinkOrders(cid || undefined);
-        if (!cancelled) await loadList({ refresh: true, silent: true });
-      }
-      catch {
-        // Keep polling alive even if one sync fails.
-      }
-      finally {
-        fullInFlight = false;
-        if (!cancelled) setSyncing(false);
-      }
-    };
-
     const lightTimer = window.setInterval(() => {
       void runLightPoll();
     }, 15000);
-    const fullTimer = window.setInterval(() => {
-      void runFullSync();
-    }, 120000);
 
     return () => {
       cancelled = true;
       window.clearInterval(lightTimer);
-      window.clearInterval(fullTimer);
     };
   }, [loadList]);
 
@@ -703,8 +699,8 @@ export default function OrdersPage() {
             <div>
               <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900, color: "#f8fafc" }}>Orders</h1>
               <p style={{ margin: "8px 0 0", fontSize: 15, color: "#94a3b8", maxWidth: 720, lineHeight: 1.5 }}>
-                Current LeafLink wholesale orders for the selected company. Data is read live from LeafLink using secure
-                credentials stored in company config (API keys never leave the server).
+                Current LeafLink wholesale orders for the selected company. The list reads from your synced database cache;
+                use refresh below to pull recent orders from LeafLink (incremental, capped).
               </p>
             </div>
             <Link href="/orders/analytics" style={linkGhost}>
@@ -742,22 +738,33 @@ export default function OrdersPage() {
                 <option value="oldest">Oldest first</option>
               </select>
               <button type="button" style={btnPrimary} onClick={() => void onRefresh()} disabled={loading || syncing}>
-                {loading ? "Refreshing…" : "Refresh"}
+                {loading ? "Loading…" : "Reload list"}
               </button>
               <button type="button" style={btnGhost} onClick={() => void onWarmSync()} disabled={loading || syncing || needsSetup}>
-                {syncing ? "Syncing…" : "Multi-page sync"}
+                {syncing ? "Syncing…" : "Refresh Recent LeafLink Orders"}
               </button>
               {listPayload?.fromCache ? (
-                <span style={{ fontSize: 12, color: "#64748b", marginLeft: 4 }}>Served from short cache</span>
+                <span style={{ fontSize: 12, color: "#64748b", marginLeft: 4 }}>From database cache</span>
               ) : null}
             </div>
 
-            {listPayload?.lastFetchedAt ? (
-              <div style={{ fontSize: 12, color: "#64748b", marginBottom: 14 }}>
-                Last fetched: {fmtDate(listPayload.lastFetchedAt)}
-                {typeof listPayload.totalCount === "number" ? ` · ${listPayload.totalCount} orders in view` : null}
-              </div>
-            ) : null}
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 14 }}>
+              {syncStatus?.lastSuccessfulLeafLinkOrderSyncAt ? (
+                <span>
+                  Last LeafLink sync: {fmtDate(syncStatus.lastSuccessfulLeafLinkOrderSyncAt)}
+                  {syncStatus.syncInProgress ? " · sync in progress" : null}
+                </span>
+              ) : (
+                <span>No LeafLink sync recorded yet — run “Refresh Recent LeafLink Orders”.</span>
+              )}
+              {listPayload?.lastFetchedAt ? (
+                <span>
+                  {" "}
+                  · List loaded {fmtDate(listPayload.lastFetchedAt)}
+                  {typeof listPayload.totalCount === "number" ? ` · ${listPayload.totalCount} orders in view` : null}
+                </span>
+              ) : null}
+            </div>
 
             {needsSetup && (
               <div
@@ -801,7 +808,7 @@ export default function OrdersPage() {
                 }}
               >
                 <span style={{ fontWeight: 700 }}>{error}</span>
-                <button type="button" style={btnGhost} onClick={() => void loadList({ refresh: true })}>
+                <button type="button" style={btnGhost} onClick={() => void loadList()}>
                   Retry
                 </button>
               </div>

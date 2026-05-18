@@ -475,7 +475,6 @@ export class CheckCaptureService {
         };
         let linkedOrders = await this.leafLinkOrdersService.findPaymentMatchCandidatesIncludingPaidForCheck(companyId, matchInput);
         if (!linkedOrders.length && refresh) {
-            await this.leafLinkOrdersService.syncOrdersWarm(companyId);
             linkedOrders = await this.leafLinkOrdersService.findPaymentMatchCandidatesIncludingPaidForCheck(companyId, matchInput);
         }
         const candidates = linkedOrders.filter((c) => !c.markedPaidInLeafLink);

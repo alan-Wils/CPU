@@ -20,7 +20,15 @@ import {
   findRecentLeafLinkStoredOrdersWithNullCreatedOn,
   STORED_ORDER_FETCH_HARD_CAP,
   type LeafLinkStoredOrderUpsertInput,
+  type LeafLinkStoredOrderUpsertStats,
 } from "./leafLinkOrdersStorePrimitives.js";
+import {
+  acquireLeafLinkOrdersSyncLock,
+  getLeafLinkOrdersSyncState,
+  recordLeafLinkOrdersSyncRun,
+  releaseLeafLinkOrdersSyncLock,
+  type LeafLinkOrdersSyncCursor,
+} from "./leafLinkOrdersSyncStateService.js";
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -167,8 +175,17 @@ export type LeafLinkOrdersSyncDto = {
   lastFetchedAt: string;
   /** True when every LeafLink page was fetched (no `hasNext`) before hitting the page cap. */
   syncComplete?: boolean;
-  /** True when stopping only because `LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES` was reached. */
+  /** True when stopping only because the page cap was reached. */
   hitPageCap?: boolean;
+  skipped?: boolean;
+  reason?: string;
+  mode?: "incremental" | "manual_full_rebuild";
+  rowsCreated?: number;
+  rowsUpdated?: number;
+  rowsSkippedUnchanged?: number;
+  stoppedReason?: string;
+  durationMs?: number;
+  cutoffIso?: string | null;
 };
 
 /** Optional LeafLink list filters when paginating orders-received into `leafLinkStoredOrder`. */
@@ -259,15 +276,23 @@ export type OrdersAnalyticsDto = {
   /** Legacy field — analytics no longer gates on LeafLink CRM customer status (always false / 0). */
   filteredByLeafLinkCurrentCustomerStatus: boolean;
   leafLinkCurrentCustomerCount: number;
+  /** Set when no stored orders exist for the company/range — client should not auto-sync. */
+  noCachedMessage?: string | null;
 };
 
 /** @deprecated Range filters removed — retained for docs. Chart axis length is capped separately. */
 const MAX_ANALYTICS_RANGE_DAYS = 366;
 /** Max UTC days in daily chart arrays when history is long (totals still use every order). */
 const MAX_ANALYTICS_CHART_DAYS = 8000;
-/** Hard safety: full sync stops after this many list pages (override with `LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES`). */
+/** Manual full rebuild only (`LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES`). */
 const DEFAULT_LEAF_LINK_FULL_SYNC_MAX_PAGES = 5000;
 const ABS_LEAF_LINK_FULL_SYNC_MAX_PAGES = 50_000;
+/** Incremental warm sync defaults (override via env). */
+const DEFAULT_LEAF_LINK_SYNC_LOOKBACK_DAYS = 90;
+const DEFAULT_LEAF_LINK_SYNC_MAX_PAGES = 25;
+const DEFAULT_LEAF_LINK_SYNC_MAX_ROWS = 2500;
+const ABS_LEAF_LINK_SYNC_MAX_PAGES = 200;
+const ABS_LEAF_LINK_SYNC_MAX_ROWS = 10_000;
 /** Cap per-order rows returned for scatter/detail; raise with care (payload size). */
 const MAX_QUALIFYING_ORDERS_IN_PAYLOAD = 8000;
 /** If list payload embeds many line rows, summing them is often wrong vs order headline `total`. */
@@ -301,6 +326,57 @@ function leafLinkOrdersFullSyncMaxPages(): number {
   if (!Number.isFinite(n) || n < 1)
     return DEFAULT_LEAF_LINK_FULL_SYNC_MAX_PAGES;
   return Math.min(Math.floor(n), ABS_LEAF_LINK_FULL_SYNC_MAX_PAGES);
+}
+
+function leafLinkOrderSyncLookbackDays(): number {
+  const raw = String(process.env.LEAFLINK_ORDER_SYNC_LOOKBACK_DAYS ?? "").trim();
+  const n = raw ? Number.parseInt(raw, 10) : DEFAULT_LEAF_LINK_SYNC_LOOKBACK_DAYS;
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_LEAF_LINK_SYNC_LOOKBACK_DAYS;
+  return Math.min(Math.floor(n), 3660);
+}
+
+function leafLinkOrderSyncMaxPages(): number {
+  const raw = String(process.env.LEAFLINK_ORDER_SYNC_MAX_PAGES ?? "").trim();
+  const n = raw ? Number.parseInt(raw, 10) : DEFAULT_LEAF_LINK_SYNC_MAX_PAGES;
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_LEAF_LINK_SYNC_MAX_PAGES;
+  return Math.min(Math.floor(n), ABS_LEAF_LINK_SYNC_MAX_PAGES);
+}
+
+function leafLinkOrderSyncMaxRows(): number {
+  const raw = String(process.env.LEAFLINK_ORDER_SYNC_MAX_ROWS ?? "").trim();
+  const n = raw ? Number.parseInt(raw, 10) : DEFAULT_LEAF_LINK_SYNC_MAX_ROWS;
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_LEAF_LINK_SYNC_MAX_ROWS;
+  return Math.min(Math.floor(n), ABS_LEAF_LINK_SYNC_MAX_ROWS);
+}
+
+function leafLinkSyncDebugEnabled(): boolean {
+  return String(process.env.LEAFLINK_SYNC_DEBUG ?? "").trim().toLowerCase() === "true";
+}
+
+function lookbackCutoffIso(days: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString();
+}
+
+function orderInstantMs(summary: LeafLinkOrderSummaryDto): number {
+  const u = Date.parse(summary.updatedAt || "");
+  if (Number.isFinite(u)) return u;
+  const c = Date.parse(summary.createdAt || "");
+  return Number.isFinite(c) ? c : 0;
+}
+
+function orderCreatedMs(summary: LeafLinkOrderSummaryDto): number {
+  const c = Date.parse(summary.createdAt || "");
+  return Number.isFinite(c) ? c : 0;
+}
+
+function pageAllOrdersOlderThanCutoff(
+  rows: { summary: LeafLinkOrderSummaryDto }[],
+  cutoffMs: number,
+): boolean {
+  if (!rows.length) return true;
+  return rows.every((r) => orderCreatedMs(r.summary) < cutoffMs && orderInstantMs(r.summary) < cutoffMs);
 }
 
 /**
@@ -1323,10 +1399,11 @@ async function persistLeafLinkOrderListRows(
   companyId: string,
   apiRows: unknown[],
   sourcePage?: number,
-): Promise<void> {
+): Promise<LeafLinkStoredOrderUpsertStats> {
+  const empty: LeafLinkStoredOrderUpsertStats = { created: 0, updated: 0, skippedUnchanged: 0 };
   const cid = cleanString(companyId);
   if (!cid || !Array.isArray(apiRows) || apiRows.length === 0)
-    return;
+    return empty;
   try {
     const inputs: LeafLinkStoredOrderUpsertInput[] = [];
     for (const item of apiRows) {
@@ -1339,13 +1416,16 @@ async function persistLeafLinkOrderListRows(
       const row = toUpsertInputFromLeafLinkPayload(raw, summary, sourcePage ?? null);
       if (row) inputs.push(row);
     }
-    if (inputs.length) {
-      await upsertLeafLinkStoredOrders(cid, inputs);
-      logInfo("[LEAFLINK] orders_saved_to_db", { companyId: cid, rows: inputs.length, sourcePage });
+    if (!inputs.length) return empty;
+    const stats = await upsertLeafLinkStoredOrders(cid, inputs);
+    if (leafLinkSyncDebugEnabled()) {
+      logInfo("[LEAFLINK] orders_saved_to_db", { companyId: cid, rows: inputs.length, sourcePage, ...stats });
     }
+    return stats;
   }
   catch (err) {
     logWarn("[LEAFLINK] orders_save_to_db_failed", { err: err instanceof Error ? err.message : String(err) });
+    return empty;
   }
 }
 
@@ -1353,22 +1433,26 @@ async function persistLeafLinkFetchedOrderPairs(
   companyId: string,
   pairs: { raw: Record<string, unknown>; summary: LeafLinkOrderSummaryDto }[],
   sourcePage?: number,
-): Promise<void> {
+): Promise<LeafLinkStoredOrderUpsertStats> {
+  const empty: LeafLinkStoredOrderUpsertStats = { created: 0, updated: 0, skippedUnchanged: 0 };
   const cid = cleanString(companyId);
-  if (!cid || !pairs.length) return;
+  if (!cid || !pairs.length) return empty;
   try {
     const inputs: LeafLinkStoredOrderUpsertInput[] = [];
     for (const { raw, summary } of pairs) {
       const row = toUpsertInputFromLeafLinkPayload(raw, summary, sourcePage ?? null);
       if (row) inputs.push(row);
     }
-    if (inputs.length) {
-      await upsertLeafLinkStoredOrders(cid, inputs);
-      logInfo("[LEAFLINK] orders_saved_to_db_pairs", { companyId: cid, rows: inputs.length, sourcePage });
+    if (!inputs.length) return empty;
+    const stats = await upsertLeafLinkStoredOrders(cid, inputs);
+    if (leafLinkSyncDebugEnabled()) {
+      logInfo("[LEAFLINK] orders_saved_to_db_pairs", { companyId: cid, rows: inputs.length, sourcePage, ...stats });
     }
+    return stats;
   }
   catch (err) {
     logWarn("[LEAFLINK] orders_save_pairs_failed", { err: err instanceof Error ? err.message : String(err) });
+    return empty;
   }
 }
 
@@ -1419,12 +1503,14 @@ async function leafLinkAuthedGet(
         headers: buildLeafLinkHeaders(creds, authValue),
       };
       try {
-        logInfo("[LEAFLINK] orders_request", {
-          url: url.slice(0, 200),
-          authMode,
-          authSource,
-          companyId: creds.companyId || null,
-        });
+        if (leafLinkSyncDebugEnabled()) {
+          logInfo("[LEAFLINK] orders_request", {
+            url: url.slice(0, 200),
+            authMode,
+            authSource,
+            companyId: creds.companyId || null,
+          });
+        }
         const body = await fetchJsonWithRetry(url, init, timeoutMs);
         preferredLeafLinkAuthByTenant.set(tenantKey, authValue);
         return { url, authMode, body };
@@ -1892,6 +1978,10 @@ export class LeafLinkOrdersService {
     };
   }
 
+  /**
+   * Orders list — **Neon cache only**. Never calls LeafLink during normal page loads.
+   * Use `POST /api/orders/sync` for incremental refresh.
+   */
   async listOrders(
     companyId: string,
     input: {
@@ -1899,19 +1989,12 @@ export class LeafLinkOrdersService {
       pageSize: number;
       status?: string;
       ordering?: string;
+      /** Ignored for LeafLink API (reloads cache only). Kept for client compatibility. */
       refresh?: boolean;
-      /** Client-side-ish filter over merged pages when non-empty (avoids bogus pagination over one partial page). */
       search?: string;
     },
   ): Promise<LeafLinkOrdersListDto> {
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
-    logInfo("[LEAFLINK] credentials_resolved", {
-      companyId,
-      authSource: creds.source,
-      fromDb: creds.source === "db",
-      fromEnv: creds.source === "env",
-    });
-
     const nowIso = new Date().toISOString();
     const baseOut: Omit<LeafLinkOrdersListDto, "orders" | "totalCount" | "hasNext" | "hasPrevious" | "lastFetchedAt" | "fromCache"> = {
       source: "leaflink",
@@ -1930,205 +2013,26 @@ export class LeafLinkOrdersService {
         hasNext: false,
         hasPrevious: false,
         lastFetchedAt: nowIso,
+        fromCache: true,
       };
     }
 
-    await this.assertOrdersCapableOrThrow(creds);
+    const cached = await this.listOrdersFromStored(companyId, input, baseOut);
+    if (cached) return cached;
 
-    if (!input.refresh) {
-      const cached = await this.listOrdersFromStored(companyId, input, baseOut);
-      if (cached)
-        return cached;
-    }
-
-    const base = creds.baseUrl.replace(/\/+$/, "");
-    const ordering = cleanString(input.ordering) || "-created_on";
-    const needleRaw = cleanString(input.search).toLowerCase();
-    /** Multi-page merge is expensive; skip for empty or accidental single-char pings. */
-    const needle = needleRaw.length >= 2 ? needleRaw : "";
-
-    const searchParams = new URLSearchParams();
-    searchParams.set("page", String(Math.max(1, input.page)));
-    searchParams.set("page_size", String(Math.min(500, Math.max(1, input.pageSize))));
-    searchParams.set("ordering", ordering);
-    const statusFilter = cleanString(input.status);
-    if (statusFilter && statusFilter !== "all") {
-      const leafStatus = statusFilter.toLowerCase();
-      searchParams.set("status", leafStatus);
-    }
-    if (needleRaw && needleRaw.length >= 2)
-      searchParams.set("search", cleanString(input.search));
-
-    /** Broader catalogue pull when scanning for text matches across recent orders (LeafLink ignores `search` on many tenants). */
-    if (needle) {
-      searchParams.set("page_size", "100");
-
-      let dedupedCards: LeafLinkOrderCardDto[] = [];
-      const seen = new Set<string>();
-      const pageNumReq = Math.max(1, input.page);
-      const psSlice = Math.min(500, Math.max(1, input.pageSize));
-      /** Cap upstream calls — wholesale order volume stays bounded for most sellers. */
-      const maxPagesPull = 12;
-
-      for (let pg = 1; pg <= maxPagesPull; pg++) {
-        searchParams.set("page", String(pg));
-        const urls = buildOrdersListUrlCandidates(base, creds, searchParams);
-
-        let body: unknown;
-        let authMode = "";
-        try {
-          const got = await leafLinkAuthedGet(urls, creds, creds.source, 25_000);
-          authMode = got.authMode;
-          body = got.body;
-        }
-        catch (err) {
-          logWarn("[LEAFLINK] orders_search_pull_failed", {
-            companyId,
-            pageInPull: pg,
-            err: err instanceof Error ? err.message : String(err),
-          });
-          throw err;
-        }
-
-        const { list, totalCount: pullAggTotal, next: pullNext } = parseLeafLinkOrdersListEnvelope(body);
-
-        await persistLeafLinkOrderListRows(companyId, list, pg);
-
-        logInfo("[LEAFLINK] orders_search_pull_page", {
-          authMode,
-          pageInPull: pg,
-          rowCount: Array.isArray(list) ? list.length : 0,
-        });
-
-        for (const raw of list) {
-          const card = orderToCardDto(normalizeOrder(raw));
-          const k = `${card.orderNumber}:${card.buyerCustomerId}`;
-          if (seen.has(k)) continue;
-          seen.add(k);
-
-          const on = card.orderNumber.toLowerCase();
-          const cn = card.customerName.toLowerCase();
-          if (!on.includes(needle) && !cn.includes(needle))
-            continue;
-          dedupedCards.push(card);
-        }
-
-        const searchPs = Math.min(
-          500,
-          Math.max(1, Number.parseInt(searchParams.get("page_size") || "100", 10) || 100),
-        );
-        const hasMoreMerged = leafLinkPagedHasMore({
-          pageNum: pg,
-          pageSize: searchPs,
-          aggregateTotal: pullAggTotal,
-          nextUrl: pullNext,
-          rowsOnPage: Array.isArray(list) ? list.length : 0,
-        });
-        if (!hasMoreMerged) break;
-        if (!Array.isArray(list) || list.length === 0) break;
-      }
-
-      const sorted = [...dedupedCards].sort((a, b) => {
-        const ta = Date.parse(a.createdAt || "") || 0;
-        const tb = Date.parse(b.createdAt || "") || 0;
-        return ordering.startsWith("-") ? tb - ta : ta - tb;
-      });
-
-      const totalFiltered = sorted.length;
-      const start = (pageNumReq - 1) * psSlice;
-      const pageSlice = sorted.slice(start, start + psSlice);
-
-      const payloadNeedle: LeafLinkOrdersListDto = {
-        ...baseOut,
-        ordering,
-        orders: pageSlice,
-        totalCount: totalFiltered,
-        page: pageNumReq,
-        pageSize: psSlice,
-        hasNext: start + psSlice < totalFiltered,
-        hasPrevious: pageNumReq > 1,
-        lastFetchedAt: nowIso,
-        fromCache: false,
-      };
-
-      logInfo("[LEAFLINK] orders_search_done", {
-        totalMatched: totalFiltered,
-        pageReturned: pageSlice.length,
-        companyId,
-      });
-
-      return payloadNeedle;
-    }
-
-    const ck = cacheKey({
-      companyId,
-      ...Object.fromEntries(searchParams.entries()),
-    });
-    if (!input.refresh) {
-      const hit = listCaches.get(ck);
-      if (hit && Date.now() - hit.at < LIST_CACHE_TTL_MS) {
-        return { ...hit.payload, fromCache: true };
-      }
-    }
-
-    const urls = buildOrdersListUrlCandidates(base, creds, searchParams);
-
-    const { authMode, body } = await leafLinkAuthedGet(urls, creds, creds.source, 20_000);
-    logInfo("[LEAFLINK] orders_list_ok", { authMode, page: input.page });
-
-    const { list, totalCount: apiTotal, next } = parseLeafLinkOrdersListEnvelope(body);
-
-    /** If API exposes no aggregate count but `next` exists, approximate hasNext without total. */
-    const orders = list.map((r) => orderToCardDto(normalizeOrder(r)));
-    const rawRoot = asRecord(body);
-    const nextUrl = next?.trim() ?? "";
-
-    const ps = Number(searchParams.get("page_size")) || orders.length || 18;
-    const pageNum = Number(searchParams.get("page")) || 1;
-
-    await persistLeafLinkOrderListRows(companyId, list, pageNum);
-
-    const hasNextBool = leafLinkPagedHasMore({
-      pageNum,
-      pageSize: ps,
-      aggregateTotal: apiTotal,
-      nextUrl,
-      rowsOnPage: orders.length,
-    });
-    const hasPrevBool = pageNum > 1;
-
-    /** Never treat `orders.length` as catalogue total unless the API publishes an aggregate (`count`). */
-    let totalCount =
-      apiTotal > 0
-        ? apiTotal
-        : (hasNextBool ? pageNum * ps + orders.length : (pageNum - 1) * ps + orders.length);
-
-    const payload: LeafLinkOrdersListDto = {
+    return {
       ...baseOut,
-      ordering,
-      orders,
-      totalCount,
-      hasNext: hasNextBool,
-      hasPrevious: hasPrevBool,
+      orders: [],
+      totalCount: 0,
+      hasNext: false,
+      hasPrevious: false,
       lastFetchedAt: nowIso,
+      fromCache: true,
     };
-    listCaches.set(ck, {
-      at: Date.now(),
-      payload: {
-        ...payload,
-        lastFetchedAt: nowIso,
-        fromCache: false,
-      },
-    });
+  }
 
-    logInfo("[LEAFLINK] orders_list_normalized", {
-      count: orders.length,
-      apiTotal,
-      rawCount: typeof rawRoot.count === "number" ? rawRoot.count : undefined,
-      hasNextUrl: Boolean(nextUrl),
-      authMode,
-    });
-    return payload;
+  async getOrdersSyncStatus(companyId: string) {
+    return getLeafLinkOrdersSyncState(companyId);
   }
 
   async getOrder(companyId: string, orderId: string): Promise<LeafLinkOrderSummaryDto | null> {
@@ -2264,31 +2168,57 @@ export class LeafLinkOrdersService {
   }
 
   /**
-   * Paginate LeafLink `orders-received` until the API reports no next page (or until the configurable page cap).
-   * Persists each page — same backing store as the Orders page (`leafLinkStoredOrder`).
-   * Omit `filters` to sync the full catalogue; pass `createdOn*` to scope to LeafLink order `created_on`.
-   * Pass {@link reuseCreds} when the caller already resolved credentials so each page does not resolve/log again.
+   * Paginate LeafLink `orders-received` sequentially from page 1 (newest first).
+   * Incremental mode applies lookback + row/page caps; full rebuild uses a separate higher page cap.
    */
   async pullLeafLinkOrdersReceivedToDb(
     companyId: string,
-    filters?: PullLeafLinkOrdersReceivedOpts,
-    reuseCreds?: LeafLinkResolvedCredentials,
+    opts: {
+      mode: "incremental" | "manual_full_rebuild";
+      filters?: PullLeafLinkOrdersReceivedOpts;
+      reuseCreds?: LeafLinkResolvedCredentials;
+    },
   ): Promise<{
     pagesPulled: number;
     ordersPersisted: number;
+    rowsFetched: number;
     syncComplete: boolean;
     hitPageCap: boolean;
+    hitRowCap: boolean;
+    stoppedReason: string;
+    rowsCreated: number;
+    rowsUpdated: number;
+    rowsSkippedUnchanged: number;
+    cutoffIso: string | null;
+    cursor: LeafLinkOrdersSyncCursor | null;
   }> {
     clearTenantOrderCachePrefix(companyId);
-    const maxPages = leafLinkOrdersFullSyncMaxPages();
+    const isIncremental = opts.mode === "incremental";
+    const maxPages = isIncremental ? leafLinkOrderSyncMaxPages() : leafLinkOrdersFullSyncMaxPages();
+    const maxRows = isIncremental ? leafLinkOrderSyncMaxRows() : Number.MAX_SAFE_INTEGER;
+    const lookbackDays = leafLinkOrderSyncLookbackDays();
+    const cutoffIso = isIncremental ? lookbackCutoffIso(lookbackDays) : null;
+    const cutoffMs = cutoffIso ? Date.parse(cutoffIso) : 0;
+
     let pagesPulled = 0;
     let ordersPersisted = 0;
+    let rowsFetched = 0;
+    let rowsCreated = 0;
+    let rowsUpdated = 0;
+    let rowsSkippedUnchanged = 0;
+    let stoppedReason = "complete";
+    let hitRowCap = false;
+    let hitPageCap = false;
+    let latestCreated: string | null = null;
+    let latestUpdated: string | null = null;
 
-    const createdOnGteIso = cleanString(filters?.createdOnGteIso);
-    const createdOnLteIso = cleanString(filters?.createdOnLteIso);
+    const createdOnGteIso =
+      cleanString(opts.filters?.createdOnGteIso)
+      || (isIncremental && cutoffIso ? cutoffIso : "");
+    const createdOnLteIso = cleanString(opts.filters?.createdOnLteIso);
 
-    const creds = reuseCreds ?? await this.leafLinkService.resolveRuntimeCredentials(companyId);
-    if (!reuseCreds) {
+    const creds = opts.reuseCreds ?? await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    if (!opts.reuseCreds) {
       logInfo("[LEAFLINK] credentials_resolved", {
         companyId,
         authSource: creds.source,
@@ -2296,14 +2226,32 @@ export class LeafLinkOrdersService {
         fromEnv: creds.source === "env",
       });
     }
-    if (!creds.integrationEnabled || !baseOutConfiguredForOrders(creds))
-      return { pagesPulled: 0, ordersPersisted: 0, syncComplete: true, hitPageCap: false };
+    if (!creds.integrationEnabled || !baseOutConfiguredForOrders(creds)) {
+      return {
+        pagesPulled: 0,
+        ordersPersisted: 0,
+        rowsFetched: 0,
+        syncComplete: true,
+        hitPageCap: false,
+        hitRowCap: false,
+        stoppedReason: "not_configured",
+        rowsCreated: 0,
+        rowsUpdated: 0,
+        rowsSkippedUnchanged: 0,
+        cutoffIso,
+        cursor: null,
+      };
+    }
 
     await this.assertOrdersCapableOrThrow(creds);
 
-    logInfo("[LEAFLINK] orders_full_sync_start", {
+    const logTag = isIncremental ? "orders_incremental_sync" : "manual_full_rebuild";
+    logInfo(`[LEAFLINK] ${logTag}_started`, {
       companyId,
+      mode: opts.mode,
       maxPages,
+      maxRows: isIncremental ? maxRows : null,
+      cutoffIso,
       createdOnGteIso: createdOnGteIso || null,
       createdOnLteIso: createdOnLteIso || null,
     });
@@ -2317,30 +2265,96 @@ export class LeafLinkOrdersService {
         createdOnLteIso: createdOnLteIso || undefined,
       });
 
-      if (!res.rows.length)
-        return { pagesPulled, ordersPersisted, syncComplete: true, hitPageCap: false };
-
-      pagesPulled += 1;
-      await persistLeafLinkFetchedOrderPairs(companyId, res.rows, page);
-      ordersPersisted += res.rows.length;
-
-      if (pagesPulled % 25 === 0 || !res.hasNext) {
-        logInfo("[LEAFLINK] orders_full_sync_progress", {
+      if (leafLinkSyncDebugEnabled()) {
+        logInfo(`[LEAFLINK] ${logTag}_page`, {
           companyId,
-          pagesPulled,
-          ordersPersisted,
+          page,
+          rowCount: res.rows.length,
           hasNext: res.hasNext,
         });
       }
 
+      if (!res.rows.length) {
+        stoppedReason = "empty_page";
+        break;
+      }
+
+      rowsFetched += res.rows.length;
+      pagesPulled += 1;
+
+      for (const { summary } of res.rows) {
+        const c = cleanString(summary.createdAt);
+        const u = cleanString(summary.updatedAt);
+        if (c && (!latestCreated || c > latestCreated)) latestCreated = c;
+        if (u && (!latestUpdated || u > latestUpdated)) latestUpdated = u;
+      }
+
+      const stats = await persistLeafLinkFetchedOrderPairs(companyId, res.rows, page);
+      rowsCreated += stats.created;
+      rowsUpdated += stats.updated;
+      rowsSkippedUnchanged += stats.skippedUnchanged;
+      ordersPersisted += stats.created + stats.updated;
+
+      if (isIncremental && cutoffMs > 0 && pageAllOrdersOlderThanCutoff(res.rows, cutoffMs)) {
+        stoppedReason = "cutoff_reached";
+        break;
+      }
+
+      if (ordersPersisted >= maxRows) {
+        hitRowCap = true;
+        stoppedReason = "row_cap";
+        break;
+      }
+
       if (!res.hasNext) {
-        logInfo("[LEAFLINK] orders_full_sync_complete", { companyId, pagesPulled, ordersPersisted });
-        return { pagesPulled, ordersPersisted, syncComplete: true, hitPageCap: false };
+        stoppedReason = "no_next_page";
+        break;
       }
     }
 
-    logWarn("[LEAFLINK] orders_full_sync_page_cap", { companyId, maxPages, ordersPersisted });
-    return { pagesPulled: maxPages, ordersPersisted, syncComplete: false, hitPageCap: true };
+    if (pagesPulled >= maxPages && stoppedReason !== "cutoff_reached" && stoppedReason !== "no_next_page" && stoppedReason !== "empty_page") {
+      hitPageCap = true;
+      stoppedReason = "page_cap";
+      if (!isIncremental) {
+        logWarn("[LEAFLINK] manual_full_rebuild_page_cap", { companyId, maxPages, ordersPersisted });
+      }
+    }
+
+    const syncComplete = !hitPageCap && !hitRowCap && (stoppedReason === "no_next_page" || stoppedReason === "empty_page" || stoppedReason === "cutoff_reached");
+
+    logInfo(`[LEAFLINK] ${logTag}_finished`, {
+      companyId,
+      mode: opts.mode,
+      pagesPulled,
+      rowsFetched,
+      rowsCreated,
+      rowsUpdated,
+      rowsSkippedUnchanged,
+      ordersPersisted,
+      stoppedReason,
+      syncComplete,
+      hitPageCap,
+      hitRowCap,
+      cutoffIso,
+    });
+
+    return {
+      pagesPulled,
+      ordersPersisted,
+      rowsFetched,
+      syncComplete,
+      hitPageCap,
+      hitRowCap,
+      stoppedReason,
+      rowsCreated,
+      rowsUpdated,
+      rowsSkippedUnchanged,
+      cutoffIso,
+      cursor: {
+        lastLeafLinkOrderCreatedAt: latestCreated,
+        lastLeafLinkOrderUpdatedAt: latestUpdated,
+      },
+    };
   }
 
   /**
@@ -2718,6 +2732,11 @@ export class LeafLinkOrdersService {
       filteredByLeafLinkCurrentCustomerStatus,
     });
 
+    const noCachedMessage =
+      totalStoredOrders === 0 || storedRowsInRange === 0
+        ? "No cached LeafLink orders found for this range. Run recent sync."
+        : null;
+
     return {
       source: "leaflink",
       configured: true,
@@ -2741,51 +2760,207 @@ export class LeafLinkOrdersService {
       storedSnapshotMaxUpdatedAt,
       filteredByLeafLinkCurrentCustomerStatus,
       leafLinkCurrentCustomerCount,
+      noCachedMessage,
     };
   }
 
-  /** Pull paginated summaries (warm cache + bookkeeping). Does not overwrite inventory. */
-  async syncOrdersWarm(companyId: string): Promise<LeafLinkOrdersSyncDto> {
+  /** Incremental LeafLink → Neon sync (recent orders only). Guarded by per-company lock. */
+  async syncOrdersWarm(
+    companyId: string,
+    lockOwner = "warm_sync",
+  ): Promise<LeafLinkOrdersSyncDto> {
+    const started = Date.now();
     const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
-    logInfo("[LEAFLINK] credentials_resolved", {
-      companyId,
-      authSource: creds.source,
-      fromDb: creds.source === "db",
-      fromEnv: creds.source === "env",
-    });
     const nowIso = new Date().toISOString();
+    const baseConfigured = Boolean(creds.apiKey && (creds.companyId || creds.companySlug));
 
     if (!creds.integrationEnabled || !baseOutConfiguredForOrders(creds)) {
       return {
         ok: true,
-        configured: Boolean(creds.apiKey && (creds.companyId || creds.companySlug)),
+        configured: baseConfigured,
         integrationEnabled: creds.integrationEnabled,
         pagesPulled: 0,
         ordersSeen: 0,
         lastFetchedAt: nowIso,
+        mode: "incremental",
       };
     }
-    await this.assertOrdersCapableOrThrow(creds);
 
-    const pulled = await this.pullLeafLinkOrdersReceivedToDb(companyId, undefined, creds);
+    const lock = await acquireLeafLinkOrdersSyncLock(companyId, lockOwner);
+    if (!lock.acquired) {
+      return {
+        ok: true,
+        configured: true,
+        integrationEnabled: true,
+        pagesPulled: 0,
+        ordersSeen: 0,
+        lastFetchedAt: nowIso,
+        skipped: true,
+        reason: "sync_already_running",
+        mode: "incremental",
+      };
+    }
 
-    logInfo("[LEAFLINK] orders_sync_complete", {
-      companyId,
-      pages: pulled.pagesPulled,
-      ordersSeen: pulled.ordersPersisted,
-      syncComplete: pulled.syncComplete,
-      hitPageCap: pulled.hitPageCap,
-    });
-    return {
-      ok: true,
-      configured: true,
-      integrationEnabled: true,
-      pagesPulled: pulled.pagesPulled,
-      ordersSeen: pulled.ordersPersisted,
-      syncComplete: pulled.syncComplete,
-      hitPageCap: pulled.hitPageCap,
-      lastFetchedAt: new Date().toISOString(),
-    };
+    try {
+      await this.assertOrdersCapableOrThrow(creds);
+      const pulled = await this.pullLeafLinkOrdersReceivedToDb(companyId, {
+        mode: "incremental",
+        reuseCreds: creds,
+      });
+
+      await recordLeafLinkOrdersSyncRun({
+        companyId,
+        mode: "incremental",
+        pagesPulled: pulled.pagesPulled,
+        rowsPersisted: pulled.ordersPersisted,
+        error: null,
+        cursor: pulled.cursor,
+        success: true,
+      });
+
+      const durationMs = Date.now() - started;
+      logInfo("[LEAFLINK] orders_sync_complete", {
+        companyId,
+        mode: "incremental",
+        pagesPulled: pulled.pagesPulled,
+        rowsFetched: pulled.rowsFetched,
+        rowsCreated: pulled.rowsCreated,
+        rowsUpdated: pulled.rowsUpdated,
+        rowsSkippedUnchanged: pulled.rowsSkippedUnchanged,
+        stoppedReason: pulled.stoppedReason,
+        durationMs,
+        cutoffIso: pulled.cutoffIso,
+      });
+
+      return {
+        ok: true,
+        configured: true,
+        integrationEnabled: true,
+        pagesPulled: pulled.pagesPulled,
+        ordersSeen: pulled.rowsFetched,
+        syncComplete: pulled.syncComplete,
+        hitPageCap: pulled.hitPageCap,
+        lastFetchedAt: new Date().toISOString(),
+        mode: "incremental",
+        rowsCreated: pulled.rowsCreated,
+        rowsUpdated: pulled.rowsUpdated,
+        rowsSkippedUnchanged: pulled.rowsSkippedUnchanged,
+        stoppedReason: pulled.stoppedReason,
+        durationMs,
+        cutoffIso: pulled.cutoffIso,
+      };
+    }
+    catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await recordLeafLinkOrdersSyncRun({
+        companyId,
+        mode: "incremental",
+        pagesPulled: 0,
+        rowsPersisted: 0,
+        error: msg,
+        success: false,
+      });
+      throw err;
+    }
+    finally {
+      await releaseLeafLinkOrdersSyncLock(companyId);
+    }
+  }
+
+  /** Manual admin-only historical rebuild — not used by UI page loads or cron warm sync. */
+  async syncOrdersFullRebuild(companyId: string): Promise<LeafLinkOrdersSyncDto> {
+    const started = Date.now();
+    logInfo("[LEAFLINK] manual_full_rebuild_started", { companyId });
+
+    const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    const baseConfigured = Boolean(creds.apiKey && (creds.companyId || creds.companySlug));
+
+    if (!creds.integrationEnabled || !baseOutConfiguredForOrders(creds)) {
+      return {
+        ok: true,
+        configured: baseConfigured,
+        integrationEnabled: creds.integrationEnabled,
+        pagesPulled: 0,
+        ordersSeen: 0,
+        lastFetchedAt: new Date().toISOString(),
+        mode: "manual_full_rebuild",
+      };
+    }
+
+    const lock = await acquireLeafLinkOrdersSyncLock(companyId, "manual_full_rebuild");
+    if (!lock.acquired) {
+      return {
+        ok: true,
+        configured: true,
+        integrationEnabled: true,
+        pagesPulled: 0,
+        ordersSeen: 0,
+        lastFetchedAt: new Date().toISOString(),
+        skipped: true,
+        reason: "sync_already_running",
+        mode: "manual_full_rebuild",
+      };
+    }
+
+    try {
+      await this.assertOrdersCapableOrThrow(creds);
+      const pulled = await this.pullLeafLinkOrdersReceivedToDb(companyId, {
+        mode: "manual_full_rebuild",
+        reuseCreds: creds,
+      });
+
+      await recordLeafLinkOrdersSyncRun({
+        companyId,
+        mode: "manual_full_rebuild",
+        pagesPulled: pulled.pagesPulled,
+        rowsPersisted: pulled.ordersPersisted,
+        error: null,
+        cursor: pulled.cursor,
+        success: true,
+      });
+
+      const durationMs = Date.now() - started;
+      logInfo("[LEAFLINK] manual_full_rebuild_finished", {
+        companyId,
+        pagesPulled: pulled.pagesPulled,
+        rowsFetched: pulled.rowsFetched,
+        stoppedReason: pulled.stoppedReason,
+        durationMs,
+      });
+
+      return {
+        ok: true,
+        configured: true,
+        integrationEnabled: true,
+        pagesPulled: pulled.pagesPulled,
+        ordersSeen: pulled.rowsFetched,
+        syncComplete: pulled.syncComplete,
+        hitPageCap: pulled.hitPageCap,
+        lastFetchedAt: new Date().toISOString(),
+        mode: "manual_full_rebuild",
+        rowsCreated: pulled.rowsCreated,
+        rowsUpdated: pulled.rowsUpdated,
+        rowsSkippedUnchanged: pulled.rowsSkippedUnchanged,
+        stoppedReason: pulled.stoppedReason,
+        durationMs,
+        cutoffIso: null,
+      };
+    }
+    catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await recordLeafLinkOrdersSyncRun({
+        companyId,
+        mode: "manual_full_rebuild",
+        pagesPulled: 0,
+        rowsPersisted: 0,
+        error: msg,
+        success: false,
+      });
+      throw err;
+    }
+    finally {
+      await releaseLeafLinkOrdersSyncLock(companyId);
+    }
   }
 
   async findOpenPaymentCandidatesForCheck(

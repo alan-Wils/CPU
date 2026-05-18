@@ -81,9 +81,19 @@ ordersRouter.get(
   }),
 );
 
+ordersRouter.get(
+  "/sync-status",
+  ordersPermissionGuard,
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const out = await ordersService.getOrdersSyncStatus(companyId);
+    res.json(out);
+  }),
+);
+
 ordersRouter.post("/sync", ordersPermissionGuard, asyncHandler(async (req, res) => {
   const companyId = getScopedCompanyId(req);
-  const out = await ordersService.syncOrdersWarm(companyId);
+  const out = await ordersService.syncOrdersWarm(companyId, "user_refresh");
   res.json(out);
 }));
 

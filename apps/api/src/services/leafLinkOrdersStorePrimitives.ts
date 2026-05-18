@@ -67,39 +67,119 @@ export async function findLatestLeafLinkStoredOrderLive(
   };
 }
 
+export type LeafLinkStoredOrderUpsertStats = {
+  created: number;
+  updated: number;
+  skippedUnchanged: number;
+};
+
+/** Stable fingerprint for skip-unchanged upserts during incremental sync. */
+export function leafLinkStoredOrderFingerprint(row: LeafLinkStoredOrderUpsertInput): string {
+  const created = row.createdOn ? row.createdOn.toISOString() : "";
+  return [
+    row.leafLinkKey,
+    row.buyerCustomerId,
+    row.customerName,
+    row.statusRaw,
+    created,
+    row.totalUsd == null ? "" : String(row.totalUsd),
+    JSON.stringify(row.payload),
+  ].join("|");
+}
+
+const UPSERT_BATCH_SIZE = 50;
+
 export async function upsertLeafLinkStoredOrders(
   companyId: string,
   rows: LeafLinkStoredOrderUpsertInput[],
-): Promise<void> {
+): Promise<LeafLinkStoredOrderUpsertStats> {
   const cid = String(companyId ?? "").trim();
-  if (!cid || rows.length === 0) return;
-  for (const row of rows) {
-    await prisma.leafLinkStoredOrder.upsert({
-      where: {
-        companyId_leafLinkKey: { companyId: cid, leafLinkKey: row.leafLinkKey },
-      },
-      create: {
-        companyId: cid,
-        leafLinkKey: row.leafLinkKey,
-        buyerCustomerId: row.buyerCustomerId,
-        customerName: row.customerName,
-        statusRaw: row.statusRaw,
-        createdOn: row.createdOn,
-        totalUsd: row.totalUsd,
-        payload: row.payload,
-        sourcePage: row.sourcePage,
-      },
-      update: {
-        buyerCustomerId: row.buyerCustomerId,
-        customerName: row.customerName,
-        statusRaw: row.statusRaw,
-        createdOn: row.createdOn,
-        totalUsd: row.totalUsd,
-        payload: row.payload,
-        sourcePage: row.sourcePage ?? undefined,
+  const stats: LeafLinkStoredOrderUpsertStats = { created: 0, updated: 0, skippedUnchanged: 0 };
+  if (!cid || rows.length === 0) return stats;
+
+  for (let i = 0; i < rows.length; i += UPSERT_BATCH_SIZE) {
+    const batch = rows.slice(i, i + UPSERT_BATCH_SIZE);
+    const keys = batch.map((r) => r.leafLinkKey);
+    const existing = await prisma.leafLinkStoredOrder.findMany({
+      where: { companyId: cid, leafLinkKey: { in: keys } },
+      select: {
+        leafLinkKey: true,
+        buyerCustomerId: true,
+        customerName: true,
+        statusRaw: true,
+        createdOn: true,
+        totalUsd: true,
+        payload: true,
       },
     });
+    const existingByKey = new Map(
+      existing.map((e) => [
+        e.leafLinkKey,
+        leafLinkStoredOrderFingerprint({
+          leafLinkKey: e.leafLinkKey,
+          buyerCustomerId: e.buyerCustomerId,
+          customerName: e.customerName,
+          statusRaw: e.statusRaw,
+          createdOn: e.createdOn,
+          totalUsd: e.totalUsd,
+          payload: e.payload as Prisma.InputJsonValue,
+          sourcePage: null,
+        }),
+      ]),
+    );
+
+    const toCreate: LeafLinkStoredOrderUpsertInput[] = [];
+    const toUpdate: LeafLinkStoredOrderUpsertInput[] = [];
+
+    for (const row of batch) {
+      const fp = leafLinkStoredOrderFingerprint(row);
+      const prev = existingByKey.get(row.leafLinkKey);
+      if (prev === fp) {
+        stats.skippedUnchanged += 1;
+        continue;
+      }
+      if (prev === undefined) toCreate.push(row);
+      else toUpdate.push(row);
+    }
+
+    if (toCreate.length) {
+      await prisma.leafLinkStoredOrder.createMany({
+        data: toCreate.map((row) => ({
+          companyId: cid,
+          leafLinkKey: row.leafLinkKey,
+          buyerCustomerId: row.buyerCustomerId,
+          customerName: row.customerName,
+          statusRaw: row.statusRaw,
+          createdOn: row.createdOn,
+          totalUsd: row.totalUsd,
+          payload: row.payload,
+          sourcePage: row.sourcePage,
+        })),
+        skipDuplicates: true,
+      });
+      stats.created += toCreate.length;
+    }
+
+    for (const row of toUpdate) {
+      await prisma.leafLinkStoredOrder.update({
+        where: {
+          companyId_leafLinkKey: { companyId: cid, leafLinkKey: row.leafLinkKey },
+        },
+        data: {
+          buyerCustomerId: row.buyerCustomerId,
+          customerName: row.customerName,
+          statusRaw: row.statusRaw,
+          createdOn: row.createdOn,
+          totalUsd: row.totalUsd,
+          payload: row.payload,
+          sourcePage: row.sourcePage ?? undefined,
+        },
+      });
+      stats.updated += 1;
+    }
   }
+
+  return stats;
 }
 
 export async function findLeafLinkStoredOrdersForCompanyInRange(
