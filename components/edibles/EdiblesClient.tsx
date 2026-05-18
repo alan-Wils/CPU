@@ -398,6 +398,12 @@ export default function EdiblesClient() {
   const [reserveGrams, setReserveGrams] = useState("");
   const [reserveLabel, setReserveLabel] = useState("");
   const [reserveBusy, setReserveBusy] = useState(false);
+  const [reserveOpen, setReserveOpen] = useState(false);
+
+  const totalActiveReservedGrams = useMemo(
+    () => oilReservations.reduce((sum, r) => sum + Number(r.reservedGrams || 0), 0),
+    [oilReservations],
+  );
 
   useEffect(() => {
     const bump = () => setTenantEpoch((n) => n + 1);
@@ -487,6 +493,22 @@ export default function EdiblesClient() {
       cancelled = true;
     };
   }, [createOpen]);
+
+  useEffect(() => {
+    if (!reserveOpen) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const o = await fetchEdiblesOilOptions();
+        if (!cancelled) setReserveOilOptions(o.options || []);
+      } catch {
+        if (!cancelled) setReserveOilOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reserveOpen]);
 
   const mergedOilOptions = useMemo(() => {
     const byId = new Map<string, EdibleOilOption>();
@@ -1163,130 +1185,41 @@ export default function EdiblesClient() {
 
 
         <div style={{ ...cardStyle, marginBottom: 18 }}>
-          <h2 style={{ marginTop: 0 }}>Reserve Live Resin oil</h2>
-          <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.5, maxWidth: 720 }}>
-            Hold grams from a completed Live Resin oil run for upcoming gummy or edible production. Reservations
-            reduce what packaging can claim and appear on the packaging batch card.
-          </p>
-          {write ? (
-            <form onSubmit={onReserveOil} style={{ display: "grid", gap: 10, marginTop: 14 }}>
-              <select
-                style={inputFull}
-                value={reserveRunId}
-                onChange={(e) => setReserveRunId(e.target.value)}
-                required
-              >
-                <option value="">Select oil batch…</option>
-                {reserveOilOptions.map((o) => (
-                  <option key={o.extractionRunId} value={o.extractionRunId}>
-                    {o.strainLabel} — {o.availableGrams.toFixed(2)} g avail
-                    {o.reservedGrams > 0 ? ` · ${o.reservedGrams.toFixed(2)} g reserved` : ""}
-                  </option>
-                ))}
-              </select>
-              {selectedReserveOil ? (
-                <div style={{ fontSize: 13, color: "#cbd5e1" }}>
-                  Output {selectedReserveOil.outputGrams.toFixed(2)} g · packaging{" "}
-                  {selectedReserveOil.packagingGrams.toFixed(2)} g · kitchen used{" "}
-                  {selectedReserveOil.ediblesGrams.toFixed(2)} g · reserved{" "}
-                  {selectedReserveOil.reservedGrams.toFixed(2)} g ·{" "}
-                  <span style={{ color: "#fdba74", fontWeight: 700 }}>
-                    {selectedReserveOil.availableGrams.toFixed(2)} g available to reserve
-                  </span>
-                </div>
-              ) : null}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <input
-                  style={inputFull}
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  placeholder="Grams to reserve"
-                  value={reserveGrams}
-                  onChange={(e) => setReserveGrams(e.target.value)}
-                  required
-                />
-                <input
-                  style={inputFull}
-                  placeholder="Label (optional, e.g. Watermelon run)"
-                  value={reserveLabel}
-                  onChange={(e) => setReserveLabel(e.target.value)}
-                />
-              </div>
-              <div>
-                <button type="submit" style={primaryBtn} disabled={reserveBusy}>
-                  {reserveBusy ? "Saving…" : "Reserve oil"}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <p style={{ color: "#94a3b8", marginBottom: 0 }}>Read-only — you cannot create reservations.</p>
-          )}
-          <div style={{ marginTop: 18 }}>
-            <div style={{ fontWeight: 800, marginBottom: 10 }}>Active reservations</div>
-            {oilReservations.length === 0 ? (
-              <p style={{ color: "#64748b", margin: 0 }}>No oil reserved yet.</p>
-            ) : (
-              <div style={{ display: "grid", gap: 8 }}>
-                {oilReservations.map((r) => (
-                  <div
-                    key={r.id}
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: "10px 12px",
-                      borderRadius: 10,
-                      background: "rgba(15,23,42,0.65)",
-                      border: "1px solid rgba(251,146,60,0.35)",
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: 800 }}>{r.extractionRunLabel}</div>
-                      <div style={{ fontSize: 13, color: "#cbd5e1", marginTop: 4 }}>
-                        {r.reservedGrams.toFixed(2)} g reserved
-                        {r.label ? ` · ${r.label}` : ""}
-                      </div>
-                      <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-                        {new Date(r.createdAt).toLocaleString()}
-                      </div>
-                    </div>
-                    {write && (
-                      <button
-                        type="button"
-                        style={ghostBtn}
-                        disabled={reserveBusy}
-                        onClick={() => void onReleaseReservation(r.id)}
-                      >
-                        Release
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div style={{ ...cardStyle, marginBottom: 18 }}>
           <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
             <h2 style={{ margin: 0 }}>Workflow stage</h2>
-            {write && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               <button
                 type="button"
-                style={primaryBtn}
-                onClick={() => {
-                  setCreatePrintSummary(null);
-                  setManualOilExtras([]);
-                  setAddRunIdDraft("");
-                  setCreateOpen(true);
+                style={{
+                  ...ghostBtn,
+                  border:
+                    oilReservations.length > 0
+                      ? "1px solid rgba(251, 146, 60, 0.65)"
+                      : ghostBtn.border,
+                  boxShadow: oilReservations.length > 0 ? "0 0 18px rgba(251,146,60,0.15)" : "none",
                 }}
+                onClick={() => setReserveOpen(true)}
               >
-                Create Edible Batch
+                Reserve oil
+                {oilReservations.length > 0
+                  ? ` · ${oilReservations.length} hold${oilReservations.length === 1 ? "" : "s"} (${totalActiveReservedGrams.toFixed(1)} g)`
+                  : ""}
               </button>
-            )}
+              {write && (
+                <button
+                  type="button"
+                  style={primaryBtn}
+                  onClick={() => {
+                    setCreatePrintSummary(null);
+                    setManualOilExtras([]);
+                    setAddRunIdDraft("");
+                    setCreateOpen(true);
+                  }}
+                >
+                  Create Edible Batch
+                </button>
+              )}
+            </div>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
             <button
@@ -1467,6 +1400,162 @@ export default function EdiblesClient() {
           </p>
         )}
       </div>
+
+      {reserveOpen && (
+        <div
+          style={overlay}
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !reserveBusy) setReserveOpen(false);
+          }}
+        >
+          <div
+            style={{
+              ...cardStyle,
+              maxWidth: 560,
+              width: "100%",
+              maxHeight: "90vh",
+              overflowY: "auto",
+            }}
+            role="dialog"
+            aria-labelledby="reserve-oil-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div>
+                <h2 id="reserve-oil-title" style={{ marginTop: 0, marginBottom: 6 }}>
+                  Reserve Live Resin oil
+                </h2>
+                <p style={{ color: "#94a3b8", margin: 0, lineHeight: 1.5, fontSize: 13 }}>
+                  Hold grams from a completed oil run for upcoming production. Reservations reduce what packaging
+                  can claim and show on the packaging batch card.
+                </p>
+              </div>
+              <button
+                type="button"
+                style={ghostBtn}
+                disabled={reserveBusy}
+                onClick={() => setReserveOpen(false)}
+                aria-label="Close"
+              >
+                Close
+              </button>
+            </div>
+
+            {write ? (
+              <form onSubmit={onReserveOil} style={{ display: "grid", gap: 10, marginTop: 16 }}>
+                <select
+                  style={inputFull}
+                  value={reserveRunId}
+                  onChange={(e) => setReserveRunId(e.target.value)}
+                  required
+                >
+                  <option value="">Select oil batch…</option>
+                  {reserveOilOptions.map((o) => (
+                    <option key={o.extractionRunId} value={o.extractionRunId}>
+                      {o.strainLabel} — {o.availableGrams.toFixed(2)} g avail
+                      {o.reservedGrams > 0 ? ` · ${o.reservedGrams.toFixed(2)} g reserved` : ""}
+                    </option>
+                  ))}
+                </select>
+                {selectedReserveOil ? (
+                  <div style={{ fontSize: 13, color: "#cbd5e1" }}>
+                    Output {selectedReserveOil.outputGrams.toFixed(2)} g · packaging{" "}
+                    {selectedReserveOil.packagingGrams.toFixed(2)} g · kitchen used{" "}
+                    {selectedReserveOil.ediblesGrams.toFixed(2)} g · reserved{" "}
+                    {selectedReserveOil.reservedGrams.toFixed(2)} g ·{" "}
+                    <span style={{ color: "#fdba74", fontWeight: 700 }}>
+                      {selectedReserveOil.availableGrams.toFixed(2)} g available to reserve
+                    </span>
+                  </div>
+                ) : null}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <input
+                    style={inputFull}
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    placeholder="Grams to reserve"
+                    value={reserveGrams}
+                    onChange={(e) => setReserveGrams(e.target.value)}
+                    required
+                  />
+                  <input
+                    style={inputFull}
+                    placeholder="Label (optional)"
+                    value={reserveLabel}
+                    onChange={(e) => setReserveLabel(e.target.value)}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="submit" style={primaryBtn} disabled={reserveBusy}>
+                    {reserveBusy ? "Saving…" : "Reserve oil"}
+                  </button>
+                  <button
+                    type="button"
+                    style={ghostBtn}
+                    disabled={reserveBusy}
+                    onClick={() => setReserveOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <p style={{ color: "#94a3b8", marginTop: 16, marginBottom: 0 }}>
+                Read-only — you can view holds but cannot create or release reservations.
+              </p>
+            )}
+
+            <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid rgba(51,65,85,0.8)" }}>
+              <div style={{ fontWeight: 800, marginBottom: 10 }}>Active reservations</div>
+              {oilReservations.length === 0 ? (
+                <p style={{ color: "#64748b", margin: 0 }}>No oil reserved yet.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {oilReservations.map((r) => (
+                    <div
+                      key={r.id}
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        background: "rgba(15,23,42,0.65)",
+                        border: "1px solid rgba(251,146,60,0.35)",
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 800 }}>{r.extractionRunLabel}</div>
+                        <div style={{ fontSize: 13, color: "#cbd5e1", marginTop: 4 }}>
+                          {r.reservedGrams.toFixed(2)} g reserved
+                          {r.label ? ` · ${r.label}` : ""}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                          {new Date(r.createdAt).toLocaleString()}
+                        </div>
+                      </div>
+                      {write && (
+                        <button
+                          type="button"
+                          style={ghostBtn}
+                          disabled={reserveBusy}
+                          onClick={() => void onReleaseReservation(r.id)}
+                        >
+                          Release
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {createOpen && (
         <div
