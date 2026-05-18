@@ -21,7 +21,12 @@ import {
   updatePackagingBatch,
   deletePackagingBatchRecord,
 } from "@/lib/packagingApi";
-import { loadExtractionBatches } from "@/lib/extractionApi";
+import { loadExtractionBatches, updateExtractionBatch } from "@/lib/extractionApi";
+import {
+  applySourcePackageIdsToBatch,
+  formatSourcePackageIdsForInput,
+  parseSourcePackageIdsInput,
+} from "@/lib/packagingSourcePackages";
 import { createLog } from "@/lib/logsApi";
 import {
   formatLogDisplayTime,
@@ -128,8 +133,6 @@ function packagingSourceMaterialLabel(batch: any): string {
       .filter(Boolean)
       .join(", ");
   }
-  const sb = batch?.sourceBatchId;
-  if (sb && sb !== batch?.id) return String(sb);
   return "—";
 }
 
@@ -279,12 +282,18 @@ export default function Packaging() {
   if (!s.logs) s.logs = [];
 
   const [canDeleteRecords, setCanDeleteRecords] = useState(false);
+  const [canEditSourcePackages, setCanEditSourcePackages] = useState(false);
   const [canWriteRecords, setCanWriteRecords] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [editSourcePackagesDraft, setEditSourcePackagesDraft] = useState("");
+  const [editSourcePackagesSaving, setEditSourcePackagesSaving] = useState(false);
 
   useEffect(() => {
     const role = String(getAuthUser()?.role || "").toUpperCase();
     setCanDeleteRecords(role === "OWNER" || role === "ADMIN" || role === "MANAGER");
+    setCanEditSourcePackages(
+      role === "OWNER" || role === "ADMIN" || role === "MANAGER" || role === "OPERATIONS_MANAGER",
+    );
     setCanWriteRecords(hasPackagingWriteAccess());
 
     let active = true;
@@ -498,6 +507,12 @@ export default function Packaging() {
     inProgressPackagingBatches[0] || null
   );
 
+  useEffect(() => {
+    if (selected) {
+      setEditSourcePackagesDraft(formatSourcePackageIdsForInput(selected));
+    }
+  }, [selected?.id]);
+
   const [packageType, setPackageType] = useState(
     getPackageOptions(activePackagingBatches[0] || null)[0] || ""
   );
@@ -673,10 +688,80 @@ export default function Packaging() {
 
   function selectBatch(batch: any) {
     setSelected(batch);
+    setEditSourcePackagesDraft(formatSourcePackageIdsForInput(batch));
     setPackageType(getPackageOptions(batch)[0] || "");
     setUnits("");
     setPackagedBy("");
     setNotes("");
+  }
+
+  async function saveSourcePackagesForSelected() {
+    if (!selected?.id || !canEditSourcePackages) return;
+
+    const ids = parseSourcePackageIdsInput(editSourcePackagesDraft);
+    if (ids.length === 0) {
+      showNotice(
+        "Missing source packages",
+        "Enter at least one source material package tag (e.g. FF-BLUE.051526).",
+        "These are source package ids — not the finished product label or market batch code.",
+      );
+      return;
+    }
+
+    const row =
+      s.packagingBatches.find((b: any) => b.id === selected.id) || selected;
+    const updated = applySourcePackageIdsToBatch(row, ids);
+
+    setEditSourcePackagesSaving(true);
+    try {
+      await updatePackagingBatch(updated.id, updated);
+      Object.assign(row, updated);
+      setSelected({ ...updated });
+
+      const exId = String(
+        updated.extractionBatchId || updated.sourceBatchId || "",
+      ).trim();
+      if (exId && exId !== updated.id) {
+        try {
+          const extractionList = await loadExtractionBatches().catch(() => []);
+          const exRow = (extractionList as any[]).find((b) => b?.id === exId);
+          if (exRow) {
+            const exPayload = applySourcePackageIdsToBatch(exRow, ids);
+            await updateExtractionBatch(exId, exPayload);
+          }
+        } catch (exErr) {
+          console.warn("Packaging: could not sync source packages to extraction run:", exErr);
+          showNotice(
+            "Extraction sync warning",
+            "Packaging lot source packages were saved, but the linked extraction run could not be updated.",
+          );
+        }
+      }
+
+      saveLog({
+        area: "Packaging",
+        batch: updated.id,
+        task: "Source Packages Updated",
+        output: `Source packages set to: ${ids.join(", ")}`,
+        loggedBy: getLoggedBy(),
+        data: {
+          sourcePackageIds: ids,
+          extractionBatchId: exId || undefined,
+        },
+        time: nowIsoForLog(),
+      });
+
+      forceRefresh();
+      showSyncMessageNotice("Source packages saved.");
+    } catch (error) {
+      console.error("Could not save source packages:", error);
+      showNotice(
+        "Save failed",
+        error instanceof Error ? error.message : "Could not update source packages on the server.",
+      );
+    } finally {
+      setEditSourcePackagesSaving(false);
+    }
   }
 
   function selectInProgressBatch(batch: any) {
@@ -1507,11 +1592,47 @@ export default function Packaging() {
                 readOnly
               />
 
-              <input
-                style={inputStyle}
-                value={`Source packages: ${packagingSourceMaterialLabel(selected)}`}
-                readOnly
-              />
+              {canEditSourcePackages ? (
+                <div style={{ display: "grid", gap: 8 }}>
+                  <label style={{ fontSize: 13, color: "#94a3b8" }}>
+                    Source packages{" "}
+                    <span style={{ color: "#64748b" }}>
+                      (material tags, e.g. FF-BLUE.051526 — not the product label)
+                    </span>
+                  </label>
+                  <textarea
+                    style={{
+                      ...inputStyle,
+                      minHeight: 72,
+                      resize: "vertical",
+                      fontFamily: "inherit",
+                    }}
+                    value={editSourcePackagesDraft}
+                    onChange={(e) => setEditSourcePackagesDraft(e.target.value)}
+                    placeholder="FF-BLUE.051526, FF-OG.051526"
+                    disabled={editSourcePackagesSaving}
+                  />
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                    <button
+                      type="button"
+                      style={blueButtonStyle}
+                      disabled={editSourcePackagesSaving}
+                      onClick={() => void saveSourcePackagesForSelected()}
+                    >
+                      {editSourcePackagesSaving ? "Saving…" : "Save source packages"}
+                    </button>
+                    <span style={{ fontSize: 12, color: "#64748b" }}>
+                      Shown on batch cards: {packagingSourceMaterialLabel(selected)}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <input
+                  style={inputStyle}
+                  value={`Source packages: ${packagingSourceMaterialLabel(selected)}`}
+                  readOnly
+                />
+              )}
 
               <input
                 style={inputStyle}
