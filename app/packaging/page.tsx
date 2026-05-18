@@ -36,6 +36,10 @@ import {
   type CustomTasksRewardDefs,
 } from "@/lib/customTasksConfig";
 import { buildTaskChallengeAttachment } from "@/lib/taskChallengePayload";
+import {
+  getPackageOptions,
+  getUnitSizeGramsFromPackageType,
+} from "@/lib/packagingUnitOptions";
 
 const BASE_PACKAGING_TASKS = [
   "Label",
@@ -214,38 +218,8 @@ function isExtractionPackagingBatch(batch: any) {
   );
 }
 
-function getPackageOptions(batch: any) {
-  const type = String(
-    batch?.name || batch?.type || batch?.productType || ""
-  ).toLowerCase();
-
-  if (type.includes("live resin oil")) {
-    return ["1 Gram Cartridges", "1 Gram Disposables"];
-  }
-
-  if (type.includes("live resin dabbable")) {
-    return ["1 Gram Units", "2 Gram Units", "4 Gram Units"];
-  }
-
-  if (type.includes("cured wax")) {
-    return ["2 Gram Units", "4 Gram Units"];
-  }
-
-  if (type.includes("gummy") || type.includes("gummies")) {
-    return ["Blueberry", "Peach", "Watermelon"];
-  }
-
-  return ["1 Gram Units"];
-}
-
 function getUnitSizeFromPackageType(packageType: string) {
-  const text = String(packageType || "").toLowerCase();
-
-  if (text.includes("1 gram")) return 1;
-  if (text.includes("2 gram")) return 2;
-  if (text.includes("4 gram")) return 4;
-
-  return 0;
+  return getUnitSizeGramsFromPackageType(packageType);
 }
 
 function getTerpsGrams(batch: any) {
