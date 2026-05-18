@@ -25,8 +25,11 @@ storeRouter.get("/version", asyncHandler(async (req, res) => {
     res.json(version);
 }));
 storeRouter.get("/", asyncHandler(async (req, res) => {
-    const data = await service.load(getScopedCompanyId(req));
-    res.setHeader("Cache-Control", "private, no-store");
+    const includeLogs =
+        String(req.query.includeLogs ?? "").trim() === "1"
+        || String(req.query.include ?? "").split(",").map((s) => s.trim()).includes("logs");
+    const data = await service.load(getScopedCompanyId(req), { includeLogs });
+    res.setHeader("Cache-Control", "private, max-age=15");
     res.json(data);
 }));
 const saveStack = [

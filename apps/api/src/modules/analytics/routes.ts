@@ -12,6 +12,8 @@ import {
 } from "./buildCultivationStrainMetricPoints.js";
 import { buildAnalyticsOverview } from "./analyticsOverviewService.js";
 import { buildLiveOperationsDetail } from "./liveOperationsDetailService.js";
+import { memoizedRead } from "../../lib/requestMemoCache.js";
+import { logSlowRequestIfNeeded } from "../../lib/slowRequestLog.js";
 
 const storeService = new StoreService();
 
@@ -119,15 +121,35 @@ analyticsRouter.get(
             throw new AppError("from must be on or before to", 400);
         }
         const auth = req.auth as { platformRole?: string | null } | undefined;
-        const out = await buildAnalyticsOverview({
+        const deptKey = department === "all" ? null : department;
+        const cacheKey = `analytics:overview:${companyId}:${dateFrom}:${dateTo}:${facility ?? ""}:${deptKey ?? ""}`;
+        const ttlMs = Number.parseInt(String(process.env.ANALYTICS_OVERVIEW_CACHE_TTL_MS ?? "90000"), 10);
+        const cacheTtl = Number.isFinite(ttlMs) && ttlMs >= 15_000 ? ttlMs : 90_000;
+
+        const dbStarted = Date.now();
+        const out = await memoizedRead(cacheKey, cacheTtl, () =>
+            buildAnalyticsOverview({
+                companyId,
+                dateFrom,
+                dateTo,
+                facility,
+                department: deptKey,
+                platformRole: auth?.platformRole ?? null,
+            }),
+        );
+        const dbMs = Date.now() - dbStarted;
+        const serStarted = Date.now();
+        const body = JSON.stringify(out);
+        const serializeMs = Date.now() - serStarted;
+        logSlowRequestIfNeeded({
+            label: "GET /api/analytics/overview",
             companyId,
-            dateFrom,
-            dateTo,
-            facility,
-            department: department === "all" ? null : department,
-            platformRole: auth?.platformRole ?? null,
+            dbMs,
+            serializeMs,
+            payloadBytes: Buffer.byteLength(body, "utf8"),
         });
-        res.json(out);
+        res.setHeader("Cache-Control", "private, max-age=30");
+        res.type("json").send(body);
     }),
 );
 
@@ -136,7 +158,11 @@ analyticsRouter.get(
     requireRoleOrAppPermission(analyticsReadRoles, "page.analytics"),
     asyncHandler(async (req, res) => {
         const companyId = getScopedCompanyId(req);
-        const out = await buildLiveOperationsDetail(companyId);
+        const cacheKey = `analytics:live-ops:${companyId}`;
+        const ttlMs = Number.parseInt(String(process.env.ANALYTICS_LIVE_OPS_CACHE_TTL_MS ?? "60000"), 10);
+        const cacheTtl = Number.isFinite(ttlMs) && ttlMs >= 15_000 ? ttlMs : 60_000;
+        const out = await memoizedRead(cacheKey, cacheTtl, () => buildLiveOperationsDetail(companyId));
+        res.setHeader("Cache-Control", "private, max-age=20");
         res.json(out);
     }),
 );

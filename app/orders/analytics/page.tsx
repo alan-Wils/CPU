@@ -23,6 +23,7 @@ import {
   type OrdersAnalyticsCustomerDto,
   type OrdersAnalyticsDto,
 } from "@/lib/api";
+import { useVisibilityPolling } from "@/lib/useVisibilityPolling";
 
 function utcYmd(d: Date): string {
   const y = d.getUTCFullYear();
@@ -232,30 +233,11 @@ export default function OrdersAnalyticsPage() {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    let cancelled = false;
-    let lightInFlight = false;
-
-    const runLightPoll = async () => {
-      if (cancelled || lightInFlight || document.hidden) return;
-      lightInFlight = true;
-      try {
-        await load({ silent: true });
-      }
-      finally {
-        lightInFlight = false;
-      }
-    };
-
-    const lightTimer = window.setInterval(() => {
-      void runLightPoll();
-    }, 15000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(lightTimer);
-    };
-  }, [load]);
+  useVisibilityPolling({
+    intervalMs: 5 * 60_000,
+    refreshOnVisible: true,
+    onPoll: () => load({ silent: true }),
+  });
 
   useEffect(() => {
     if (!data?.customers?.length) {

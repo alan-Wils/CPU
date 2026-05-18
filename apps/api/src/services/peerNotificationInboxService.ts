@@ -37,6 +37,26 @@ async function membershipIdForUserCompany(userId: string, companyId: string): Pr
   return m?.id ?? null;
 }
 
+export async function peerNotifyGetUnreadCount(input: {
+  userId: string;
+  companyId: string;
+}): Promise<{ unreadCount: number; updatedAt: string | null }> {
+  const membershipId = await membershipIdForUserCompany(input.userId, input.companyId);
+  if (!membershipId) return { unreadCount: 0, updatedAt: null };
+
+  const row = await prisma.peerNotificationInbox.findUnique({
+    where: { membershipId },
+    select: { items: true, updatedAt: true },
+  });
+  if (!row) return { unreadCount: 0, updatedAt: null };
+
+  const items = coerceItems(row.items);
+  return {
+    unreadCount: items.filter((x) => !x.read).length,
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
 export async function peerNotifyGetInbox(input: {
   userId: string;
   companyId: string;

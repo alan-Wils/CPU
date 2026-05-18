@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { useVisibilityPolling } from "@/lib/useVisibilityPolling";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import {
@@ -207,32 +208,11 @@ export default function AnalyticsLiveOperationsPage() {
     if (data.cards.some((c) => c.id === cardId)) setExpandedId(cardId);
   }, [data]);
 
-  useEffect(() => {
-    let cancelled = false;
-    let inFlight = false;
-
-    const tick = async () => {
-      if (cancelled || inFlight || document.hidden) return;
-      inFlight = true;
-      try {
-        await load({ silent: true });
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    const id = window.setInterval(() => {
-      void tick();
-    }, 45_000);
-    const boot = window.setTimeout(() => {
-      void tick();
-    }, 1200);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-      window.clearTimeout(boot);
-    };
-  }, [load]);
+  useVisibilityPolling({
+    intervalMs: 5 * 60_000,
+    refreshOnVisible: true,
+    onPoll: () => load({ silent: true }),
+  });
 
   const pageStyle = {
     minHeight: "100vh",
@@ -254,8 +234,8 @@ export default function AnalyticsLiveOperationsPage() {
           <h1 style={{ margin: "0 0 8px", fontSize: 26, fontWeight: 800 }}>Live operations</h1>
           <p style={{ margin: "0 0 20px", color: "#94a3b8", fontSize: 14, maxWidth: 720 }}>
             Task logs (14 days, linked to a reference), active extraction and packaging work, and labor logged today
-            in UTC. Expand a card for the full scrollable list. Data refreshes every 45 seconds while this tab is
-            visible.
+            in UTC. Expand a card for the full scrollable list. Data refreshes on tab focus and about every 5 minutes
+            while this tab is visible.
           </p>
           {loading ? <p style={{ color: "#94a3b8" }}>Loading…</p> : null}
           {error ? <p style={{ color: "#fca5a5" }}>{error}</p> : null}

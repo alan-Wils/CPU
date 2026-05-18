@@ -17,10 +17,16 @@ const DEFAULT_STORE = {
 export class StoreService {
     repo = new StoreRepository();
     audit = new AuditService();
-    async load(companyId) {
+    async load(companyId, opts?: { includeLogs?: boolean }) {
+        const includeLogs = Boolean(opts?.includeLogs);
         const row = await this.repo.getCompanyStore(companyId);
-        if (!row?.valueJson)
-            return { ...DEFAULT_STORE, _meta: { updatedAt: row?.updatedAt?.toISOString() ?? null } };
+        if (!row?.valueJson) {
+            return {
+                ...DEFAULT_STORE,
+                logs: includeLogs ? [] : [],
+                _meta: { updatedAt: row?.updatedAt?.toISOString() ?? null, logsOmitted: !includeLogs },
+            };
+        }
         try {
             const parsed = JSON.parse(row.valueJson);
             return {
@@ -34,8 +40,11 @@ export class StoreService {
                 packagingBatches: parsed.packagingBatches ?? [],
                 inProgressPackagingBatches: parsed.inProgressPackagingBatches ?? [],
                 completedPackagingBatches: parsed.completedPackagingBatches ?? [],
-                logs: parsed.logs ?? [],
-                _meta: { updatedAt: row.updatedAt.toISOString() }
+                logs: includeLogs ? (parsed.logs ?? []) : [],
+                _meta: {
+                    updatedAt: row.updatedAt.toISOString(),
+                    logsOmitted: !includeLogs,
+                },
             };
         }
         catch {

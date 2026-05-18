@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useVisibilityPolling } from "@/lib/useVisibilityPolling";
 import Nav from "@/components/Nav";
 import PageAccessGate from "@/components/PageAccessGate";
 import { AnalyticsDashboard } from "@/components/analytics/AnalyticsDashboard";
@@ -56,33 +57,11 @@ export default function AnalyticsPage() {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    let cancelled = false;
-    let inFlight = false;
-
-    const tick = async () => {
-      if (cancelled || inFlight || document.hidden) return;
-      inFlight = true;
-      try {
-        await load({ silent: true });
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    const id = window.setInterval(() => {
-      void tick();
-    }, 45_000);
-    /** First silent poll soon after mount so the toast is noticeable without waiting 15s. */
-    const boot = window.setTimeout(() => {
-      void tick();
-    }, 1200);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-      window.clearTimeout(boot);
-    };
-  }, [load]);
+  useVisibilityPolling({
+    intervalMs: 5 * 60_000,
+    refreshOnVisible: true,
+    onPoll: () => load({ silent: true }),
+  });
 
   const onSectionPrefsChange = useCallback((next: Record<AnalyticsSectionKey, boolean>) => {
     setSectionPrefs(next);

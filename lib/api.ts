@@ -461,10 +461,23 @@ export async function deleteCompanyItem(
   });
 }
 
-export async function getLogs(companyId?: string, opts?: { take?: number }) {
-  const take = opts?.take != null ? Math.min(2000, Math.max(1, Math.floor(opts.take))) : 800;
-  const q = take === 800 ? "" : `?take=${encodeURIComponent(String(take))}`;
-  return apiRequest(`/api/logs${q}`, {
+export type TaskLogsPageDto = {
+  items: unknown[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
+export async function getLogs(
+  companyId?: string,
+  opts?: { take?: number; cursor?: string; paginated?: boolean; compact?: boolean },
+): Promise<unknown[] | TaskLogsPageDto> {
+  const take = opts?.take != null ? Math.min(500, Math.max(1, Math.floor(opts.take))) : 150;
+  const q = new URLSearchParams();
+  q.set("take", String(take));
+  if (opts?.cursor) q.set("cursor", opts.cursor);
+  if (opts?.paginated) q.set("paginated", "true");
+  if (opts?.compact === false) q.set("compact", "0");
+  return apiRequest(`/api/logs?${q.toString()}`, {
     companyId,
   });
 }
@@ -1374,6 +1387,12 @@ export type PeerNotificationItemDto = {
   at: string;
   read: boolean;
 };
+
+export async function fetchPeerNotifyUnreadCount() {
+  return apiRequest<{ unreadCount: number; updatedAt?: string | null }>(
+    "/api/notifications/inbox/unread-count",
+  );
+}
 
 export async function fetchPeerNotifyInbox() {
   return apiRequest<{ items: PeerNotificationItemDto[]; updatedAt?: string }>("/api/notifications/inbox");

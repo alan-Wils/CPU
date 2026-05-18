@@ -848,7 +848,7 @@ export default function DataHub() {
           loadSourceBatches(),
           loadExtractionBatches(),
           loadPackagingBatches(),
-          getLogs(undefined, { take: 1200 }),
+          getLogs(undefined, { take: 250, compact: true }),
         ]);
 
         if (!mounted) return;
@@ -857,7 +857,9 @@ export default function DataHub() {
         const sourceList = asArray(realSourceBatches);
         const extractionList = asArray(realExtractionBatches);
         const packagingList = asArray(realPackagingBatches);
-        const backendLogs = asArray(realLogs);
+        const backendLogs = asArray(
+          Array.isArray(realLogs) ? realLogs : (realLogs as { items?: unknown[] })?.items,
+        );
         const syncedLogs = asArray(s.logs);
         const logById = new Map<string, any>();
         for (const row of backendLogs) {

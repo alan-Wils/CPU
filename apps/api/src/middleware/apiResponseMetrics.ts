@@ -77,6 +77,16 @@ export function apiResponseMetricsMiddleware(req: Request, res: Response, next: 
             });
         }
 
+        if (ms >= 500 || bytes >= 75_000) {
+            logInfo("api_slow_or_large_response", {
+                path: methodPath,
+                bytes,
+                ms,
+                status,
+                companyKey: ck,
+            });
+        }
+
         if (env.API_TRANSFER_METRICS && (bytes >= 25_000 || ms >= 2000)) {
             logInfo("api_transfer_sample", {
                 path: methodPath,

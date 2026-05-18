@@ -13,17 +13,20 @@ import React, {
 import { usePathname } from "next/navigation";
 import {
   fetchPeerNotifyInbox,
+  fetchPeerNotifyUnreadCount,
   pushPeerNotifyItem,
   replacePeerNotifyInbox,
 } from "@/lib/api";
 import { CPU_AUTH_CHANGED_EVENT, isLoggedIn } from "@/lib/auth";
 import { CPU_TENANT_CHANGED_EVENT } from "@/lib/tenantEvents";
+import { useVisibilityPolling } from "@/lib/useVisibilityPolling";
 import type { PeerNotificationKind, PeerNotificationItem } from "@/lib/peerNotificationsTypes";
 
 export type { PeerNotificationKind, PeerNotificationItem };
 
 const MAX_ITEMS = 60;
-const INBOX_POLL_MS = 5500;
+/** Lightweight unread badge — full inbox loads when the bell opens. */
+const UNREAD_POLL_MS = 60_000;
 
 function skipInboxPollingPath(pathname: string | null): boolean {
   const p = String(pathname || "");
@@ -41,6 +44,8 @@ type PeerNotificationsContextValue = {
   items: PeerNotificationItem[];
   hasUnread: boolean;
   unreadCount: number;
+  /** Fetch full inbox (dropdown open). */
+  loadFullInbox: () => Promise<void>;
   emitTask: (payload: { logId: string; message: string }) => void;
   emitOrder: (payload: { orderId: string; message: string }) => void;
   markAllRead: () => void;
@@ -72,8 +77,10 @@ function applySerializedIfDifferent(
 export function PeerNotificationsProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [items, setItems] = useState<PeerNotificationItem[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [authTick, setAuthTick] = useState(0);
   const serializedRef = useRef("");
+  const inboxLoadedRef = useRef(false);
 
   useEffect(() => {
     function bump() {
@@ -87,52 +94,44 @@ export function PeerNotificationsProvider({ children }: { children: ReactNode })
     };
   }, []);
 
-  const pullFromServer = useCallback(async () => {
+  const pollUnreadCount = useCallback(async () => {
     if (!isLoggedIn()) return;
-    const next = await fetchInboxOrEmpty();
-    applySerializedIfDifferent(next, serializedRef, setItems);
+    try {
+      const out = await fetchPeerNotifyUnreadCount();
+      setUnreadCount(Math.max(0, Number(out.unreadCount) || 0));
+    } catch {
+      /* keep last count */
+    }
   }, []);
 
-  /** Auth / tenant switch: reload immediately. */
+  const loadFullInbox = useCallback(async () => {
+    if (!isLoggedIn()) return;
+    const next = await fetchInboxOrEmpty();
+    inboxLoadedRef.current = true;
+    applySerializedIfDifferent(next, serializedRef, setItems);
+    setUnreadCount(next.filter((x) => !x.read).length);
+  }, []);
+
   useEffect(() => {
     if (!isLoggedIn()) {
       serializedRef.current = "";
+      inboxLoadedRef.current = false;
       setItems([]);
+      setUnreadCount(0);
       return;
     }
-    void pullFromServer();
-  }, [authTick, pullFromServer]);
+    inboxLoadedRef.current = false;
+    void pollUnreadCount();
+  }, [authTick, pollUnreadCount]);
 
-  /** Periodic + tab-focus sync so other devices see updates quickly. */
-  useEffect(() => {
-    if (!isLoggedIn()) return;
-    if (skipInboxPollingPath(pathname)) return;
+  const pollingEnabled = isLoggedIn() && !skipInboxPollingPath(pathname);
 
-    let cancelled = false;
-
-    async function poll() {
-      if (cancelled) return;
-      if (!isLoggedIn()) return;
-      if (typeof document !== "undefined" && document.hidden) return;
-      const next = await fetchInboxOrEmpty();
-      if (cancelled) return;
-      applySerializedIfDifferent(next, serializedRef, setItems);
-    }
-
-    const intervalId = setInterval(() => void poll(), INBOX_POLL_MS);
-    function onVisibility() {
-      if (document.visibilityState === "visible")
-        void poll();
-    }
-    document.addEventListener("visibilitychange", onVisibility);
-    void poll();
-
-    return () => {
-      cancelled = true;
-      clearInterval(intervalId);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [pathname, authTick]);
+  useVisibilityPolling({
+    enabled: pollingEnabled,
+    intervalMs: UNREAD_POLL_MS,
+    refreshOnVisible: true,
+    onPoll: pollUnreadCount,
+  });
 
   const emitTask = useCallback((payload: { logId: string; message: string }) => {
     if (!isLoggedIn()) return;
@@ -147,15 +146,23 @@ export function PeerNotificationsProvider({ children }: { children: ReactNode })
       read: false,
     };
 
-    setItems((prev) => {
-      if (prev.some((x) => x.id === row.id)) return prev;
-      return [row, ...prev].slice(0, MAX_ITEMS);
-    });
+    setUnreadCount((c) => c + 1);
+    if (inboxLoadedRef.current) {
+      setItems((prev) => {
+        if (prev.some((x) => x.id === row.id)) return prev;
+        return [row, ...prev].slice(0, MAX_ITEMS);
+      });
+    }
 
     void pushPeerNotifyItem(row)
       .then((out: { items: PeerNotificationItem[] }) => {
+        if (!inboxLoadedRef.current) {
+          setUnreadCount(out.items.filter((x) => !x.read).length);
+          return;
+        }
         const next = (out.items || []).slice(0, MAX_ITEMS);
         applySerializedIfDifferent(next, serializedRef, setItems);
+        setUnreadCount(next.filter((x) => !x.read).length);
       })
       .catch(() => {});
   }, []);
@@ -173,20 +180,29 @@ export function PeerNotificationsProvider({ children }: { children: ReactNode })
       read: false,
     };
 
-    setItems((prev) => {
-      if (prev.some((x) => x.id === row.id)) return prev;
-      return [row, ...prev].slice(0, MAX_ITEMS);
-    });
+    setUnreadCount((c) => c + 1);
+    if (inboxLoadedRef.current) {
+      setItems((prev) => {
+        if (prev.some((x) => x.id === row.id)) return prev;
+        return [row, ...prev].slice(0, MAX_ITEMS);
+      });
+    }
 
     void pushPeerNotifyItem(row)
       .then((out: { items: PeerNotificationItem[] }) => {
+        if (!inboxLoadedRef.current) {
+          setUnreadCount(out.items.filter((x) => !x.read).length);
+          return;
+        }
         const next = (out.items || []).slice(0, MAX_ITEMS);
         applySerializedIfDifferent(next, serializedRef, setItems);
+        setUnreadCount(next.filter((x) => !x.read).length);
       })
       .catch(() => {});
   }, []);
 
   const markAllRead = useCallback(() => {
+    setUnreadCount(0);
     setItems((prev) => {
       if (!prev.some((x) => !x.read)) return prev;
       const next = prev.map((x) => ({ ...x, read: true }));
@@ -202,26 +218,27 @@ export function PeerNotificationsProvider({ children }: { children: ReactNode })
 
   const clearAll = useCallback(() => {
     setItems([]);
+    setUnreadCount(0);
     serializedRef.current = JSON.stringify([]);
     void replacePeerNotifyInbox([])
       .then(() => {})
       .catch(() => {});
   }, []);
 
-  const hasUnread = useMemo(() => items.some((x) => !x.read), [items]);
-  const unreadCount = useMemo(() => items.filter((x) => !x.read).length, [items]);
+  const hasUnread = unreadCount > 0;
 
   const value = useMemo(
     () => ({
       items,
       hasUnread,
       unreadCount,
+      loadFullInbox,
       emitTask,
       emitOrder,
       markAllRead,
       clearAll,
     }),
-    [items, hasUnread, unreadCount, emitTask, emitOrder, markAllRead, clearAll],
+    [items, hasUnread, unreadCount, loadFullInbox, emitTask, emitOrder, markAllRead, clearAll],
   );
 
   return (

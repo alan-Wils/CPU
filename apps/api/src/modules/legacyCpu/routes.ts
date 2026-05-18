@@ -93,12 +93,26 @@ function legacyLogNotePayload(body) {
         linkedBatch
     });
 }
-function taskRowToLegacyLog(row) {
+function compactTaskLogData(data) {
+    if (!data || typeof data !== "object" || Array.isArray(data))
+        return {};
+    const o = data;
+    const pick = {};
+    for (const k of ["loggedAt", "loggedAtIso", "source", "linkedBatch", "people", "minutes", "strain", "room", "stage"]) {
+        if (o[k] !== undefined && o[k] !== null && o[k] !== "")
+            pick[k] = o[k];
+    }
+    return pick;
+}
+/** @param {object} row @param {{ compact?: boolean }} [opts] */
+function taskRowToLegacyLog(row, opts) {
+    const compact = Boolean(opts && opts.compact);
     const raw = String(row.note || "");
     try {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === "object" && "task" in parsed) {
-            const data = typeof parsed.data === "object" && parsed.data ? parsed.data : {};
+            const dataRaw = typeof parsed.data === "object" && parsed.data ? parsed.data : {};
+            const data = compact ? compactTaskLogData(dataRaw) : { ...dataRaw };
             const loggedAtIso = row.createdAt.toISOString();
             const src =
                 parsed.source ??
@@ -470,14 +484,36 @@ legacyCpuRouter.get("/logs", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const rawTake = req.query.take ?? req.query.limit;
     const parsed = typeof rawTake === "string" ? Number.parseInt(rawTake, 10) : Number(rawTake);
-    const take = Number.isFinite(parsed) ? Math.min(2000, Math.max(1, Math.floor(parsed))) : 800;
+    const take = Number.isFinite(parsed) ? Math.min(500, Math.max(1, Math.floor(parsed))) : 150;
+    const compact =
+        String(req.query.compact ?? "1").trim() !== "0"
+        && String(req.query.compact ?? "").trim() !== "false";
+    const paginated =
+        String(req.query.paginated ?? "").trim() === "1"
+        || String(req.query.paginated ?? "").trim() === "true";
+    const cursorRaw = String(req.query.cursor ?? "").trim();
+    const cursorDate = cursorRaw ? new Date(cursorRaw) : null;
+    const cursorValid = cursorDate && !Number.isNaN(cursorDate.getTime());
+
     const rows = await prisma.taskLog.findMany({
-        where: { companyId },
+        where: {
+            companyId,
+            ...(cursorValid ? { createdAt: { lt: cursorDate } } : {}),
+        },
         orderBy: { createdAt: "desc" },
-        take,
+        take: take + 1,
     });
-    res.setHeader("Cache-Control", "private, no-store");
-    res.json(rows.map(taskRowToLegacyLog));
+    const hasMore = rows.length > take;
+    const page = hasMore ? rows.slice(0, take) : rows;
+    const items = page.map((r) => taskRowToLegacyLog(r, { compact }));
+    const nextCursor = hasMore && page.length ? page[page.length - 1].createdAt.toISOString() : null;
+
+    res.setHeader("Cache-Control", "private, max-age=20");
+    if (paginated) {
+        res.json({ items, nextCursor, hasMore });
+        return;
+    }
+    res.json(items);
 }));
 /** Compact latest task log for realtime “peer task” UI toasts (SPA poll). */
 legacyCpuRouter.get("/logs/latest-live", asyncHandler(async (req, res) => {
@@ -490,7 +526,7 @@ legacyCpuRouter.get("/logs/latest-live", asyncHandler(async (req, res) => {
         res.json(null);
         return;
     }
-    const legacy = taskRowToLegacyLog(row);
+    const legacy = taskRowToLegacyLog(row, {});
     const actor = await prisma.user.findUnique({
         where: { id: row.actorUserId },
         select: { email: true }
@@ -552,7 +588,7 @@ legacyCpuRouter.post("/logs", asyncHandler(async (req, res) => {
         referenceId: row.referenceId,
         minutes: row.minutes
     });
-    res.status(201).json(taskRowToLegacyLog(row));
+    res.status(201).json(taskRowToLegacyLog(row, {}));
 }));
 /** SPA cultivation labor: close pending end time (cultivation writers) or manager-edit labor fields. */
 legacyCpuRouter.patch("/logs/:taskLogId", asyncHandler(async (req, res) => {
@@ -623,7 +659,7 @@ legacyCpuRouter.patch("/logs/:taskLogId", asyncHandler(async (req, res) => {
         if (!updated) {
             throw new AppError("Log update failed", 500);
         }
-        res.json(taskRowToLegacyLog(updated));
+        res.json(taskRowToLegacyLog(updated, {}));
         return;
     }
     if (!canManagerEdit) {
@@ -655,7 +691,7 @@ legacyCpuRouter.patch("/logs/:taskLogId", asyncHandler(async (req, res) => {
     if (!updated) {
         throw new AppError("Log update failed", 500);
     }
-    res.json(taskRowToLegacyLog(updated));
+    res.json(taskRowToLegacyLog(updated, {}));
 }));
 function readMotherPlantsFromCultivationConfig(value: unknown): unknown[] {
     if (!value || typeof value !== "object" || Array.isArray(value))

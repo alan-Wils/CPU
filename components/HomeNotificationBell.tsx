@@ -23,7 +23,7 @@ function formatShortTime(iso: string): string {
 
 /** Home header: inbox for tasks, orders, and cultivation climate alerts. */
 export default function HomeNotificationBell() {
-  const { items, hasUnread, unreadCount, markAllRead, clearAll } = usePeerNotifications();
+  const { items, hasUnread, unreadCount, loadFullInbox, markAllRead, clearAll } = usePeerNotifications();
   const hasUnreadClimate = useMemo(
     () => items.some((i) => i.kind === "climate" && !i.read),
     [items],
@@ -36,8 +36,9 @@ export default function HomeNotificationBell() {
 
   useEffect(() => {
     if (!open) return;
+    void loadFullInbox();
     markAllRead();
-  }, [open, markAllRead]);
+  }, [open, loadFullInbox, markAllRead]);
 
   useLayoutEffect(() => {
     if (!open) {
