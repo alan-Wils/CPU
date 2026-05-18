@@ -738,7 +738,7 @@ export default function Packaging() {
         }
       }
 
-      saveLog({
+      await addBackendLog({
         area: "Packaging",
         batch: updated.id,
         task: "Source Packages Updated",
