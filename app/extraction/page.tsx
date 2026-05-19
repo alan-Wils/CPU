@@ -19,7 +19,9 @@ import {
   loadSourceBatches,
   updateSourceBatch,
   deleteSourceBatchRecord,
+  patchSourcePackageCanonicalName,
 } from "@/lib/sourceBatchApi";
+import { makeExtractionMarketBatchCode } from "@/lib/batchChainCodes";
 import { getSourceAvailable, isCompletedSourceBatch } from "@/lib/sourceBatchActive";
 import {
   freshFrozenAvailableLine,
@@ -274,29 +276,21 @@ function makeMarketBatchCode(creativeName: string, extractionBatchId: string): s
   return `${core}.${datePart}`;
 }
 
-/** Public code for multi-strain extraction runs (replaces EXT id in UI until AI renames). */
+/** Public lot code when creating an extraction run from source rows (acronym + extraction date). */
 function makeBlendMarketBatchCodeFromSourceRows(
   rows: Array<{ acronym?: string }>,
-  extractionBatchId: string
+  extractionBatchId: string,
 ): string {
-  const cleaned = rows.map((r) => cleanAcronym(r.acronym)).filter(Boolean);
-  const unique = [...new Set(cleaned)];
-  let core = "MIXX";
-  if (unique.length === 1) {
-    core = (unique[0] + "XXXX").slice(0, 4);
-  } else if (unique.length === 2) {
-    const a = unique[0];
-    const b = unique[1];
-    core = `${(a + "XX").slice(0, 2)}${(b + "XX").slice(0, 2)}`.toUpperCase().slice(0, 4);
-  } else if (unique.length > 2) {
-    core = unique
-      .map((u) => (u.charAt(0) || "X").toUpperCase())
-      .join("")
-      .concat("XXXX")
-      .slice(0, 4);
-  }
-  const datePart = extractDateCodeFromBatchId(extractionBatchId) || getDateCode();
-  return `${core}.${datePart}`;
+  const acronyms = rows.map((r) => cleanAcronym(r.acronym)).filter(Boolean);
+  const dateFromExt = extractDateCodeFromBatchId(extractionBatchId);
+  const isoDate = dateFromExt
+    ? `20${dateFromExt.slice(4, 6)}-${dateFromExt.slice(0, 2)}-${dateFromExt.slice(2, 4)}`
+    : new Date().toISOString().slice(0, 10);
+  return makeExtractionMarketBatchCode(acronyms, isoDate);
+}
+
+function sourcePackageDisplayId(row: { id?: string; harvestCode?: string }): string {
+  return String(row.harvestCode || row.id || "").trim();
 }
 
 function cleanAcronym(value: any) {
@@ -523,6 +517,16 @@ export default function Extraction() {
   const [selectedExt, setSelectedExt] = useState<any>(null);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editSourcePackage, setEditSourcePackage] = useState<any>(null);
+  const [editSourceSaving, setEditSourceSaving] = useState(false);
+  const [editSourceId, setEditSourceId] = useState("");
+  const [editSourceName, setEditSourceName] = useState("");
+  const [editSourceType, setEditSourceType] = useState("Fresh Frozen");
+  const [editSourceCultivationId, setEditSourceCultivationId] = useState("");
+  const [editSourceBundles, setEditSourceBundles] = useState("");
+  const [editSourceGrams, setEditSourceGrams] = useState("");
+  const [editSourceWeightLbs, setEditSourceWeightLbs] = useState("");
+  const [editSourceStatus, setEditSourceStatus] = useState("");
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [viewBatch, setViewBatch] = useState<any>(null);
   const [viewBatchEditing, setViewBatchEditing] = useState(false);
@@ -1848,6 +1852,161 @@ export default function Extraction() {
       `Delete source batch "${batchId}" from Available Source Material?`,
       () => runDeleteSourceBatch(batchId),
       "This removes the source material from the available extraction list."
+    );
+  }
+
+  function openEditSourcePackage(row: any) {
+    if (!requireWriteAccess("edit source packages")) return;
+    const materialType = getSourceMaterialType(row);
+    setEditSourcePackage(row);
+    setEditSourceId(sourcePackageDisplayId(row));
+    setEditSourceName(String(row.name || row.type || "").trim());
+    setEditSourceType(
+      materialType === "dryTrim"
+        ? "Dry Trim"
+        : materialType === "freshFrozen"
+          ? "Fresh Frozen"
+          : String(row.type || "Fresh Frozen").trim() || "Fresh Frozen",
+    );
+    setEditSourceCultivationId(String(row.source || "").trim());
+    setEditSourceBundles(String(row.bundles ?? ""));
+    setEditSourceGrams(String(row.grams ?? ""));
+    const lbs =
+      row.weightLbs != null && row.weightLbs !== ""
+        ? row.weightLbs
+        : row.grams != null && Number(row.grams) > 0
+          ? +(Number(row.grams) / GRAMS_PER_LB).toFixed(4)
+          : "";
+    setEditSourceWeightLbs(String(lbs ?? ""));
+    setEditSourceStatus(
+      String(row.status || "Available for Extraction").trim() || "Available for Extraction",
+    );
+  }
+
+  function closeEditSourcePackage() {
+    setEditSourcePackage(null);
+    setEditSourceSaving(false);
+  }
+
+  async function saveEditSourcePackage() {
+    if (!editSourcePackage) return;
+    if (!requireWriteAccess("edit source packages")) return;
+
+    const originalId = String(editSourcePackage.id || "").trim();
+    const nextId = editSourceId.trim();
+    const name = editSourceName.trim();
+    const type = editSourceType.trim();
+    const source = editSourceCultivationId.trim();
+    const bundles = Math.max(0, Math.floor(num(editSourceBundles)));
+    const grams = Math.max(0, num(String(editSourceGrams).replace(/,/g, "")));
+    const weightLbs = Math.max(0, num(String(editSourceWeightLbs).replace(/,/g, "")));
+    const status = editSourceStatus.trim() || "Available for Extraction";
+
+    if (
+      !requireFields([
+        { label: "Harvest package code", value: nextId },
+        { label: "Display name", value: name },
+        { label: "Material type", value: type },
+        { label: "Cultivation batch", value: source },
+      ])
+    ) {
+      return;
+    }
+
+    const isDb = isLikelyDatabaseSourcePackageId(originalId);
+    if (isDb && nextId !== originalId) {
+      showNotice(
+        "Package code locked",
+        "Database source packages keep their system id. Change the display name or harvest code field on legacy packages.",
+      );
+      return;
+    }
+
+    const amount =
+      type === "Fresh Frozen"
+        ? `${bundles} bundles / ${grams} grams`
+        : `${weightLbs} lbs`;
+
+    const payload: Record<string, unknown> = {
+      id: nextId,
+      name,
+      type,
+      source,
+      strain: editSourcePackage.strain || "",
+      status,
+      bundles,
+      grams,
+      weightLbs,
+      amount,
+      harvestCode: nextId,
+    };
+
+    if (type === "Fresh Frozen" && grams > 0 && !weightLbs) {
+      payload.weightLbs = +(grams / GRAMS_PER_LB).toFixed(4);
+    }
+    if (type === "Fresh Frozen" && weightLbs > 0 && !grams) {
+      payload.grams = Math.round(weightLbs * GRAMS_PER_LB);
+    }
+
+    setEditSourceSaving(true);
+    try {
+      if (isDb) {
+        await patchSourcePackageCanonicalName(originalId, name);
+        const updated = await updateSourceBatch(originalId, {
+          ...editSourcePackage,
+          name,
+          type,
+          source,
+          status,
+          bundles,
+          grams: payload.grams ?? grams,
+          weightLbs: payload.weightLbs ?? weightLbs,
+          amount,
+        });
+        applySourcePackageLocalUpdate(originalId, originalId, updated || { ...editSourcePackage, ...payload });
+      } else {
+        const updated = await updateSourceBatch(originalId, {
+          ...editSourcePackage,
+          ...payload,
+        });
+        applySourcePackageLocalUpdate(originalId, nextId, updated || { ...editSourcePackage, ...payload, id: nextId });
+      }
+      closeEditSourcePackage();
+      showSyncMessageNotice("Source package saved.");
+      forceRefresh();
+    } catch (error) {
+      console.error("Could not save source package:", error);
+      showNotice(
+        "Backend Save Failed",
+        error instanceof Error ? error.message : "The server rejected the update.",
+      );
+    } finally {
+      setEditSourceSaving(false);
+    }
+  }
+
+  function applySourcePackageLocalUpdate(
+    originalId: string,
+    nextId: string,
+    row: Record<string, unknown>,
+  ) {
+    const patchLists = (list: any[]) => {
+      const idx = list.findIndex((b) => String(b?.id || "") === originalId);
+      if (idx < 0) return;
+      const prev = list[idx];
+      if (nextId !== originalId) {
+        list.splice(idx, 1);
+        list.unshift({ ...prev, ...row, id: nextId });
+      } else {
+        list[idx] = { ...prev, ...row, id: nextId };
+      }
+    };
+    patchLists(s.sourceBatches);
+    if (Array.isArray(s.productionBatches)) patchLists(s.productionBatches);
+    setSourceInputs((prev) =>
+      prev.map((r) =>
+        r.sourceId === originalId ? { ...r, sourceId: nextId } : r,
+      ),
     );
   }
 
@@ -3768,16 +3927,19 @@ export default function Extraction() {
                     <div style={{ flex: 1 }}>
                       {isLikelyDatabaseSourcePackageId(b.id) ? (
                         <>
-                          <b>{b.name || b.type || "Source package"}</b>
+                          <b>{sourcePackageDisplayId(b)}</b>
                           <span style={{ color: "#94a3b8", fontSize: 13 }}>
                             {" "}
-                            · {b.id}
+                            · {b.name || b.type || "Source package"}
                           </span>
+                          {" | Cultivation: "}
+                          {b.source || "—"}
                           {" | Material: "}
                         </>
                       ) : (
                         <>
-                          <b>{b.id}</b> | {b.name || b.type} | Material:{" "}
+                          <b>{sourcePackageDisplayId(b)}</b> | {b.name || b.type} | Cultivation:{" "}
+                          {b.source || "—"} | Material:{" "}
                         </>
                       )}
                       {materialType === "freshFrozen"
@@ -3797,14 +3959,24 @@ export default function Extraction() {
                       )}
                     </div>
 
-                    {userCanDelete ? (
-                      <button
-                        style={deleteButtonStyle}
-                        onClick={() => deleteSourceBatch(b.id)}
-                      >
-                        Delete
-                      </button>
-                    ) : null}
+                    <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                      {userCanWrite ? (
+                        <button
+                          style={blueButtonStyle}
+                          onClick={() => openEditSourcePackage(b)}
+                        >
+                          Edit
+                        </button>
+                      ) : null}
+                      {userCanDelete ? (
+                        <button
+                          style={deleteButtonStyle}
+                          onClick={() => deleteSourceBatch(b.id)}
+                        >
+                          Delete
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 );
               })
@@ -5377,6 +5549,121 @@ export default function Extraction() {
           {syncMessage}
         </div>
       ) : null}
+
+        {editSourcePackage ? (
+          <div style={modalBackStyle}>
+            <div style={{ ...modalStyle, maxWidth: 560 }}>
+              <h2 style={{ marginTop: 0 }}>Edit source package</h2>
+              <p style={{ fontSize: 13, color: "#94a3b8", marginTop: 0 }}>
+                Harvest code uses strain acronym + harvest date (e.g. GMO.051226). Cultivation batch
+                id is the clone/flower lot; extraction runs get a new market code when created.
+              </p>
+
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+                Harvest package code
+              </label>
+              <input
+                style={{ ...inputStyle, marginBottom: 14 }}
+                value={editSourceId}
+                onChange={(e) => setEditSourceId(e.target.value)}
+                disabled={isLikelyDatabaseSourcePackageId(editSourcePackage.id)}
+                autoComplete="off"
+              />
+
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+                Display name
+              </label>
+              <input
+                style={{ ...inputStyle, marginBottom: 14 }}
+                value={editSourceName}
+                onChange={(e) => setEditSourceName(e.target.value)}
+                autoComplete="off"
+              />
+
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+                Material type
+              </label>
+              <select
+                style={{ ...inputStyle, marginBottom: 14 }}
+                value={editSourceType}
+                onChange={(e) => setEditSourceType(e.target.value)}
+              >
+                <option value="Fresh Frozen">Fresh Frozen</option>
+                <option value="Dry Trim">Dry Trim</option>
+              </select>
+
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+                Cultivation batch id
+              </label>
+              <input
+                style={{ ...inputStyle, marginBottom: 14 }}
+                value={editSourceCultivationId}
+                onChange={(e) => setEditSourceCultivationId(e.target.value)}
+                autoComplete="off"
+              />
+
+              {editSourceType === "Fresh Frozen" ? (
+                <>
+                  <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+                    Bundles
+                  </label>
+                  <input
+                    style={{ ...inputStyle, marginBottom: 14 }}
+                    value={editSourceBundles}
+                    onChange={(e) => setEditSourceBundles(e.target.value)}
+                    autoComplete="off"
+                  />
+                  <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+                    Grams
+                  </label>
+                  <input
+                    style={{ ...inputStyle, marginBottom: 14 }}
+                    value={editSourceGrams}
+                    onChange={(e) => setEditSourceGrams(e.target.value)}
+                    autoComplete="off"
+                  />
+                </>
+              ) : null}
+
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+                Weight (lbs)
+              </label>
+              <input
+                style={{ ...inputStyle, marginBottom: 14 }}
+                value={editSourceWeightLbs}
+                onChange={(e) => setEditSourceWeightLbs(e.target.value)}
+                autoComplete="off"
+              />
+
+              <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+                Status
+              </label>
+              <select
+                style={{ ...inputStyle, marginBottom: 16 }}
+                value={editSourceStatus}
+                onChange={(e) => setEditSourceStatus(e.target.value)}
+              >
+                <option value="Available for Extraction">Available for Extraction</option>
+                <option value="Partially Used in Extraction">Partially Used in Extraction</option>
+                <option value="Used in Extraction">Used in Extraction</option>
+              </select>
+
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button type="button" style={buttonStyle} onClick={closeEditSourcePackage}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  style={greenButtonStyle}
+                  onClick={() => void saveEditSourcePackage()}
+                  disabled={editSourceSaving}
+                >
+                  {editSourceSaving ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {viewBatch && (
           <div style={modalBackStyle}>

@@ -29,3 +29,17 @@ export async function deleteSourceBatchRecord(batchId: string) {
     method: "DELETE",
   });
 }
+
+/** Prisma SourcePackage rows: update display name (canonicalName) only. */
+export async function patchSourcePackageCanonicalName(
+  sourcePackageId: string,
+  canonicalName: string,
+) {
+  return apiRequest(
+    `/api/workflow/source-packages/${encodeURIComponent(sourcePackageId)}`,
+    {
+      method: "PATCH",
+      body: { canonicalName },
+    },
+  );
+}

@@ -1331,6 +1331,27 @@ legacyCpuRouter.put("/source-batches/:id", requireRole(sourceBatchWriteRoles), a
     const companyId = getScopedCompanyId(req);
     const id = String(req.params.id || "").trim();
     const body = req.body || {};
+    const requestedId = String(body.id || "").trim();
+    const newId = requestedId && requestedId !== id ? requestedId : "";
+    if (isLikelyPrismaSourcePackageId(id)) {
+        const canonicalName = String(body.name ?? body.canonicalName ?? "").trim();
+        if (canonicalName) {
+            await workflowService.updateSourcePackage(companyId, req.auth.userId, {
+                sourcePackageId: id,
+                canonicalName,
+            });
+        }
+        const pkg = await prisma.sourcePackage.findFirst({
+            where: { id, sourceChain: { companyId } },
+            include: { sourceChain: { include: { cultivationBatch: true } } },
+        });
+        if (!pkg) {
+            throw new AppError("Source batch not found", 404);
+        }
+        invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
+        res.json(mapSourcePackageToLegacyBatch(pkg, { summary: false }));
+        return;
+    }
     const snap = await storeService.load(companyId);
     const base = snapshotForStoreSave(snap);
     const current = Array.isArray(base.sourceBatches) ? [...base.sourceBatches] : [];
@@ -1338,11 +1359,32 @@ legacyCpuRouter.put("/source-batches/:id", requireRole(sourceBatchWriteRoles), a
     if (idx < 0) {
         throw new AppError("Source batch not found", 404);
     }
-    current[idx] = { ...current[idx], ...body, id: current[idx].id };
-    base.sourceBatches = current;
+    if (newId) {
+        if (current.some((b, i) => i !== idx && String(b?.id || "") === newId)) {
+            throw new AppError("A source batch with that id already exists", 409);
+        }
+        const row = { ...current[idx], ...body, id: newId };
+        current.splice(idx, 1);
+        current.unshift(row);
+        base.sourceBatches = current;
+        const prod = Array.isArray(base.productionBatches) ? [...base.productionBatches] : [];
+        base.productionBatches = prod.map((b) => String(b?.id || "") === id ? { ...b, ...row } : b);
+    }
+    else {
+        current[idx] = { ...current[idx], ...body, id: current[idx].id };
+        base.sourceBatches = current;
+        const prodIdx = (base.productionBatches || []).findIndex((b) => String(b?.id || "") === id);
+        if (prodIdx >= 0) {
+            base.productionBatches = [...base.productionBatches];
+            base.productionBatches[prodIdx] = { ...base.productionBatches[prodIdx], ...body, id };
+        }
+    }
     await storeService.save(companyId, req.auth.userId, base);
     invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
-    res.json(current[idx]);
+    const saved = newId
+        ? current.find((b) => String(b?.id || "") === newId)
+        : current.find((b) => String(b?.id || "") === id);
+    res.json(saved);
 }));
 legacyCpuRouter.delete("/source-batches/:id", requireRole(sourceBatchWriteRoles), asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);

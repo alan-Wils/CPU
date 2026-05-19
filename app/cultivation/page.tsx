@@ -47,6 +47,7 @@ import { fetchCachedCompanyConfig } from "@/lib/configClient";
 import { extractHarvestSheet, uploadHarvestSheetImage } from "@/lib/harvestSheetApi";
 import { fileToBase64DataUrl, shrinkHarvestSheetImageFileIfLarge } from "@/lib/shrinkHarvestSheetImage";
 import { createSourceBatch, loadSourceBatches } from "@/lib/sourceBatchApi";
+import { makeChainBatchCode, makeDateCode } from "@/lib/batchChainCodes";
 import { isActiveExtractionSourceBatch } from "@/lib/sourceBatchActive";
 import {
   createLog,
@@ -632,45 +633,12 @@ function cultivationLogHasLaborData(log: any): boolean {
   );
 }
 
-function makeDateCode(date: string) {
-  const value = date || new Date().toISOString().slice(0, 10);
-  const parts = value.split("-");
-
-  if (parts.length === 3) {
-    const yyyy = parts[0] || "";
-    const mm = parts[1] || "";
-    const dd = parts[2] || "";
-    return `${mm}${dd}${yyyy.slice(-2)}`;
-  }
-
-  const d = new Date(value);
-  if (!Number.isNaN(d.getTime())) {
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    const yy = String(d.getFullYear()).slice(-2);
-    return `${mm}${dd}${yy}`;
-  }
-
-  return value.replaceAll("-", "").slice(-6);
+function makeBatchId(acronym: string, date: string, existingBatches: any[] = []) {
+  return makeChainBatchCode(acronym, date, existingBatches);
 }
 
-function makeBatchId(acronym: string, date: string, existingBatches: any[] = []) {
-  const cleanAcronym = acronym.trim().toUpperCase() || "BATCH";
-  const dateCode = makeDateCode(date);
-
-  const sameStrainSameDay = existingBatches.filter((batch: any) => {
-    const id = String(batch?.id || "");
-    return (
-      id === `${cleanAcronym}.${dateCode}` ||
-      id.startsWith(`${cleanAcronym}.`) && id.endsWith(`.${dateCode}`)
-    );
-  });
-
-  if (sameStrainSameDay.length === 0) {
-    return `${cleanAcronym}.${dateCode}`;
-  }
-
-  return `${cleanAcronym}.${sameStrainSameDay.length + 1}.${dateCode}`;
+function collectHarvestSourcePackageIds(s: { sourceBatches?: unknown[]; productionBatches?: unknown[] }) {
+  return [...(s.sourceBatches || []), ...(s.productionBatches || [])];
 }
 
 /** Last segment of batch id is `MMDDYY` per `makeDateCode` (e.g. `ACRONYM.MMDDYY` or `ACRONYM.N.MMDDYY`). */
@@ -3285,9 +3253,21 @@ export default function Cultivation() {
           ? Math.max(0, Math.round((Number(aiSumGrams) - gramsParsed) * 100) / 100)
           : null;
       const weightLbs = +(gramsParsed / 453.592).toFixed(4);
+      const harvestYmd = new Date().toISOString().slice(0, 10);
+      const harvestAcronym =
+        String(selectedBatch.acronym || "").trim().toUpperCase() ||
+        getConfigStrainAcronym(getCloneStrainByName(selectedBatch.strain, strainList) || {}) ||
+        "BATCH";
+      const harvestPackageId = makeChainBatchCode(
+        harvestAcronym,
+        harvestYmd,
+        collectHarvestSourcePackageIds(s),
+      );
       const freshFrozenBatch = {
-        id: nextSeriesBatchId("FF", selectedBatch.id, [s.sourceBatches, s.productionBatches]),
+        id: harvestPackageId,
         name: `${selectedBatch.strain} Fresh Frozen`,
+        harvestDate: harvestYmd,
+        harvestCode: harvestPackageId,
         type: "Fresh Frozen",
         amount: `${freshFrozenBundles || 0} bundles / ${gramsParsed} grams`,
         bundles: Number(freshFrozenBundles || 0),
@@ -3752,12 +3732,29 @@ export default function Cultivation() {
       )
 
       if (totalTrimForExtraction > 0) {
+        const trimHarvestYmd = new Date().toISOString().slice(0, 10);
+        const parentCultivationId = String(selectedDryFlowerBatch.source || "").trim();
+        const parentCultivation =
+          (s.cloneBatches || []).find((b: any) => b.id === parentCultivationId) ||
+          (s.vegBatches || []).find((b: any) => b.id === parentCultivationId) ||
+          (s.flowerBatches || []).find((b: any) => b.id === parentCultivationId) ||
+          null;
+        const trimAcronym =
+          String(parentCultivation?.acronym || "").trim().toUpperCase() ||
+          getConfigStrainAcronym(
+            getCloneStrainByName(String(parentCultivation?.strain || ""), strainList) || {},
+          ) ||
+          "BATCH";
+        const trimPackageId = makeChainBatchCode(
+          trimAcronym,
+          trimHarvestYmd,
+          collectHarvestSourcePackageIds(s),
+        );
         const trimBatch = {
-          id: nextSeriesBatchId("TRIM", selectedDryFlowerBatch.id, [
-            s.sourceBatches,
-            s.productionBatches,
-          ]),
+          id: trimPackageId,
           name: `${selectedDryFlowerBatch.name} Trim`,
+          harvestDate: trimHarvestYmd,
+          harvestCode: trimPackageId,
           type: "Dry Trim",
           amount: `${totalTrimForExtraction} lbs`,
           weightLbs: totalTrimForExtraction,
