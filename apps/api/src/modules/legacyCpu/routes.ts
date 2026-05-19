@@ -189,7 +189,7 @@ function taskRowToLegacyLog(row, opts) {
     }
     const stage = String(row.stage || "");
     const area = stage === "EXTRACTION" ? "Extraction" : stage === "PACKAGING" ? "Packaging" : "Cultivation";
-    const fallback = {
+    const fallback: Record<string, unknown> = {
         id: row.id,
         actorUserId: row.actorUserId,
         area,
@@ -201,7 +201,7 @@ function taskRowToLegacyLog(row, opts) {
         data: {},
         time: row.createdAt.toISOString(),
         loggedAt: row.createdAt.toISOString(),
-        loggedAtIso: row.createdAt.toISOString()
+        loggedAtIso: row.createdAt.toISOString(),
     };
     if (loggedBy) {
         fallback.loggedBy = loggedBy;
