@@ -3256,7 +3256,7 @@ export default function Cultivation() {
       const harvestYmd = new Date().toISOString().slice(0, 10);
       const harvestAcronym =
         String(selectedBatch.acronym || "").trim().toUpperCase() ||
-        getConfigStrainAcronym(getCloneStrainByName(selectedBatch.strain, strainList) || {}) ||
+        getConfigStrainAcronym(getCloneStrainByName(selectedBatch.strain, configStrains) || {}) ||
         "BATCH";
       const harvestPackageId = makeChainBatchCode(
         harvestAcronym,
@@ -3742,7 +3742,7 @@ export default function Cultivation() {
         const trimAcronym =
           String(parentCultivation?.acronym || "").trim().toUpperCase() ||
           getConfigStrainAcronym(
-            getCloneStrainByName(String(parentCultivation?.strain || ""), strainList) || {},
+            getCloneStrainByName(String(parentCultivation?.strain || ""), configStrains) || {},
           ) ||
           "BATCH";
         const trimPackageId = makeChainBatchCode(
