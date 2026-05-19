@@ -8,9 +8,10 @@ import { defaultDymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration"
 
 describe("DYMO extraction batch label print layout", () => {
   const fields = {
-    newExtractionNumber: "N",
+    marketBatchCode: "GMO.051226",
     strain: "T",
     product: "P",
+    cultivationSourceLine: "",
   };
 
   it("wraps sheet in job so whole-label calibration moves sheet + template together", () => {
@@ -82,70 +83,71 @@ describe("DYMO extraction batch label print layout", () => {
     expect(formatExtractionBatchLabelNumber("")).toBe("—");
   });
 
-  it("lays out three lines top to bottom: extraction #, strain, product", () => {
-    const html = buildDymoExtractionBatchLabelPrintHtml(fields);
-    const iNex = html.indexOf('<div class="lbl-nex">');
-    const iStrain = html.indexOf('<div class="lbl-strain">');
-    const iProduct = html.indexOf('<div class="lbl-product">');
-    expect(iNex).toBeGreaterThan(0);
-    expect(iNex).toBeLessThan(iStrain);
+  it("lays out market code, strain, product, then optional cultivation footer", () => {
+    const withSource = buildDymoExtractionBatchLabelPrintHtml({
+      ...fields,
+      cultivationSourceLine: "GMO.051226",
+    });
+    const iMarket = withSource.indexOf('<div class="lbl-market">');
+    const iStrain = withSource.indexOf('<div class="lbl-strain">');
+    const iProduct = withSource.indexOf('<div class="lbl-product">');
+    const iCult = withSource.indexOf('<div class="lbl-cultivation">');
+    expect(iMarket).toBeGreaterThan(0);
+    expect(iMarket).toBeLessThan(iStrain);
     expect(iStrain).toBeLessThan(iProduct);
+    expect(iProduct).toBeLessThan(iCult);
   });
 
-  it("buildExtractionBatchLabelFields maps extraction #, strain from sources, product", () => {
+  it("buildExtractionBatchLabelFields uses market code, strain from sources, product", () => {
     expect(
       buildExtractionBatchLabelFields({
         id: "EXT-GMO0-010126",
-        marketBatchCode: "ABCD.010126",
+        marketBatchCode: "GMO.010126",
         productType: "Live Resin",
         sources: [{ name: "blue dream" }, { name: "gelato" }],
       }),
     ).toEqual({
-      newExtractionNumber: "GMO-010126-1",
+      marketBatchCode: "GMO.010126",
       strain: "Blue Dream · Gelato",
       product: "Live Resin",
+      cultivationSourceLine: "",
     });
   });
 
-  it("buildExtractionBatchLabelFields falls back strain to blend line and number to id", () => {
+  it("buildExtractionBatchLabelFields falls back strain to blend line and market code from EXT id", () => {
     expect(
       buildExtractionBatchLabelFields({
-        id: "EXT-99",
+        id: "EXT-GMO0-051226",
         productType: "Badder",
         sourceBlendLabel: "Blend A",
       }),
     ).toEqual({
-      newExtractionNumber: "EXT-99",
+      marketBatchCode: "GMO.051226",
       strain: "Blend A",
       product: "Badder",
+      cultivationSourceLine: "",
     });
   });
 
-  it("all three label line classes use bold weight in print CSS", () => {
-    const html = buildDymoExtractionBatchLabelPrintHtml(fields);
-    expect(html).toMatch(/\.lbl-nex\s*\{[^}]*font-weight:\s*700/s);
-    expect(html).toMatch(/\.lbl-strain\s*\{[^}]*font-weight:\s*700/s);
-    expect(html).toMatch(/\.lbl-product\s*\{[^}]*font-weight:\s*700/s);
+  it("buildExtractionBatchLabelFields includes cultivation source footer when resolved", () => {
+    expect(
+      buildExtractionBatchLabelFields(
+        {
+          id: "EXT-GMO0-051226",
+          marketBatchCode: "GMO.051226",
+          sources: [{ sourceId: "ff-1" }],
+        },
+        () => ({ source: "GMO.051226" }),
+      ).cultivationSourceLine,
+    ).toBe("GMO.051226");
   });
 
-  it("buildExtractionBatchLabelFields uses formatted extraction # when market code is shared", () => {
-    const shared = "GMO0.051226";
-    expect(
-      buildExtractionBatchLabelFields({
-        id: "EXT-GMO0-051226",
-        marketBatchCode: shared,
-        productType: "Live Resin Oil",
-        sources: [{ name: "G.M.O" }],
-      }).newExtractionNumber,
-    ).toBe("GMO-051226-1");
-    expect(
-      buildExtractionBatchLabelFields({
-        id: "EXT-GMO0-051226-2",
-        marketBatchCode: shared,
-        productType: "Live Resin Oil",
-        sources: [{ name: "G.M.O" }],
-      }).newExtractionNumber,
-    ).toBe("GMO-051226-2");
+  it("label line classes use bold for main lines and lighter cultivation footer", () => {
+    const html = buildDymoExtractionBatchLabelPrintHtml(fields);
+    expect(html).toMatch(/\.lbl-market\s*\{[^}]*font-weight:\s*700/s);
+    expect(html).toMatch(/\.lbl-strain\s*\{[^}]*font-weight:\s*700/s);
+    expect(html).toMatch(/\.lbl-product\s*\{[^}]*font-weight:\s*700/s);
+    expect(html).toMatch(/\.lbl-cultivation\s*\{[^}]*font-weight:\s*500/s);
   });
 
   it("uses full sticker width with inner column and line gap", () => {

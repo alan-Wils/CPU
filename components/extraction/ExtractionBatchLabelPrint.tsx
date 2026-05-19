@@ -10,6 +10,11 @@ import {
   validateDymoLabelCalibrationSettings,
   clampDymoLabelPrintCopies,
 } from "@/lib/dymoLabelCalibration";
+import {
+  collectExtractionCultivationSourceLabels,
+  extractionBatchMarketBatchCode,
+  formatExtractionCultivationSourceFooter,
+} from "@/lib/extractionBatchDisplay";
 
 export type { DymoLabelCalibrationSettings };
 export { defaultDymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration";
@@ -21,14 +26,13 @@ export { defaultDymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration"
 export const DYMO_LABEL_LAYOUT_DEBUG = false;
 
 export type ExtractionBatchLabelFields = {
-  /**
-   * Display extraction number: `acronym-date-run` (e.g. `GMO-051226-2`) parsed from stored `EXT-…` ids;
-   * non-matching ids pass through unchanged.
-   */
-  newExtractionNumber: string;
+  /** Market / lot code (`strainAcronym.MMDDYY`, e.g. `GMO.051226`). */
+  marketBatchCode: string;
   /** Strain names from extraction source rows (deduped, first-seen order), else saved blend/source line. */
   strain: string;
   product: string;
+  /** Cultivation batch id(s) linked via source packages (small footer on label). */
+  cultivationSourceLine: string;
 };
 
 /**
@@ -60,18 +64,22 @@ function collectStrainNamesFromSources(sources: Array<{ name?: string }>): strin
   return out;
 }
 
-export function buildExtractionBatchLabelFields(batch: {
-  id?: string;
-  marketBatchCode?: string;
-  productType?: string;
-  name?: string;
-  sourceBlendLabel?: string;
-  source?: string;
-  sources?: Array<{ name?: string }>;
-}): ExtractionBatchLabelFields {
-  const batchId = String(batch?.id || "").trim() || "—";
+export function buildExtractionBatchLabelFields(
+  batch: {
+    id?: string;
+    marketBatchCode?: string;
+    productType?: string;
+    name?: string;
+    sourceBlendLabel?: string;
+    source?: string;
+    cultivationBatchId?: string;
+    blendCultivationBatchIds?: unknown;
+    sources?: Array<{ name?: string; sourceId?: string }>;
+  },
+  resolveSource?: (sourceId: string) => { source?: string } | null | undefined,
+): ExtractionBatchLabelFields {
   const product = String(batch?.productType || batch?.name || "").trim() || "—";
-  const newExtractionNumber = formatExtractionBatchLabelNumber(batchId);
+  const marketBatchCode = extractionBatchMarketBatchCode(batch);
   let strain = "—";
   if (Array.isArray(batch?.sources) && batch.sources.length > 0) {
     const names = collectStrainNamesFromSources(batch.sources);
@@ -85,7 +93,10 @@ export function buildExtractionBatchLabelFields(batch: {
     strain =
       String(batch?.sourceBlendLabel || batch?.source || "").trim() || "—";
   }
-  return { newExtractionNumber, strain, product };
+  const cultivationSourceLine = formatExtractionCultivationSourceFooter(
+    collectExtractionCultivationSourceLabels(batch, resolveSource),
+  );
+  return { marketBatchCode, strain, product, cultivationSourceLine };
 }
 
 function escapeHtml(s: string) {
@@ -139,7 +150,7 @@ function buildDymoLabelContentTransform(s: DymoLabelCalibrationSettings): string
 
 /**
  * Full HTML document for a hidden iframe (no inline script — parent calls print()).
- * Label copy is a single column: extraction number (acronym-date-run) → strain → product (see `.dymo-label-inner`), all bold.
+ * Label copy: market batch code → strain → product; cultivation source batch(es) in a small footer line.
  * @param copies Number of identical labels (each on its own @page); clamped {@link clampDymoLabelPrintCopies}.
  */
 export function buildDymoExtractionBatchLabelPrintHtml(
@@ -161,9 +172,14 @@ export function buildDymoExtractionBatchLabelPrintHtml(
       <div class="dymo-label-frame${dbg}">
         <div class="dymo-label-content${dbg}">
         <div class="dymo-label-inner">
-          <div class="lbl-nex">${escapeHtml(f.newExtractionNumber)}</div>
+          <div class="lbl-market">${escapeHtml(f.marketBatchCode)}</div>
           <div class="lbl-strain">${escapeHtml(f.strain)}</div>
           <div class="lbl-product">${escapeHtml(f.product)}</div>
+          ${
+            f.cultivationSourceLine
+              ? `<div class="lbl-cultivation">${escapeHtml(f.cultivationSourceLine)}</div>`
+              : ""
+          }
         </div>
         </div>
       </div>
@@ -347,12 +363,21 @@ export function buildDymoExtractionBatchLabelPrintHtml(
   .dymo-label-debug.dymo-label-content {
     box-shadow: inset 0 0 0 2px #7c3aed;
   }
-  .lbl-nex {
+  .lbl-market {
     font-size: calc(10.5pt * var(--dymo-font-mul));
     font-weight: 700;
     letter-spacing: 0.02em;
     line-height: 1.07;
     color: #0f172a;
+    max-width: 100%;
+    word-break: break-word;
+  }
+  .lbl-cultivation {
+    margin-top: auto;
+    font-size: calc(5.75pt * var(--dymo-font-mul));
+    font-weight: 500;
+    line-height: 1.12;
+    color: #475569;
     max-width: 100%;
     word-break: break-word;
   }
@@ -585,7 +610,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
           }}
         >
           Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}). Lines top → bottom:{" "}
-          <strong style={{ color: "#e2e8f0" }}>acronym-date-run → strain → product</strong> (all bold).{" "}
+          <strong style={{ color: "#e2e8f0" }}>market code → strain → product</strong>; cultivation source at bottom.{" "}
           <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job ·{" "}
           <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame ·{" "}
           <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content.
@@ -719,7 +744,7 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                         color: "#0f172a",
                       }}
                     >
-                      {fields.newExtractionNumber}
+                      {fields.marketBatchCode}
                     </div>
                     <div
                       style={{
@@ -745,6 +770,21 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
                     >
                       {fields.product}
                     </div>
+                    {fields.cultivationSourceLine ? (
+                      <div
+                        style={{
+                          marginTop: "auto",
+                          fontSize: `calc(5.75pt * ${fmul})`,
+                          fontWeight: 500,
+                          lineHeight: 1.12,
+                          maxWidth: "100%",
+                          wordBreak: "break-word",
+                          color: "#475569",
+                        }}
+                      >
+                        {fields.cultivationSourceLine}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>

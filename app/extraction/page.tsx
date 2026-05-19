@@ -107,6 +107,11 @@ import {
   ExtractionBatchLabelPreview,
   openExtractionBatchLabelPrintWindow,
 } from "@/components/extraction/ExtractionBatchLabelPrint";
+import {
+  collectExtractionCultivationSourceLabels,
+  extractionBatchMarketBatchCode,
+  formatExtractionCultivationSourceFooter,
+} from "@/lib/extractionBatchDisplay";
 
 const sourceMaterialTypes = {
   freshFrozen: [
@@ -1194,6 +1199,12 @@ export default function Extraction() {
 
   function getSource(sourceId: string) {
     return s.sourceBatches.find((b: any) => b.id === sourceId);
+  }
+
+  function extractionBatchCultivationFooter(batch: any): string {
+    return formatExtractionCultivationSourceFooter(
+      collectExtractionCultivationSourceLabels(batch, getSource),
+    );
   }
 
   function collectStrainNamesForExtractionBatch(batch: any): string[] {
@@ -2558,7 +2569,7 @@ export default function Extraction() {
     }
 
     if (selectedTask === "Print Batch Label") {
-      const label = buildExtractionBatchLabelFields(selectedExt);
+      const label = buildExtractionBatchLabelFields(selectedExt, getSource);
       return {
         label,
         dymoCalibration: dymoSavedCalibration,
@@ -3735,11 +3746,7 @@ export default function Extraction() {
                     onClick={() => setSelectedExt(b)}
                     style={{ flex: 1, cursor: "pointer" }}
                   >
-                    <b>{b.marketBatchCode || b.id}</b>
-                    {b.marketBatchCode ? (
-                      <span style={{ fontWeight: 600 }}> ({b.id})</span>
-                    ) : null}{" "}
-                    | {b.name} | Biomass Used:{" "}
+                    <b>{extractionBatchMarketBatchCode(b)}</b> | {b.name} | Biomass Used:{" "}
                     {extractionBatchBiomassLbs(b) > 0
                       ? `${extractionBatchBiomassLbs(b)} lbs`
                       : "—"}{" "}
@@ -3762,6 +3769,18 @@ export default function Extraction() {
                       <div style={{ fontSize: 12, marginTop: 6, color: "#fbbf24", fontWeight: 600 }}>
                         Merged with {getMergedPartnerIds(b).length} batch
                         {getMergedPartnerIds(b).length === 1 ? "" : "es"} — use Undo Combine to restore
+                      </div>
+                    ) : null}
+                    {extractionBatchCultivationFooter(b) ? (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          marginTop: 6,
+                          fontWeight: 500,
+                          opacity: selectedExt?.id === b.id ? 0.8 : 0.92,
+                        }}
+                      >
+                        Source (cultivation): {extractionBatchCultivationFooter(b)}
                       </div>
                     ) : null}
                   </div>
@@ -3827,11 +3846,8 @@ export default function Extraction() {
               completedMergedExtractionBatches.map((b: any) => (
                 <div key={b.id} style={{ ...rowStyle, background: "#111827" }}>
                   <div style={{ flex: 1 }}>
-                    <b>{b.marketBatchCode || b.id}</b>
-                    {b.marketBatchCode ? (
-                      <span style={{ fontWeight: 600 }}> ({b.id})</span>
-                    ) : null}{" "}
-                    | {b.name || "—"} | Status: {b.status || "Merged"}
+                    <b>{extractionBatchMarketBatchCode(b)}</b> | {b.name || "—"} | Status:{" "}
+                    {b.status || "Merged"}
                     {b.mergedIntoBatchId ? (
                       <span style={{ color: "#fbbf24" }}> | Merged into {b.mergedIntoBatchId}</span>
                     ) : null}
@@ -4177,7 +4193,7 @@ export default function Extraction() {
                       <option value="">Select partner batch…</option>
                       {combinePartnerOptions.map((b: any) => (
                         <option key={b.id} value={b.id}>
-                          {b.marketBatchCode || b.id}
+                          {extractionBatchMarketBatchCode(b)}
                           {b.sourceBlendLabel ? ` · ${b.sourceBlendLabel}` : ""}
                           {combineUsesOilGrams
                             ? extractionBatchOilGrams(b) > 0
@@ -4394,7 +4410,7 @@ export default function Extraction() {
                         onPrintCopiesChange={(n) => setDymoLabelPrintCopies(clampDymoLabelPrintCopies(n))}
                         onTestPrint={() => {
                           const ok = openExtractionBatchLabelPrintWindow(
-                            buildExtractionBatchLabelFields(selectedExt),
+                            buildExtractionBatchLabelFields(selectedExt, getSource),
                             {
                               calibration: dymoDraftCalibration,
                               copies: dymoLabelPrintCopiesClamped,
@@ -4412,7 +4428,7 @@ export default function Extraction() {
                         inputStyle={inputStyle}
                       />
                       <ExtractionBatchLabelPreview
-                        fields={buildExtractionBatchLabelFields(selectedExt)}
+                        fields={buildExtractionBatchLabelFields(selectedExt, getSource)}
                         calibration={dymoDraftCalibration}
                       />
                       <button
@@ -4431,7 +4447,7 @@ export default function Extraction() {
                         }}
                         onClick={() => {
                           const ok = openExtractionBatchLabelPrintWindow(
-                            buildExtractionBatchLabelFields(selectedExt),
+                            buildExtractionBatchLabelFields(selectedExt, getSource),
                             {
                               calibration: dymoSavedCalibration,
                               copies: dymoLabelPrintCopiesClamped,
@@ -5258,13 +5274,7 @@ export default function Extraction() {
               ) : (
                 <>
                   <p>
-                    <b>{viewBatch.marketBatchCode || viewBatch.id}</b>
-                    {viewBatch.marketBatchCode ? (
-                      <span style={{ color: "#94a3b8", fontWeight: 600 }}>
-                        {" "}
-                        (run {viewBatch.id})
-                      </span>
-                    ) : null}
+                    <b>{extractionBatchMarketBatchCode(viewBatch)}</b>
                   </p>
 
                   <p>
@@ -5281,6 +5291,12 @@ export default function Extraction() {
                   {viewBatch.sourceBlendLabel ? (
                     <p style={{ color: "#cbd5e1" }}>
                       <b>Blend:</b> {viewBatch.sourceBlendLabel}
+                    </p>
+                  ) : null}
+
+                  {extractionBatchCultivationFooter(viewBatch) ? (
+                    <p style={{ fontSize: 12, color: "#94a3b8", margin: "8px 0 0" }}>
+                      Source (cultivation): {extractionBatchCultivationFooter(viewBatch)}
                     </p>
                   ) : null}
 
