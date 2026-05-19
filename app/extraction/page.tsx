@@ -88,6 +88,8 @@ import {
   sanitizeExtractionBatchMergeState,
   survivorPutPayloadAfterPhantomMergeClear,
   rebuildExtractionBatchSourceSummary,
+  ensureExtractionBatchMaterialTotals,
+  resolveExtractionBatchSourceRows,
   resolveAbsorbedForUncombine,
   setExtractionBatchCombinedOilGrams,
   setExtractionBatchTotalBiomassLbs,
@@ -1305,6 +1307,10 @@ export default function Extraction() {
   function getDefaultTaskForBatch(batch: any) {
     if (isTaskAllowed(batch, "Whip")) return "Whip";
     return getNextAllowedTask(batch);
+  }
+
+  function getExtractionSourceRowsForDisplay(batch: any) {
+    return resolveExtractionBatchSourceRows(batch, getSource);
   }
 
   function getSource(sourceId: string) {
@@ -3126,6 +3132,7 @@ export default function Extraction() {
       }
       selectedExt.combinedFromBatchIds.push(partnerId);
       rebuildExtractionBatchSourceSummary(selectedExt, mergedSources);
+      ensureExtractionBatchMaterialTotals(selectedExt, getSource);
 
       let mergeData: Record<string, unknown>;
       let survivorOutput: string;
@@ -5745,8 +5752,10 @@ export default function Extraction() {
 
                   <p>
                     {viewBatch.name} | Status: {viewBatch.status} | Biomass Used:{" "}
-                    {viewBatch.totalBiomassUsed || viewBatch.amount || "—"} lbs |
-                    Final: {num(viewBatch.totalFinalGrams) || "—"} g
+                    {extractionBatchBiomassLbs(viewBatch) > 0
+                      ? `${extractionBatchBiomassLbs(viewBatch)} lbs`
+                      : "—"}{" "}
+                    | Final: {num(viewBatch.totalFinalGrams) || "—"} g
                   </p>
                   <ExtractionBatchYieldSummary
                     batch={viewBatch}
@@ -5887,8 +5896,8 @@ export default function Extraction() {
 
               <h3>Sources Used</h3>
 
-              {viewBatch.sources ? (
-                viewBatch.sources.map((src: any, index: number) => (
+              {getExtractionSourceRowsForDisplay(viewBatch).length > 0 ? (
+                getExtractionSourceRowsForDisplay(viewBatch).map((src: any, index: number) => (
                   <div
                     key={index}
                     style={{

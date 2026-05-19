@@ -13,6 +13,7 @@ import {
   sweepMergedExtractionBatchesToCompleted,
   mergeExtractionSourceRows,
   rebuildExtractionBatchSourceSummary,
+  resolveExtractionBatchSourceRows,
   resolveAbsorbedForUncombine,
   applyExtractionPartnerUncombineRestore,
   applyPrunedCombinedFromBatchIds,
@@ -225,6 +226,24 @@ describe("extractionMergeHelpers", () => {
   it("extractionBatchBiomassLbs reads totalBiomassUsed or amount string", () => {
     expect(extractionBatchBiomassLbs({ totalBiomassUsed: 42 })).toBe(42);
     expect(extractionBatchBiomassLbs({ amount: "12.5 lbs" })).toBe(12.5);
+  });
+
+  it("extractionBatchBiomassLbs falls back to Pack Socks Stop prepared lbs", () => {
+    expect(
+      extractionBatchBiomassLbs({
+        totalBiomassUsed: 0,
+        taskData: { "Pack Socks Stop": { totalPreparedLbs: 59.45 } },
+      }),
+    ).toBe(59.45);
+  });
+
+  it("resolveExtractionBatchSourceRows rebuilds from comma-separated source ids", () => {
+    const rows = resolveExtractionBatchSourceRows({
+      source: "GMO.051226, FF-GMO.020926",
+      totalBiomassUsed: 100,
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows[0].amountUsed).toBe(50);
   });
 
   it("setExtractionBatchTotalBiomassLbs updates lbs fields", () => {

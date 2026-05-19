@@ -247,13 +247,90 @@ export function setExtractionBatchCombinedOilGrams(batch: any, oilGrams: number)
   batch.totalFinalGrams = +(oil + terps).toFixed(2);
 }
 
-/** Read total biomass in lbs from batch fields. */
+/** Biomass weighed at Pack Socks Stop (when totalBiomassUsed was never saved). */
+export function extractionBatchPreparedBiomassLbs(batch: any): number {
+  const stop = batch?.taskData?.["Pack Socks Stop"];
+  if (!stop || typeof stop !== "object") return 0;
+  const lbs = num((stop as { totalPreparedLbs?: unknown }).totalPreparedLbs);
+  if (lbs > 0) return lbs;
+  const grams = num((stop as { totalPreparedGrams?: unknown }).totalPreparedGrams);
+  if (grams > 0) return +(grams / 453.592).toFixed(4);
+  return 0;
+}
+
+function extractionBatchBiomassFromSourceRows(batch: any): number {
+  const rows = Array.isArray(batch?.sources) ? batch.sources : [];
+  if (rows.length === 0) return 0;
+  return +rows.reduce((sum, row) => sum + num(row?.amountUsed ?? row?.amount), 0).toFixed(2);
+}
+
+/** Read total biomass in lbs from batch fields (sources, pack socks, or amount string). */
 export function extractionBatchBiomassLbs(batch: any): number {
   const direct = num(batch?.totalBiomassUsed);
   if (direct > 0) return direct;
   const amt = String(batch?.amount ?? "");
   const match = amt.match(/([\d.]+)/);
-  return match ? num(match[1]) : 0;
+  if (match && num(match[1]) > 0) return num(match[1]);
+  const fromSources = extractionBatchBiomassFromSourceRows(batch);
+  if (fromSources > 0) return fromSources;
+  return extractionBatchPreparedBiomassLbs(batch);
+}
+
+/** Source rows for UI when legacy batches only stored comma-separated `source` ids. */
+export function resolveExtractionBatchSourceRows(
+  batch: any,
+  getSource?: (sourceId: string) => any | null | undefined,
+): any[] {
+  const existing = Array.isArray(batch?.sources) ? batch.sources : [];
+  const normalized = existing
+    .map((row) => {
+      const sourceId = String(row?.sourceId ?? row?.id ?? "").trim();
+      if (!sourceId) return null;
+      return { ...row, sourceId };
+    })
+    .filter(Boolean) as any[];
+  if (normalized.length > 0) return normalized;
+
+  const ids = String(batch?.source || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (ids.length === 0) return [];
+
+  const totalLbs = extractionBatchBiomassLbs(batch);
+  const each = ids.length > 0 ? +(totalLbs / ids.length).toFixed(4) : 0;
+  return ids.map((sourceId) => {
+    const src = getSource?.(sourceId);
+    const type = String(src?.type ?? "").toLowerCase();
+    const materialType =
+      type.includes("dry") || type.includes("trim")
+        ? "dryTrim"
+        : type.includes("fresh") || type.includes("frozen")
+          ? "freshFrozen"
+          : undefined;
+    return {
+      sourceId,
+      name: String(src?.name ?? src?.type ?? batch?.sourceBlendLabel ?? sourceId).trim(),
+      amountUsed: each,
+      ...(materialType ? { materialType } : {}),
+      ...(src?.acronym ? { acronym: src.acronym } : {}),
+    };
+  });
+}
+
+/** Backfill missing biomass / source summary before persisting or after combine. */
+export function ensureExtractionBatchMaterialTotals(
+  batch: any,
+  getSource?: (sourceId: string) => any | null | undefined,
+): void {
+  const rows = resolveExtractionBatchSourceRows(batch, getSource);
+  if (rows.length > 0) {
+    rebuildExtractionBatchSourceSummary(batch, rows);
+  }
+  if (extractionBatchBiomassLbs(batch) <= 0) {
+    const prep = extractionBatchPreparedBiomassLbs(batch);
+    if (prep > 0) setExtractionBatchTotalBiomassLbs(batch, prep);
+  }
 }
 
 /** Set total biomass on a batch (lbs string + inputGrams estimate). */
