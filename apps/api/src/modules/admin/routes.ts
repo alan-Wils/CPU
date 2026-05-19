@@ -157,6 +157,7 @@ adminRouter.patch("/users/:userId", requireRole(["OWNER", "ADMIN", "OPERATIONS_M
         actorRole: req.auth.role,
         targetUserId: String(req.params.userId),
         email: payload.email,
+        username: payload.username,
         role: payload.role,
         isActive: payload.isActive,
         appPermissions: payload.appPermissions,

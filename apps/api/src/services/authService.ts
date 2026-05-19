@@ -18,6 +18,7 @@ import {
 } from "../lib/nexbatchRoles.js";
 import { CompanyRepository } from "../repositories/companyRepository.js";
 import { CompanyService } from "./companyService.js";
+import { userDisplayName } from "../lib/userDisplayName.js";
 
 type UserWithRelations = User & {
     company: Company | null;
@@ -99,7 +100,7 @@ export class AuthService {
         return jwt.sign(payload, env.JWT_SECRET, { expiresIn: ttl } as SignOptions);
     }
 
-    /** SPA `CpuUser` expects `username` + `email`; DB only stores `email`. */
+    /** SPA `CpuUser` expects `username` + `email`; `username` is the stored display name when set. */
     sessionUserFields(
         user: UserWithRelations,
         effectiveRole: string,
@@ -109,9 +110,10 @@ export class AuthService {
         companyMembershipRole: string | null = null,
     ) {
         const email = String(user.email ?? "").trim().toLowerCase();
-        const username = email.includes("@")
-            ? email.slice(0, email.indexOf("@"))
-            : (email || "user");
+        const username = userDisplayName({
+            displayName: (user as User & { displayName?: string | null }).displayName,
+            email,
+        });
         const platformRole = user.platformRole ?? null;
         return {
             id: user.id,

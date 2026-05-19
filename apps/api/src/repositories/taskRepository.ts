@@ -1,3 +1,4 @@
+import { userDisplayName } from "../lib/userDisplayName.js";
 import { TenantRepository } from "./TenantRepository.js";
 export class TaskRepository extends TenantRepository {
     async createTaskLog(companyId, data) {
@@ -20,14 +21,14 @@ export class TaskRepository extends TenantRepository {
             select: {
                 id: true,
                 email: true,
+                displayName: true,
                 role: true
             }
         });
         const usersById = new Map(users.map((u) => [
             u.id,
             {
-                // UI expects username in many places; prefer email local-part as readable name.
-                username: String(u.email || "").split("@")[0] || "User",
+                username: userDisplayName({ displayName: u.displayName, email: u.email }),
                 email: u.email || "",
                 role: String(u.role || "")
             }

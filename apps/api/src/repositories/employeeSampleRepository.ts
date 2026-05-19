@@ -20,7 +20,7 @@ export class EmployeeSampleRepository {
                 user: { isActive: true },
             },
             include: {
-                user: { select: { id: true, email: true, isActive: true } },
+                user: { select: { id: true, email: true, displayName: true, isActive: true } },
             },
             orderBy: { createdAt: "asc" },
         });
@@ -34,7 +34,7 @@ export class EmployeeSampleRepository {
                 designatedRnDSamplingEmployee: true,
                 user: { isActive: true },
             },
-            include: { user: { select: { id: true, email: true, isActive: true } } },
+            include: { user: { select: { id: true, email: true, displayName: true, isActive: true } } },
         });
         return m;
     }
@@ -100,8 +100,8 @@ export class EmployeeSampleRepository {
             orderBy: { transferDate: "desc" },
             take: input.take,
             include: {
-                employee: { select: { id: true, email: true } },
-                createdBy: { select: { id: true, email: true } },
+                employee: { select: { id: true, email: true, displayName: true } },
+                createdBy: { select: { id: true, email: true, displayName: true } },
             },
         });
     }
@@ -110,8 +110,8 @@ export class EmployeeSampleRepository {
         return prisma.employeeSample.findFirst({
             where: { companyId, id },
             include: {
-                employee: { select: { id: true, email: true, isActive: true } },
-                createdBy: { select: { id: true, email: true } },
+                employee: { select: { id: true, email: true, displayName: true, isActive: true } },
+                createdBy: { select: { id: true, email: true, displayName: true } },
             },
         });
     }
@@ -120,8 +120,8 @@ export class EmployeeSampleRepository {
         return prisma.employeeSample.create({
             data,
             include: {
-                employee: { select: { id: true, email: true } },
-                createdBy: { select: { id: true, email: true } },
+                employee: { select: { id: true, email: true, displayName: true } },
+                createdBy: { select: { id: true, email: true, displayName: true } },
             },
         });
     }

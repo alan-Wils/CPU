@@ -12,19 +12,13 @@ import {
     COLORADO_EMPLOYEE_SAMPLE_SERVINGS_OR_PRODUCTS_PER_MONTH,
 } from "../lib/coloradoEmployeeSampleLimits.js";
 import { evaluateMonthlyLimits, concentrateCap } from "../lib/employeeSampleUsage.js";
+import { userDisplayName } from "../lib/userDisplayName.js";
 import { EmployeeSampleRepository } from "../repositories/employeeSampleRepository.js";
 
 function denverYearMonth(d: Date): string {
     const y = new Intl.DateTimeFormat("en", { timeZone: "America/Denver", year: "numeric" }).format(d);
     const m = new Intl.DateTimeFormat("en", { timeZone: "America/Denver", month: "2-digit" }).format(d);
     return `${y}-${m}`;
-}
-
-function displayNameFromEmail(email: string): string {
-    const e = String(email || "").trim().toLowerCase();
-    if (!e.includes("@"))
-        return e || "User";
-    return e.slice(0, e.indexOf("@")) || "User";
 }
 
 export class EmployeeSampleService {
@@ -35,7 +29,7 @@ export class EmployeeSampleService {
         return rows.map((r) => ({
             id: r.user.id,
             email: r.user.email,
-            displayName: displayNameFromEmail(r.user.email),
+            displayName: userDisplayName({ displayName: r.user.displayName, email: r.user.email }),
             active: r.user.isActive,
         }));
     }
@@ -184,7 +178,10 @@ export class EmployeeSampleService {
         const created = await this.repo.createRow({
             company: { connect: { id: input.companyId } },
             employee: { connect: { id: input.employeeId } },
-            employeeNameSnapshot: displayNameFromEmail(email),
+            employeeNameSnapshot: userDisplayName({
+                displayName: m.user.displayName,
+                email,
+            }),
             employeeIdentifierSnapshot: input.employeeIdentifierSnapshot?.trim() || null,
             licenseType: input.licenseType,
             sourceType: input.sourceType,

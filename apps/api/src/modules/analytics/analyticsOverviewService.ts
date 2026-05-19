@@ -8,6 +8,7 @@ import {
   sumLeafLinkInventoryValueUsd,
 } from "../../services/leaflinkService.js";
 import { memoizedReadWithMeta } from "../../lib/requestMemoCache.js";
+import { userDisplayName } from "../../lib/userDisplayName.js";
 import { LeafLinkOrdersService, type OrdersAnalyticsDto } from "../../services/leafLinkOrdersService.js";
 
 const companyServices = new CompanyServiceSettingsService();
@@ -592,14 +593,16 @@ async function buildAnalyticsOverviewBody(
     topLaborIds.length > 0
       ? await prisma.user.findMany({
           where: { id: { in: topLaborIds } },
-          select: { id: true, email: true },
+          select: { id: true, email: true, displayName: true },
         })
       : [];
-  const emailById = new Map(laborUsers.map((u) => [u.id, u.email]));
+  const userById = new Map(laborUsers.map((u) => [u.id, u]));
   const topPerformers = topLaborIds.map((id) => {
     const agg = laborByUser.get(id)!;
-    const email = emailById.get(id) ?? id;
-    const name = email.includes("@") ? email.split("@")[0] : email;
+    const u = userById.get(id);
+    const name = u
+      ? userDisplayName({ displayName: u.displayName, email: u.email })
+      : id;
     return {
       userId: id,
       name,

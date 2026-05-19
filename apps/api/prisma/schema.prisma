@@ -571,6 +571,8 @@ model User {
   companyId    String?
   company      Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
   email        String  @unique
+  /// Admin-set display name (logs, employee lists). Falls back to email local-part when null.
+  displayName  String?
   passwordHash String
   /// Legacy Prisma role; kept for invites, audits, and gradual UI mapping.
   role         UserRole

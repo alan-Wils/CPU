@@ -134,7 +134,7 @@ function mergeUsersWithPendingInvites(
     if (!em || seen.has(em)) continue;
     extras.push({
       id: `${PENDING_INVITE_ROW_PREFIX}${inv.id}`,
-      username: inv.email.split("@")[0] || inv.email,
+      username: inv.username || inv.email.split("@")[0] || inv.email,
       email: inv.email,
       role: inv.role,
       active: false,
@@ -2104,6 +2104,7 @@ export default function AdminPage() {
         }
         body.appPermissions = editAppPermissions.length > 0 ? editAppPermissions : null;
       } else {
+        body.username = editUsername.trim();
         body.email = editEmail.trim() || undefined;
         body.role = editRole;
         body.isActive = editActive;
@@ -2542,7 +2543,7 @@ export default function AdminPage() {
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         style={inputStyle}
-                        placeholder="Not stored — invite uses email only"
+                        placeholder="e.g. Mike K (set after they join via Edit user)"
                         autoComplete="off"
                         name="invite-user-username"
                       />

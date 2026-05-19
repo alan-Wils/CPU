@@ -480,6 +480,8 @@ const adminUserUpdateRoleEnum = z.enum([
 const appPermissionIdSchema = z.enum([...ALL_APP_PERMISSION_IDS] as [string, ...string[]]);
 export const adminUserUpdateSchema = z.preprocess(preprocessBodyNormalizeUserRole, z.object({
     email: z.string().email().optional(),
+    /** Human-readable name for logs and employee UI (stored as User.displayName). */
+    username: z.string().trim().min(1).max(120).optional(),
     role: adminUserUpdateRoleEnum.optional(),
     isActive: z.boolean().optional(),
     /** `null` clears overrides (role defaults). Omitted = do not change membership permissions. */
@@ -493,7 +495,7 @@ export const adminUserUpdateSchema = z.preprocess(preprocessBodyNormalizeUserRol
     /** Colorado MED — Designated R-and-D Sampling Employee (Metrc). */
     designatedRnDSamplingEmployee: z.boolean().optional(),
 }).superRefine((val, ctx) => {
-    const n = [val.email, val.role, val.isActive, val.appPermissions, val.cashLogEodEnabled, val.rewardsEnrolled, val.cultivationAlertsEnabled, val.designatedRnDSamplingEmployee].filter((x) => x !== undefined).length;
+    const n = [val.email, val.username, val.role, val.isActive, val.appPermissions, val.cashLogEodEnabled, val.rewardsEnrolled, val.cultivationAlertsEnabled, val.designatedRnDSamplingEmployee].filter((x) => x !== undefined).length;
     if (n === 0) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,

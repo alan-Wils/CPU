@@ -12,7 +12,14 @@ export class AdminRepository extends TenantRepository {
             where: { companyId },
             include: {
                 user: {
-                    select: { id: true, email: true, role: true, isActive: true, createdAt: true },
+                    select: {
+                        id: true,
+                        email: true,
+                        displayName: true,
+                        role: true,
+                        isActive: true,
+                        createdAt: true,
+                    },
                 },
             },
             orderBy: { createdAt: "desc" },
@@ -95,6 +102,10 @@ export class AdminRepository extends TenantRepository {
         const userPatch: Prisma.UserUpdateManyMutationInput = {};
         if (data.email !== undefined)
             userPatch.email = data.email;
+        if (data.displayName !== undefined) {
+            const trimmed = String(data.displayName).trim();
+            userPatch.displayName = trimmed.length > 0 ? trimmed : null;
+        }
         if (data.role !== undefined)
             userPatch.role = data.role;
         if (data.isActive !== undefined)

@@ -8,6 +8,7 @@ import { AdminRepository } from "../repositories/adminRepository.js";
 import { mayAdminEnableOwnerDigestEmails } from "./adminDigestPolicy.js";
 import { AuditService } from "./auditService.js";
 import { AuthService } from "./authService.js";
+import { userDisplayName } from "../lib/userDisplayName.js";
 export class AdminService {
     repo = new AdminRepository();
     auditService = new AuditService();
@@ -135,7 +136,7 @@ export class AdminService {
         return rows.map(
             ({ user: u, appPermissions, cashLogEodEnabled, rewardsEnrolled, cultivationAlertsEnabled, designatedRnDSamplingEmployee }) => ({
                 id: u.id,
-                username: u.email.split("@")[0],
+                username: userDisplayName({ displayName: u.displayName, email: u.email }),
                 email: u.email,
                 role: u.role,
                 active: u.isActive,
@@ -149,7 +150,21 @@ export class AdminService {
             }),
         );
     }
-    async updateUser(input) {
+    async updateUser(input: {
+        companyId: string;
+        actorUserId: string;
+        actorRole: string;
+        targetUserId: string;
+        email?: string;
+        username?: string;
+        role?: string;
+        isActive?: boolean;
+        appPermissions?: string[] | null;
+        cashLogEodEnabled?: boolean;
+        rewardsEnrolled?: boolean;
+        cultivationAlertsEnabled?: boolean;
+        designatedRnDSamplingEmployee?: boolean;
+    }) {
         const target = await this.repo.findUserById(input.companyId, input.targetUserId);
         if (!target)
             throw new AppError("Target user not found", 404);
@@ -179,6 +194,7 @@ export class AdminService {
             }
             const triedNonPermissionFields =
                 input.email !== undefined ||
+                input.username !== undefined ||
                 input.role !== undefined ||
                 input.isActive !== undefined ||
                 input.cashLogEodEnabled !== undefined ||
@@ -200,6 +216,8 @@ export class AdminService {
             const profileDirty =
                 (input.email !== undefined &&
                     input.email.trim().toLowerCase() !== target.email.trim().toLowerCase()) ||
+                (input.username !== undefined &&
+                    input.username.trim() !== String(target.displayName ?? "").trim()) ||
                     (input.role !== undefined && input.role !== target.role) ||
                     (input.isActive !== undefined && input.isActive !== target.isActive) ||
                     (input.appPermissions !== undefined &&
@@ -266,6 +284,7 @@ export class AdminService {
         }
         const changed = await this.repo.updateUser(input.companyId, input.targetUserId, {
             email: input.email,
+            displayName: input.username,
             role: input.role,
             isActive: input.isActive,
             appPermissions: input.appPermissions,
@@ -308,7 +327,7 @@ export class AdminService {
         });
         return {
             id: next.id,
-            username: next.email.split("@")[0],
+            username: userDisplayName({ displayName: next.displayName, email: next.email }),
             email: next.email,
             role: next.role,
             active: next.isActive,

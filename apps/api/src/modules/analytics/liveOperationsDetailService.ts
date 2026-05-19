@@ -1,5 +1,6 @@
 import { prisma } from "../../config/prisma.js";
 import { parseYmdEndUtc, parseYmdStartUtc } from "../../lib/analyticsDateRange.js";
+import { userDisplayName } from "../../lib/userDisplayName.js";
 
 function ymdFromUtcMs(ms: number): string {
   const d = new Date(ms);
@@ -124,12 +125,12 @@ export async function buildLiveOperationsDetail(companyId: string): Promise<Live
   if (actorIds.length > 0) {
     const users = await prisma.user.findMany({
       where: { companyId, id: { in: actorIds } },
-      select: { id: true, email: true },
+      select: { id: true, email: true, displayName: true },
     });
     for (const u of users) {
       const email = String(u.email || "");
       usersById.set(u.id, {
-        username: email.includes("@") ? email.split("@")[0]! : email || "User",
+        username: userDisplayName({ displayName: u.displayName, email }),
         email,
       });
     }
