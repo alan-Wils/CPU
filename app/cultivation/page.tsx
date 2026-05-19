@@ -637,8 +637,12 @@ function makeBatchId(acronym: string, date: string, existingBatches: any[] = [])
   return makeChainBatchCode(acronym, date, existingBatches);
 }
 
-function collectHarvestSourcePackageIds(s: { sourceBatches?: unknown[]; productionBatches?: unknown[] }) {
-  return [...(s.sourceBatches || []), ...(s.productionBatches || [])];
+function collectHarvestSourcePackageIds(
+  s: { sourceBatches?: unknown[]; productionBatches?: unknown[] },
+): Array<string | { id?: unknown }> {
+  return [...(s.sourceBatches || []), ...(s.productionBatches || [])] as Array<
+    string | { id?: unknown }
+  >;
 }
 
 /** Last segment of batch id is `MMDDYY` per `makeDateCode` (e.g. `ACRONYM.MMDDYY` or `ACRONYM.N.MMDDYY`). */
