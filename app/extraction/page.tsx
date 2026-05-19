@@ -67,6 +67,8 @@ import {
   extractionBatchBiomassLbs,
   extractionBatchOilGrams,
   extractionCombineUsesOilGrams,
+  applyExtractionPartnerUncombineRestore,
+  captureExtractionPreMergeUiSnapshot,
   extractionBatchPutPayloadAfterUncombinePartner,
   extractionBatchPutPayloadAfterUncombineSurvivor,
   filterActiveExtractionBatches,
@@ -1883,19 +1885,11 @@ export default function Extraction() {
       );
     }
 
-    delete pRestore.mergedIntoSnapshot;
-    pRestore.mergedIntoBatchId = undefined;
     pRestore.status = resolved.statusBeforeMerge;
     delete pRestore.completedAt;
-
-    if (Array.isArray(resolved.sources) && resolved.sources.length > 0) {
-      pRestore.sources = resolved.sources.map((r: any) => ({ ...r }));
-      rebuildExtractionBatchSourceSummary(pRestore, pRestore.sources);
-    }
-
-    if (resolved.combineWeightUnit === "grams" && (resolved.oilGrams ?? 0) > 0) {
-      setExtractionBatchCombinedOilGrams(pRestore, resolved.oilGrams ?? 0);
-    }
+    applyExtractionPartnerUncombineRestore(pRestore, resolved);
+    delete pRestore.mergedIntoSnapshot;
+    pRestore.mergedIntoBatchId = undefined;
 
     if (located.storage === "completed") {
       s.completedExtractionBatches.splice(located.index, 1);
@@ -1957,11 +1951,15 @@ export default function Extraction() {
       sourcesSnapshot: any[];
       statusBeforeMerge: string;
       uiStageBeforeMerge: ExtractionUiStageKey;
+      preMergeUiSnapshot?: Record<string, unknown>;
     },
   ) {
     absorbed.mergedIntoSnapshot = {
       survivorBatchId: survivorId,
       biomassAbsorbed: snapshot.biomassAbsorbed,
+      ...(snapshot.preMergeUiSnapshot && Object.keys(snapshot.preMergeUiSnapshot).length > 0
+        ? { preMergeUiSnapshot: snapshot.preMergeUiSnapshot }
+        : {}),
       ...(snapshot.combineWeightUnit === "grams"
         ? {
             combineWeightUnit: "grams" as const,
@@ -2874,6 +2872,7 @@ export default function Extraction() {
 
       finalizeMergedPartnerExtractionBatch(partner, survivorId, {
         biomassAbsorbed: partnerBiomassLbs,
+        preMergeUiSnapshot: captureExtractionPreMergeUiSnapshot(partner),
         ...(usesOilGrams
           ? {
               combineWeightUnit: "grams" as const,
@@ -3741,8 +3740,17 @@ export default function Extraction() {
                       <span style={{ fontWeight: 600 }}> ({b.id})</span>
                     ) : null}{" "}
                     | {b.name} | Biomass Used:{" "}
-                    {b.totalBiomassUsed || b.amount || "—"} lbs | Final:{" "}
-                    {num(b.totalFinalGrams) || "—"} g | Status: {b.status}
+                    {extractionBatchBiomassLbs(b) > 0
+                      ? `${extractionBatchBiomassLbs(b)} lbs`
+                      : "—"}{" "}
+                    | Final:{" "}
+                    {(() => {
+                      const finalG =
+                        num(b.totalFinalGrams) ||
+                        extractionBatchOilGrams(b) + num(b.extraTerpsGrams);
+                      return finalG > 0 ? `${finalG} g` : "—";
+                    })()}{" "}
+                    | Status: {b.status}
                     <ExtractionBatchYieldSummary
                       batch={b}
                       terpAddBackPercent={terpAddBackPercentOfOilWeight}

@@ -250,19 +250,130 @@ export function rebuildExtractionBatchSourceSummary(batch: any, sources: any[]) 
   );
 }
 
-export function resolveAbsorbedForUncombine(
-  partner: any,
-  logs: any[],
-  survivorId: string,
-  partnerId: string,
-): {
+const EXTRACTION_PRE_MERGE_UI_KEYS = [
+  "totalBiomassUsed",
+  "amount",
+  "inputGrams",
+  "finalOilGrams",
+  "totalFinalGrams",
+  "extraTerpsGrams",
+  "finalDecarbedOilGrams",
+  "totalTerpsCollectedGrams",
+  "oilYieldPercent",
+  "terpYieldPercent",
+  "totalBatchYieldPercent",
+  "terpedOilGrams",
+  "terpedOilYieldPercent",
+  "leftoverTerpsGrams",
+] as const;
+
+/** Capture partner totals before merge so uncombine can restore card metrics. */
+export function captureExtractionPreMergeUiSnapshot(batch: any): Record<string, unknown> {
+  const snap: Record<string, unknown> = {};
+  for (const key of EXTRACTION_PRE_MERGE_UI_KEYS) {
+    if (batch?.[key] !== undefined && batch[key] !== null && batch[key] !== "") {
+      snap[key] = batch[key];
+    }
+  }
+  if (Array.isArray(batch?.sources) && batch.sources.length > 0) {
+    snap.sources = batch.sources.map((r: any) => ({ ...r }));
+  }
+  if (Array.isArray(batch?.completedTasks) && batch.completedTasks.length > 0) {
+    snap.completedTasks = batch.completedTasks.map(String);
+  }
+  if (
+    batch?.taskData &&
+    typeof batch.taskData === "object" &&
+    !Array.isArray(batch.taskData)
+  ) {
+    snap.taskData = JSON.parse(JSON.stringify(batch.taskData));
+  }
+  return snap;
+}
+
+export function applyExtractionPreMergeUiSnapshot(
+  batch: any,
+  preMerge: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!preMerge || typeof preMerge !== "object") return false;
+  let applied = false;
+  for (const key of EXTRACTION_PRE_MERGE_UI_KEYS) {
+    if (preMerge[key] !== undefined && preMerge[key] !== null && preMerge[key] !== "") {
+      batch[key] = preMerge[key];
+      applied = true;
+    }
+  }
+  if (Array.isArray(preMerge.sources) && preMerge.sources.length > 0) {
+    batch.sources = (preMerge.sources as any[]).map((r) => ({ ...r }));
+    applied = true;
+  }
+  if (Array.isArray(preMerge.completedTasks) && preMerge.completedTasks.length > 0) {
+    batch.completedTasks = [...(preMerge.completedTasks as string[])];
+    applied = true;
+  }
+  if (
+    preMerge.taskData &&
+    typeof preMerge.taskData === "object" &&
+    !Array.isArray(preMerge.taskData)
+  ) {
+    batch.taskData = JSON.parse(JSON.stringify(preMerge.taskData));
+    applied = true;
+  }
+  return applied;
+}
+
+export type ExtractionAbsorbedForUncombine = {
   biomassLbs: number;
   oilGrams?: number;
   combineWeightUnit: ExtractionCombineWeightUnit;
   sources: any[];
   statusBeforeMerge: string;
   uiStageBeforeMerge: ExtractionUiStageKey;
-} | null {
+};
+
+/** Restore partner biomass/oil/yield after uncombine (snapshot first, then merge log fields). */
+export function applyExtractionPartnerUncombineRestore(
+  partner: any,
+  resolved: ExtractionAbsorbedForUncombine,
+): void {
+  const preMerge = partner?.mergedIntoSnapshot?.preMergeUiSnapshot;
+  const restoredFromPreMerge = applyExtractionPreMergeUiSnapshot(partner, preMerge);
+
+  if (Array.isArray(resolved.sources) && resolved.sources.length > 0) {
+    partner.sources = resolved.sources.map((r: any) => ({ ...r }));
+    rebuildExtractionBatchSourceSummary(partner, partner.sources);
+  } else if (!restoredFromPreMerge && resolved.biomassLbs > 0) {
+    setExtractionBatchTotalBiomassLbs(partner, resolved.biomassLbs);
+  }
+
+  if (resolved.combineWeightUnit === "grams" && (resolved.oilGrams ?? 0) > 0) {
+    const currentOil = extractionBatchOilGrams(partner);
+    if (currentOil <= 0) {
+      setExtractionBatchCombinedOilGrams(partner, resolved.oilGrams ?? 0);
+    }
+  } else if (
+    resolved.combineWeightUnit === "lbs" &&
+    resolved.biomassLbs > 0 &&
+    extractionBatchBiomassLbs(partner) <= 0
+  ) {
+    setExtractionBatchTotalBiomassLbs(partner, resolved.biomassLbs);
+  }
+}
+
+function extractionPollFinalGrams(batch: any): number {
+  const total = num(batch?.totalFinalGrams);
+  if (total > 0) return total;
+  const oil = extractionBatchOilGrams(batch);
+  const terps = num(batch?.extraTerpsGrams);
+  return +(oil + terps).toFixed(2);
+}
+
+export function resolveAbsorbedForUncombine(
+  partner: any,
+  logs: any[],
+  survivorId: string,
+  partnerId: string,
+): ExtractionAbsorbedForUncombine | null {
   const snap = partner?.mergedIntoSnapshot;
   const logMatch = findExtractionCombineMergeDataForPair(logs, survivorId, partnerId);
   const combineWeightUnit: ExtractionCombineWeightUnit =
@@ -361,6 +472,11 @@ const EXTRACTION_POLL_WEIGHT_FIELDS = [
   "source",
   "sourceBlendLabel",
   "extraTerpsGrams",
+  "finalDecarbedOilGrams",
+  "totalTerpsCollectedGrams",
+  "oilYieldPercent",
+  "totalBatchYieldPercent",
+  "terpedOilGrams",
 ] as const;
 
 function extractionPollTaskNodeIsEmpty(value: unknown): boolean {
@@ -457,6 +573,20 @@ export function mergeExtractionPollState(serverBatch: any, localBatch: any): any
       delete merged.combinedFromBatchIds;
     } else {
       merged.combinedFromBatchIds = [...localCombined];
+    }
+  }
+
+  const localBio = extractionBatchBiomassLbs(localBatch);
+  const serverBio = extractionBatchBiomassLbs(merged);
+  const localFinal = extractionPollFinalGrams(localBatch);
+  const serverFinal = extractionPollFinalGrams(merged);
+  if (localBio > serverBio + 0.0001 || localFinal > serverFinal + 0.0001) {
+    merged = {
+      ...merged,
+      ...pickExtractionPollWeightFields(localBatch),
+    };
+    if (Array.isArray(localBatch.completedTasks) && localBatch.completedTasks.length > 0) {
+      merged.completedTasks = localBatch.completedTasks.map(String);
     }
   }
 

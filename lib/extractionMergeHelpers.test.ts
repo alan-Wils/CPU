@@ -12,6 +12,9 @@ import {
   mergeExtractionSourceRows,
   rebuildExtractionBatchSourceSummary,
   resolveAbsorbedForUncombine,
+  applyExtractionPartnerUncombineRestore,
+  applyExtractionPreMergeUiSnapshot,
+  captureExtractionPreMergeUiSnapshot,
   extractionBatchPutPayloadAfterUncombinePartner,
   extractionBatchPutPayloadAfterUncombineSurvivor,
   getExtractionCombinedPartnerIds,
@@ -173,6 +176,84 @@ describe("extractionMergeHelpers", () => {
     setExtractionBatchCombinedOilGrams(batch, 30);
     expect(batch.finalOilGrams).toBe(30);
     expect(batch.totalFinalGrams).toBe(32);
+  });
+
+  it("captureExtractionPreMergeUiSnapshot stores biomass and oil totals", () => {
+    const snap = captureExtractionPreMergeUiSnapshot({
+      totalBiomassUsed: 40,
+      amount: "40 lbs",
+      finalOilGrams: 360,
+      totalFinalGrams: 360,
+      completedTasks: ["Run Extraction"],
+    });
+    expect(snap.totalBiomassUsed).toBe(40);
+    expect(snap.finalOilGrams).toBe(360);
+    expect(snap.completedTasks).toEqual(["Run Extraction"]);
+  });
+
+  it("applyExtractionPartnerUncombineRestore uses preMergeUiSnapshot", () => {
+    const partner: any = {
+      id: "P",
+      totalBiomassUsed: 0,
+      amount: "0 lbs",
+      mergedIntoSnapshot: {
+        preMergeUiSnapshot: {
+          totalBiomassUsed: 39.6,
+          amount: "39.6 lbs",
+          finalOilGrams: 359.5,
+          totalFinalGrams: 359.5,
+        },
+        biomassAbsorbed: 39.6,
+        oilAbsorbed: 359.5,
+        combineWeightUnit: "grams",
+      },
+    };
+    applyExtractionPartnerUncombineRestore(partner, {
+      biomassLbs: 39.6,
+      oilGrams: 359.5,
+      combineWeightUnit: "grams",
+      sources: [],
+      statusBeforeMerge: "Purge Active",
+      uiStageBeforeMerge: "post",
+    });
+    expect(partner.totalBiomassUsed).toBe(39.6);
+    expect(partner.finalOilGrams).toBe(359.5);
+    expect(partner.totalFinalGrams).toBe(359.5);
+  });
+
+  it("applyExtractionPartnerUncombineRestore falls back to oil from merge log", () => {
+    const partner: any = { id: "P", mergedIntoSnapshot: { combineWeightUnit: "grams" } };
+    applyExtractionPartnerUncombineRestore(partner, {
+      biomassLbs: 20,
+      oilGrams: 180,
+      combineWeightUnit: "grams",
+      sources: [],
+      statusBeforeMerge: "Purge Active",
+      uiStageBeforeMerge: "post",
+    });
+    expect(extractionBatchOilGrams(partner)).toBe(180);
+    expect(extractionBatchBiomassLbs(partner)).toBe(20);
+  });
+
+  it("mergeExtractionPollState prefers local totals over server zeros after uncombine", () => {
+    const server = {
+      id: "P",
+      status: "Purge Active",
+      totalBiomassUsed: 0,
+      amount: "0 lbs",
+      totalFinalGrams: 0,
+    };
+    const local = {
+      id: "P",
+      status: "Purge Active",
+      totalBiomassUsed: 39.6,
+      amount: "39.6 lbs",
+      totalFinalGrams: 359.5,
+      finalOilGrams: 359.5,
+    };
+    const merged = mergeExtractionPollState(server, local);
+    expect(merged.totalBiomassUsed).toBe(39.6);
+    expect(merged.totalFinalGrams).toBe(359.5);
   });
 
   it("extractionBatchPutPayloadAfterUncombinePartner sends null merge clears", () => {
