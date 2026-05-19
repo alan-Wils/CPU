@@ -215,6 +215,8 @@ type AppConfig = {
       rewardsEligible: boolean;
       tierPointsMultiplier: number;
     }>;
+    /** Percent of final decarbed oil weight to add back as terps at Finish Decarb. */
+    terpAddBackPercentOfOilWeight?: number;
   };
   packaging: {
     supplies: Supply[];
@@ -317,6 +319,7 @@ const emptyConfig: AppConfig = {
     blendNameHistory: [],
     supplies: [],
     customTasks: [],
+    terpAddBackPercentOfOilWeight: 0,
   },
   packaging: {
     supplies: [],
@@ -3606,6 +3609,29 @@ export default function ConfigPage() {
         <CultivationScheduleTemplatesCard config={config} setConfig={setConfig} />
 
         <h4 style={{ ...styles.subTitle, fontSize: 16, marginBottom: 8 }}>Extraction</h4>
+        <label style={{ ...styles.label, maxWidth: 420, marginBottom: 16 }}>
+          Terp Add-Back % of Oil Weight
+          <input
+            style={styles.input}
+            type="number"
+            min={0}
+            step={0.01}
+            value={config.extraction.terpAddBackPercentOfOilWeight ?? 0}
+            onChange={(e) => {
+              const v = Math.max(0, Number(e.target.value) || 0);
+              setConfig((prev) => ({
+                ...prev,
+                extraction: {
+                  ...prev.extraction,
+                  terpAddBackPercentOfOilWeight: v,
+                },
+              }));
+            }}
+          />
+          <span style={{ fontSize: 12, color: "#94a3b8", display: "block", marginTop: 6 }}>
+            Used at Finish Decarb to calculate terps added back into oil and leftover terps.
+          </span>
+        </label>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
           {(config.extraction.customTasks || []).map((row, idx) => (
             <div

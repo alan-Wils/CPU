@@ -79,6 +79,17 @@ import {
   setExtractionBatchTotalBiomassLbs,
   subtractExtractionSourceRows,
 } from "@/lib/extractionMergeHelpers";
+import {
+  buildFinishDecarbYieldTaskFields,
+  computeExtractionYieldMetrics,
+  formatYieldGramsDisplay,
+  formatYieldPercentDisplay,
+  getLegacyFinishBatchYieldPercent,
+  readTotalTerpsCollectedGrams,
+  readTerpAddBackPercentFromConfig,
+  syncExtractionYieldFieldsToBatch,
+} from "@/lib/extractionYieldHelpers";
+import { ExtractionBatchYieldSummary } from "@/components/extraction/ExtractionBatchYieldSummary";
 import { buildTaskChallengeAttachment } from "@/lib/taskChallengePayload";
 import {
   formatLogDisplayTime,
@@ -568,6 +579,7 @@ export default function Extraction() {
   const [draftFinishBatchCode, setDraftFinishBatchCode] = useState("");
   const [finishBatchManualName, setFinishBatchManualName] = useState("");
   const [blendNameHistory, setBlendNameHistory] = useState<BlendNameHistoryRow[]>([]);
+  const [terpAddBackPercentOfOilWeight, setTerpAddBackPercentOfOilWeight] = useState(0);
 
   const [dymoSavedCalibration, setDymoSavedCalibration] =
     useState<DymoLabelCalibrationSettings>(defaultDymoLabelCalibrationSettings);
@@ -940,6 +952,7 @@ export default function Extraction() {
         ? cfg.extraction.blendNameHistory
         : [];
       setBlendNameHistory(rows as BlendNameHistoryRow[]);
+      setTerpAddBackPercentOfOilWeight(readTerpAddBackPercentFromConfig(cfg?.extraction));
       setRewardsCfg(extractRewardsFromCompanyConfig(cfg));
       const defs = extractCustomTasksRewardDefsFromCompanyConfig(cfg);
       setCustomTasksRewardDefs(defs);
@@ -1328,25 +1341,22 @@ export default function Extraction() {
   }
 
   function getYieldPercentage(batch: any) {
-    const biomassLbs = num(batch.totalBiomassUsed);
-
-    const oilGrams =
-      num(batch.finalOilGrams) ||
-      num(batch?.taskData?.["Finish Batch"]?.finalOilGrams);
-
-    const terpsGrams =
-      num(batch.extraTerpsGrams) ||
-      num(batch?.taskData?.["Finish Batch"]?.extraTerpsGrams);
-
-    const totalFinalGrams = oilGrams + terpsGrams;
-
-    if (biomassLbs <= 0 || totalFinalGrams <= 0) return "";
-
-    const biomassGrams = biomassLbs * 453.592;
-    const yieldPercent = (totalFinalGrams / biomassGrams) * 100;
-
-    return `${yieldPercent.toFixed(2)}%`;
+    return getLegacyFinishBatchYieldPercent(batch);
   }
+
+  const finishDecarbYieldPreview = useMemo(() => {
+    if (!selectedExt || selectedTask !== "Finish Decarb") return null;
+    const finalOil = num(decarbEndWeight);
+    if (finalOil <= 0) return null;
+    return computeExtractionYieldMetrics(
+      {
+        ...selectedExt,
+        finalDecarbedOilGrams: finalOil,
+        totalTerpsCollectedGrams: readTotalTerpsCollectedGrams(selectedExt),
+      },
+      terpAddBackPercentOfOilWeight,
+    );
+  }, [selectedExt, selectedTask, decarbEndWeight, terpAddBackPercentOfOilWeight]);
 
   function getFirstAvailableSourceId() {
     const firstAvailable = s.sourceBatches.find(
@@ -2247,7 +2257,7 @@ export default function Extraction() {
         !requireFields([
           { label: "Finish Terp Separation Date/Time", value: terpEnd },
           { label: "How Many Techs", value: terpFinishTechCount },
-          { label: "Total Terps", value: totalTerps },
+          { label: "Terps collected (grams)", value: totalTerps },
         ])
       ) {
         return false;
@@ -2255,6 +2265,7 @@ export default function Extraction() {
 
       if (!requirePositiveNumber("How Many Techs", terpFinishTechCount)) return false;
       if (!requireTechNames("Tech", terpFinishTechNames)) return false;
+      if (!requirePositiveNumber("Terps collected (grams)", totalTerps)) return false;
       return true;
     }
 
@@ -2262,7 +2273,7 @@ export default function Extraction() {
       if (
         !requireFields([
           { label: "Start Decarb Date/Time", value: decarbStart },
-          { label: "Start Weight", value: decarbStartWeight },
+          { label: "Starting crystal weight (grams)", value: decarbStartWeight },
           { label: "Max Temp", value: decarbMaxTemp },
           { label: "How Many Techs", value: decarbStartTechCount },
         ])
@@ -2272,6 +2283,9 @@ export default function Extraction() {
 
       if (!requirePositiveNumber("How Many Techs", decarbStartTechCount)) return false;
       if (!requireTechNames("Tech", decarbStartTechNames)) return false;
+      if (!requirePositiveNumber("Starting crystal weight (grams)", decarbStartWeight)) {
+        return false;
+      }
       return true;
     }
 
@@ -2279,7 +2293,7 @@ export default function Extraction() {
       if (
         !requireFields([
           { label: "Finish Decarb Date/Time", value: decarbEnd },
-          { label: "End Weight", value: decarbEndWeight },
+          { label: "Final decarbed oil (grams)", value: decarbEndWeight },
           { label: "How Many Techs", value: decarbFinishTechCount },
         ])
       ) {
@@ -2288,6 +2302,7 @@ export default function Extraction() {
 
       if (!requirePositiveNumber("How Many Techs", decarbFinishTechCount)) return false;
       if (!requireTechNames("Tech", decarbFinishTechNames)) return false;
+      if (!requirePositiveNumber("Final decarbed oil (grams)", decarbEndWeight)) return false;
       return true;
     }
 
@@ -2657,6 +2672,7 @@ export default function Extraction() {
         leadTechName: terpFinishTechNames[0] || "",
         techNames: terpFinishTechNames,
         totalTerps,
+        totalTerpsCollectedGrams: num(totalTerps),
         notes: terpFinishNotes,
       };
     }
@@ -2665,6 +2681,7 @@ export default function Extraction() {
       return {
         startDateTime: decarbStart,
         startWeight: decarbStartWeight,
+        startCrystalWeightGrams: num(decarbStartWeight),
         maxTemp: decarbMaxTemp,
         techCount: decarbStartTechCount,
         leadTechName: decarbStartTechNames[0] || "",
@@ -2681,6 +2698,11 @@ export default function Extraction() {
         leadTechName: decarbFinishTechNames[0] || "",
         techNames: decarbFinishTechNames,
         notes: decarbFinishNotes,
+        ...buildFinishDecarbYieldTaskFields(
+          selectedExt,
+          num(decarbEndWeight),
+          terpAddBackPercentOfOilWeight,
+        ),
       };
     }
 
@@ -3021,6 +3043,20 @@ export default function Extraction() {
     if (selectedTask === "Run Extraction") {
       selectedExt.productType = finalProduct;
       selectedExt.name = finalProduct;
+    }
+
+    if (selectedTask === "Finish Terp Separation") {
+      selectedExt.totalTerpsCollectedGrams = num(totalTerps);
+      syncExtractionYieldFieldsToBatch(selectedExt, terpAddBackPercentOfOilWeight);
+    }
+
+    if (selectedTask === "Start Decarb") {
+      selectedExt.startCrystalWeightGrams = num(decarbStartWeight);
+    }
+
+    if (selectedTask === "Finish Decarb") {
+      selectedExt.finalDecarbedOilGrams = num(decarbEndWeight);
+      syncExtractionYieldFieldsToBatch(selectedExt, terpAddBackPercentOfOilWeight);
     }
 
     if (selectedTask === "Finish Batch") {
@@ -3758,8 +3794,11 @@ export default function Extraction() {
                     ) : null}{" "}
                     | {b.name} | Biomass Used:{" "}
                     {b.totalBiomassUsed || b.amount || "—"} lbs | Final:{" "}
-                    {num(b.totalFinalGrams) || "—"} g | Yield:{" "}
-                    {getYieldPercentage(b) || "—"} | Status: {b.status}
+                    {num(b.totalFinalGrams) || "—"} g | Status: {b.status}
+                    <ExtractionBatchYieldSummary
+                      batch={b}
+                      terpAddBackPercent={terpAddBackPercentOfOilWeight}
+                    />
                     <div style={{ fontSize: 13, marginTop: 4 }}>
                       Next Required Task: {getNextAllowedTask(b)}
                     </div>
@@ -4672,7 +4711,7 @@ export default function Extraction() {
 
                     <input
                       style={inputStyle}
-                      placeholder="Total Terps"
+                      placeholder="Terps collected (grams)"
                       value={totalTerps}
                       onChange={(e) => setTotalTerps(e.target.value)}
                     />
@@ -4697,7 +4736,7 @@ export default function Extraction() {
 
                     <input
                       style={inputStyle}
-                      placeholder="Start Weight"
+                      placeholder="Starting crystal weight (grams)"
                       value={decarbStartWeight}
                       onChange={(e) => setDecarbStartWeight(e.target.value)}
                     />
@@ -4754,10 +4793,49 @@ export default function Extraction() {
 
                     <input
                       style={inputStyle}
-                      placeholder="End Weight"
+                      placeholder="Final decarbed oil (grams)"
                       value={decarbEndWeight}
                       onChange={(e) => setDecarbEndWeight(e.target.value)}
                     />
+
+                    {finishDecarbYieldPreview ? (
+                      <div
+                        style={{
+                          padding: 12,
+                          borderRadius: 8,
+                          background: "#0f172a",
+                          border: "1px solid #334155",
+                          fontSize: 13,
+                          color: "#cbd5e1",
+                        }}
+                      >
+                        <p style={{ margin: "0 0 6px" }}>
+                          Final decarbed oil:{" "}
+                          {formatYieldGramsDisplay(finishDecarbYieldPreview.finalDecarbedOilGrams)}
+                        </p>
+                        <p style={{ margin: "0 0 6px" }}>
+                          Configured terp add-back:{" "}
+                          {formatYieldPercentDisplay(finishDecarbYieldPreview.terpAddBackPercent)}
+                        </p>
+                        <p style={{ margin: "0 0 6px" }}>
+                          Terps to add back:{" "}
+                          {formatYieldGramsDisplay(finishDecarbYieldPreview.terpsToAddBackGrams)}
+                          {finishDecarbYieldPreview.terpAddBackCapped ? (
+                            <span style={{ color: "#fbbf24", marginLeft: 8 }}>
+                              (capped at collected — only{" "}
+                              {formatYieldGramsDisplay(
+                                finishDecarbYieldPreview.actualTerpsAddedBackGrams,
+                              )}{" "}
+                              will be added)
+                            </span>
+                          ) : null}
+                        </p>
+                        <p style={{ margin: 0 }}>
+                          Leftover terps:{" "}
+                          {formatYieldGramsDisplay(finishDecarbYieldPreview.leftoverTerpsGrams)}
+                        </p>
+                      </div>
+                    ) : null}
 
                     <input
                       style={inputStyle}
@@ -5236,9 +5314,13 @@ export default function Extraction() {
                   <p>
                     {viewBatch.name} | Status: {viewBatch.status} | Biomass Used:{" "}
                     {viewBatch.totalBiomassUsed || viewBatch.amount || "—"} lbs |
-                    Final: {num(viewBatch.totalFinalGrams) || "—"} g | Yield:{" "}
-                    {getYieldPercentage(viewBatch) || "—"}
+                    Final: {num(viewBatch.totalFinalGrams) || "—"} g
                   </p>
+                  <ExtractionBatchYieldSummary
+                    batch={viewBatch}
+                    terpAddBackPercent={terpAddBackPercentOfOilWeight}
+                    compact={false}
+                  />
 
                   {viewBatch.sourceBlendLabel ? (
                     <p style={{ color: "#cbd5e1" }}>

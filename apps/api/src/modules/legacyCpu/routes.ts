@@ -19,6 +19,11 @@ import { memoizedReadWithMeta, invalidateMemoPrefix } from "../../lib/requestMem
 import { logSlowRequestIfNeeded } from "../../lib/slowRequestLog.js";
 import { taskLogToListRow } from "../../lib/taskLogListDto.js";
 import {
+    buildLoggedByMap,
+    resolveLoggedByForRow,
+    type LoggedByDto,
+} from "../../lib/taskLogActorLookup.js";
+import {
     prismaSourcePackageToListRow,
     storeSourceBatchToListRow,
 } from "../../lib/sourceBatchListDto.js";
@@ -130,9 +135,10 @@ function compactTaskLogData(data) {
     }
     return pick;
 }
-/** @param {object} row @param {{ compact?: boolean }} [opts] */
+/** @param {object} row @param {{ compact?: boolean, loggedBy?: import("../../lib/taskLogActorLookup.js").LoggedByDto }} [opts] */
 function taskRowToLegacyLog(row, opts) {
     const compact = Boolean(opts && opts.compact);
+    const loggedBy = opts && opts.loggedBy;
     const raw = String(row.note || "");
     try {
         const parsed = JSON.parse(raw);
@@ -169,6 +175,12 @@ function taskRowToLegacyLog(row, opts) {
             else if (Object.keys(data).length > 0) {
                 out.data = data;
             }
+            if (loggedBy) {
+                out.loggedBy = loggedBy;
+                if (out.data && typeof out.data === "object" && !Array.isArray(out.data)) {
+                    out.data = { ...out.data, loggedBy };
+                }
+            }
             return out;
         }
     }
@@ -177,7 +189,7 @@ function taskRowToLegacyLog(row, opts) {
     }
     const stage = String(row.stage || "");
     const area = stage === "EXTRACTION" ? "Extraction" : stage === "PACKAGING" ? "Packaging" : "Cultivation";
-    return {
+    const fallback = {
         id: row.id,
         actorUserId: row.actorUserId,
         area,
@@ -191,6 +203,11 @@ function taskRowToLegacyLog(row, opts) {
         loggedAt: row.createdAt.toISOString(),
         loggedAtIso: row.createdAt.toISOString()
     };
+    if (loggedBy) {
+        fallback.loggedBy = loggedBy;
+        fallback.data = { loggedBy };
+    }
+    return fallback;
 }
 /** Prisma JsonValue includes arrays; SPA ui state is always a plain object. */
 function asUiRecord(value: unknown): Record<string, unknown> {
@@ -537,9 +554,13 @@ legacyCpuRouter.get("/logs", asyncHandler(async (req, res) => {
     });
     const hasMore = rows.length > take;
     const page = hasMore ? rows.slice(0, take) : rows;
+    const usersById = await buildLoggedByMap(prisma, companyId, page.map((r) => r.actorUserId));
     const items = compact
-        ? page.map((r) => taskLogToListRow(r))
-        : page.map((r) => taskRowToLegacyLog(r, { compact: false }));
+        ? page.map((r) => taskLogToListRow(r, resolveLoggedByForRow(r, usersById)))
+        : page.map((r) => taskRowToLegacyLog(r, {
+            compact: false,
+            loggedBy: resolveLoggedByForRow(r, usersById),
+        }));
     const nextCursor = hasMore && page.length ? page[page.length - 1].createdAt.toISOString() : null;
 
     res.setHeader("Cache-Control", "private, max-age=20");
@@ -596,8 +617,11 @@ legacyCpuRouter.get("/logs/:taskLogId", asyncHandler(async (req, res) => {
     });
     if (!row)
         throw new AppError("Task log not found", 404);
+    const usersById = await buildLoggedByMap(prisma, companyId, [row.actorUserId]);
     res.setHeader("Cache-Control", "private, max-age=30");
-    res.json(taskRowToLegacyLog(row, {}));
+    res.json(taskRowToLegacyLog(row, {
+        loggedBy: resolveLoggedByForRow(row, usersById),
+    }));
 }));
 /** SPA `lib/logsApi.deleteAllLogs` — must be registered before `DELETE /logs/:id`. */
 legacyCpuRouter.delete("/logs/all/clear", asyncHandler(async (req, res) => {
@@ -647,7 +671,10 @@ legacyCpuRouter.post("/logs", asyncHandler(async (req, res) => {
         referenceId: row.referenceId,
         minutes: row.minutes
     });
-    res.status(201).json(taskRowToLegacyLog(row, {}));
+    const usersById = await buildLoggedByMap(prisma, companyId, [row.actorUserId]);
+    res.status(201).json(taskRowToLegacyLog(row, {
+        loggedBy: resolveLoggedByForRow(row, usersById),
+    }));
 }));
 /** SPA cultivation labor: close pending end time (cultivation writers) or manager-edit labor fields. */
 legacyCpuRouter.patch("/logs/:taskLogId", asyncHandler(async (req, res) => {

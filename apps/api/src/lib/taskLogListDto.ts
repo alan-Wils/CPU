@@ -2,6 +2,8 @@
  * Minimal list-row shape for GET /api/logs?compact=1 (detail via GET /api/logs/:id).
  */
 
+import type { LoggedByDto } from "./taskLogActorLookup.js";
+
 const MAX_FIELD_LEN = 160;
 
 function capStr(value: unknown, max = MAX_FIELD_LEN): string {
@@ -42,18 +44,22 @@ export type TaskLogListRow = {
   source?: string;
   linkedBatch?: string;
   loggedAtIso: string;
+  loggedBy: Pick<LoggedByDto, "username" | "email" | "role"> & { userId?: string };
 };
 
 /** @param row Prisma TaskLog row */
-export function taskLogToListRow(row: {
-  id: string;
-  actorUserId: string;
-  stage: string;
-  note: string;
-  minutes: number;
-  referenceId: string | null;
-  createdAt: Date;
-}): TaskLogListRow {
+export function taskLogToListRow(
+  row: {
+    id: string;
+    actorUserId: string;
+    stage: string;
+    note: string;
+    minutes: number;
+    referenceId: string | null;
+    createdAt: Date;
+  },
+  loggedBy: LoggedByDto,
+): TaskLogListRow {
   const loggedAtIso = row.createdAt.toISOString();
   const raw = String(row.note || "");
   try {
@@ -78,6 +84,12 @@ export function taskLogToListRow(row: {
         people: capStr(data.people ?? "", 80),
         minutes: String(data.minutes ?? row.minutes ?? ""),
         loggedAtIso,
+        loggedBy: {
+          userId: loggedBy.userId,
+          username: loggedBy.username,
+          email: loggedBy.email,
+          role: loggedBy.role,
+        },
       };
       if (src) out.source = capStr(src, 80);
       if (linked) out.linkedBatch = capStr(linked, 80);
@@ -97,5 +109,11 @@ export function taskLogToListRow(row: {
     people: "",
     minutes: String(row.minutes ?? ""),
     loggedAtIso,
+    loggedBy: {
+      userId: loggedBy.userId,
+      username: loggedBy.username,
+      email: loggedBy.email,
+      role: loggedBy.role,
+    },
   };
 }
