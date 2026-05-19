@@ -15,11 +15,14 @@ import {
   rebuildExtractionBatchSourceSummary,
   resolveAbsorbedForUncombine,
   applyExtractionPartnerUncombineRestore,
+  applyPrunedCombinedFromBatchIds,
   applyExtractionPreMergeUiSnapshot,
   captureExtractionPreMergeUiSnapshot,
   extractionBatchPutPayloadAfterUncombinePartner,
   extractionBatchPutPayloadAfterUncombineSurvivor,
   getExtractionCombinedPartnerIds,
+  getValidatedCombinedPartnerIds,
+  isPartnerMergedIntoSurvivor,
   mergeExtractionPollState,
   setExtractionBatchCombinedOilGrams,
   setExtractionBatchTotalBiomassLbs,
@@ -57,6 +60,37 @@ describe("extractionMergeHelpers", () => {
     expect(batch.totalBiomassUsed).toBe(12.5);
     expect(batch.amount).toBe("12.5 lbs");
     expect(batch.sourceBlendLabel).toBe("Strain");
+  });
+
+  it("getValidatedCombinedPartnerIds drops phantom links to active partners", () => {
+    const survivor = {
+      id: "EXT-S",
+      combinedFromBatchIds: ["EXT-P"],
+      status: "Purge Active",
+    };
+    const partner = {
+      id: "EXT-P",
+      status: "Purge Active",
+      marketBatchCode: "GMO.051226",
+    };
+    expect(isPartnerMergedIntoSurvivor(partner, "EXT-S")).toBe(false);
+    expect(
+      getValidatedCombinedPartnerIds(survivor, [survivor, partner], []),
+    ).toEqual([]);
+    expect(applyPrunedCombinedFromBatchIds(survivor, [survivor, partner], [])).toBe(
+      true,
+    );
+    expect(survivor.combinedFromBatchIds).toBeUndefined();
+  });
+
+  it("getValidatedCombinedPartnerIds keeps truly merged partners", () => {
+    const survivor = { id: "S", combinedFromBatchIds: ["P"] };
+    const partner = {
+      id: "P",
+      mergedIntoBatchId: "S",
+      status: "Merged - Complete",
+    };
+    expect(getValidatedCombinedPartnerIds(survivor, [], [partner])).toEqual(["P"]);
   });
 
   it("findMergedExtractionPartnerBatch locates partner in active or completed lists", () => {

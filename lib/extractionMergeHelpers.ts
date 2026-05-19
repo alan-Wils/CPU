@@ -475,6 +475,97 @@ export function getExtractionCombinedPartnerIds(batch: any): string[] {
     .filter(Boolean);
 }
 
+/** Partner was absorbed via Combine Batches (not a stale `combinedFromBatchIds` pointer). */
+export function isPartnerMergedIntoSurvivor(partner: any, survivorId: string): boolean {
+  const pid = String(partner?.id || "").trim();
+  const sid = String(survivorId || "").trim();
+  if (!pid || !sid || pid === sid) return false;
+  const mergedInto = String(partner?.mergedIntoBatchId || "").trim();
+  if (mergedInto !== sid) return false;
+  return String(partner?.status || "")
+    .toLowerCase()
+    .includes("merged");
+}
+
+function indexExtractionBatchById(batches: any[]): Map<string, any> {
+  const byId = new Map<string, any>();
+  for (const row of batches || []) {
+    const id = String(row?.id || "").trim();
+    if (id) byId.set(id, row);
+  }
+  return byId;
+}
+
+/**
+ * `combinedFromBatchIds` entries that still point at a batch truly merged into this survivor.
+ * Drops phantom links when the partner is still an active separate batch.
+ */
+export function getValidatedCombinedPartnerIds(
+  survivor: any,
+  activeBatches: any[],
+  completedBatches: any[],
+): string[] {
+  const sid = String(survivor?.id || "").trim();
+  const listed = getExtractionCombinedPartnerIds(survivor);
+  if (!sid || listed.length === 0) return [];
+
+  const byId = indexExtractionBatchById([
+    ...(activeBatches || []),
+    ...(completedBatches || []),
+  ]);
+
+  return listed.filter((pid) => {
+    const partner = byId.get(pid);
+    if (!partner) return false;
+    return isPartnerMergedIntoSurvivor(partner, sid);
+  });
+}
+
+/** Mutates survivor when stored merge list includes phantom partner ids. Returns whether it changed. */
+export function applyPrunedCombinedFromBatchIds(
+  survivor: any,
+  activeBatches: any[],
+  completedBatches: any[],
+): boolean {
+  if (!survivor?.id) return false;
+  const pruned = getValidatedCombinedPartnerIds(survivor, activeBatches, completedBatches);
+  const current = getExtractionCombinedPartnerIds(survivor);
+  if (
+    pruned.length === current.length &&
+    pruned.every((id, index) => id === current[index])
+  ) {
+    return false;
+  }
+  if (pruned.length === 0) {
+    delete survivor.combinedFromBatchIds;
+  } else {
+    survivor.combinedFromBatchIds = pruned;
+  }
+  return true;
+}
+
+export function sweepPhantomCombinedLinksOnBatches(
+  activeBatches: any[],
+  completedBatches: any[],
+): boolean {
+  let changed = false;
+  for (const row of activeBatches || []) {
+    if (applyPrunedCombinedFromBatchIds(row, activeBatches, completedBatches)) {
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+export function survivorPutPayloadAfterPhantomMergeClear(survivor: any): Record<string, unknown> {
+  const payload: Record<string, unknown> = { ...survivor };
+  const ids = getExtractionCombinedPartnerIds(survivor);
+  if (ids.length === 0) {
+    payload.combinedFromBatchIds = null;
+  }
+  return payload;
+}
+
 /** PUT body: JSON omits `undefined`, so send `null` to clear merge fields in extractionUiState. */
 export function extractionBatchPutPayloadAfterUncombinePartner(
   batch: any,

@@ -74,12 +74,17 @@ import {
   extractionBatchPutPayloadForDetailEdit,
   filterActiveExtractionBatches,
   findMergedExtractionPartnerBatch,
+  applyPrunedCombinedFromBatchIds,
+  getValidatedCombinedPartnerIds,
   isExtractionBatchActiveForCombine,
   isExtractionBatchMergedAbsorbed,
+  isPartnerMergedIntoSurvivor,
   mergeExtractionPollState,
   mergeExtractionSourceRows,
   sweepMergedExtractionBatchesToCompleted,
+  sweepPhantomCombinedLinksOnBatches,
   sanitizeExtractionBatchMergeState,
+  survivorPutPayloadAfterPhantomMergeClear,
   rebuildExtractionBatchSourceSummary,
   resolveAbsorbedForUncombine,
   setExtractionBatchCombinedOilGrams,
@@ -457,6 +462,7 @@ export default function Extraction() {
         s.extractionBatches = activeExtraction;
         s.completedExtractionBatches = completedMergedExtraction;
         sweepMergedExtractionBatchesToCompleted(s);
+        sweepPhantomCombinedLinksOnBatches(s.extractionBatches, s.completedExtractionBatches);
 
         setSelectedExt((current: any) => {
           if (current?.id) {
@@ -1927,9 +1933,51 @@ export default function Extraction() {
   }
 
   function getMergedPartnerIds(batch: any): string[] {
-    return Array.isArray(batch?.combinedFromBatchIds)
-      ? batch.combinedFromBatchIds.map((x: any) => String(x))
-      : [];
+    return getValidatedCombinedPartnerIds(
+      batch,
+      s.extractionBatches || [],
+      s.completedExtractionBatches || [],
+    );
+  }
+
+  async function runClearPhantomMergeLink(survivor: any, partnerId: string): Promise<boolean> {
+    const sid = String(survivor?.id || "").trim();
+    const pid = String(partnerId || "").trim();
+    if (!sid || !pid) return false;
+
+    applyPrunedCombinedFromBatchIds(
+      survivor,
+      s.extractionBatches,
+      s.completedExtractionBatches,
+    );
+    const row = s.extractionBatches.find((b: any) => b?.id === sid);
+    if (row && row !== survivor) {
+      applyPrunedCombinedFromBatchIds(
+        row,
+        s.extractionBatches,
+        s.completedExtractionBatches,
+      );
+    }
+
+    try {
+      const live = getLiveExtractionBatch(sid) || survivor;
+      await updateExtractionBatch(
+        sid,
+        survivorPutPayloadAfterPhantomMergeClear(live),
+      );
+      showSyncMessageNotice(
+        "Cleared false merge link — these batches were never combined.",
+      );
+      forceRefresh();
+      return true;
+    } catch (error) {
+      console.error("Could not clear phantom merge link:", error);
+      showNotice(
+        "Clear merge link failed",
+        error instanceof Error ? error.message : "Server update failed.",
+      );
+      return false;
+    }
   }
 
   function getLiveExtractionBatch(batchId: string) {
@@ -1956,6 +2004,17 @@ export default function Extraction() {
       s.completedExtractionBatches,
     );
     if (!located) {
+      const partnerRow =
+        s.extractionBatches.find((b: any) => b?.id === pid) ||
+        s.completedExtractionBatches.find((b: any) => b?.id === pid);
+      if (partnerRow && !isPartnerMergedIntoSurvivor(partnerRow, sid)) {
+        setUncombineBusyPartnerId(pid);
+        try {
+          return await runClearPhantomMergeLink(survivor, pid);
+        } finally {
+          setUncombineBusyPartnerId("");
+        }
+      }
       showNotice(
         "Uncombine failed",
         "The absorbed batch could not be found as a merged record. Try refreshing.",
