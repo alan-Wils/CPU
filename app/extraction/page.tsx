@@ -67,10 +67,12 @@ import {
   extractionBatchBiomassLbs,
   extractionBatchOilGrams,
   extractionCombineUsesOilGrams,
+  filterActiveExtractionBatches,
   findMergedExtractionPartnerBatch,
   isExtractionBatchActiveForCombine,
   isExtractionBatchMergedAbsorbed,
   mergeExtractionSourceRows,
+  sweepMergedExtractionBatchesToCompleted,
   rebuildExtractionBatchSourceSummary,
   resolveAbsorbedForUncombine,
   setExtractionBatchCombinedOilGrams,
@@ -489,6 +491,7 @@ export default function Extraction() {
         }
         s.extractionBatches = activeExtraction;
         s.completedExtractionBatches = completedMergedExtraction;
+        sweepMergedExtractionBatchesToCompleted(s);
 
         setSelectedExt((current: any) => {
           if (current?.id) {
@@ -718,7 +721,7 @@ export default function Extraction() {
   }, [viewBatch?.id]);
 
   useEffect(() => {
-    const grouped = groupExtractionBatchesByUiStage(s.extractionBatches);
+    const grouped = groupExtractionBatchesByUiStage(filterActiveExtractionBatches(s.extractionBatches));
     if (selectedExtractionStage === null) {
       setSelectedExt(null);
       return;
@@ -2021,6 +2024,7 @@ export default function Extraction() {
     if (!s.completedExtractionBatches.some((b: any) => b?.id === absorbed.id)) {
       s.completedExtractionBatches.unshift(absorbed);
     }
+    sweepMergedExtractionBatchesToCompleted(s);
   }
 
   function getUncombinePreview(survivor: any, partnerIdRaw: string) {
@@ -3253,7 +3257,7 @@ export default function Extraction() {
       if (selectedExtractionStage === null) {
         setSelectedExt(null);
       } else {
-        const grouped = groupExtractionBatchesByUiStage(s.extractionBatches);
+        const grouped = groupExtractionBatchesByUiStage(filterActiveExtractionBatches(s.extractionBatches));
         setSelectedExt(grouped[selectedExtractionStage][0] ?? null);
       }
     }
@@ -3456,9 +3460,13 @@ export default function Extraction() {
       })
     : [];
 
-  const extractionBatchesByStage = groupExtractionBatchesByUiStage(s.extractionBatches);
+  const activeExtractionBatches = filterActiveExtractionBatches(s.extractionBatches);
+  const extractionBatchesByStage = groupExtractionBatchesByUiStage(activeExtractionBatches);
   const visibleExtractionBatches = selectedExtractionStage
     ? extractionBatchesByStage[selectedExtractionStage]
+    : [];
+  const completedMergedExtractionBatches = Array.isArray(s.completedExtractionBatches)
+    ? s.completedExtractionBatches.filter((b: any) => isExtractionBatchMergedAbsorbed(b))
     : [];
 
   return (
@@ -3723,7 +3731,7 @@ export default function Extraction() {
           <div style={{ ...lockedListStyle, maxHeight: selectedExtractionStage ? 420 : 120 }}>
             {selectedExtractionStage === null ? (
               <p style={{ color: "#94a3b8", margin: 0 }}>
-                {s.extractionBatches.length === 0
+                {activeExtractionBatches.length === 0
                   ? "No extraction batches yet. Create a batch above, then pick a stage card to filter the list."
                   : "Select a stage above to view batches. Your team’s workflow is grouped the same way as cultivation stages."}
               </p>
@@ -3804,6 +3812,45 @@ export default function Extraction() {
                       Delete
                     </button>
                   ) : null}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div style={cardStyle}>
+          <h2 style={{ marginTop: 0 }}>Completed / Merged Extraction Batches</h2>
+          <p style={{ color: "#94a3b8", margin: "0 0 12px", fontSize: 13, lineHeight: 1.45 }}>
+            Batches absorbed into another run via <b>Combine Batches</b>. They stay here until you undo
+            the merge from the survivor batch.
+          </p>
+
+          <div style={lockedListStyle}>
+            {completedMergedExtractionBatches.length === 0 ? (
+              <p style={{ color: "#94a3b8", margin: 0 }}>No merged extraction batches yet.</p>
+            ) : (
+              completedMergedExtractionBatches.map((b: any) => (
+                <div key={b.id} style={{ ...rowStyle, background: "#111827" }}>
+                  <div style={{ flex: 1 }}>
+                    <b>{b.marketBatchCode || b.id}</b>
+                    {b.marketBatchCode ? (
+                      <span style={{ fontWeight: 600 }}> ({b.id})</span>
+                    ) : null}{" "}
+                    | {b.name || "—"} | Status: {b.status || "Merged"}
+                    {b.mergedIntoBatchId ? (
+                      <span style={{ color: "#fbbf24" }}> | Merged into {b.mergedIntoBatchId}</span>
+                    ) : null}
+                    {b.completedAt ? (
+                      <span style={{ color: "#94a3b8", fontSize: 13 }}>
+                        {" "}
+                        | Completed: {b.completedAt}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <button style={buttonStyle} onClick={() => setViewBatch(b)}>
+                    View
+                  </button>
                 </div>
               ))
             )}

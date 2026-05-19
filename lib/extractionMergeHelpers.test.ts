@@ -4,9 +4,11 @@ import {
   extractionBatchOilGrams,
   extractionCombineUsesOilGrams,
   findExtractionCombineMergeDataForPair,
+  filterActiveExtractionBatches,
   findMergedExtractionPartnerBatch,
   isExtractionBatchActiveForCombine,
   isExtractionBatchMergedAbsorbed,
+  sweepMergedExtractionBatchesToCompleted,
   mergeExtractionSourceRows,
   rebuildExtractionBatchSourceSummary,
   resolveAbsorbedForUncombine,
@@ -61,6 +63,27 @@ describe("extractionMergeHelpers", () => {
       findMergedExtractionPartnerBatch("P", "S", [], [partner]).storage,
     ).toBe("completed");
     expect(findMergedExtractionPartnerBatch("P", "S", [], [])).toBeNull();
+  });
+
+  it("sweepMergedExtractionBatchesToCompleted moves merged rows out of active", () => {
+    const store: any = {
+      extractionBatches: [
+        { id: "A", status: "Purge Active" },
+        { id: "P", status: "Merged - Complete", mergedIntoBatchId: "S" },
+      ],
+      completedExtractionBatches: [],
+    };
+    sweepMergedExtractionBatchesToCompleted(store);
+    expect(store.extractionBatches.map((b: any) => b.id)).toEqual(["A"]);
+    expect(store.completedExtractionBatches.map((b: any) => b.id)).toEqual(["P"]);
+  });
+
+  it("filterActiveExtractionBatches excludes merged partners", () => {
+    const rows = [
+      { id: "A", status: "Purge Active" },
+      { id: "P", status: "Merged - Complete" },
+    ];
+    expect(filterActiveExtractionBatches(rows).map((b) => b.id)).toEqual(["A"]);
   });
 
   it("isExtractionBatchMergedAbsorbed detects mergedIntoBatchId", () => {

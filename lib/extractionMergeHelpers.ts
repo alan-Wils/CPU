@@ -53,6 +53,40 @@ export function isExtractionBatchMergedAbsorbed(batch: any): boolean {
   return String(batch.status || "").toLowerCase().includes("merged");
 }
 
+/** Active extraction list should not show merged partners. */
+export function filterActiveExtractionBatches(batches: any[]): any[] {
+  return (batches || []).filter((b) => !isExtractionBatchMergedAbsorbed(b));
+}
+
+/**
+ * Move merged partners from active → completed (API poll can briefly return them as active).
+ */
+export function sweepMergedExtractionBatchesToCompleted(store: {
+  extractionBatches?: any[];
+  completedExtractionBatches?: any[];
+}): void {
+  const active = Array.isArray(store.extractionBatches) ? store.extractionBatches : [];
+  if (!Array.isArray(store.completedExtractionBatches)) {
+    store.completedExtractionBatches = [];
+  }
+  const completedById = new Map<string, any>();
+  for (const row of store.completedExtractionBatches) {
+    const id = String(row?.id || "");
+    if (id) completedById.set(id, row);
+  }
+  const stillActive: any[] = [];
+  for (const row of active) {
+    if (isExtractionBatchMergedAbsorbed(row)) {
+      const id = String(row.id);
+      completedById.set(id, row);
+    } else {
+      stillActive.push(row);
+    }
+  }
+  store.extractionBatches = stillActive;
+  store.completedExtractionBatches = Array.from(completedById.values());
+}
+
 export type MergedExtractionPartnerLocation = {
   batch: any;
   storage: "active" | "completed";
