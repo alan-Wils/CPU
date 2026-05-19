@@ -220,6 +220,23 @@ function asUiRecord(value: unknown): Record<string, unknown> {
 function mergeRecord(base: unknown, patch: unknown): Record<string, unknown> {
     return { ...asUiRecord(base), ...asUiRecord(patch) };
 }
+const EXTRACTION_UI_NULL_CLEAR_KEYS = [
+    "mergedIntoBatchId",
+    "mergedIntoSnapshot",
+    "combinedFromBatchIds",
+    "completedAt",
+] as const;
+/** PUT /api/extraction/:id — `null` in JSON clears keys omitted by `undefined` on the client. */
+function mergeExtractionUiStatePatch(base: unknown, patch: unknown): Record<string, unknown> {
+    const merged = mergeRecord(base, patch);
+    const p = asUiRecord(patch);
+    for (const key of EXTRACTION_UI_NULL_CLEAR_KEYS) {
+        if (key in p && p[key] === null) {
+            delete merged[key];
+        }
+    }
+    return merged;
+}
 function extractionTaskNodeIsEmpty(value: unknown): boolean {
     if (value === undefined || value === null)
         return true;
@@ -1009,7 +1026,7 @@ legacyCpuRouter.put("/extraction/:runId", requireRole(extractionWriteRoles), asy
     }
     const prevUi = asUiRecord(existing.extractionUiState);
     const prevPhase = String(existing.phase ?? "");
-    const mergedUi = mergeRecord(prevUi, body);
+    const mergedUi = mergeExtractionUiStatePatch(prevUi, body);
     if (mergedUi.id)
         delete mergedUi.id;
     const updated = await workflowService.updateExtractionRun(companyId, req.auth.userId, {

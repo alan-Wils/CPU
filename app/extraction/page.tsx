@@ -67,10 +67,13 @@ import {
   extractionBatchBiomassLbs,
   extractionBatchOilGrams,
   extractionCombineUsesOilGrams,
+  extractionBatchPutPayloadAfterUncombinePartner,
+  extractionBatchPutPayloadAfterUncombineSurvivor,
   filterActiveExtractionBatches,
   findMergedExtractionPartnerBatch,
   isExtractionBatchActiveForCombine,
   isExtractionBatchMergedAbsorbed,
+  mergeExtractionPollState,
   mergeExtractionSourceRows,
   sweepMergedExtractionBatchesToCompleted,
   rebuildExtractionBatchSourceSummary,
@@ -371,68 +374,6 @@ function makeProductionBatchId(sources: any[]) {
     .slice(0, 4);
 
   return `EXT-${acronymMix || "MIX"}-${getDateCode()}`;
-}
-
-function extractionPollTaskNodeIsEmpty(value: any): boolean {
-  if (value === undefined || value === null) return true;
-  if (Array.isArray(value)) return value.length === 0;
-  if (typeof value === "object") return Object.keys(value).length === 0;
-  return false;
-}
-
-/** When polling, keep optimistic task progress if the server row is briefly stale. */
-function mergeExtractionPollState(serverBatch: any, localBatch: any): any {
-  if (!localBatch || !serverBatch || String(serverBatch.id) !== String(localBatch.id)) {
-    return serverBatch || localBatch;
-  }
-  const ctS = Array.isArray(serverBatch.completedTasks)
-    ? serverBatch.completedTasks.map(String)
-    : [];
-  const ctL = Array.isArray(localBatch.completedTasks)
-    ? localBatch.completedTasks.map(String)
-    : [];
-  const completedTasks = [...ctS, ...ctL.filter((t: string) => !ctS.includes(t))];
-
-  const tdS =
-    serverBatch.taskData &&
-    typeof serverBatch.taskData === "object" &&
-    !Array.isArray(serverBatch.taskData)
-      ? serverBatch.taskData
-      : {};
-  const tdL =
-    localBatch.taskData &&
-    typeof localBatch.taskData === "object" &&
-    !Array.isArray(localBatch.taskData)
-      ? localBatch.taskData
-      : {};
-  const keys = new Set([...Object.keys(tdS), ...Object.keys(tdL)]);
-  const taskData: Record<string, unknown> = {};
-  for (const k of keys) {
-    const b = tdS[k];
-    const a = tdL[k];
-    if (extractionPollTaskNodeIsEmpty(b) && !extractionPollTaskNodeIsEmpty(a)) {
-      taskData[k] = a;
-    } else if (extractionPollTaskNodeIsEmpty(a) && !extractionPollTaskNodeIsEmpty(b)) {
-      taskData[k] = b;
-    } else if (
-      typeof a === "object" &&
-      typeof b === "object" &&
-      a &&
-      b &&
-      !Array.isArray(a) &&
-      !Array.isArray(b)
-    ) {
-      taskData[k] = { ...(b as Record<string, unknown>), ...(a as Record<string, unknown>) };
-    } else {
-      taskData[k] = !extractionPollTaskNodeIsEmpty(b) ? b : a;
-    }
-  }
-
-  return {
-    ...serverBatch,
-    completedTasks: completedTasks.length ? completedTasks : serverBatch.completedTasks,
-    taskData,
-  };
 }
 
 export default function Extraction() {
@@ -1991,8 +1932,15 @@ export default function Extraction() {
     resetTaskForm();
 
     showSyncMessageNotice("Uncombine saved locally. Syncing to server...");
-    let ok = await updateExtractionBatch(sid, survivor);
-    ok = (await updateExtractionBatch(pid, pRestore)) && ok;
+    let ok = await updateExtractionBatch(
+      sid,
+      extractionBatchPutPayloadAfterUncombineSurvivor(survivor),
+    );
+    ok =
+      (await updateExtractionBatch(
+        pid,
+        extractionBatchPutPayloadAfterUncombinePartner(pRestore),
+      )) && ok;
     showSyncMessageNotice(
       ok ? "Uncombine synced to server." : "Uncombine saved locally — server sync failed.",
     );

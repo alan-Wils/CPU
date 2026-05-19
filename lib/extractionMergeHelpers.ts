@@ -320,3 +320,146 @@ export function resolveAbsorbedForUncombine(
   };
 }
 
+export function getExtractionCombinedPartnerIds(batch: any): string[] {
+  if (!batch || !Array.isArray(batch.combinedFromBatchIds)) return [];
+  return batch.combinedFromBatchIds
+    .map((id: unknown) => String(id || "").trim())
+    .filter(Boolean);
+}
+
+/** PUT body: JSON omits `undefined`, so send `null` to clear merge fields in extractionUiState. */
+export function extractionBatchPutPayloadAfterUncombinePartner(
+  batch: any,
+): Record<string, unknown> {
+  return {
+    ...batch,
+    mergedIntoBatchId: null,
+    mergedIntoSnapshot: null,
+    completedAt: null,
+  };
+}
+
+/** PUT body: clear survivor merge list when the last partner was restored. */
+export function extractionBatchPutPayloadAfterUncombineSurvivor(
+  batch: any,
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = { ...batch };
+  if (getExtractionCombinedPartnerIds(batch).length === 0) {
+    payload.combinedFromBatchIds = null;
+  }
+  return payload;
+}
+
+const EXTRACTION_POLL_WEIGHT_FIELDS = [
+  "status",
+  "sources",
+  "totalBiomassUsed",
+  "amount",
+  "inputGrams",
+  "finalOilGrams",
+  "totalFinalGrams",
+  "source",
+  "sourceBlendLabel",
+  "extraTerpsGrams",
+] as const;
+
+function extractionPollTaskNodeIsEmpty(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") return Object.keys(value as object).length === 0;
+  return false;
+}
+
+function pickExtractionPollWeightFields(localBatch: any): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of EXTRACTION_POLL_WEIGHT_FIELDS) {
+    if (localBatch[key] !== undefined) out[key] = localBatch[key];
+  }
+  return out;
+}
+
+/**
+ * When polling, keep optimistic task progress and local uncombine state if the server row is stale.
+ */
+export function mergeExtractionPollState(serverBatch: any, localBatch: any): any {
+  if (!localBatch || !serverBatch || String(serverBatch.id) !== String(localBatch.id)) {
+    return serverBatch || localBatch;
+  }
+  const ctS = Array.isArray(serverBatch.completedTasks)
+    ? serverBatch.completedTasks.map(String)
+    : [];
+  const ctL = Array.isArray(localBatch.completedTasks)
+    ? localBatch.completedTasks.map(String)
+    : [];
+  const completedTasks = [...ctS, ...ctL.filter((t: string) => !ctS.includes(t))];
+
+  const tdS =
+    serverBatch.taskData &&
+    typeof serverBatch.taskData === "object" &&
+    !Array.isArray(serverBatch.taskData)
+      ? serverBatch.taskData
+      : {};
+  const tdL =
+    localBatch.taskData &&
+    typeof localBatch.taskData === "object" &&
+    !Array.isArray(localBatch.taskData)
+      ? localBatch.taskData
+      : {};
+  const keys = new Set([...Object.keys(tdS), ...Object.keys(tdL)]);
+  const taskData: Record<string, unknown> = {};
+  for (const k of keys) {
+    const b = tdS[k];
+    const a = tdL[k];
+    if (extractionPollTaskNodeIsEmpty(b) && !extractionPollTaskNodeIsEmpty(a)) {
+      taskData[k] = a;
+    } else if (extractionPollTaskNodeIsEmpty(a) && !extractionPollTaskNodeIsEmpty(b)) {
+      taskData[k] = b;
+    } else if (
+      typeof a === "object" &&
+      typeof b === "object" &&
+      a &&
+      b &&
+      !Array.isArray(a) &&
+      !Array.isArray(b)
+    ) {
+      taskData[k] = { ...(b as Record<string, unknown>), ...(a as Record<string, unknown>) };
+    } else {
+      taskData[k] = !extractionPollTaskNodeIsEmpty(b) ? b : a;
+    }
+  }
+
+  let merged: any = {
+    ...serverBatch,
+    completedTasks: completedTasks.length ? completedTasks : serverBatch.completedTasks,
+    taskData,
+  };
+
+  const localAbsorbed = isExtractionBatchMergedAbsorbed(localBatch);
+  const serverAbsorbed = isExtractionBatchMergedAbsorbed(serverBatch);
+  if (!localAbsorbed && serverAbsorbed) {
+    merged = {
+      ...merged,
+      ...pickExtractionPollWeightFields(localBatch),
+    };
+    delete merged.mergedIntoBatchId;
+    delete merged.mergedIntoSnapshot;
+    delete merged.completedAt;
+  }
+
+  const localCombined = getExtractionCombinedPartnerIds(localBatch);
+  const serverCombined = getExtractionCombinedPartnerIds(serverBatch);
+  if (localCombined.length < serverCombined.length) {
+    merged = {
+      ...merged,
+      ...pickExtractionPollWeightFields(localBatch),
+    };
+    if (localCombined.length === 0) {
+      delete merged.combinedFromBatchIds;
+    } else {
+      merged.combinedFromBatchIds = [...localCombined];
+    }
+  }
+
+  return merged;
+}
+

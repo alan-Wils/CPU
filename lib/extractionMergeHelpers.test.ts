@@ -12,6 +12,10 @@ import {
   mergeExtractionSourceRows,
   rebuildExtractionBatchSourceSummary,
   resolveAbsorbedForUncombine,
+  extractionBatchPutPayloadAfterUncombinePartner,
+  extractionBatchPutPayloadAfterUncombineSurvivor,
+  getExtractionCombinedPartnerIds,
+  mergeExtractionPollState,
   setExtractionBatchCombinedOilGrams,
   setExtractionBatchTotalBiomassLbs,
   subtractExtractionSourceRows,
@@ -169,6 +173,60 @@ describe("extractionMergeHelpers", () => {
     setExtractionBatchCombinedOilGrams(batch, 30);
     expect(batch.finalOilGrams).toBe(30);
     expect(batch.totalFinalGrams).toBe(32);
+  });
+
+  it("extractionBatchPutPayloadAfterUncombinePartner sends null merge clears", () => {
+    const payload = extractionBatchPutPayloadAfterUncombinePartner({
+      id: "P",
+      status: "Purge Active",
+    });
+    expect(payload.mergedIntoBatchId).toBeNull();
+    expect(payload.mergedIntoSnapshot).toBeNull();
+    expect(payload.completedAt).toBeNull();
+    expect(JSON.stringify(payload)).toContain('"mergedIntoBatchId":null');
+  });
+
+  it("extractionBatchPutPayloadAfterUncombineSurvivor clears empty combinedFromBatchIds", () => {
+    const payload = extractionBatchPutPayloadAfterUncombineSurvivor({
+      id: "S",
+      combinedFromBatchIds: [],
+    });
+    expect(payload.combinedFromBatchIds).toBeNull();
+  });
+
+  it("mergeExtractionPollState keeps local uncombine when server still merged", () => {
+    const server = {
+      id: "P",
+      mergedIntoBatchId: "S",
+      status: "Merged - Complete",
+      totalBiomassUsed: 0,
+    };
+    const local = {
+      id: "P",
+      status: "Purge Active",
+      totalBiomassUsed: 12,
+      sources: [{ sourceId: "A", amountUsed: 12 }],
+    };
+    const merged = mergeExtractionPollState(server, local);
+    expect(merged.mergedIntoBatchId).toBeUndefined();
+    expect(merged.status).toBe("Purge Active");
+    expect(merged.totalBiomassUsed).toBe(12);
+  });
+
+  it("mergeExtractionPollState keeps survivor with fewer combined partners", () => {
+    const server = {
+      id: "S",
+      combinedFromBatchIds: ["P1", "P2"],
+      totalBiomassUsed: 30,
+    };
+    const local = {
+      id: "S",
+      combinedFromBatchIds: ["P2"],
+      totalBiomassUsed: 20,
+    };
+    const merged = mergeExtractionPollState(server, local);
+    expect(getExtractionCombinedPartnerIds(merged)).toEqual(["P2"]);
+    expect(merged.totalBiomassUsed).toBe(20);
   });
 
   it("resolveAbsorbedForUncombine resolves oil from grams merge log", () => {
