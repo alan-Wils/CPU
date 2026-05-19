@@ -49,8 +49,45 @@ export function findExtractionCombineMergeDataForPair(
 /** Partner row absorbed into another extraction batch (still returned by GET /api/extraction until uncombined). */
 export function isExtractionBatchMergedAbsorbed(batch: any): boolean {
   if (!batch?.id) return false;
-  if (String(batch.mergedIntoBatchId || "").trim()) return true;
-  return String(batch.status || "").toLowerCase().includes("merged");
+  const id = String(batch.id).trim();
+  const mergedInto = String(batch.mergedIntoBatchId || "").trim();
+  if (mergedInto && mergedInto === id) return false;
+  const status = String(batch.status || "").toLowerCase();
+  if (mergedInto && !status.includes("merged")) return false;
+  if (mergedInto) return true;
+  return status.includes("merged");
+}
+
+/**
+ * Clears stale merge markers when a batch is still in active workflow (e.g. after editing market code
+ * rehydrated a ghost `mergedIntoBatchId` from company-store snapshot).
+ */
+export function sanitizeExtractionBatchMergeState(batch: any): any {
+  if (!batch || typeof batch !== "object") return batch;
+  const id = String(batch.id || "").trim();
+  if (!id) return batch;
+  const mergedInto = String(batch.mergedIntoBatchId || "").trim();
+  const status = String(batch.status || "").toLowerCase();
+  if (!mergedInto) return batch;
+  if (mergedInto === id || !status.includes("merged")) {
+    const out = { ...batch };
+    delete out.mergedIntoBatchId;
+    delete out.mergedIntoSnapshot;
+    delete out.completedAt;
+    return out;
+  }
+  return batch;
+}
+
+/** PUT body for editing name / product / market code on a non-merged active batch. */
+export function extractionBatchPutPayloadForDetailEdit(batch: any): Record<string, unknown> {
+  const payload: Record<string, unknown> = { ...batch };
+  if ("_db" in payload) delete payload._db;
+  if (isExtractionBatchMergedAbsorbed(batch)) return payload;
+  payload.mergedIntoBatchId = null;
+  payload.mergedIntoSnapshot = null;
+  payload.completedAt = null;
+  return payload;
 }
 
 /** Active extraction list should not show merged partners. */
@@ -557,6 +594,10 @@ export function mergeExtractionPollState(serverBatch: any, localBatch: any): any
       ...merged,
       ...pickExtractionPollWeightFields(localBatch),
     };
+    delete merged.mergedIntoBatchId;
+    delete merged.mergedIntoSnapshot;
+    delete merged.completedAt;
+  } else if (localAbsorbed && !serverAbsorbed) {
     delete merged.mergedIntoBatchId;
     delete merged.mergedIntoSnapshot;
     delete merged.completedAt;

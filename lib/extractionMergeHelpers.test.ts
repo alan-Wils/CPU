@@ -7,7 +7,9 @@ import {
   filterActiveExtractionBatches,
   findMergedExtractionPartnerBatch,
   isExtractionBatchActiveForCombine,
+  extractionBatchPutPayloadForDetailEdit,
   isExtractionBatchMergedAbsorbed,
+  sanitizeExtractionBatchMergeState,
   sweepMergedExtractionBatchesToCompleted,
   mergeExtractionSourceRows,
   rebuildExtractionBatchSourceSummary,
@@ -93,10 +95,61 @@ describe("extractionMergeHelpers", () => {
     expect(filterActiveExtractionBatches(rows).map((b) => b.id)).toEqual(["A"]);
   });
 
-  it("isExtractionBatchMergedAbsorbed detects mergedIntoBatchId", () => {
-    expect(isExtractionBatchMergedAbsorbed({ id: "1", mergedIntoBatchId: "S" })).toBe(true);
+  it("isExtractionBatchMergedAbsorbed requires merged status when mergedIntoBatchId is set", () => {
+    expect(
+      isExtractionBatchMergedAbsorbed({
+        id: "1",
+        mergedIntoBatchId: "S",
+        status: "Merged - Complete",
+      }),
+    ).toBe(true);
+    expect(
+      isExtractionBatchMergedAbsorbed({
+        id: "1",
+        mergedIntoBatchId: "S",
+        status: "Purge Active",
+      }),
+    ).toBe(false);
+    expect(isExtractionBatchMergedAbsorbed({ id: "EXT-1", mergedIntoBatchId: "EXT-1" })).toBe(
+      false,
+    );
     expect(isExtractionBatchMergedAbsorbed({ id: "1", status: "Merged - Complete" })).toBe(true);
     expect(isExtractionBatchMergedAbsorbed({ id: "1", status: "Purge Active" })).toBe(false);
+  });
+
+  it("sanitizeExtractionBatchMergeState strips stale merge markers on active batches", () => {
+    expect(
+      sanitizeExtractionBatchMergeState({
+        id: "EXT-A",
+        mergedIntoBatchId: "EXT-B",
+        status: "Purge Active",
+      }).mergedIntoBatchId,
+    ).toBeUndefined();
+    expect(
+      sanitizeExtractionBatchMergeState({
+        id: "EXT-A",
+        mergedIntoBatchId: "EXT-A",
+        status: "Purge Active",
+      }).mergedIntoBatchId,
+    ).toBeUndefined();
+    expect(
+      sanitizeExtractionBatchMergeState({
+        id: "P",
+        mergedIntoBatchId: "S",
+        status: "Merged - Complete",
+      }).mergedIntoBatchId,
+    ).toBe("S");
+  });
+
+  it("extractionBatchPutPayloadForDetailEdit clears merge fields for active batches", () => {
+    const payload = extractionBatchPutPayloadForDetailEdit({
+      id: "EXT-A",
+      status: "Purge Active",
+      mergedIntoBatchId: "EXT-B",
+      marketBatchCode: "GMO.051226",
+    });
+    expect(payload.mergedIntoBatchId).toBeNull();
+    expect(payload.marketBatchCode).toBe("GMO.051226");
   });
 
   it("isExtractionBatchActiveForCombine rejects finished or merged", () => {
@@ -108,7 +161,13 @@ describe("extractionMergeHelpers", () => {
         completedTasks: ["Finish Batch"],
       }),
     ).toBe(false);
-    expect(isExtractionBatchActiveForCombine({ id: "3", mergedIntoBatchId: "S" })).toBe(false);
+    expect(
+      isExtractionBatchActiveForCombine({
+        id: "3",
+        mergedIntoBatchId: "S",
+        status: "Merged - Complete",
+      }),
+    ).toBe(false);
   });
 
   it("findExtractionCombineMergeDataForPair matches survivor and absorbed ids", () => {
@@ -273,6 +332,23 @@ describe("extractionMergeHelpers", () => {
       combinedFromBatchIds: [],
     });
     expect(payload.combinedFromBatchIds).toBeNull();
+  });
+
+  it("mergeExtractionPollState drops stale local merge markers when server row is active", () => {
+    const server = {
+      id: "EXT-A",
+      status: "Purge Active",
+      marketBatchCode: "GMO.051226",
+    };
+    const local = {
+      id: "EXT-A",
+      status: "Purge Active",
+      mergedIntoBatchId: "EXT-A",
+      marketBatchCode: "GMO.051226",
+    };
+    const merged = mergeExtractionPollState(server, local);
+    expect(merged.mergedIntoBatchId).toBeUndefined();
+    expect(merged.status).toBe("Purge Active");
   });
 
   it("mergeExtractionPollState keeps local uncombine when server still merged", () => {

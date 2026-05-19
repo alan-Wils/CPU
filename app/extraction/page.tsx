@@ -71,6 +71,7 @@ import {
   captureExtractionPreMergeUiSnapshot,
   extractionBatchPutPayloadAfterUncombinePartner,
   extractionBatchPutPayloadAfterUncombineSurvivor,
+  extractionBatchPutPayloadForDetailEdit,
   filterActiveExtractionBatches,
   findMergedExtractionPartnerBatch,
   isExtractionBatchActiveForCombine,
@@ -78,6 +79,7 @@ import {
   mergeExtractionPollState,
   mergeExtractionSourceRows,
   sweepMergedExtractionBatchesToCompleted,
+  sanitizeExtractionBatchMergeState,
   rebuildExtractionBatchSourceSummary,
   resolveAbsorbedForUncombine,
   setExtractionBatchCombinedOilGrams,
@@ -441,7 +443,9 @@ export default function Extraction() {
         for (const b of extractionList) {
           const id = String(b?.id || "");
           const prev = prevExById.get(id) || prevCompletedExById.get(id);
-          const row = prev ? mergeExtractionPollState(b, prev) : b;
+          const row = sanitizeExtractionBatchMergeState(
+            prev ? mergeExtractionPollState(b, prev) : b,
+          );
           if (isExtractionBatchMergedAbsorbed(row)) {
             completedMergedExtraction.push(row);
           } else {
@@ -791,26 +795,30 @@ export default function Extraction() {
 
     const latest =
       s.extractionBatches.find((b: any) => b.id === viewBatch.id) || viewBatch;
-    const payload: any = { ...latest };
-    if (payload && typeof payload === "object" && "_db" in payload) {
-      delete payload._db;
-    }
-    payload.name = editBatchName.trim();
-    payload.productType = editProductType.trim();
-    payload.marketBatchCode = editMarketBatchCode.trim();
-    payload.sourceBlendLabel = editSourceBlendLabel.trim();
+    const payload: any = extractionBatchPutPayloadForDetailEdit({
+      ...latest,
+      name: editBatchName.trim(),
+      productType: editProductType.trim(),
+      marketBatchCode: editMarketBatchCode.trim(),
+      sourceBlendLabel: editSourceBlendLabel.trim(),
+    });
 
     setEditBatchSaving(true);
     try {
       const updated = await updateExtractionBatch(viewBatch.id, payload);
       if (updated && typeof updated === "object") {
+        const cleaned = sanitizeExtractionBatchMergeState(updated);
         const row = s.extractionBatches.find((b: any) => b.id === viewBatch.id);
-        if (row) Object.assign(row, updated);
+        if (row) Object.assign(row, cleaned);
+        s.completedExtractionBatches = (s.completedExtractionBatches || []).filter(
+          (b: any) => String(b?.id || "") !== String(viewBatch.id),
+        );
+        sweepMergedExtractionBatchesToCompleted(s);
         setViewBatch((prev: any) =>
-          prev && prev.id === viewBatch.id ? { ...prev, ...updated } : prev,
+          prev && prev.id === viewBatch.id ? { ...prev, ...cleaned } : prev,
         );
         setSelectedExt((cur: any) =>
-          cur?.id === viewBatch.id ? { ...cur, ...updated } : cur,
+          cur?.id === viewBatch.id ? { ...cur, ...cleaned } : cur,
         );
         setViewBatchEditing(false);
         showSyncMessageNotice("Batch details saved.");
