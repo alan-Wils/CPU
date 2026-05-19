@@ -7,6 +7,16 @@ import {
 
 export type ExtractionCombineWeightUnit = "lbs" | "grams";
 
+type ExtractionSourceRowLike = {
+  sourceId?: unknown;
+  id?: unknown;
+  amountUsed?: unknown;
+  amount?: unknown;
+  name?: unknown;
+  materialType?: unknown;
+  acronym?: unknown;
+};
+
 export type ExtractionCombineMergeLogData = {
   combineBatches?: boolean;
   survivorBatchId?: string;
@@ -259,10 +269,12 @@ export function extractionBatchPreparedBiomassLbs(batch: any): number {
 }
 
 function extractionBatchBiomassFromSourceRows(batch: any): number {
-  const rows = Array.isArray(batch?.sources) ? batch.sources : [];
+  const rows: ExtractionSourceRowLike[] = Array.isArray(batch?.sources)
+    ? (batch.sources as ExtractionSourceRowLike[])
+    : [];
   if (rows.length === 0) return 0;
   return +rows
-    .reduce((sum: number, row: { amountUsed?: unknown; amount?: unknown }) => {
+    .reduce((sum: number, row: ExtractionSourceRowLike) => {
       return sum + num(row?.amountUsed ?? row?.amount);
     }, 0)
     .toFixed(2);
@@ -285,14 +297,16 @@ export function resolveExtractionBatchSourceRows(
   batch: any,
   getSource?: (sourceId: string) => any | null | undefined,
 ): any[] {
-  const existing = Array.isArray(batch?.sources) ? batch.sources : [];
+  const existing: ExtractionSourceRowLike[] = Array.isArray(batch?.sources)
+    ? (batch.sources as ExtractionSourceRowLike[])
+    : [];
   const normalized = existing
-    .map((row) => {
+    .map((row: ExtractionSourceRowLike) => {
       const sourceId = String(row?.sourceId ?? row?.id ?? "").trim();
       if (!sourceId) return null;
       return { ...row, sourceId };
     })
-    .filter(Boolean) as any[];
+    .filter((row): row is ExtractionSourceRowLike & { sourceId: string } => row != null);
   if (normalized.length > 0) return normalized;
 
   const ids = String(batch?.source || "")
