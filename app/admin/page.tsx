@@ -134,7 +134,7 @@ function mergeUsersWithPendingInvites(
     if (!em || seen.has(em)) continue;
     extras.push({
       id: `${PENDING_INVITE_ROW_PREFIX}${inv.id}`,
-      username: inv.username || inv.email.split("@")[0] || inv.email,
+      username: inv.email.split("@")[0] || inv.email,
       email: inv.email,
       role: inv.role,
       active: false,
