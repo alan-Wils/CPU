@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   collectExtractionCultivationSourceLabels,
   extractionBatchMarketBatchCode,
+  findActiveExtractionBatchWithMarketCode,
   marketBatchCodeFromExtId,
 } from "./extractionBatchDisplay";
 
@@ -22,6 +23,26 @@ describe("extractionBatchDisplay", () => {
     expect(
       extractionBatchMarketBatchCode({ id: "EXT-GMO0-051226" }),
     ).toBe("GMO.051226");
+  });
+
+  it("findActiveExtractionBatchWithMarketCode matches saved codes only", () => {
+    const batches = [
+      { id: "EXT-A", marketBatchCode: "GMO.051226", status: "Purge Active" },
+      { id: "EXT-B", marketBatchCode: "GMO.051226.2", status: "Purge Active" },
+      { id: "EXT-C", status: "Purge Active" },
+    ];
+    expect(
+      findActiveExtractionBatchWithMarketCode(batches, "GMO.051226", "EXT-B")?.id,
+    ).toBe("EXT-A");
+    expect(
+      findActiveExtractionBatchWithMarketCode(batches, "gmo.051226", "EXT-A"),
+    ).toBeNull();
+    expect(
+      findActiveExtractionBatchWithMarketCode(batches, "GMO.051226", "EXT-A"),
+    ).toBeNull();
+    expect(
+      findActiveExtractionBatchWithMarketCode(batches, "GMO.051226", "EXT-C")?.id,
+    ).toBe("EXT-A");
   });
 
   it("collectExtractionCultivationSourceLabels dedupes blend, anchor, and source rows", () => {

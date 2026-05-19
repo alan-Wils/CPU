@@ -64,3 +64,40 @@ export function formatExtractionCultivationSourceFooter(labels: string[]): strin
   if (labels.length === 0) return "";
   return labels.join(" · ");
 }
+
+/** Saved `marketBatchCode` on the batch record (not derived from EXT id). */
+export function extractionBatchSavedMarketBatchCode(batch: {
+  marketBatchCode?: string;
+}): string {
+  return String(batch?.marketBatchCode ?? "").trim();
+}
+
+function marketBatchCodesMatch(a: string, b: string): boolean {
+  const left = String(a || "").trim();
+  const right = String(b || "").trim();
+  if (!left || !right) return false;
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+/**
+ * Another active extraction batch already uses this market lot code.
+ * Compares explicit `marketBatchCode` only — not display fallbacks from EXT ids.
+ */
+export function findActiveExtractionBatchWithMarketCode(
+  batches: any[],
+  marketBatchCode: string,
+  excludeBatchId: string,
+): any | null {
+  const want = String(marketBatchCode || "").trim();
+  if (!want) return null;
+  const exclude = String(excludeBatchId || "").trim();
+  for (const batch of batches || []) {
+    const id = String(batch?.id || "").trim();
+    if (!id || id === exclude) continue;
+    const saved = extractionBatchSavedMarketBatchCode(batch);
+    if (saved && marketBatchCodesMatch(saved, want)) {
+      return batch;
+    }
+  }
+  return null;
+}

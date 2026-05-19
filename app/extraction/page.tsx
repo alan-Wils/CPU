@@ -112,6 +112,8 @@ import {
 import {
   collectExtractionCultivationSourceLabels,
   extractionBatchMarketBatchCode,
+  extractionBatchSavedMarketBatchCode,
+  findActiveExtractionBatchWithMarketCode,
   formatExtractionCultivationSourceFooter,
 } from "@/lib/extractionBatchDisplay";
 
@@ -781,6 +783,83 @@ export default function Extraction() {
     setViewBatchEditing(false);
   }
 
+  function openCombineForMarketBatchCodeConflict(survivor: any, partner: any) {
+    setViewBatchEditing(false);
+    setViewBatch(null);
+    setSelectedExt(survivor);
+    setCombinePartnerBatchId(String(partner.id || ""));
+    if (extractionCombineUsesOilGrams(survivor)) {
+      const survivorOil = extractionBatchOilGrams(survivor);
+      const partnerOil = extractionBatchOilGrams(partner);
+      setCombineSurvivorLbs(survivorOil > 0 ? String(survivorOil) : "");
+      setCombinePartnerLbs(partnerOil > 0 ? String(partnerOil) : "");
+    } else {
+      const survivorLbs = extractionBatchBiomassLbs(survivor);
+      const partnerLbs = extractionBatchBiomassLbs(partner);
+      setCombineSurvivorLbs(survivorLbs > 0 ? String(survivorLbs) : "");
+      setCombinePartnerLbs(partnerLbs > 0 ? String(partnerLbs) : "");
+    }
+    setCombineNotes("");
+    setSelectedTask("Combine Batches");
+    setShowTaskModal(true);
+    showSyncMessageNotice(
+      "Use Combine Batches to merge, or cancel and pick a unique market batch code.",
+    );
+  }
+
+  function promptIfDuplicateMarketBatchCode(
+    nextCode: string,
+    batchId: string,
+    onProceed: () => void,
+  ): boolean {
+    const trimmed = String(nextCode || "").trim();
+    if (!trimmed) {
+      onProceed();
+      return true;
+    }
+
+    const previousCode = extractionBatchSavedMarketBatchCode(
+      s.extractionBatches.find((b: any) => b.id === batchId) || {},
+    );
+    if (previousCode && previousCode.toLowerCase() === trimmed.toLowerCase()) {
+      onProceed();
+      return true;
+    }
+
+    const conflict = findActiveExtractionBatchWithMarketCode(
+      filterActiveExtractionBatches(s.extractionBatches || []),
+      trimmed,
+      batchId,
+    );
+    if (!conflict) {
+      onProceed();
+      return true;
+    }
+
+    const survivor =
+      s.extractionBatches.find((b: any) => b.id === batchId) ||
+      (viewBatch?.id === batchId ? viewBatch : null);
+    if (!survivor) {
+      showNotice(
+        "Market batch code in use",
+        `Another active batch (${extractionBatchMarketBatchCode(conflict)}) already uses "${trimmed}". Choose a different code.`,
+        `Conflicting run id: ${conflict.id}`,
+      );
+      return false;
+    }
+
+    const conflictLabel = extractionBatchMarketBatchCode(conflict);
+    showConfirm(
+      "Market batch code already in use",
+      `Another active batch (${conflictLabel}, run ${conflict.id}) already uses "${trimmed}". Merge that batch into this one?`,
+      () => openCombineForMarketBatchCodeConflict(survivor, conflict),
+      `If you do not want to merge, pick a unique code (for example ${trimmed}.2 or a different date). Saving was not applied.`,
+      "Merge batches",
+      "Change code",
+    );
+    return false;
+  }
+
   async function saveViewBatchEdits() {
     if (!viewBatch) return;
     if (!requireWriteAccess("edit extraction batch details")) return;
@@ -793,13 +872,26 @@ export default function Extraction() {
       return;
     }
 
+    const nextMarketCode = editMarketBatchCode.trim();
+    if (
+      !promptIfDuplicateMarketBatchCode(nextMarketCode, viewBatch.id, () => {
+        void runSaveViewBatchEdits(nextMarketCode);
+      })
+    ) {
+      return;
+    }
+  }
+
+  async function runSaveViewBatchEdits(nextMarketCode: string) {
+    if (!viewBatch) return;
+
     const latest =
       s.extractionBatches.find((b: any) => b.id === viewBatch.id) || viewBatch;
     const payload: any = extractionBatchPutPayloadForDetailEdit({
       ...latest,
       name: editBatchName.trim(),
       productType: editProductType.trim(),
-      marketBatchCode: editMarketBatchCode.trim(),
+      marketBatchCode: nextMarketCode,
       sourceBlendLabel: editSourceBlendLabel.trim(),
     });
 
@@ -3041,11 +3133,31 @@ export default function Extraction() {
         return;
       }
 
+      let finishMarketCode = "";
       if (!isBlank(chosenName)) {
         selectedExt.name = chosenName.trim();
-        selectedExt.marketBatchCode = !isBlank(draftFinishBatchCode)
+        finishMarketCode = !isBlank(draftFinishBatchCode)
           ? draftFinishBatchCode.trim()
           : makeMarketBatchCode(chosenName.trim(), selectedExt.id);
+        const conflict = findActiveExtractionBatchWithMarketCode(
+          filterActiveExtractionBatches(s.extractionBatches || []),
+          finishMarketCode,
+          selectedExt.id,
+        );
+        if (conflict) {
+          const conflictLabel = extractionBatchMarketBatchCode(conflict);
+          showConfirm(
+            "Market batch code already in use",
+            `Another active batch (${conflictLabel}, run ${conflict.id}) already uses "${finishMarketCode}". Merge that batch into this one before finishing?`,
+            () => openCombineForMarketBatchCodeConflict(selectedExt, conflict),
+            "Pick a unique market batch code on the Finish Batch step, or merge first. Finish Batch was not saved.",
+            "Merge batches",
+            "Change code",
+          );
+          setIsSavingTask(false);
+          return;
+        }
+        selectedExt.marketBatchCode = finishMarketCode;
       }
       selectedExt.status = "Finished - Sent To Packaging";
       selectedExt.finalOilGrams = finalOilGrams;
