@@ -67,7 +67,9 @@ import {
   extractionBatchBiomassLbs,
   extractionBatchOilGrams,
   extractionCombineUsesOilGrams,
+  findMergedExtractionPartnerBatch,
   isExtractionBatchActiveForCombine,
+  isExtractionBatchMergedAbsorbed,
   mergeExtractionSourceRows,
   rebuildExtractionBatchSourceSummary,
   resolveAbsorbedForUncombine,
@@ -466,16 +468,31 @@ export default function Extraction() {
         const prevExById = new Map<string, any>(
           (s.extractionBatches || [])
             .map((b: any): [string, any] => [String(b?.id || ""), b])
-            .filter(([k]: [string, any]) => k)
+            .filter(([k]: [string, any]) => k),
         );
-        s.extractionBatches = extractionList.map((b: any) => {
-          const prev = prevExById.get(String(b?.id || ""));
-          return prev ? mergeExtractionPollState(b, prev) : b;
-        });
+        const prevCompletedExById = new Map<string, any>(
+          (s.completedExtractionBatches || [])
+            .map((b: any): [string, any] => [String(b?.id || ""), b])
+            .filter(([k]: [string, any]) => k),
+        );
+        const activeExtraction: any[] = [];
+        const completedMergedExtraction: any[] = [];
+        for (const b of extractionList) {
+          const id = String(b?.id || "");
+          const prev = prevExById.get(id) || prevCompletedExById.get(id);
+          const row = prev ? mergeExtractionPollState(b, prev) : b;
+          if (isExtractionBatchMergedAbsorbed(row)) {
+            completedMergedExtraction.push(row);
+          } else {
+            activeExtraction.push(row);
+          }
+        }
+        s.extractionBatches = activeExtraction;
+        s.completedExtractionBatches = completedMergedExtraction;
 
         setSelectedExt((current: any) => {
           if (current?.id) {
-            const stillExists = extractionList.find((batch: any) => batch.id === current.id);
+            const stillExists = activeExtraction.find((batch: any) => batch.id === current.id);
             if (stillExists) return mergeExtractionPollState(stillExists, current);
           }
           return null;
@@ -1865,12 +1882,20 @@ export default function Extraction() {
       return false;
     }
 
-    const refreshedDoneIdx = s.completedExtractionBatches.findIndex((b: any) => b?.id === pid);
-    const pRestore = refreshedDoneIdx >= 0 ? s.completedExtractionBatches[refreshedDoneIdx] : null;
-    if (!pRestore || String(pRestore.mergedIntoBatchId || "") !== sid) {
-      showNotice("Uncombine failed", "Partner batch no longer matches. Refresh and retry.");
+    const located = findMergedExtractionPartnerBatch(
+      pid,
+      sid,
+      s.extractionBatches,
+      s.completedExtractionBatches,
+    );
+    if (!located) {
+      showNotice(
+        "Uncombine failed",
+        "The absorbed batch could not be found as a merged record. Try refreshing.",
+      );
       return false;
     }
+    const pRestore = located.batch;
 
     const resolved = resolveAbsorbedForUncombine(pRestore, s.logs, sid, pid);
     if (!resolved) {
@@ -1918,7 +1943,11 @@ export default function Extraction() {
       setExtractionBatchCombinedOilGrams(pRestore, resolved.oilGrams ?? 0);
     }
 
-    s.completedExtractionBatches.splice(refreshedDoneIdx, 1);
+    if (located.storage === "completed") {
+      s.completedExtractionBatches.splice(located.index, 1);
+    } else {
+      s.extractionBatches.splice(located.index, 1);
+    }
     s.extractionBatches.unshift(pRestore);
 
     saveLog({
@@ -2003,15 +2032,19 @@ export default function Extraction() {
       return { error: "That batch is not listed as merged into this survivor." };
     }
 
-    const previewIdx = s.completedExtractionBatches.findIndex((b: any) => b?.id === pid);
-    const partnerPreview = previewIdx >= 0 ? s.completedExtractionBatches[previewIdx] : null;
-    if (!partnerPreview || String(partnerPreview.mergedIntoBatchId || "") !== sid) {
+    const located = findMergedExtractionPartnerBatch(
+      pid,
+      sid,
+      s.extractionBatches,
+      s.completedExtractionBatches,
+    );
+    if (!located) {
       return {
         error: "The absorbed batch could not be found as a merged record. Try refreshing.",
       };
     }
 
-    const resolved = resolveAbsorbedForUncombine(partnerPreview, s.logs, sid, pid);
+    const resolved = resolveAbsorbedForUncombine(located.batch, s.logs, sid, pid);
     if (!resolved) {
       return {
         error: "Could not resolve merge snapshot or Combine Batches log entry is missing.",

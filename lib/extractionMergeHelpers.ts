@@ -46,9 +46,50 @@ export function findExtractionCombineMergeDataForPair(
   return null;
 }
 
+/** Partner row absorbed into another extraction batch (still returned by GET /api/extraction until uncombined). */
+export function isExtractionBatchMergedAbsorbed(batch: any): boolean {
+  if (!batch?.id) return false;
+  if (String(batch.mergedIntoBatchId || "").trim()) return true;
+  return String(batch.status || "").toLowerCase().includes("merged");
+}
+
+export type MergedExtractionPartnerLocation = {
+  batch: any;
+  storage: "active" | "completed";
+  index: number;
+};
+
+/** Find absorbed partner in active or completed lists (API reload keeps merged rows in active). */
+export function findMergedExtractionPartnerBatch(
+  partnerId: string,
+  survivorId: string,
+  activeBatches: any[],
+  completedBatches: any[],
+): MergedExtractionPartnerLocation | null {
+  const pid = String(partnerId || "").trim();
+  const sid = String(survivorId || "").trim();
+  if (!pid || !sid) return null;
+
+  const matchSurvivor = (batch: any) => String(batch?.mergedIntoBatchId || "").trim() === sid;
+
+  let index = (completedBatches || []).findIndex((b: any) => b?.id === pid);
+  if (index >= 0) {
+    const batch = completedBatches[index];
+    if (matchSurvivor(batch)) return { batch, storage: "completed", index };
+  }
+
+  index = (activeBatches || []).findIndex((b: any) => b?.id === pid);
+  if (index >= 0) {
+    const batch = activeBatches[index];
+    if (matchSurvivor(batch)) return { batch, storage: "active", index };
+  }
+
+  return null;
+}
+
 export function isExtractionBatchActiveForCombine(batch: any): boolean {
   if (!batch?.id) return false;
-  if (String(batch.mergedIntoBatchId || "").trim()) return false;
+  if (isExtractionBatchMergedAbsorbed(batch)) return false;
   const st = String(batch.status || "").toLowerCase();
   if (st.includes("merged")) return false;
   if (st.includes("finished") || st.includes("sent to packaging")) return false;

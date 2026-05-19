@@ -4,7 +4,9 @@ import {
   extractionBatchOilGrams,
   extractionCombineUsesOilGrams,
   findExtractionCombineMergeDataForPair,
+  findMergedExtractionPartnerBatch,
   isExtractionBatchActiveForCombine,
+  isExtractionBatchMergedAbsorbed,
   mergeExtractionSourceRows,
   rebuildExtractionBatchSourceSummary,
   resolveAbsorbedForUncombine,
@@ -44,6 +46,27 @@ describe("extractionMergeHelpers", () => {
     expect(batch.totalBiomassUsed).toBe(12.5);
     expect(batch.amount).toBe("12.5 lbs");
     expect(batch.sourceBlendLabel).toBe("Strain");
+  });
+
+  it("findMergedExtractionPartnerBatch locates partner in active or completed lists", () => {
+    const partner = {
+      id: "P",
+      mergedIntoBatchId: "S",
+      status: "Merged - Complete",
+    };
+    expect(
+      findMergedExtractionPartnerBatch("P", "S", [partner], []).storage,
+    ).toBe("active");
+    expect(
+      findMergedExtractionPartnerBatch("P", "S", [], [partner]).storage,
+    ).toBe("completed");
+    expect(findMergedExtractionPartnerBatch("P", "S", [], [])).toBeNull();
+  });
+
+  it("isExtractionBatchMergedAbsorbed detects mergedIntoBatchId", () => {
+    expect(isExtractionBatchMergedAbsorbed({ id: "1", mergedIntoBatchId: "S" })).toBe(true);
+    expect(isExtractionBatchMergedAbsorbed({ id: "1", status: "Merged - Complete" })).toBe(true);
+    expect(isExtractionBatchMergedAbsorbed({ id: "1", status: "Purge Active" })).toBe(false);
   });
 
   it("isExtractionBatchActiveForCombine rejects finished or merged", () => {
