@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   extractionBatchBiomassLbs,
+  extractionBatchOilGrams,
+  extractionCombineUsesOilGrams,
   findExtractionCombineMergeDataForPair,
   isExtractionBatchActiveForCombine,
   mergeExtractionSourceRows,
   rebuildExtractionBatchSourceSummary,
-  resolveAbsorbedBiomassForUncombine,
+  resolveAbsorbedForUncombine,
+  setExtractionBatchCombinedOilGrams,
   setExtractionBatchTotalBiomassLbs,
   subtractExtractionSourceRows,
 } from "@/lib/extractionMergeHelpers";
@@ -85,7 +88,7 @@ describe("extractionMergeHelpers", () => {
     expect(batch.amount).toBe("25 lbs");
   });
 
-  it("resolveAbsorbedBiomassForUncombine prefers snapshot", () => {
+  it("resolveAbsorbedForUncombine prefers snapshot", () => {
     const partner = {
       mergedIntoSnapshot: {
         biomassAbsorbed: 20,
@@ -94,9 +97,49 @@ describe("extractionMergeHelpers", () => {
         uiStageBeforeMerge: "prep",
       },
     };
-    expect(resolveAbsorbedBiomassForUncombine(partner, [], "S", "P")).toMatchObject({
+    expect(resolveAbsorbedForUncombine(partner, [], "S", "P")).toMatchObject({
       biomassLbs: 20,
+      combineWeightUnit: "lbs",
       uiStageBeforeMerge: "prep",
+    });
+  });
+
+  it("extractionCombineUsesOilGrams is true after Run Extraction", () => {
+    expect(
+      extractionCombineUsesOilGrams({
+        completedTasks: ["Pack Socks Start", "Pack Socks Stop", "Run Extraction"],
+      }),
+    ).toBe(true);
+    expect(
+      extractionCombineUsesOilGrams({
+        completedTasks: ["Pack Socks Start", "Pack Socks Stop"],
+      }),
+    ).toBe(false);
+  });
+
+  it("extractionBatchOilGrams and setExtractionBatchCombinedOilGrams", () => {
+    const batch: any = { finalOilGrams: 12.5, extraTerpsGrams: 2 };
+    expect(extractionBatchOilGrams(batch)).toBe(12.5);
+    setExtractionBatchCombinedOilGrams(batch, 30);
+    expect(batch.finalOilGrams).toBe(30);
+    expect(batch.totalFinalGrams).toBe(32);
+  });
+
+  it("resolveAbsorbedForUncombine resolves oil from grams merge log", () => {
+    const partner = {
+      mergedIntoSnapshot: {
+        combineWeightUnit: "grams",
+        oilAbsorbed: 79.3,
+        biomassAbsorbed: 59.4,
+        sourcesSnapshot: [],
+        statusBeforeMerge: "Purge Active",
+        uiStageBeforeMerge: "post",
+      },
+    };
+    expect(resolveAbsorbedForUncombine(partner, [], "S", "P")).toMatchObject({
+      combineWeightUnit: "grams",
+      oilGrams: 79.3,
+      uiStageBeforeMerge: "post",
     });
   });
 });

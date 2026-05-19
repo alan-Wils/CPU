@@ -1,6 +1,11 @@
 /** Helpers for combining / uncombining extraction runs in the Extraction UI. */
 
-import type { ExtractionUiStageKey } from "@/lib/extractionBatchUiStage";
+import {
+  hasCompletedExtractionTask,
+  type ExtractionUiStageKey,
+} from "@/lib/extractionBatchUiStage";
+
+export type ExtractionCombineWeightUnit = "lbs" | "grams";
 
 export type ExtractionCombineMergeLogData = {
   combineBatches?: boolean;
@@ -9,6 +14,10 @@ export type ExtractionCombineMergeLogData = {
   biomassBeforePartner?: number | string | null;
   biomassBeforeSurvivor?: number | string | null;
   biomassAfterCombine?: number | string | null;
+  oilBeforePartner?: number | string | null;
+  oilBeforeSurvivor?: number | string | null;
+  oilAfterCombine?: number | string | null;
+  combineWeightUnit?: ExtractionCombineWeightUnit;
   uiStageBucket?: string;
   notes?: string;
 };
@@ -99,6 +108,33 @@ export function subtractExtractionSourceRows(survivor: any[], partner: any[]): a
   return Array.from(map.values());
 }
 
+/** After Run Extraction, combine prompts for extracted oil (g) instead of biomass (lbs). */
+export function extractionCombineUsesOilGrams(batch: any): boolean {
+  return hasCompletedExtractionTask(batch, "Run Extraction");
+}
+
+/** Read extracted oil weight in grams (final oil only, not extra terps). */
+export function extractionBatchOilGrams(batch: any): number {
+  const direct = num(batch?.finalOilGrams);
+  if (direct > 0) return direct;
+  const fromFinish = num(batch?.taskData?.["Finish Batch"]?.finalOilGrams);
+  if (fromFinish > 0) return fromFinish;
+  const total = num(batch?.totalFinalGrams);
+  const terps =
+    num(batch?.extraTerpsGrams) || num(batch?.taskData?.["Finish Batch"]?.extraTerpsGrams);
+  if (total > 0) return +Math.max(0, total - terps).toFixed(2);
+  return 0;
+}
+
+/** Set combined extracted oil on survivor; keeps any logged extra terps in totalFinalGrams. */
+export function setExtractionBatchCombinedOilGrams(batch: any, oilGrams: number) {
+  const oil = +Math.max(0, oilGrams).toFixed(2);
+  batch.finalOilGrams = oil;
+  const terps =
+    num(batch?.extraTerpsGrams) || num(batch?.taskData?.["Finish Batch"]?.extraTerpsGrams);
+  batch.totalFinalGrams = +(oil + terps).toFixed(2);
+}
+
 /** Read total biomass in lbs from batch fields. */
 export function extractionBatchBiomassLbs(batch: any): number {
   const direct = num(batch?.totalBiomassUsed);
@@ -139,19 +175,31 @@ export function rebuildExtractionBatchSourceSummary(batch: any, sources: any[]) 
   );
 }
 
-export function resolveAbsorbedBiomassForUncombine(
+export function resolveAbsorbedForUncombine(
   partner: any,
   logs: any[],
   survivorId: string,
   partnerId: string,
-): { biomassLbs: number; sources: any[]; statusBeforeMerge: string; uiStageBeforeMerge: ExtractionUiStageKey } | null {
+): {
+  biomassLbs: number;
+  oilGrams?: number;
+  combineWeightUnit: ExtractionCombineWeightUnit;
+  sources: any[];
+  statusBeforeMerge: string;
+  uiStageBeforeMerge: ExtractionUiStageKey;
+} | null {
   const snap = partner?.mergedIntoSnapshot;
+  const logMatch = findExtractionCombineMergeDataForPair(logs, survivorId, partnerId);
+  const combineWeightUnit: ExtractionCombineWeightUnit =
+    snap?.combineWeightUnit === "grams" || logMatch?.combineWeightUnit === "grams"
+      ? "grams"
+      : "lbs";
+
   let biomass: number | undefined;
   if (snap != null && snap.biomassAbsorbed !== undefined && snap.biomassAbsorbed !== "") {
     const n = Number(snap.biomassAbsorbed);
     if (Number.isFinite(n)) biomass = n;
   }
-  const logMatch = findExtractionCombineMergeDataForPair(logs, survivorId, partnerId);
   if (biomass === undefined && logMatch != null) {
     const raw = logMatch.biomassBeforePartner;
     if (raw !== undefined && raw !== null && String(raw).trim() !== "") {
@@ -159,7 +207,23 @@ export function resolveAbsorbedBiomassForUncombine(
       if (Number.isFinite(n)) biomass = n;
     }
   }
-  if (biomass === undefined) return null;
+  if (biomass === undefined && combineWeightUnit === "lbs") return null;
+
+  let oilGrams: number | undefined;
+  if (combineWeightUnit === "grams") {
+    if (snap != null && snap.oilAbsorbed !== undefined && snap.oilAbsorbed !== "") {
+      const n = Number(snap.oilAbsorbed);
+      if (Number.isFinite(n)) oilGrams = n;
+    }
+    if (oilGrams === undefined && logMatch != null) {
+      const raw = logMatch.oilBeforePartner;
+      if (raw !== undefined && raw !== null && String(raw).trim() !== "") {
+        const n = Number(raw);
+        if (Number.isFinite(n)) oilGrams = n;
+      }
+    }
+    if (oilGrams === undefined) return null;
+  }
 
   const sources = Array.isArray(snap?.sourcesSnapshot)
     ? snap.sourcesSnapshot.map((r: any) => ({ ...r }))
@@ -167,7 +231,9 @@ export function resolveAbsorbedBiomassForUncombine(
   const statusBeforeMerge = String(snap?.statusBeforeMerge || "Ready For Pack Socks Start").trim();
   const uiStageBeforeMerge = String(snap?.uiStageBeforeMerge || logMatch?.uiStageBucket || "prep").trim() as ExtractionUiStageKey;
   return {
-    biomassLbs: Math.max(0, biomass),
+    biomassLbs: Math.max(0, biomass ?? 0),
+    oilGrams: oilGrams !== undefined ? Math.max(0, oilGrams) : undefined,
+    combineWeightUnit,
     sources,
     statusBeforeMerge: statusBeforeMerge || "Ready For Pack Socks Start",
     uiStageBeforeMerge:
@@ -178,3 +244,4 @@ export function resolveAbsorbedBiomassForUncombine(
         : "prep",
   };
 }
+

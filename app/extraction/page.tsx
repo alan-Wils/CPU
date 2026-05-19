@@ -65,10 +65,13 @@ import {
 } from "@/lib/extractionBatchUiStage";
 import {
   extractionBatchBiomassLbs,
+  extractionBatchOilGrams,
+  extractionCombineUsesOilGrams,
   isExtractionBatchActiveForCombine,
   mergeExtractionSourceRows,
   rebuildExtractionBatchSourceSummary,
-  resolveAbsorbedBiomassForUncombine,
+  resolveAbsorbedForUncombine,
+  setExtractionBatchCombinedOilGrams,
   setExtractionBatchTotalBiomassLbs,
   subtractExtractionSourceRows,
 } from "@/lib/extractionMergeHelpers";
@@ -581,8 +584,17 @@ export default function Extraction() {
   const [combineNotes, setCombineNotes] = useState("");
   const [uncombineBusyPartnerId, setUncombineBusyPartnerId] = useState("");
 
+  const combineUsesOilGrams = Boolean(
+    selectedExt && selectedTask === "Combine Batches" && extractionCombineUsesOilGrams(selectedExt),
+  );
+
   useEffect(() => {
     if (selectedTask !== "Combine Batches" || !selectedExt) return;
+    if (extractionCombineUsesOilGrams(selectedExt)) {
+      const grams = extractionBatchOilGrams(selectedExt);
+      setCombineSurvivorLbs(grams > 0 ? String(grams) : "");
+      return;
+    }
     const lbs = extractionBatchBiomassLbs(selectedExt);
     setCombineSurvivorLbs(lbs > 0 ? String(lbs) : "");
   }, [selectedTask, selectedExt?.id]);
@@ -591,9 +603,14 @@ export default function Extraction() {
     if (selectedTask !== "Combine Batches" || !combinePartnerBatchId.trim()) return;
     const partner = s.extractionBatches.find((b: any) => b?.id === combinePartnerBatchId.trim());
     if (!partner) return;
+    if (selectedExt && extractionCombineUsesOilGrams(selectedExt)) {
+      const grams = extractionBatchOilGrams(partner);
+      setCombinePartnerLbs(grams > 0 ? String(grams) : "");
+      return;
+    }
     const lbs = extractionBatchBiomassLbs(partner);
     setCombinePartnerLbs(lbs > 0 ? String(lbs) : "");
-  }, [selectedTask, combinePartnerBatchId]);
+  }, [selectedTask, combinePartnerBatchId, selectedExt?.id]);
 
   const [packSockTechCount, setPackSockTechCount] = useState("1");
   const [packSockTechNames, setPackSockTechNames] = useState<string[]>([""]);
@@ -1815,6 +1832,8 @@ export default function Extraction() {
     survivorId: string,
     snapshot: {
       biomassAbsorbed: number;
+      oilAbsorbed?: number;
+      combineWeightUnit?: "lbs" | "grams";
       sourcesSnapshot: any[];
       statusBeforeMerge: string;
       uiStageBeforeMerge: ExtractionUiStageKey;
@@ -1823,6 +1842,12 @@ export default function Extraction() {
     absorbed.mergedIntoSnapshot = {
       survivorBatchId: survivorId,
       biomassAbsorbed: snapshot.biomassAbsorbed,
+      ...(snapshot.combineWeightUnit === "grams"
+        ? {
+            combineWeightUnit: "grams" as const,
+            oilAbsorbed: snapshot.oilAbsorbed ?? 0,
+          }
+        : {}),
       sourcesSnapshot: snapshot.sourcesSnapshot.map((r: any) => ({ ...r })),
       statusBeforeMerge: snapshot.statusBeforeMerge,
       uiStageBeforeMerge: snapshot.uiStageBeforeMerge,
@@ -1865,18 +1890,23 @@ export default function Extraction() {
       return;
     }
 
-    const resolved = resolveAbsorbedBiomassForUncombine(partnerPreview, s.logs, sid, pid);
+    const resolved = resolveAbsorbedForUncombine(partnerPreview, s.logs, sid, pid);
     if (!resolved) {
       showNotice(
         "Uncombine failed",
-        "Could not resolve biomass — merge snapshot or Combine Batches log entry is missing.",
+        "Could not resolve merge snapshot or Combine Batches log entry is missing.",
       );
       return;
     }
 
+    const restoreDetail =
+      resolved.combineWeightUnit === "grams"
+        ? `${(resolved.oilGrams ?? 0).toFixed(2)} g extracted oil`
+        : `${resolved.biomassLbs.toFixed(2)} lbs biomass`;
+
     showConfirm(
       "Uncombine batches?",
-      `Restore ${pid} (${resolved.biomassLbs.toFixed(2)} lbs biomass) as its own batch and subtract that biomass from survivor ${sid}?`,
+      `Restore ${pid} (${restoreDetail}) as its own batch and subtract that amount from survivor ${sid}?`,
       () => {
         void (async () => {
           setUncombineBusyPartnerId(pid);
@@ -1902,14 +1932,23 @@ export default function Extraction() {
               delete survivor.combinedFromBatchIds;
             }
 
-            const priorSurvivorLbs = extractionBatchBiomassLbs(survivor);
             const survivorSources = Array.isArray(survivor.sources) ? survivor.sources : [];
             const restoredSources = subtractExtractionSourceRows(survivorSources, resolved.sources);
             rebuildExtractionBatchSourceSummary(survivor, restoredSources);
-            setExtractionBatchTotalBiomassLbs(
-              survivor,
-              Math.max(0, priorSurvivorLbs - resolved.biomassLbs),
-            );
+
+            if (resolved.combineWeightUnit === "grams") {
+              const priorSurvivorOil = extractionBatchOilGrams(survivor);
+              setExtractionBatchCombinedOilGrams(
+                survivor,
+                Math.max(0, priorSurvivorOil - (resolved.oilGrams ?? 0)),
+              );
+            } else {
+              const priorSurvivorLbs = extractionBatchBiomassLbs(survivor);
+              setExtractionBatchTotalBiomassLbs(
+                survivor,
+                Math.max(0, priorSurvivorLbs - resolved.biomassLbs),
+              );
+            }
 
             delete pRestore.mergedIntoSnapshot;
             pRestore.mergedIntoBatchId = undefined;
@@ -1921,6 +1960,10 @@ export default function Extraction() {
               rebuildExtractionBatchSourceSummary(pRestore, pRestore.sources);
             }
 
+            if (resolved.combineWeightUnit === "grams" && (resolved.oilGrams ?? 0) > 0) {
+              setExtractionBatchCombinedOilGrams(pRestore, resolved.oilGrams ?? 0);
+            }
+
             s.completedExtractionBatches.splice(refreshedDoneIdx, 1);
             s.extractionBatches.unshift(pRestore);
 
@@ -1928,14 +1971,19 @@ export default function Extraction() {
               area: "Extraction",
               batch: sid,
               task: "Uncombine Batches",
-              output: `Restored ${pid} (${resolved.biomassLbs.toFixed(2)} lbs) from survivor ${sid}`,
+              output:
+                resolved.combineWeightUnit === "grams"
+                  ? `Restored ${pid} (${(resolved.oilGrams ?? 0).toFixed(2)} g oil) from survivor ${sid}`
+                  : `Restored ${pid} (${resolved.biomassLbs.toFixed(2)} lbs) from survivor ${sid}`,
               source: survivor.source,
               loggedBy: getLoggedBy(),
               data: {
                 uncombineBatches: true,
                 survivorBatchId: sid,
                 restoredBatchId: pid,
+                combineWeightUnit: resolved.combineWeightUnit,
                 biomassRestored: resolved.biomassLbs,
+                oilRestored: resolved.oilGrams,
               },
               time: nowIsoForLog(),
             });
@@ -1970,10 +2018,16 @@ export default function Extraction() {
       if (!requireFields([{ label: "Partner batch", value: combinePartnerBatchId }])) {
         return false;
       }
-      if (!requirePositiveNumber("This batch total (lbs)", combineSurvivorLbs)) {
+      const survivorLabel = combineUsesOilGrams
+        ? "This batch extracted oil (g)"
+        : "This batch total (lbs)";
+      const partnerLabel = combineUsesOilGrams
+        ? "Partner batch extracted oil (g)"
+        : "Partner batch total (lbs)";
+      if (!requirePositiveNumber(survivorLabel, combineSurvivorLbs)) {
         return false;
       }
-      if (!requirePositiveNumber("Partner batch total (lbs)", combinePartnerLbs)) {
+      if (!requirePositiveNumber(partnerLabel, combinePartnerLbs)) {
         return false;
       }
       return true;
@@ -2395,6 +2449,13 @@ export default function Extraction() {
 
   function buildTaskData() {
     if (selectedTask === "Combine Batches") {
+      if (combineUsesOilGrams) {
+        return {
+          survivorOilGrams: num(combineSurvivorLbs),
+          partnerOilGrams: num(combinePartnerLbs),
+          notes: combineNotes.trim(),
+        };
+      }
       return {
         survivorLbs: num(combineSurvivorLbs),
         partnerLbs: num(combinePartnerLbs),
@@ -2646,37 +2707,65 @@ export default function Extraction() {
         return;
       }
 
-      const priorSurvivorBiomass = num(combineSurvivorLbs);
-      const priorPartnerBiomass = num(combinePartnerLbs);
-      const combinedBiomass = +(priorSurvivorBiomass + priorPartnerBiomass).toFixed(2);
+      const usesOilGrams = extractionCombineUsesOilGrams(selectedExt);
+      const priorSurvivorWeight = num(combineSurvivorLbs);
+      const priorPartnerWeight = num(combinePartnerLbs);
+      const combinedWeight = +(priorSurvivorWeight + priorPartnerWeight).toFixed(2);
       const notes = combineNotes.trim();
       const survivorId = selectedExt.id;
       const partnerId = partner.id;
+      const partnerBiomassLbs = extractionBatchBiomassLbs(partner);
 
       if (!Array.isArray(selectedExt.combinedFromBatchIds)) {
         selectedExt.combinedFromBatchIds = [];
       }
       selectedExt.combinedFromBatchIds.push(partnerId);
       rebuildExtractionBatchSourceSummary(selectedExt, mergedSources);
-      setExtractionBatchTotalBiomassLbs(selectedExt, combinedBiomass);
 
-      const survivorOutput = `Merged ${partnerId} (${priorPartnerBiomass} lbs) into ${survivorId} — total biomass now ${combinedBiomass} lbs${
-        notes ? `. Notes: ${notes}` : ""
-      }`;
-      const partnerOutput = `Merged into survivor ${survivorId} (${priorSurvivorBiomass} + ${priorPartnerBiomass} = ${combinedBiomass} lbs on survivor)${
-        notes ? `. Notes: ${notes}` : ""
-      }`;
+      let mergeData: Record<string, unknown>;
+      let survivorOutput: string;
+      let partnerOutput: string;
 
-      const mergeData = {
-        combineBatches: true,
-        survivorBatchId: survivorId,
-        absorbedBatchId: partnerId,
-        biomassBeforeSurvivor: priorSurvivorBiomass,
-        biomassBeforePartner: priorPartnerBiomass,
-        biomassAfterCombine: combinedBiomass,
-        uiStageBucket: stageA,
-        notes,
-      };
+      if (usesOilGrams) {
+        setExtractionBatchCombinedOilGrams(selectedExt, combinedWeight);
+        survivorOutput = `Merged ${partnerId} (${priorPartnerWeight} g oil) into ${survivorId} — total extracted oil now ${combinedWeight} g${
+          notes ? `. Notes: ${notes}` : ""
+        }`;
+        partnerOutput = `Merged into survivor ${survivorId} (${priorSurvivorWeight} + ${priorPartnerWeight} = ${combinedWeight} g oil on survivor)${
+          notes ? `. Notes: ${notes}` : ""
+        }`;
+        mergeData = {
+          combineBatches: true,
+          survivorBatchId: survivorId,
+          absorbedBatchId: partnerId,
+          combineWeightUnit: "grams",
+          oilBeforeSurvivor: priorSurvivorWeight,
+          oilBeforePartner: priorPartnerWeight,
+          oilAfterCombine: combinedWeight,
+          biomassBeforePartner: partnerBiomassLbs,
+          uiStageBucket: stageA,
+          notes,
+        };
+      } else {
+        setExtractionBatchTotalBiomassLbs(selectedExt, combinedWeight);
+        survivorOutput = `Merged ${partnerId} (${priorPartnerWeight} lbs) into ${survivorId} — total biomass now ${combinedWeight} lbs${
+          notes ? `. Notes: ${notes}` : ""
+        }`;
+        partnerOutput = `Merged into survivor ${survivorId} (${priorSurvivorWeight} + ${priorPartnerWeight} = ${combinedWeight} lbs on survivor)${
+          notes ? `. Notes: ${notes}` : ""
+        }`;
+        mergeData = {
+          combineBatches: true,
+          survivorBatchId: survivorId,
+          absorbedBatchId: partnerId,
+          combineWeightUnit: "lbs",
+          biomassBeforeSurvivor: priorSurvivorWeight,
+          biomassBeforePartner: priorPartnerWeight,
+          biomassAfterCombine: combinedWeight,
+          uiStageBucket: stageA,
+          notes,
+        };
+      }
 
       const loggedBy = getLoggedBy();
       const loggedAt = nowIsoForLog();
@@ -2706,7 +2795,13 @@ export default function Extraction() {
       });
 
       finalizeMergedPartnerExtractionBatch(partner, survivorId, {
-        biomassAbsorbed: priorPartnerBiomass,
+        biomassAbsorbed: partnerBiomassLbs,
+        ...(usesOilGrams
+          ? {
+              combineWeightUnit: "grams" as const,
+              oilAbsorbed: priorPartnerWeight,
+            }
+          : {}),
         sourcesSnapshot: partnerSources.map((r: any) => ({ ...r })),
         statusBeforeMerge: String(partner.status || "Ready For Pack Socks Start"),
         uiStageBeforeMerge: stageB,
@@ -3824,15 +3919,20 @@ export default function Extraction() {
                   <>
                     <p style={{ color: "#94a3b8", margin: 0, lineHeight: 1.5 }}>
                       Merge another active extraction batch in the same workflow stage into this survivor.
-                      Enter the total weight (lbs) for each batch; source rows are linked and the partner is
-                      marked complete.
+                      {combineUsesOilGrams
+                        ? " Enter the total extracted oil weight (g) for each batch; source rows are linked and the partner is marked complete."
+                        : " Enter the total biomass weight (lbs) for each batch; source rows are linked and the partner is marked complete."}
                     </p>
                     <input
                       style={inputStyle}
                       type="number"
                       step="0.01"
                       min="0.01"
-                      placeholder="This batch total (lbs)"
+                      placeholder={
+                        combineUsesOilGrams
+                          ? "This batch extracted oil (g)"
+                          : "This batch total (lbs)"
+                      }
                       value={combineSurvivorLbs}
                       onChange={(e) => setCombineSurvivorLbs(e.target.value)}
                       required
@@ -3847,9 +3947,13 @@ export default function Extraction() {
                         <option key={b.id} value={b.id}>
                           {b.marketBatchCode || b.id}
                           {b.sourceBlendLabel ? ` · ${b.sourceBlendLabel}` : ""}
-                          {extractionBatchBiomassLbs(b) > 0
-                            ? ` (${extractionBatchBiomassLbs(b).toFixed(2)} lbs on file)`
-                            : ""}
+                          {combineUsesOilGrams
+                            ? extractionBatchOilGrams(b) > 0
+                              ? ` (${extractionBatchOilGrams(b).toFixed(2)} g oil on file)`
+                              : ""
+                            : extractionBatchBiomassLbs(b) > 0
+                              ? ` (${extractionBatchBiomassLbs(b).toFixed(2)} lbs on file)`
+                              : ""}
                         </option>
                       ))}
                     </select>
@@ -3863,7 +3967,11 @@ export default function Extraction() {
                       type="number"
                       step="0.01"
                       min="0.01"
-                      placeholder="Partner batch total (lbs)"
+                      placeholder={
+                        combineUsesOilGrams
+                          ? "Partner batch extracted oil (g)"
+                          : "Partner batch total (lbs)"
+                      }
                       value={combinePartnerLbs}
                       onChange={(e) => setCombinePartnerLbs(e.target.value)}
                       disabled={!combinePartnerBatchId.trim()}
@@ -3872,7 +3980,10 @@ export default function Extraction() {
                     {num(combineSurvivorLbs) > 0 && num(combinePartnerLbs) > 0 ? (
                       <p style={{ color: "#cbd5e1", margin: 0, fontSize: 13 }}>
                         Combined total:{" "}
-                        <b>{(num(combineSurvivorLbs) + num(combinePartnerLbs)).toFixed(2)} lbs</b>
+                        <b>
+                          {(num(combineSurvivorLbs) + num(combinePartnerLbs)).toFixed(2)}{" "}
+                          {combineUsesOilGrams ? "g" : "lbs"}
+                        </b>
                       </p>
                     ) : null}
                     <input
