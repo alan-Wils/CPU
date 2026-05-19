@@ -261,7 +261,11 @@ export function extractionBatchPreparedBiomassLbs(batch: any): number {
 function extractionBatchBiomassFromSourceRows(batch: any): number {
   const rows = Array.isArray(batch?.sources) ? batch.sources : [];
   if (rows.length === 0) return 0;
-  return +rows.reduce((sum, row) => sum + num(row?.amountUsed ?? row?.amount), 0).toFixed(2);
+  return +rows
+    .reduce((sum: number, row: { amountUsed?: unknown; amount?: unknown }) => {
+      return sum + num(row?.amountUsed ?? row?.amount);
+    }, 0)
+    .toFixed(2);
 }
 
 /** Read total biomass in lbs from batch fields (sources, pack socks, or amount string). */
