@@ -377,6 +377,10 @@ export function buildIntegrationsMetaView(merged: MergedCompanyConfig): Record<s
             (nonEmptyString(metrc.apiKey) || nonEmptyString(metrc.vendorApiKey))
             && (nonEmptyString(metrc.userKey) || nonEmptyString(metrc.userApiKey))
             && Boolean(licenseDisplay),
+        metrcSandboxProvisioning: Boolean(metrc.sandboxProvisioning),
+        metrcSandboxReady: Boolean(metrc.sandboxReady),
+        metrcSandboxProvisioningStartedAt:
+            String(metrc.sandboxProvisioningStartedAt ?? "").trim() || null,
         metrcLastConnectionStatus: String(metrc.metrcLastConnectionStatus ?? "").trim(),
         metrcLastConnectionCheckedAt: String(metrc.metrcLastConnectionCheckedAt ?? "").trim() || null,
         metrcSandboxLastFacilitiesSyncAt: String(metrc.metrcSandboxLastFacilitiesSyncAt ?? "").trim() || null,

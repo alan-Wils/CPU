@@ -58,6 +58,11 @@ export type MetrcCompanyConfig = {
   metrcSandboxLastPackagesCount?: number | null;
   /** Non-secret warning from last METRC client rate-limit / retry behavior. */
   metrcSandboxLastRateLimitWarning?: string;
+  /** METRC is asynchronously creating the sandbox facility user. */
+  sandboxProvisioning?: boolean;
+  sandboxProvisioningStartedAt?: string;
+  sandboxProvisioningLastError?: string;
+  sandboxReady?: boolean;
 };
 
 /** Shown when GET scrubbed secrets but a credential still exists server-side. */

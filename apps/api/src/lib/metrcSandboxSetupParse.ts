@@ -43,6 +43,50 @@ export type MetrcSandboxSetupDebugInfo = {
   structureOutline: unknown;
 };
 
+/** Extract human-readable text from METRC setup response bodies. */
+export function extractMetrcSandboxResponseText(body: unknown): string {
+  if (typeof body === "string") return body.trim();
+  if (body == null) return "";
+  if (Array.isArray(body)) {
+    return body
+      .map((item) => extractMetrcSandboxResponseText(item))
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (typeof body === "object") {
+    const r = body as Record<string, unknown>;
+    const direct = r.message ?? r.Message ?? r.status ?? r.Status ?? r.detail ?? r.Detail;
+    if (typeof direct === "string" && direct.trim()) return direct.trim();
+    return JSON.stringify(body);
+  }
+  return String(body);
+}
+
+/** METRC sandbox setup is still creating the facility user (HTTP 202 or known message). */
+export function isMetrcSandboxAsyncProvisioningResponse(
+  httpStatus: number,
+  body: unknown,
+): boolean {
+  if (httpStatus === 202) return true;
+  const msg = extractMetrcSandboxResponseText(body).toLowerCase();
+  return (
+    msg.includes("user creation is in process")
+    || msg.includes("user creation is in progress")
+    || msg.includes("creation is in process")
+  );
+}
+
+/** Facility metadata returned but user API key not yet available — keep polling. */
+export function isMetrcSandboxPartialProvisioning(
+  parsed: MetrcSandboxSetupParsed,
+  httpStatus: number,
+  body: unknown,
+): boolean {
+  if (isMetrcSandboxAsyncProvisioningResponse(httpStatus, body)) return true;
+  if (parsed.userApiKey) return false;
+  return Boolean(parsed.facilityLicenseNumber || parsed.facilityName || parsed.username);
+}
+
 function normalizeKey(key: string): string {
   return key.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
 }

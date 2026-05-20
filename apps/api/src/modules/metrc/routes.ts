@@ -35,6 +35,20 @@ function httpStatusForMetrcAction(result: { ok: boolean; status?: number }): num
   return 502;
 }
 
+function httpStatusForSandboxSetup(result: {
+  ok: boolean;
+  status?: string;
+  httpStatus?: number;
+}): number {
+  if (!result.ok) {
+    const s = result.httpStatus;
+    if (typeof s === "number" && s >= 400 && s < 600) return s;
+    return 502;
+  }
+  if (result.status === "provisioning") return 202;
+  return 200;
+}
+
 /** Safe read-only probe: GET METRC active locations (no writes). */
 metrcRouter.get(
   "/test-connection",
@@ -59,7 +73,21 @@ metrcRouter.post(
       companyId,
       actorUserId: req.auth.userId,
     });
-    res.status(httpStatusForMetrcAction(result)).json(result);
+    res.status(httpStatusForSandboxSetup(result)).json(result);
+  }),
+);
+
+/** Poll async sandbox provisioning; discovers credentials when METRC finishes user creation. */
+metrcRouter.get(
+  "/sandbox/status",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const result = await metrcSandboxService.pollSandboxStatus({
+      companyId,
+      actorUserId: req.auth.userId,
+    });
+    res.status(200).json(result);
   }),
 );
 

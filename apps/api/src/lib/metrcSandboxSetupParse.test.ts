@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  isMetrcSandboxAsyncProvisioningResponse,
+  isMetrcSandboxPartialProvisioning,
   parseMetrcSandboxSetupResponse,
   redactMetrcSandboxPayload,
 } from "./metrcSandboxSetupParse.js";
@@ -45,6 +47,24 @@ describe("parseMetrcSandboxSetupResponse", () => {
     );
     expect(parsed.userApiKey).toBe("");
     expect(parsed.facilityLicenseNumber).toBe("L-1");
+  });
+
+  it("detects HTTP 202 as async provisioning", () => {
+    expect(isMetrcSandboxAsyncProvisioningResponse(202, "")).toBe(true);
+  });
+
+  it("detects user creation message as async provisioning", () => {
+    expect(isMetrcSandboxAsyncProvisioningResponse(200, "User creation is in process")).toBe(true);
+  });
+
+  it("detects partial facility without user key as provisioning", () => {
+    const parsed = parseMetrcSandboxSetupResponse({
+      FacilityLicenseNumber: "L-1",
+      FacilityName: "Test",
+    });
+    expect(
+      isMetrcSandboxPartialProvisioning(parsed, 200, { FacilityLicenseNumber: "L-1" }),
+    ).toBe(true);
   });
 
   it("redacts secrets in log payload", () => {

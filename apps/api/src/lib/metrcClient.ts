@@ -169,6 +169,8 @@ export class MetrcClient {
     body?: unknown;
     /** Absolute URL override (e.g. sandbox integrator setup on CO host). */
     absoluteUrl?: string;
+    /** Use integrator vendor key only (no user Basic auth). */
+    vendorOnly?: boolean;
   }): Promise<MetrcClientResult<T>> {
     const path = String(input.pathnameAndQuery || "").trim();
     const url = input.absoluteUrl
@@ -185,7 +187,7 @@ export class MetrcClient {
       };
     }
 
-    if (!this.headers && !input.absoluteUrl) {
+    if (!this.headers && !input.absoluteUrl && !input.vendorOnly) {
       return {
         ok: false,
         status: 400,
@@ -196,14 +198,16 @@ export class MetrcClient {
       };
     }
 
-    const headers = input.absoluteUrl
-      ? {
-          Accept: "application/json",
-          "User-Agent": "CPU-NexBatch/1.0",
-          ...(this.creds.vendorApiKey.trim()
-            ? { "x-metrc-key": this.creds.vendorApiKey.trim() }
-            : {}),
-        }
+    const vendorHeaders = {
+      Accept: "application/json",
+      "User-Agent": "CPU-NexBatch/1.0",
+      ...(this.creds.vendorApiKey.trim()
+        ? { "x-metrc-key": this.creds.vendorApiKey.trim() }
+        : {}),
+    };
+
+    const headers = input.absoluteUrl || input.vendorOnly
+      ? vendorHeaders
       : (this.headers as Record<string, string>);
 
     let retries = 0;

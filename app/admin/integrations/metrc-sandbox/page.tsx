@@ -23,6 +23,9 @@ type IntegrationsMeta = {
   hasMetrcVendorApiKey?: boolean;
   hasMetrcUserApiKey?: boolean;
   metrcSandboxCredentialsReady?: boolean;
+  metrcSandboxProvisioning?: boolean;
+  metrcSandboxReady?: boolean;
+  metrcSandboxProvisioningStartedAt?: string | null;
   metrcLastConnectionStatus?: MetrcLastConnectionStatus | "";
   metrcLastConnectionCheckedAt?: string | null;
   metrcSandboxLastFacilitiesSyncAt?: string | null;
@@ -63,13 +66,29 @@ type SandboxSetupDebug = {
 type SandboxSetupJson =
   | {
       ok: true;
+      status?: "ready" | "provisioning";
+      message?: string;
+      provisioningStartedAt?: string;
       facilityName?: string;
       facilityLicenseNumber?: string;
       username?: string;
       credentialsReady?: boolean;
       debug?: SandboxSetupDebug;
     }
-  | { ok: false; message?: string; debug?: SandboxSetupDebug };
+  | { ok: false; status?: string; message?: string; debug?: SandboxSetupDebug };
+
+type SandboxStatusJson = {
+  ok: true;
+  status: "idle" | "provisioning" | "ready" | "timeout" | "error";
+  sandboxProvisioning: boolean;
+  sandboxReady: boolean;
+  message: string;
+  credentialsReady: boolean;
+  remainingMs: number | null;
+};
+
+const POLL_INTERVAL_MS = 10_000;
+const POLL_MAX_MS = 5 * 60 * 1000;
 
 const styles: Record<string, React.CSSProperties> = {
   page: { minHeight: "100vh", background: "#020617", color: "#e5e7eb", padding: 24 },
@@ -174,6 +193,10 @@ export default function MetrcSandboxPage() {
   const [lastPull, setLastPull] = useState<PullResult | null>(null);
   const [testAt, setTestAt] = useState<string | null>(null);
   const [setupDebug, setSetupDebug] = useState<SandboxSetupDebug | null>(null);
+  const [sandboxUiStatus, setSandboxUiStatus] = useState<
+    "idle" | "provisioning" | "ready" | "timeout" | "error"
+  >("idle");
+  const [provisioningMessage, setProvisioningMessage] = useState<string | null>(null);
 
   const loadMeta = useCallback(async () => {
     setLoadingMeta(true);
@@ -181,6 +204,13 @@ export default function MetrcSandboxPage() {
       const res = await authFetch("/api/config/integrations");
       const json = res.ok ? ((await res.json()) as IntegrationsMeta) : null;
       setMeta(json);
+      if (json?.metrcSandboxProvisioning) {
+        setSandboxUiStatus("provisioning");
+        setProvisioningMessage("METRC is creating your sandbox user…");
+      } else if (json?.metrcSandboxReady || json?.metrcSandboxCredentialsReady) {
+        setSandboxUiStatus("ready");
+        setProvisioningMessage("Sandbox ready");
+      }
     } catch {
       setMeta(null);
     } finally {
@@ -188,28 +218,96 @@ export default function MetrcSandboxPage() {
     }
   }, []);
 
+  const pollSandboxStatus = useCallback(async (): Promise<SandboxStatusJson | null> => {
+    try {
+      const res = await authFetch("/api/metrc/sandbox/status");
+      if (!res.ok) return null;
+      return (await res.json()) as SandboxStatusJson;
+    } catch {
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     void loadMeta();
   }, [loadMeta]);
 
+  useEffect(() => {
+    if (sandboxUiStatus !== "provisioning") return;
+
+    const startedAt = Date.parse(String(meta?.metrcSandboxProvisioningStartedAt || ""));
+    const deadline =
+      Number.isFinite(startedAt) && startedAt > 0
+        ? startedAt + POLL_MAX_MS
+        : Date.now() + POLL_MAX_MS;
+
+    const tick = async () => {
+      const status = await pollSandboxStatus();
+      if (!status) return;
+
+      setProvisioningMessage(status.message);
+
+      if (status.status === "ready" || status.credentialsReady) {
+        setSandboxUiStatus("ready");
+        setStatusMsg({ tone: "ok", text: "Sandbox ready" });
+        await loadMeta();
+        return;
+      }
+
+      if (status.status === "timeout") {
+        setSandboxUiStatus("timeout");
+        setStatusMsg({ tone: "error", text: status.message });
+        await loadMeta();
+        return;
+      }
+
+      if (status.status === "error") {
+        setSandboxUiStatus("error");
+        setStatusMsg({ tone: "error", text: status.message });
+        await loadMeta();
+      }
+    };
+
+    void tick();
+    const intervalId = window.setInterval(() => {
+      if (Date.now() >= deadline) {
+        setSandboxUiStatus("timeout");
+        setStatusMsg({
+          tone: "error",
+          text: "Sandbox user creation timed out after 5 minutes. Try Generate Sandbox Facility again.",
+        });
+        window.clearInterval(intervalId);
+        return;
+      }
+      void tick();
+    }, POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [sandboxUiStatus, meta?.metrcSandboxProvisioningStartedAt, pollSandboxStatus, loadMeta]);
+
   const credentialsReady = useMemo(() => {
-    if (meta?.metrcSandboxCredentialsReady) return true;
+    if (sandboxUiStatus === "ready") return true;
+    if (meta?.metrcSandboxCredentialsReady || meta?.metrcSandboxReady) return true;
     return Boolean(
       meta?.hasMetrcVendorApiKey &&
         meta?.hasMetrcUserApiKey &&
         String(meta?.metrcLicenseNumberDisplay || "").trim(),
     );
-  }, [meta]);
+  }, [meta, sandboxUiStatus]);
 
   const connectionLabel = useMemo(() => {
     if (busy === "test") return "Testing…";
-    if (busy === "setup") return "Provisioning…";
-    if (credentialsReady) return "Connected";
+    if (busy === "setup" || sandboxUiStatus === "provisioning") {
+      return "Provisioning…";
+    }
+    if (sandboxUiStatus === "ready" || credentialsReady) return "Connected";
+    if (sandboxUiStatus === "timeout") return "Timed out";
+    if (sandboxUiStatus === "error") return "Error";
     const st = String(meta?.metrcLastConnectionStatus || "").trim();
     if (st === "connected") return "Connected (API test)";
     if (st === "not_connected") return "Not connected";
     return "Not ready";
-  }, [meta?.metrcLastConnectionStatus, busy, credentialsReady]);
+  }, [meta?.metrcLastConnectionStatus, busy, credentialsReady, sandboxUiStatus]);
 
   async function runSetup() {
     setBusy("setup");
@@ -220,22 +318,40 @@ export default function MetrcSandboxPage() {
       const res = await authFetch("/api/metrc/sandbox/setup", { method: "POST" });
       const json = (await res.json()) as SandboxSetupJson;
       if (json.debug) setSetupDebug(json.debug);
-      if (!res.ok || !json.ok) {
+
+      if (!json.ok) {
+        setSandboxUiStatus("error");
         setStatusMsg({
           tone: "error",
           text: json.message || "Sandbox setup failed. Ensure vendor API key is saved in Company Config.",
         });
         return;
       }
+
       const ok = json as Extract<SandboxSetupJson, { ok: true }>;
+
+      if (res.status === 202 || ok.status === "provisioning") {
+        setSandboxUiStatus("provisioning");
+        setProvisioningMessage(ok.message || "METRC is creating your sandbox user…");
+        setStatusMsg({
+          tone: "warn",
+          text: ok.message || "METRC is creating your sandbox user…",
+        });
+        await loadMeta();
+        return;
+      }
+
+      setSandboxUiStatus("ready");
+      setProvisioningMessage("Sandbox ready");
       setStatusMsg({
         tone: "ok",
-        text: `Sandbox facility provisioned${ok.facilityName ? `: ${ok.facilityName}` : ""}${
+        text: `Sandbox ready${ok.facilityName ? `: ${ok.facilityName}` : ""}${
           ok.facilityLicenseNumber ? ` (${ok.facilityLicenseNumber})` : ""
         }. User API key stored server-side.`,
       });
       await loadMeta();
     } catch {
+      setSandboxUiStatus("error");
       setStatusMsg({ tone: "error", text: "Unable to reach the API server." });
     } finally {
       setBusy(null);
@@ -451,10 +567,12 @@ export default function MetrcSandboxPage() {
             <button
               type="button"
               style={{ ...styles.btn, ...styles.btnPrimary, opacity: busy ? 0.6 : 1 }}
-              disabled={!!busy}
+              disabled={!!busy || sandboxUiStatus === "provisioning"}
               onClick={() => void runSetup()}
             >
-              {busy === "setup" ? "Generating…" : "Generate Sandbox Facility"}
+              {busy === "setup" || sandboxUiStatus === "provisioning"
+                ? "Provisioning…"
+                : "Generate Sandbox Facility"}
             </button>
             <button
               type="button"
@@ -490,17 +608,17 @@ export default function MetrcSandboxPage() {
             </button>
           </div>
 
-          {statusMsg ? (
+          {(provisioningMessage || statusMsg) ? (
             <div
               style={
-                statusMsg.tone === "error"
+                statusMsg?.tone === "error" || sandboxUiStatus === "timeout" || sandboxUiStatus === "error"
                   ? styles.error
-                  : statusMsg.tone === "warn"
+                  : statusMsg?.tone === "warn" || sandboxUiStatus === "provisioning"
                     ? styles.warn
                     : styles.ok
               }
             >
-              {statusMsg.text}
+              {statusMsg?.text || provisioningMessage}
             </div>
           ) : null}
 
