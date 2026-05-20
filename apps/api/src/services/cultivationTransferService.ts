@@ -706,25 +706,162 @@ export class CultivationTransferService {
         return null;
     }
 
-    private async resolveTransferredRowForReturn(
+    /** e.g. FF-GUAV.012026-1 → GUAV.012026 */
+    private inferSourceCultivationBatchIdFromFfId(sourceBatchId: string): string {
+        const m = String(sourceBatchId || "").trim().match(/^FF-(.+)-\d+$/i);
+        return m?.[1]?.trim() || "";
+    }
+
+    private materialTypeFromStoreRow(storeRow: Record<string, unknown>): CultivationTransferMaterialType {
+        const t = String(storeRow.type || storeRow.name || "").toLowerCase();
+        return t.includes("dry trim") || t.includes("trim")
+            ? CultivationTransferMaterialType.TRIM
+            : CultivationTransferMaterialType.FRESH_FROZEN;
+    }
+
+    private async findTransferForReturn(
         companyId: string,
         sourceBatchId: string,
         storeRow: Record<string, unknown> | null,
     ) {
         const cultivationTransferId = String(storeRow?.cultivationTransferId || "").trim();
+        const metrcTag = String(storeRow?.metrcTag || storeRow?.plantTag || "").trim();
+        const sourceCultivationBatchId =
+            String(storeRow?.source || "").trim()
+            || this.inferSourceCultivationBatchIdFromFfId(sourceBatchId);
+        const parentGroupId = String(storeRow?.parentGroupId || "").trim();
+
         const or: Prisma.CultivationExtractionTransferWhereInput[] = [
             { extractionSourceBatchId: sourceBatchId },
             { harvestCode: sourceBatchId },
         ];
         if (cultivationTransferId)
             or.push({ id: cultivationTransferId });
-        return prisma.cultivationExtractionTransfer.findFirst({
+        if (metrcTag)
+            or.push({ metrcTag });
+        if (sourceCultivationBatchId && metrcTag) {
+            or.push({
+                sourceCultivationBatchId,
+                metrcTag,
+            });
+        }
+        if (parentGroupId)
+            or.push({ parentGroupId });
+
+        const transferred = await prisma.cultivationExtractionTransfer.findFirst({
             where: {
                 companyId,
                 transferStatus: CultivationTransferStatus.TRANSFERRED_TO_EXTRACTION,
                 OR: or,
             },
+            orderBy: { updatedAt: "desc" },
         });
+        if (transferred)
+            return transferred;
+
+        return prisma.cultivationExtractionTransfer.findFirst({
+            where: { companyId, OR: or },
+            orderBy: { updatedAt: "desc" },
+        });
+    }
+
+    private async restoreStoredTransferFromStoreRow(params: {
+        companyId: string;
+        sourceBatchId: string;
+        storeRow: Record<string, unknown>;
+    }) {
+        const sourceCultivationBatchId =
+            String(params.storeRow.source || "").trim()
+            || this.inferSourceCultivationBatchIdFromFfId(params.sourceBatchId);
+        if (!sourceCultivationBatchId)
+            throw new AppError(
+                "Cannot return this package: missing cultivation batch link. Re-harvest Fresh Frozen on the cultivation lot or contact support.",
+                404,
+            );
+
+        const materialType = this.materialTypeFromStoreRow(params.storeRow);
+        const config = await this.loadStorageConfig(params.companyId);
+        const storage = this.resolveStorageLocation(
+            config,
+            materialType,
+            String(params.storeRow.storageLocationId || ""),
+            String(params.storeRow.storageLocationName || ""),
+        );
+
+        const metrcTag = String(params.storeRow.metrcTag || params.storeRow.plantTag || "").trim();
+        const grams = Number(params.storeRow.grams ?? 0);
+        const bundles = Math.max(0, Math.floor(Number(params.storeRow.bundles ?? 0)));
+        const weightLbs =
+            params.storeRow.weightLbs != null
+                ? Number(params.storeRow.weightLbs)
+                : grams > 0
+                  ? +(grams / 453.592).toFixed(4)
+                  : 0;
+        const displayName = String(params.storeRow.name || params.sourceBatchId).trim()
+            || params.sourceBatchId;
+        const harvestCode = String(params.storeRow.harvestCode || params.sourceBatchId).trim();
+        const parentGroupId = String(params.storeRow.parentGroupId || "").trim() || null;
+
+        const payload =
+            params.storeRow.materialPayload && typeof params.storeRow.materialPayload === "object"
+                ? (params.storeRow.materialPayload as Prisma.InputJsonValue)
+                : undefined;
+
+        return prisma.cultivationExtractionTransfer.create({
+            data: {
+                companyId: params.companyId,
+                materialType,
+                transferStatus: CultivationTransferStatus.STORED,
+                sourceCultivationBatchId,
+                displayName,
+                harvestCode: harvestCode || null,
+                metrcTag: metrcTag || null,
+                parentGroupId,
+                grams: grams > 0 ? grams : null,
+                bundles: bundles > 0 ? bundles : null,
+                weightLbs: weightLbs > 0 ? weightLbs : null,
+                materialPayload: payload,
+                storageType: storage.storageType,
+                storageLocationId: storage.storageLocationId,
+                storageLocationName: storage.storageLocationName,
+                extractionSourceBatchId: null,
+                transferredAt: null,
+                transferredByUserId: null,
+            },
+        });
+    }
+
+    private async resolveOrRestoreTransferForReturn(
+        companyId: string,
+        sourceBatchId: string,
+        storeRow: Record<string, unknown> | null,
+    ) {
+        const existing = await this.findTransferForReturn(companyId, sourceBatchId, storeRow);
+        if (existing)
+            return existing;
+
+        if (storeRow)
+            return this.restoreStoredTransferFromStoreRow({
+                companyId,
+                sourceBatchId,
+                storeRow,
+            });
+
+        const inferredSource = this.inferSourceCultivationBatchIdFromFfId(sourceBatchId);
+        if (inferredSource) {
+            const byLot = await prisma.cultivationExtractionTransfer.findFirst({
+                where: {
+                    companyId,
+                    sourceCultivationBatchId: inferredSource,
+                    materialType: CultivationTransferMaterialType.FRESH_FROZEN,
+                },
+                orderBy: { updatedAt: "desc" },
+            });
+            if (byLot)
+                return byLot;
+        }
+
+        return null;
     }
 
     async returnToCultivationStorage(params: {
@@ -761,26 +898,32 @@ export class CultivationTransferService {
         }
 
         const storeRow = this.findStoreSourceRow(snap, sourceBatchId);
-        const transfer = await this.resolveTransferredRowForReturn(
+        const transfer = await this.resolveOrRestoreTransferForReturn(
             params.companyId,
             sourceBatchId,
             storeRow,
         );
         if (!transfer)
             throw new AppError(
-                "No cultivation transfer record found for this package (it may already be in a freezer or was created outside Ready to Transfer).",
+                "No cultivation transfer record found for this package. If it was harvested before transfers were enabled, re-run Fresh Frozen harvest on the cultivation lot or contact support.",
                 404,
             );
 
-        const updatedRow = await prisma.cultivationExtractionTransfer.update({
-            where: { id: transfer.id },
-            data: {
-                transferStatus: CultivationTransferStatus.STORED,
-                extractionSourceBatchId: null,
-                transferredAt: null,
-                transferredByUserId: null,
-            },
-        });
+        const alreadyInStorage =
+            transfer.transferStatus === CultivationTransferStatus.STORED
+            || transfer.transferStatus === CultivationTransferStatus.READY_TO_TRANSFER;
+
+        const updatedRow = alreadyInStorage
+            ? transfer
+            : await prisma.cultivationExtractionTransfer.update({
+                where: { id: transfer.id },
+                data: {
+                    transferStatus: CultivationTransferStatus.STORED,
+                    extractionSourceBatchId: null,
+                    transferredAt: null,
+                    transferredByUserId: null,
+                },
+            });
 
         const sourceBatches = Array.isArray(snap.sourceBatches) ? snap.sourceBatches : [];
         const completedSourceBatches = Array.isArray(snap.completedSourceBatches)
