@@ -1,4 +1,5 @@
 import { getSourceAvailable } from "@/lib/sourceBatchActive";
+import type { SourceBatchLike } from "@/lib/extractionSourceAvailability";
 
 function norm(value: unknown): string {
   return String(value ?? "").trim();
@@ -35,4 +36,21 @@ export function repairMisclassifiedSourceBatchRow(row: unknown): Record<string, 
     delete r.remainingAmount;
   }
   return r;
+}
+
+function asSourceBatchLike(row: unknown): SourceBatchLike | null {
+  if (!row || typeof row !== "object") return null;
+  return row as SourceBatchLike;
+}
+
+/** Repair misclassified Complete rows before filtering for extraction/cultivation lists. */
+export function normalizeSourceBatchList(rows: unknown[]): SourceBatchLike[] {
+  const out: SourceBatchLike[] = [];
+  for (const row of rows) {
+    const base = asSourceBatchLike(row);
+    if (!base) continue;
+    const repaired = repairMisclassifiedSourceBatchRow(base);
+    out.push((repaired || base) as SourceBatchLike);
+  }
+  return out;
 }

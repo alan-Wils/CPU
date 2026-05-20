@@ -67,7 +67,7 @@ import { makeChainBatchCode, makeDateCode } from "@/lib/batchChainCodes";
 import { isActiveExtractionSourceBatch } from "@/lib/sourceBatchActive";
 import { filterSourceBatchesForExtractionAvailability } from "@/lib/extractionSourceAvailability";
 import { applyFfTrimSourceListToStore } from "@/lib/syncSourceBatchesToStore";
-import { repairMisclassifiedSourceBatchRow } from "@/lib/repairMisclassifiedSourceBatch";
+import { normalizeSourceBatchList } from "@/lib/repairMisclassifiedSourceBatch";
 import {
   createLog,
   deleteLog as deleteTaskLogRemote,
@@ -659,10 +659,6 @@ function collectHarvestSourcePackageIds(
   return [...(s.sourceBatches || []), ...(s.productionBatches || [])] as Array<
     string | { id?: unknown }
   >;
-}
-
-function normalizeSourceBatchList(rows: unknown[]): unknown[] {
-  return rows.map((row) => repairMisclassifiedSourceBatchRow(row) || row);
 }
 
 /** Last segment of batch id is `MMDDYY` per `makeDateCode` (e.g. `ACRONYM.MMDDYY` or `ACRONYM.N.MMDDYY`). */

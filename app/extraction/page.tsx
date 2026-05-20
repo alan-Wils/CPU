@@ -23,7 +23,7 @@ import {
 } from "@/lib/sourceBatchApi";
 import { makeExtractionMarketBatchCode } from "@/lib/batchChainCodes";
 import { getSourceAvailable, isCompletedSourceBatch } from "@/lib/sourceBatchActive";
-import { repairMisclassifiedSourceBatchRow } from "@/lib/repairMisclassifiedSourceBatch";
+import { normalizeSourceBatchList } from "@/lib/repairMisclassifiedSourceBatch";
 import { filterSourceBatchesForExtractionAvailability } from "@/lib/extractionSourceAvailability";
 import {
   freshFrozenAvailableLine,
@@ -189,10 +189,6 @@ function asArray(value: any) {
   if (Array.isArray(value)) return value;
   if (value === undefined || value === null) return [];
   return [value];
-}
-
-function normalizeSourceBatchList(rows: unknown[]): unknown[] {
-  return rows.map((row) => repairMisclassifiedSourceBatchRow(row) || row);
 }
 
 function mergeCompletedSourceBatchLists(
