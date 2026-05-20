@@ -1220,6 +1220,12 @@ legacyCpuRouter.get("/source-batches", asyncHandler(async (req, res) => {
     const cacheKey = `legacy:source-batches:${companyId}:${summary ? "sum" : "full"}`;
     const ttlMs = 20_000;
     const dbStarted = Date.now();
+    const repaired = await cultivationTransferService.reconcileMissingExtractionSourceBatches({
+        companyId,
+        actorUserId: req.auth.userId,
+    });
+    if (repaired > 0)
+        invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
     const { value: items, cacheHit, inflightJoined } = await memoizedReadWithMeta(cacheKey, ttlMs, async () => {
         const pkgWhere = { sourceChain: { companyId } };
         const pkgOrder = { createdAt: "desc" as const };

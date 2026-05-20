@@ -512,4 +512,53 @@ export class CultivationTransferService {
 
         return { rows: updated, sourceBatches };
     }
+
+    /**
+     * Rebuild store `sourceBatches` rows for transfers already marked TRANSFERRED_TO_EXTRACTION
+     * when a stale client PUT /api/store overwrote the server snapshot (trim/FF missing on Extraction).
+     */
+    async reconcileMissingExtractionSourceBatches(params: {
+        companyId: string;
+        actorUserId: string;
+    }): Promise<number> {
+        const transferred = await prisma.cultivationExtractionTransfer.findMany({
+            where: {
+                companyId: params.companyId,
+                transferStatus: CultivationTransferStatus.TRANSFERRED_TO_EXTRACTION,
+                extractionSourceBatchId: { not: null },
+            },
+            orderBy: { transferredAt: "desc" },
+            take: 500,
+        });
+        if (transferred.length === 0)
+            return 0;
+
+        const snap = await this.storeService.load(params.companyId);
+        const list = Array.isArray(snap.sourceBatches) ? [...snap.sourceBatches] : [];
+        const ids = new Set(
+            list.map((b) =>
+                String(b && typeof b === "object" ? (b as { id?: string }).id || "" : "").trim(),
+            ),
+        );
+
+        let added = 0;
+        for (const row of transferred) {
+            const sourceBatchId = String(row.extractionSourceBatchId || "").trim();
+            if (!sourceBatchId || ids.has(sourceBatchId))
+                continue;
+            const legacyBatch = this.buildLegacySourceBatchFromTransfer(row, sourceBatchId);
+            list.unshift(legacyBatch);
+            ids.add(sourceBatchId);
+            added++;
+        }
+
+        if (added > 0) {
+            await this.storeService.save(params.companyId, params.actorUserId, {
+                ...snap,
+                sourceBatches: list,
+            });
+        }
+
+        return added;
+    }
 }

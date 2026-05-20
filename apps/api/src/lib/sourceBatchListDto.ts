@@ -2,7 +2,18 @@
  * Lightweight source-batch list rows (detail via GET /api/source-batches/:id).
  */
 
-const SUMMARY_KEYS = ["id", "name", "type", "source", "strain", "status", "amount", "grams", "bundles"] as const;
+const SUMMARY_KEYS = [
+    "id",
+    "name",
+    "type",
+    "source",
+    "strain",
+    "status",
+    "amount",
+    "grams",
+    "bundles",
+    "weightLbs",
+] as const;
 
 function capStr(value: unknown, max = 120): string {
   const s = String(value ?? "").trim();
@@ -37,6 +48,7 @@ export function prismaSourcePackageToListRow(p: {
     amount: "",
     grams: 0,
     bundles: 0,
+    weightLbs: 0,
   };
 }
 
@@ -55,5 +67,6 @@ export function storeSourceBatchToListRow(row: unknown): SourceBatchListRow | nu
     amount: r.amount !== undefined && r.amount !== null ? capStr(r.amount, 60) : "",
     grams: Number.isFinite(Number(r.grams)) ? Number(r.grams) : 0,
     bundles: Number.isFinite(Number(r.bundles)) ? Math.trunc(Number(r.bundles)) : 0,
+    weightLbs: Number.isFinite(Number(r.weightLbs)) ? Number(r.weightLbs) : 0,
   };
 }

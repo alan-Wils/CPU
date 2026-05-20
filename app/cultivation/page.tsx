@@ -65,6 +65,7 @@ import { bundleSlotCountFromTotalGrams } from "@/lib/freshFrozenPackageDisplay";
 import ReadyToTransferModal from "@/components/cultivation/ReadyToTransferModal";
 import { makeChainBatchCode, makeDateCode } from "@/lib/batchChainCodes";
 import { isActiveExtractionSourceBatch } from "@/lib/sourceBatchActive";
+import { applyFfTrimSourceListToStore } from "@/lib/syncSourceBatchesToStore";
 import {
   createLog,
   deleteLog as deleteTaskLogRemote,
@@ -1457,32 +1458,7 @@ export default function Cultivation() {
           lastSourceListForProductionRef.current = rawSources;
         }
 
-        const activeFfTrimIds = new Set<string>();
-        for (const src of sourceList) {
-          const typ = String((src as any)?.type || "");
-          if (typ !== "Fresh Frozen" && typ !== "Dry Trim") continue;
-          if (!isActiveExtractionSourceBatch(src)) continue;
-          const id = String((src as any)?.id || "");
-          if (id) activeFfTrimIds.add(id);
-        }
-        s.productionBatches = (s.productionBatches || []).filter((p: any) => {
-          const typ = String(p?.type || "");
-          if (typ !== "Fresh Frozen" && typ !== "Dry Trim") return true;
-          const id = String(p?.id || "");
-          return Boolean(id && activeFfTrimIds.has(id));
-        });
-        const prodIds = new Set(
-          (s.productionBatches || []).map((b: any) => String(b?.id || ""))
-        );
-        for (const src of sourceList) {
-          const typ = String((src as any)?.type || "");
-          if (typ !== "Fresh Frozen" && typ !== "Dry Trim") continue;
-          if (!isActiveExtractionSourceBatch(src)) continue;
-          const id = String((src as any)?.id || "");
-          if (!id || prodIds.has(id)) continue;
-          s.productionBatches.unshift({ ...(src as object) });
-          prodIds.add(id);
-        }
+        applyFfTrimSourceListToStore(s, sourceList);
 
         if (!mounted || pollGen !== cultivationPollGenRef.current) return;
 
@@ -2141,14 +2117,37 @@ export default function Cultivation() {
     return () => window.clearTimeout(t);
   }, [canWriteRecords, templateSyncFp, cultivationScheduleTemplates.length]);
 
-  function forceRefresh() {
+  function forceRefresh(opts?: { skipBackendSave?: boolean }) {
     persistStore();
 
-    saveBackendStore().catch((error) => {
-      console.error("Could not save backend store:", error);
-    });
+    if (!opts?.skipBackendSave) {
+      saveBackendStore().catch((error) => {
+        console.error("Could not save backend store:", error);
+      });
+    }
 
     setRefresh((n) => n + 1);
+  }
+
+  async function refreshSourceBatchesAfterExtractionTransfer(
+    transferResult?: { sourceBatches?: unknown[] },
+  ) {
+    const mergedFromTransfer = Array.isArray(transferResult?.sourceBatches)
+      ? transferResult.sourceBatches
+      : [];
+    if (mergedFromTransfer.length > 0) {
+      applyFfTrimSourceListToStore(s, mergedFromTransfer);
+    }
+
+    try {
+      const rawSources = await loadSourceBatches({ summary: true });
+      if (Array.isArray(rawSources)) {
+        lastSourceListForProductionRef.current = rawSources;
+        applyFfTrimSourceListToStore(s, rawSources);
+      }
+    } catch (error) {
+      console.error("Could not reload source batches after transfer:", error);
+    }
   }
 
   function resetMomsAddWizard() {
@@ -12232,9 +12231,10 @@ export default function Cultivation() {
         open={showReadyToTransferModal}
         onClose={() => setShowReadyToTransferModal(false)}
         canWrite={canWriteRecords}
-        onTransferred={() => {
-          void loadSourceBatches({ summary: true }).catch(() => null);
-          forceRefresh();
+        onTransferred={(result) => {
+          void refreshSourceBatchesAfterExtractionTransfer(result).then(() => {
+            forceRefresh({ skipBackendSave: true });
+          });
         }}
       />
       </div>

@@ -20,10 +20,15 @@ import {
 } from "@/lib/cultivationTransferStorageGroups";
 import { fetchCachedCompanyConfig } from "@/lib/configClient";
 
+export type CultivationTransferToExtractionResult = {
+  rows?: CultivationExtractionTransferRow[];
+  sourceBatches?: unknown[];
+};
+
 type Props = {
   open: boolean;
   onClose: () => void;
-  onTransferred?: () => void;
+  onTransferred?: (result: CultivationTransferToExtractionResult) => void;
   canWrite: boolean;
 };
 
@@ -227,8 +232,13 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
           }
         }
       }
-      await transferCultivationExtractionToExtraction(ids);
-      onTransferred?.();
+      const transferResult = await transferCultivationExtractionToExtraction(ids);
+      onTransferred?.({
+        rows: Array.isArray(transferResult?.rows) ? transferResult.rows : [],
+        sourceBatches: Array.isArray(transferResult?.sourceBatches)
+          ? transferResult.sourceBatches
+          : [],
+      });
       await loadRows();
     } catch (e) {
       setError(formatCultivationTransferApiError(e));
