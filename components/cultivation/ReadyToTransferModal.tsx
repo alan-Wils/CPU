@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  formatCultivationTransferApiError,
   listCultivationExtractionTransfers,
   patchCultivationExtractionTransfer,
   transferCultivationExtractionToExtraction,
@@ -84,7 +85,7 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
       setRows(list);
       setSelected(new Set());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load transfer queue");
+      setError(formatCultivationTransferApiError(e));
     } finally {
       setLoading(false);
     }
@@ -155,7 +156,7 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
       });
       await loadRows();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not update storage");
+      setError(formatCultivationTransferApiError(e));
     } finally {
       setBusy(false);
     }
@@ -193,7 +194,7 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
       onTransferred?.();
       await loadRows();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Transfer failed");
+      setError(formatCultivationTransferApiError(e));
     } finally {
       setBusy(false);
     }

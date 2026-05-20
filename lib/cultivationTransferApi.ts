@@ -1,5 +1,20 @@
 import { apiRequest } from "@/lib/api";
 
+/** Turn Express/HTML 404 bodies into an actionable message for operators. */
+export function formatCultivationTransferApiError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? "");
+  if (
+    raw.includes("Cannot GET") &&
+    raw.includes("cultivation-extraction-transfers")
+  ) {
+    return "The production API has not been updated yet. Redeploy the Railway CPU service (apps/api) from main (commit ffd4367 or later), then confirm the release step runs the database migration.";
+  }
+  if (raw.includes("<!DOCTYPE") || raw.includes("<html")) {
+    return "The API returned an error page instead of JSON. Check NEXT_PUBLIC_API_URL on Vercel and redeploy the Railway API (apps/api).";
+  }
+  return raw.trim() || "Could not load transfer queue";
+}
+
 export type CultivationTransferMaterialType = "FRESH_FROZEN" | "TRIM";
 export type CultivationTransferStatus =
   | "READY_TO_TRANSFER"
