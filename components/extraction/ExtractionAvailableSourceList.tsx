@@ -10,6 +10,7 @@ import {
   harvestGroupZoneKey,
 } from "@/lib/extractionSourceHarvestGroups";
 import { getSourceAvailable } from "@/lib/sourceBatchActive";
+import { SEP_DOT, TRIANGLE_RIGHT } from "@/lib/textSymbols";
 
 type Props = {
   sources: any[];
@@ -102,14 +103,15 @@ export default function ExtractionAvailableSourceList({
                   }}
                   aria-hidden
                 >
-                  \u25b6
+                  {TRIANGLE_RIGHT}
                 </span>
                 <span>
                   <span style={{ fontWeight: 800, fontSize: 15 }}>{group.label}</span>
                   <span style={{ color: "#94a3b8", fontSize: 13, marginLeft: 8 }}>
                     {packageLabel}
-                    {" \u00b7 "}
-                    {group.totalGrams.toLocaleString()} g \u00b7 {group.totalLbs.toFixed(2)} lbs
+                    {SEP_DOT}
+                    {group.totalGrams.toLocaleString()} g{SEP_DOT}
+                    {group.totalLbs.toFixed(2)} lbs
                     {group.hasFreshFrozen && group.totalBundles > 0
                       ? ` \u00b7 ${group.totalBundles} bundle${group.totalBundles === 1 ? "" : "s"}`
                       : ""}
@@ -150,7 +152,8 @@ export default function ExtractionAvailableSourceList({
                             {b.name ? (
                               <span style={{ color: "#94a3b8", fontWeight: 400 }}>
                                 {" "}
-                                \u00b7 {b.name}
+                                {SEP_DOT}
+                                {b.name}
                               </span>
                             ) : null}
                           </div>
@@ -160,7 +163,8 @@ export default function ExtractionAvailableSourceList({
                             <b>{sourcePackageDisplayId(b)}</b>
                             <span style={{ color: "#94a3b8", fontSize: 13 }}>
                               {" "}
-                              \u00b7 {b.name || b.type || "Source package"}
+                              {SEP_DOT}
+                              {b.name || b.type || "Source package"}
                             </span>
                             {" | Material: "}
                           </>

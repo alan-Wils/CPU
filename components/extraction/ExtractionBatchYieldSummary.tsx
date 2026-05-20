@@ -7,6 +7,7 @@ import {
   getLegacyFinishBatchYieldPercent,
   hasExtractionDetailedYields,
 } from "@/lib/extractionYieldHelpers";
+import { EM_DASH, SEP_DOT } from "@/lib/textSymbols";
 
 type Props = {
   batch: any;
@@ -22,7 +23,7 @@ export function ExtractionBatchYieldSummary({
   if (hasExtractionDetailedYields(batch)) {
     const metrics = computeExtractionYieldMetrics(batch, terpAddBackPercent);
     if (!metrics) {
-      return <span>Yield: \u2014</span>;
+      return <span>Yield: {EM_DASH}</span>;
     }
 
     const lineStyle = compact
@@ -32,11 +33,15 @@ export function ExtractionBatchYieldSummary({
     return (
       <div style={lineStyle}>
         <span>
-          Oil: {formatYieldPercentDisplay(metrics.oilYieldPercent)} \u00b7 Terp:{" "}
-          {formatYieldPercentDisplay(metrics.terpYieldPercent)} \u00b7 Total:{" "}
-          {formatYieldPercentDisplay(metrics.totalBatchYieldPercent)} \u00b7 Terped:{" "}
+          Oil: {formatYieldPercentDisplay(metrics.oilYieldPercent)}
+          {SEP_DOT}Terp:{" "}
+          {formatYieldPercentDisplay(metrics.terpYieldPercent)}
+          {SEP_DOT}Total:{" "}
+          {formatYieldPercentDisplay(metrics.totalBatchYieldPercent)}
+          {SEP_DOT}Terped:{" "}
           {formatYieldGramsDisplay(metrics.terpedOilGrams)} (
-          {formatYieldPercentDisplay(metrics.terpedOilYieldPercent)}) \u00b7 Leftover:{" "}
+          {formatYieldPercentDisplay(metrics.terpedOilYieldPercent)})
+          {SEP_DOT}Leftover:{" "}
           {formatYieldGramsDisplay(metrics.leftoverTerpsGrams)} (
           {formatYieldPercentDisplay(metrics.leftoverTerpsPercent)})
         </span>

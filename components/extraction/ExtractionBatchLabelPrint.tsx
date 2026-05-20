@@ -15,6 +15,7 @@ import {
   extractionBatchMarketBatchCode,
   formatExtractionCultivationSourceFooter,
 } from "@/lib/extractionBatchDisplay";
+import { ARROW_RIGHT, SEP_DOT } from "@/lib/textSymbols";
 
 export type { DymoLabelCalibrationSettings };
 export { defaultDymoLabelCalibrationSettings } from "@/lib/dymoLabelCalibration";
@@ -609,10 +610,10 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             maxWidth: 420,
           }}
         >
-          Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}). Lines top \u2192 bottom:{" "}
-          <strong style={{ color: "#e2e8f0" }}>market code \u2192 strain \u2192 product</strong>; cultivation source at bottom.{" "}
-          <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job \u00b7{" "}
-          <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame \u00b7{" "}
+          Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}). Lines top {ARROW_RIGHT} bottom:{" "}
+          <strong style={{ color: "#e2e8f0" }}>market code {ARROW_RIGHT} strain {ARROW_RIGHT} product</strong>; cultivation source at bottom.{" "}
+          <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job{SEP_DOT}
+          <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame{SEP_DOT}
           <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content.
         </p>
       ) : null}

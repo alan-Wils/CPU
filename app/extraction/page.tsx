@@ -40,6 +40,7 @@ import {
   lbsToGrams,
   lbsToGramsInputString,
 } from "@/lib/weightUnits";
+import { ARROW_RIGHT, EM_DASH, SEP_DOT } from "@/lib/textSymbols";
 import { normalizeSourceBatchList } from "@/lib/repairMisclassifiedSourceBatch";
 import { filterSourceBatchesForExtractionAvailability } from "@/lib/extractionSourceAvailability";
 import {
@@ -4262,7 +4263,7 @@ export default function Extraction() {
                       {" "}
                       ({+availableSourcesTotalLbs.toFixed(2)} lbs)
                     </span>
-                    {" \u00b7 "}
+                    {SEP_DOT}
                     <span style={{ color: "#f8fafc" }}>
                       {availableSourcesHasFreshFrozen
                         ? `${availableSourcesTotalBundles} bundle${
@@ -4311,7 +4312,7 @@ export default function Extraction() {
             <div style={{ flex: "1 1 280px" }}>
               <h2 style={{ margin: 0 }}>Extraction Batches</h2>
               <p style={{ color: "#94a3b8", margin: "6px 0 0" }}>
-                {`Required path: Pack Socks Start \u2192 Pack Socks Stop \u2192 Run Extraction \u2192 Start Purge \u2192 End Purge \u2192 Testing Passed \u2192 Finish Batch. Print Batch Label is available anytime (reprints allowed). Optional tasks (Whip, Adding Terps, etc.) can be logged while purge is active.`}
+                {`Required path: Pack Socks Start ${ARROW_RIGHT} Pack Socks Stop ${ARROW_RIGHT} Run Extraction ${ARROW_RIGHT} Start Purge ${ARROW_RIGHT} End Purge ${ARROW_RIGHT} Testing Passed ${ARROW_RIGHT} Finish Batch. Print Batch Label is available anytime (reprints allowed). Optional tasks (Whip, Adding Terps, etc.) can be logged while purge is active.`}
               </p>
             </div>
 
@@ -4360,7 +4361,7 @@ export default function Extraction() {
                     {meta.helper}
                   </span>
                   <span style={{ color: "#22d3ee", fontWeight: 800, fontSize: 12, marginTop: 4 }}>
-                    View this stage \u2192
+                    View this stage {ARROW_RIGHT}
                   </span>
                 </button>
               );
@@ -4441,7 +4442,8 @@ export default function Extraction() {
                     {getMergedPartnerIds(b).length > 0 ? (
                       <div style={{ fontSize: 12, marginTop: 6, color: "#fbbf24", fontWeight: 600 }}>
                         Merged with {getMergedPartnerIds(b).length} batch
-                        {getMergedPartnerIds(b).length === 1 ? "" : "es"} \u2014 use Undo Combine to restore
+                        {getMergedPartnerIds(b).length === 1 ? "" : "es"}
+                        {EM_DASH} use Undo Combine to restore
                       </div>
                     ) : null}
                     {extractionBatchCultivationFooter(b) ? (
@@ -4607,7 +4609,8 @@ export default function Extraction() {
                         <b>{b.name || b.type || "Source package"}</b>
                         <span style={{ color: "#94a3b8", fontSize: 13 }}>
                           {" "}
-                          \u00b7 {b.id}
+                          {SEP_DOT}
+                          {b.id}
                         </span>
                         {" | Status: Complete | Completed: "}
                       </>
@@ -5035,7 +5038,7 @@ export default function Extraction() {
                       This task is <strong style={{ color: "#e2e8f0" }}>always available</strong> at
                       any workflow stage so you can reprint labels. Layout is anchored to the{" "}
                       <strong style={{ color: "#e2e8f0" }}>top</strong> of one sticker with lines using the full
-                      calibrated width \u2014 sized from{" "}
+                      calibrated width {EM_DASH} sized from{" "}
                       <strong style={{ color: "#e2e8f0" }}>DYMO calibration</strong> below.{" "}
                       <strong style={{ color: "#e2e8f0" }}>Print label</strong> uses{" "}
                       <strong style={{ color: "#e2e8f0" }}>saved</strong> settings; use{" "}
@@ -5448,7 +5451,7 @@ export default function Extraction() {
                           {formatYieldGramsDisplay(finishDecarbYieldPreview.terpsToAddBackGrams)}
                           {finishDecarbYieldPreview.terpAddBackCapped ? (
                             <span style={{ color: "#fbbf24", marginLeft: 8 }}>
-                              (capped at collected \u2014 only{" "}
+                              (capped at collected {EM_DASH} only{" "}
                               {formatYieldGramsDisplay(
                                 finishDecarbYieldPreview.actualTerpsAddedBackGrams,
                               )}{" "}
@@ -6067,7 +6070,7 @@ export default function Extraction() {
                     autoComplete="off"
                   />
                   <p style={{ fontSize: 12, color: "#64748b", margin: "8px 0 0" }}>
-                    Sources and completed tasks are unchanged here \u2014 use workflow tasks to log
+                    Sources and completed tasks are unchanged here {EM_DASH} use workflow tasks to log
                     process steps.
                   </p>
                 </div>
@@ -6115,7 +6118,7 @@ export default function Extraction() {
                     >
                       <p style={{ margin: "0 0 10px", fontSize: 13, color: "#fbbf24" }}>
                         This batch absorbed others via <b>Combine Batches</b>. Use <b>Undo combine</b> if
-                        the wrong partner was merged \u2014 restores that batch and fixes survivor totals.
+                        the wrong partner was merged {EM_DASH} restores that batch and fixes survivor totals.
                       </p>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                         {viewBatch.combinedFromBatchIds.map((mergedId: string) => (
@@ -6217,7 +6220,7 @@ export default function Extraction() {
 
               <h3>Completed Tasks</h3>
               <p>
-                {getCompletedTasks(viewBatch).join(" \u2192 ") ||
+                {getCompletedTasks(viewBatch).join(` ${ARROW_RIGHT} `) ||
                   "No tasks completed yet."}
               </p>
 

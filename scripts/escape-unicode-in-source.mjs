@@ -21,12 +21,116 @@ const MOJI_FIX = [
   ["\u00e2\u20ac\u00a6", "..."],
 ];
 
-const UNICODE_TO_ESCAPE = [
-  ["\u00b7", "\\u00b7"],
-  ["\u2192", "\\u2192"],
-  ["\u2014", "\\u2014"],
-  ["\u25b6", "\\u25b6"],
-];
+/** Only escape inside quoted JS strings — never in raw JSX text nodes. */
+function escapeInQuotedStrings(text) {
+  let out = "";
+  let i = 0;
+  let mode = "code"; // code | sq | dq | bt | lineComment | blockComment
+
+  while (i < text.length) {
+    const ch = text[i];
+    const next = text[i + 1];
+
+    if (mode === "lineComment") {
+      out += ch;
+      if (ch === "\n") mode = "code";
+      i += 1;
+      continue;
+    }
+
+    if (mode === "blockComment") {
+      out += ch;
+      if (ch === "*" && next === "/") {
+        out += "/";
+        i += 2;
+        mode = "code";
+      } else {
+        i += 1;
+      }
+      continue;
+    }
+
+    if (mode === "code") {
+      if (ch === "/" && next === "/") {
+        out += ch + next;
+        i += 2;
+        mode = "lineComment";
+        continue;
+      }
+      if (ch === "/" && next === "*") {
+        out += ch + next;
+        i += 2;
+        mode = "blockComment";
+        continue;
+      }
+      if (ch === "'") {
+        out += ch;
+        i += 1;
+        mode = "sq";
+        continue;
+      }
+      if (ch === '"') {
+        out += ch;
+        i += 1;
+        mode = "dq";
+        continue;
+      }
+      if (ch === "`") {
+        out += ch;
+        i += 1;
+        mode = "bt";
+        continue;
+      }
+      out += ch;
+      i += 1;
+      continue;
+    }
+
+    const stringMode = mode;
+    if (ch === "\\") {
+      out += ch + (next ?? "");
+      i += 2;
+      continue;
+    }
+
+    if (
+      (stringMode === "sq" && ch === "'") ||
+      (stringMode === "dq" && ch === '"') ||
+      (stringMode === "bt" && ch === "`")
+    ) {
+      out += ch;
+      i += 1;
+      mode = "code";
+      continue;
+    }
+
+    if (ch === "\u00b7") {
+      out += "\\u00b7";
+      i += 1;
+      continue;
+    }
+    if (ch === "\u2192") {
+      out += "\\u2192";
+      i += 1;
+      continue;
+    }
+    if (ch === "\u2014") {
+      out += "\\u2014";
+      i += 1;
+      continue;
+    }
+    if (ch === "\u25b6") {
+      out += "\\u25b6";
+      i += 1;
+      continue;
+    }
+
+    out += ch;
+    i += 1;
+  }
+
+  return out;
+}
 
 function collectFiles(entry) {
   const abs = path.join(ROOT, entry);
@@ -43,46 +147,27 @@ function collectFiles(entry) {
   return out;
 }
 
-function escapeFile(filePath) {
-  let text = fs.readFileSync(filePath, "utf8");
-  let changed = false;
-
-  for (const [bad, good] of MOJI_FIX) {
-    if (text.includes(bad)) {
-      text = text.split(bad).join(good);
-      changed = true;
-      console.log(`  fixed mojibake ${JSON.stringify(bad)} in ${path.relative(ROOT, filePath)}`);
-    }
-  }
-
-  for (const [ch, esc] of UNICODE_TO_ESCAPE) {
-    if (!text.includes(ch)) continue;
-    // Skip if already escaped (preceded by backslash)
-    const parts = text.split(ch);
-    if (parts.length <= 1) continue;
-    let rebuilt = parts[0];
-    for (let i = 1; i < parts.length; i++) {
-      const prev = rebuilt;
-      const endsWithEscape = /\\u[0-9a-fA-F]{4}$/.test(prev.slice(-6)) || prev.endsWith("\\");
-      rebuilt += endsWithEscape ? ch : esc;
-      rebuilt += parts[i];
-    }
-    if (rebuilt !== text) {
-      text = rebuilt;
-      changed = true;
-    }
-  }
-
-  if (changed) {
-    fs.writeFileSync(filePath, text, "utf8");
-  }
-  return changed;
-}
-
 let total = 0;
 for (const entry of TARGETS) {
   for (const file of collectFiles(entry)) {
-    if (escapeFile(file)) {
+    let text = fs.readFileSync(file, "utf8");
+    let changed = false;
+
+    for (const [bad, good] of MOJI_FIX) {
+      if (text.includes(bad)) {
+        text = text.split(bad).join(good);
+        changed = true;
+      }
+    }
+
+    const escaped = escapeInQuotedStrings(text);
+    if (escaped !== text) {
+      text = escaped;
+      changed = true;
+    }
+
+    if (changed) {
+      fs.writeFileSync(file, text, "utf8");
       total += 1;
       console.log("updated", path.relative(ROOT, file));
     }
