@@ -148,6 +148,11 @@ import {
   openExtractionBatchLabelPrintWindow,
 } from "@/components/extraction/ExtractionBatchLabelPrint";
 import {
+  buildExtractionBatchSheetModel,
+  buildAndPrintExtractionBatchSheet,
+  ExtractionBatchSheetPreview,
+} from "@/components/extraction/ExtractionBatchSheetPrint";
+import {
   collectExtractionCultivationSourceLabels,
   extractionBatchMarketBatchCode,
   extractionBatchSavedMarketBatchCode,
@@ -177,6 +182,7 @@ const extractionTasks = [
   "Combine Batches",
   "Undo Combine",
   "Print Batch Label",
+  "Print Batch Sheet",
   "Run Extraction",
   "Start Purge",
   "Whip",
@@ -190,7 +196,7 @@ const extractionTasks = [
   "Finish Batch",
 ];
 
-const optionalRepeatableTasks = ["Whip", "Adding Terps", "Print Batch Label"];
+const optionalRepeatableTasks = ["Whip", "Adding Terps", "Print Batch Label", "Print Batch Sheet"];
 
 const testingOptions = [
   "Metals",
@@ -1332,6 +1338,7 @@ export default function Extraction() {
     if (task === "Pack Socks Stop") return packSocksStarted && !packSocksStopped;
     /** Anytime reprint; does not gate other tasks. */
     if (task === "Print Batch Label") return true;
+    if (task === "Print Batch Sheet") return true;
     if (task === "Run Extraction") return packSocksStopped && !hasRun;
     if (task === "Start Purge") return hasRun && !purgeStarted;
 
@@ -2754,6 +2761,10 @@ export default function Extraction() {
       return true;
     }
 
+    if (selectedTask === "Print Batch Sheet") {
+      return true;
+    }
+
     if (selectedTask === "Run Extraction") {
       if (
         !requireFields([
@@ -3174,6 +3185,17 @@ export default function Extraction() {
         labelPrintCopies: dymoLabelPrintCopiesClamped,
         printerModel: "DYMO LabelWriter",
         labelStock: `${dymoSavedCalibration.labelWidth} × ${dymoSavedCalibration.labelHeight}`,
+      };
+    }
+
+    if (selectedTask === "Print Batch Sheet") {
+      const sheet = buildExtractionBatchSheetModel(selectedExt, {
+        resolveSource: getSource,
+        nextRequiredTask: getNextAllowedTask(selectedExt),
+      });
+      return {
+        sheet,
+        printedAtIso: new Date().toISOString(),
       };
     }
 
@@ -4312,7 +4334,7 @@ export default function Extraction() {
             <div style={{ flex: "1 1 280px" }}>
               <h2 style={{ margin: 0 }}>Extraction Batches</h2>
               <p style={{ color: "#94a3b8", margin: "6px 0 0" }}>
-                {`Required path: Pack Socks Start ${ARROW_RIGHT} Pack Socks Stop ${ARROW_RIGHT} Run Extraction ${ARROW_RIGHT} Start Purge ${ARROW_RIGHT} End Purge ${ARROW_RIGHT} Testing Passed ${ARROW_RIGHT} Finish Batch. Print Batch Label is available anytime (reprints allowed). Optional tasks (Whip, Adding Terps, etc.) can be logged while purge is active.`}
+                {`Required path: Pack Socks Start ${ARROW_RIGHT} Pack Socks Stop ${ARROW_RIGHT} Run Extraction ${ARROW_RIGHT} Start Purge ${ARROW_RIGHT} End Purge ${ARROW_RIGHT} Testing Passed ${ARROW_RIGHT} Finish Batch. Print Batch Label and Print Batch Sheet are available anytime (reprints allowed). Optional tasks (Whip, Adding Terps, etc.) can be logged while purge is active.`}
               </p>
             </div>
 
@@ -4463,6 +4485,33 @@ export default function Extraction() {
                   <button style={buttonStyle} onClick={() => setViewBatch(b)}>
                     View
                   </button>
+
+                  {userCanWrite ? (
+                    <button
+                      type="button"
+                      style={{
+                        ...buttonStyle,
+                        background: "#1e3a5f",
+                        border: "1px solid #38bdf8",
+                        color: "#e0f2fe",
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const ok = buildAndPrintExtractionBatchSheet(b, {
+                          resolveSource: getSource,
+                          nextRequiredTask: getNextAllowedTask(b),
+                        });
+                        if (!ok) {
+                          showNotice(
+                            "Print could not start",
+                            "Could not open the batch sheet print view. Try again or use a different browser.",
+                          );
+                        }
+                      }}
+                    >
+                      Sheet
+                    </button>
+                  ) : null}
 
                   {userCanWrite && getMergedPartnerIds(b).length > 0 ? (
                     <button
@@ -5145,6 +5194,73 @@ export default function Extraction() {
                         preview even when ink lands on the die-cut).
                       </p>
                     </div>
+                  </>
+                )}
+
+                {selectedTask === "Print Batch Sheet" && selectedExt && (
+                  <>
+                    <p
+                      style={{
+                        color: "#94a3b8",
+                        margin: "0 auto 16px",
+                        maxWidth: 560,
+                        textAlign: "center",
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      Print a <strong style={{ color: "#e2e8f0" }}>letter-size reference sheet</strong> with
+                      strains, METRC tags, weights per source package, cultivation batch codes, pack socks
+                      totals, and completed tasks. Keep it with the physical batch through prep and extraction.
+                    </p>
+                    <ExtractionBatchSheetPreview
+                      model={buildExtractionBatchSheetModel(selectedExt, {
+                        resolveSource: getSource,
+                        nextRequiredTask: getNextAllowedTask(selectedExt),
+                      })}
+                    />
+                    <button
+                      type="button"
+                      style={{
+                        ...inputStyle,
+                        cursor: "pointer",
+                        fontWeight: 600,
+                        width: "100%",
+                        maxWidth: 400,
+                        margin: "16px auto 0",
+                        display: "block",
+                        padding: "12px 20px",
+                        background: "linear-gradient(135deg, #0ea5e9, #0284c7)",
+                        border: "1px solid #38bdf8",
+                        color: "#f8fafc",
+                      }}
+                      onClick={() => {
+                        const ok = buildAndPrintExtractionBatchSheet(selectedExt, {
+                          resolveSource: getSource,
+                          nextRequiredTask: getNextAllowedTask(selectedExt),
+                        });
+                        if (!ok) {
+                          showNotice(
+                            "Print could not start",
+                            "Could not open the batch sheet print view. Try again or use a different browser.",
+                          );
+                        }
+                      }}
+                    >
+                      Print batch sheet
+                    </button>
+                    <p
+                      style={{
+                        color: "#64748b",
+                        margin: "12px auto 0",
+                        fontSize: 12,
+                        maxWidth: 480,
+                        textAlign: "center",
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      Save this task to the log after printing if you want a record of when the sheet was
+                      issued.
+                    </p>
                   </>
                 )}
 
