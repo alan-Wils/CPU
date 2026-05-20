@@ -719,6 +719,88 @@ export class CultivationTransferService {
             : CultivationTransferMaterialType.FRESH_FROZEN;
     }
 
+    private minimalStoreRowFromSourceBatchId(sourceBatchId: string): Record<string, unknown> | null {
+        const id = String(sourceBatchId || "").trim();
+        if (!/^FF-/i.test(id) && !/^TRIM-/i.test(id))
+            return null;
+        const source = this.inferSourceCultivationBatchIdFromFfId(id)
+            || (/^TRIM-/i.test(id) ? id.replace(/^TRIM-/i, "").split("-")[0] : "");
+        const type = /^TRIM-/i.test(id) ? "Dry Trim" : "Fresh Frozen";
+        const name = id.replace(/^(FF|TRIM)-/i, "").replace(/-/g, " ") || id;
+        return {
+            id,
+            type,
+            name,
+            source: source || undefined,
+            status: "Complete",
+            manualTransferToExtraction: true,
+        };
+    }
+
+    private resolveStoreRowForReturn(
+        snap: Awaited<ReturnType<StoreService["load"]>>,
+        sourceBatchId: string,
+        clientPackage?: Record<string, unknown> | null,
+    ): Record<string, unknown> | null {
+        const fromSnap = this.findStoreSourceRow(snap, sourceBatchId);
+        if (fromSnap && clientPackage)
+            return { ...fromSnap, ...clientPackage, id: sourceBatchId };
+        if (fromSnap)
+            return fromSnap;
+        if (clientPackage && typeof clientPackage === "object")
+            return { ...clientPackage, id: sourceBatchId };
+        return this.minimalStoreRowFromSourceBatchId(sourceBatchId);
+    }
+
+    private async resolveStorageLocationForReturn(
+        companyId: string,
+        materialType: CultivationTransferMaterialType,
+        storeRow: Record<string, unknown>,
+    ): Promise<{
+        storageType: CultivationTransferStorageType;
+        storageLocationId: string;
+        storageLocationName: string;
+    }> {
+        const rowId = String(storeRow.storageLocationId || "").trim();
+        const rowName = String(storeRow.storageLocationName || "").trim();
+        if (rowId && rowName) {
+            const storageType =
+                materialType === CultivationTransferMaterialType.TRIM
+                    ? CultivationTransferStorageType.DRY_ROOM
+                    : CultivationTransferStorageType.FREEZER;
+            return {
+                storageType,
+                storageLocationId: rowId,
+                storageLocationName: rowName,
+            };
+        }
+        try {
+            const config = await this.loadStorageConfig(companyId);
+            const resolved = this.resolveStorageLocation(
+                config,
+                materialType,
+                rowId,
+                rowName,
+            );
+            return {
+                storageType: resolved.storageType,
+                storageLocationId: resolved.storageLocationId,
+                storageLocationName: resolved.storageLocationName,
+            };
+        }
+        catch {
+            const storageType =
+                materialType === CultivationTransferMaterialType.TRIM
+                    ? CultivationTransferStorageType.DRY_ROOM
+                    : CultivationTransferStorageType.FREEZER;
+            return {
+                storageType,
+                storageLocationId: rowId || "unassigned",
+                storageLocationName: rowName || "Unassigned",
+            };
+        }
+    }
+
     private async findTransferForReturn(
         companyId: string,
         sourceBatchId: string,
@@ -780,12 +862,10 @@ export class CultivationTransferService {
             );
 
         const materialType = this.materialTypeFromStoreRow(params.storeRow);
-        const config = await this.loadStorageConfig(params.companyId);
-        const storage = this.resolveStorageLocation(
-            config,
+        const storage = await this.resolveStorageLocationForReturn(
+            params.companyId,
             materialType,
-            String(params.storeRow.storageLocationId || ""),
-            String(params.storeRow.storageLocationName || ""),
+            params.storeRow,
         );
 
         const metrcTag = String(params.storeRow.metrcTag || params.storeRow.plantTag || "").trim();
@@ -806,6 +886,34 @@ export class CultivationTransferService {
             params.storeRow.materialPayload && typeof params.storeRow.materialPayload === "object"
                 ? (params.storeRow.materialPayload as Prisma.InputJsonValue)
                 : undefined;
+
+        const existing = await prisma.cultivationExtractionTransfer.findFirst({
+            where: {
+                companyId: params.companyId,
+                sourceCultivationBatchId,
+                ...(metrcTag ? { metrcTag } : { harvestCode: harvestCode || params.sourceBatchId }),
+            },
+            orderBy: { updatedAt: "desc" },
+        });
+        if (existing) {
+            return prisma.cultivationExtractionTransfer.update({
+                where: { id: existing.id },
+                data: {
+                    transferStatus: CultivationTransferStatus.STORED,
+                    extractionSourceBatchId: null,
+                    transferredAt: null,
+                    transferredByUserId: null,
+                    displayName,
+                    harvestCode: harvestCode || null,
+                    grams: grams > 0 ? grams : existing.grams,
+                    bundles: bundles > 0 ? bundles : existing.bundles,
+                    weightLbs: weightLbs > 0 ? weightLbs : existing.weightLbs,
+                    storageType: storage.storageType,
+                    storageLocationId: storage.storageLocationId,
+                    storageLocationName: storage.storageLocationName,
+                },
+            });
+        }
 
         return prisma.cultivationExtractionTransfer.create({
             data: {
@@ -840,26 +948,14 @@ export class CultivationTransferService {
         if (existing)
             return existing;
 
-        if (storeRow)
+        const effectiveRow =
+            storeRow ?? this.minimalStoreRowFromSourceBatchId(sourceBatchId);
+        if (effectiveRow)
             return this.restoreStoredTransferFromStoreRow({
                 companyId,
                 sourceBatchId,
-                storeRow,
+                storeRow: effectiveRow,
             });
-
-        const inferredSource = this.inferSourceCultivationBatchIdFromFfId(sourceBatchId);
-        if (inferredSource) {
-            const byLot = await prisma.cultivationExtractionTransfer.findFirst({
-                where: {
-                    companyId,
-                    sourceCultivationBatchId: inferredSource,
-                    materialType: CultivationTransferMaterialType.FRESH_FROZEN,
-                },
-                orderBy: { updatedAt: "desc" },
-            });
-            if (byLot)
-                return byLot;
-        }
 
         return null;
     }
@@ -868,6 +964,7 @@ export class CultivationTransferService {
         companyId: string;
         actorUserId: string;
         sourceBatchId: string;
+        storePackage?: Record<string, unknown> | null;
     }): Promise<CultivationTransferDto> {
         const sourceBatchId = String(params.sourceBatchId || "").trim();
         if (!sourceBatchId)
@@ -897,7 +994,11 @@ export class CultivationTransferService {
             }
         }
 
-        const storeRow = this.findStoreSourceRow(snap, sourceBatchId);
+        const storeRow = this.resolveStoreRowForReturn(
+            snap,
+            sourceBatchId,
+            params.storePackage,
+        );
         const transfer = await this.resolveOrRestoreTransferForReturn(
             params.companyId,
             sourceBatchId,
@@ -905,7 +1006,7 @@ export class CultivationTransferService {
         );
         if (!transfer)
             throw new AppError(
-                "No cultivation transfer record found for this package. If it was harvested before transfers were enabled, re-run Fresh Frozen harvest on the cultivation lot or contact support.",
+                `Could not restore Ready to Transfer for ${sourceBatchId}. Open Cultivation, find the harvest lot, and confirm Fresh Frozen bundles exist.`,
                 404,
             );
 
@@ -951,27 +1052,45 @@ export class CultivationTransferService {
     async returnManyToCultivationStorage(params: {
         companyId: string;
         actorUserId: string;
-        sourceBatchIds: string[];
+        sourceBatchIds?: string[];
+        packages?: Array<{ sourceBatchId: string; storePackage?: Record<string, unknown> }>;
     }): Promise<{
         rows: CultivationTransferDto[];
         returnedIds: string[];
         failed: Array<{ sourceBatchId: string; message: string }>;
     }> {
-        const ids = [
-            ...new Set(
-                params.sourceBatchIds.map((id) => String(id || "").trim()).filter(Boolean),
-            ),
-        ];
+        const work: Array<{ sourceBatchId: string; storePackage?: Record<string, unknown> }> = [];
+        const seen = new Set<string>();
+        for (const pkg of params.packages || []) {
+            const sourceBatchId = String(pkg.sourceBatchId || "").trim();
+            if (!sourceBatchId || seen.has(sourceBatchId))
+                continue;
+            seen.add(sourceBatchId);
+            work.push({
+                sourceBatchId,
+                storePackage: pkg.storePackage,
+            });
+        }
+        for (const id of params.sourceBatchIds || []) {
+            const sourceBatchId = String(id || "").trim();
+            if (!sourceBatchId || seen.has(sourceBatchId))
+                continue;
+            seen.add(sourceBatchId);
+            work.push({ sourceBatchId });
+        }
+
         const rows: CultivationTransferDto[] = [];
         const returnedIds: string[] = [];
         const failed: Array<{ sourceBatchId: string; message: string }> = [];
 
-        for (const sourceBatchId of ids) {
+        for (const item of work) {
+            const sourceBatchId = item.sourceBatchId;
             try {
                 const row = await this.returnToCultivationStorage({
                     companyId: params.companyId,
                     actorUserId: params.actorUserId,
                     sourceBatchId,
+                    storePackage: item.storePackage,
                 });
                 rows.push(row);
                 returnedIds.push(sourceBatchId);

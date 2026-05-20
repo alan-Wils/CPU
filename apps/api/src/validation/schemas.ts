@@ -767,8 +767,22 @@ export const cultivationTransferBulkSchema = z.object({
 
 export const cultivationReturnToCultivationSchema = z.object({
     sourceBatchId: z.string().trim().min(1).max(120),
+    storePackage: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const cultivationReturnBulkToCultivationSchema = z.object({
-    sourceBatchIds: z.array(z.string().trim().min(1).max(120)).min(1).max(50),
+export const cultivationReturnBulkPackageSchema = z.object({
+    sourceBatchId: z.string().trim().min(1).max(120),
+    storePackage: z.record(z.string(), z.unknown()).optional(),
 });
+
+export const cultivationReturnBulkToCultivationSchema = z
+    .object({
+        sourceBatchIds: z.array(z.string().trim().min(1).max(120)).optional(),
+        packages: z.array(cultivationReturnBulkPackageSchema).max(50).optional(),
+    })
+    .refine(
+        (data) =>
+            (Array.isArray(data.sourceBatchIds) && data.sourceBatchIds.length > 0)
+            || (Array.isArray(data.packages) && data.packages.length > 0),
+        { message: "sourceBatchIds or packages is required" },
+    );

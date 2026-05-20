@@ -2015,17 +2015,35 @@ export default function Extraction() {
     );
   }
 
-  async function executeReturnSourceIds(sourceBatchIds: string[]) {
-    const ids = [...new Set(sourceBatchIds.map((id) => String(id || "").trim()).filter(Boolean))];
-    if (ids.length === 0) return { returnedIds: [] as string[], failed: [] as Array<{ sourceBatchId: string; message: string }> };
+  function buildReturnPackages(rows: any[]) {
+    const byId = new Map<string, { sourceBatchId: string; storePackage: Record<string, unknown> }>();
+    for (const row of rows) {
+      const sourceBatchId = String(row?.id || "").trim();
+      if (!sourceBatchId) continue;
+      byId.set(sourceBatchId, {
+        sourceBatchId,
+        storePackage: { ...(row as Record<string, unknown>) },
+      });
+    }
+    return [...byId.values()];
+  }
 
-    if (ids.length === 1) {
-      await returnSourceBatchToCultivation(ids[0]);
-      applyReturnToCultivationLocal(ids[0]);
-      return { returnedIds: ids, failed: [] };
+  async function executeReturnPackages(packages: Array<{
+    sourceBatchId: string;
+    storePackage?: Record<string, unknown>;
+  }>) {
+    if (packages.length === 0) {
+      return { returnedIds: [] as string[], failed: [] as Array<{ sourceBatchId: string; message: string }> };
     }
 
-    const out = await returnSourceBatchesToCultivationBulk(ids);
+    if (packages.length === 1) {
+      const one = packages[0];
+      await returnSourceBatchToCultivation(one.sourceBatchId, one.storePackage);
+      applyReturnToCultivationLocal(one.sourceBatchId);
+      return { returnedIds: [one.sourceBatchId], failed: [] };
+    }
+
+    const out = await returnSourceBatchesToCultivationBulk(packages);
     for (const id of out.returnedIds || []) applyReturnToCultivationLocal(id);
     return {
       returnedIds: out.returnedIds || [],
@@ -2053,7 +2071,7 @@ export default function Extraction() {
       async () => {
         setEditReturnBusy(true);
         try {
-          await executeReturnSourceIds([sourceBatchId]);
+          await executeReturnPackages(buildReturnPackages([row]));
           closeEditSourcePackage();
           await reloadExtractionSourceLists();
           showSyncMessageNotice(
@@ -2097,8 +2115,7 @@ export default function Extraction() {
       async () => {
         setBulkReturnBusy(true);
         try {
-          const ids = rows.map((b: any) => String(b.id || "").trim()).filter(Boolean);
-          const { returnedIds, failed } = await executeReturnSourceIds(ids);
+          const { returnedIds, failed } = await executeReturnPackages(buildReturnPackages(rows));
           await reloadExtractionSourceLists();
           forceRefresh({ skipBackendSave: true });
           if (returnedIds.length > 0 && failed.length === 0) {

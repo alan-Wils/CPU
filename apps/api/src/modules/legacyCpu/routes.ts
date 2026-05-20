@@ -1562,6 +1562,7 @@ legacyCpuRouter.post(
             companyId,
             actorUserId: req.auth.userId,
             sourceBatchId: body.sourceBatchId,
+            storePackage: body.storePackage,
         });
         invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
         res.json({ row });
@@ -1579,6 +1580,7 @@ legacyCpuRouter.post(
             companyId,
             actorUserId: req.auth.userId,
             sourceBatchIds: body.sourceBatchIds,
+            packages: body.packages,
         });
         if (out.returnedIds.length > 0)
             invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);

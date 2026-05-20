@@ -134,22 +134,27 @@ export function sourceBatchCanReturnToCultivation(row: unknown): boolean {
   return t.includes("fresh frozen") || t.includes("dry trim");
 }
 
-export async function returnSourceBatchToCultivation(sourceBatchId: string): Promise<{
+export async function returnSourceBatchToCultivation(
+  sourceBatchId: string,
+  storePackage?: Record<string, unknown>,
+): Promise<{
   row: CultivationExtractionTransferRow;
 }> {
   return apiRequest("/api/cultivation-extraction-transfers/return-to-cultivation", {
     method: "POST",
-    body: { sourceBatchId },
+    body: { sourceBatchId, storePackage },
   });
 }
 
-export async function returnSourceBatchesToCultivationBulk(sourceBatchIds: string[]): Promise<{
+export async function returnSourceBatchesToCultivationBulk(
+  packages: Array<{ sourceBatchId: string; storePackage?: Record<string, unknown> }>,
+): Promise<{
   rows: CultivationExtractionTransferRow[];
   returnedIds: string[];
   failed: Array<{ sourceBatchId: string; message: string }>;
 }> {
   return apiRequest("/api/cultivation-extraction-transfers/return-to-cultivation/bulk", {
     method: "POST",
-    body: { sourceBatchIds },
+    body: { packages },
   });
 }
