@@ -33,7 +33,8 @@ export function scrubCompanySecretsForHttp(company: unknown): unknown {
         : null;
     if (metrc) {
         const hasVendor = nonEmptyString(metrc.apiKey) || nonEmptyString(metrc.vendorApiKey);
-        const hasUser = nonEmptyString(metrc.userKey) || nonEmptyString(metrc.userApiKey);
+        const hasUser =
+            nonEmptyString(metrc.userKey) || nonEmptyString(metrc.userApiKey);
         metrc.apiKey = "";
         metrc.userKey = "";
         if ("vendorApiKey" in metrc) metrc.vendorApiKey = "";
@@ -95,6 +96,10 @@ export function mergeCompanyValuePreserveMaskedSecrets(prevCompany: unknown, inc
             nextMet.userKey = prevMet.userKey;
         if (isEmptyOrMaskedMetrcSecret(nextMet.userKey) && nonEmptyString(prevMet.userApiKey))
             nextMet.userKey = prevMet.userApiKey;
+        if (isEmptyOrMaskedMetrcSecret(nextMet.userApiKey) && nonEmptyString(prevMet.userApiKey))
+            nextMet.userApiKey = prevMet.userApiKey;
+        if (isEmptyOrMaskedMetrcSecret(nextMet.userApiKey) && nonEmptyString(prevMet.userKey))
+            nextMet.userApiKey = prevMet.userKey;
         delete nextMet.hasMetrcVendorApiKey;
         delete nextMet.hasMetrcUserApiKey;
         delete nextMet.vendorApiKey;
@@ -358,15 +363,20 @@ export function buildIntegrationsMetaView(merged: MergedCompanyConfig): Record<s
     const ag = cc.autogrow && typeof cc.autogrow === "object" && !Array.isArray(cc.autogrow)
         ? (cc.autogrow as Record<string, unknown>)
         : {};
+    const licenseDisplay = String(metrc.licenseNumber ?? metrc.facilityLicenseNumber ?? "").trim();
     return {
         metrcIntegrationEnabled: Boolean(metrc.integrationEnabled),
         metrcStateCode: String(metrc.stateCode ?? "").trim(),
         metrcEnvironment: String(metrc.environment ?? ""),
-        metrcLicenseNumberDisplay: String(metrc.licenseNumber ?? "").trim(),
+        metrcLicenseNumberDisplay: licenseDisplay,
         metrcFacilityName: String(metrc.facilityName ?? "").trim(),
         metrcUsernameDisplay: String(metrc.username ?? "").trim(),
         hasMetrcVendorApiKey: nonEmptyString(metrc.apiKey) || nonEmptyString(metrc.vendorApiKey),
         hasMetrcUserApiKey: nonEmptyString(metrc.userKey) || nonEmptyString(metrc.userApiKey),
+        metrcSandboxCredentialsReady:
+            (nonEmptyString(metrc.apiKey) || nonEmptyString(metrc.vendorApiKey))
+            && (nonEmptyString(metrc.userKey) || nonEmptyString(metrc.userApiKey))
+            && Boolean(licenseDisplay),
         metrcLastConnectionStatus: String(metrc.metrcLastConnectionStatus ?? "").trim(),
         metrcLastConnectionCheckedAt: String(metrc.metrcLastConnectionCheckedAt ?? "").trim() || null,
         metrcSandboxLastFacilitiesSyncAt: String(metrc.metrcSandboxLastFacilitiesSyncAt ?? "").trim() || null,

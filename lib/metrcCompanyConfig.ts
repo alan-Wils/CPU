@@ -14,6 +14,8 @@ export type MetrcCompanyConfig = {
   vendorApiKey?: string;
   /** User API key (facility operator key from METRC) */
   userKey: string;
+  /** Alias persisted alongside `userKey` (sandbox setup / some METRC docs). */
+  userApiKey?: string;
   /** METRC account username (from sandbox integrator setup; used for Basic auth). */
   username: string;
   /** Facility license number (often required in URL paths) */
@@ -81,6 +83,7 @@ export function prepareMetrcSecretsForSave(
   delete m.hasMetrcVendorApiKey;
   delete m.hasMetrcUserApiKey;
   delete m.vendorApiKey;
+  delete m.userApiKey;
   if (isMaskedMetrcSecretPlaceholder(m.apiKey)) m.apiKey = "";
   if (isMaskedMetrcSecretPlaceholder(m.userKey)) m.userKey = "";
   if (!touched.vendorKey) m.apiKey = "";

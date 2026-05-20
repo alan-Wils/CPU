@@ -22,6 +22,7 @@ type IntegrationsMeta = {
   metrcUsernameDisplay?: string;
   hasMetrcVendorApiKey?: boolean;
   hasMetrcUserApiKey?: boolean;
+  metrcSandboxCredentialsReady?: boolean;
   metrcLastConnectionStatus?: MetrcLastConnectionStatus | "";
   metrcLastConnectionCheckedAt?: string | null;
   metrcSandboxLastFacilitiesSyncAt?: string | null;
@@ -46,6 +47,29 @@ type PullResult = {
 type TestConnectionJson =
   | { ok: true; connected: true; checkedAt: string; locationCount: number }
   | { ok: false; connected: false; checkedAt: string; message: string; status: number };
+
+type SandboxSetupDebug = {
+  topLevelKeys: string[];
+  fieldsFound: string[];
+  parserPaths: {
+    userApiKey?: string | null;
+    facilityLicenseNumber?: string | null;
+    username?: string | null;
+    facilityName?: string | null;
+  };
+  structureOutline: unknown;
+};
+
+type SandboxSetupJson =
+  | {
+      ok: true;
+      facilityName?: string;
+      facilityLicenseNumber?: string;
+      username?: string;
+      credentialsReady?: boolean;
+      debug?: SandboxSetupDebug;
+    }
+  | { ok: false; message?: string; debug?: SandboxSetupDebug };
 
 const styles: Record<string, React.CSSProperties> = {
   page: { minHeight: "100vh", background: "#020617", color: "#e5e7eb", padding: 24 },
@@ -149,6 +173,7 @@ export default function MetrcSandboxPage() {
   const [statusMsg, setStatusMsg] = useState<{ tone: "ok" | "error" | "warn"; text: string } | null>(null);
   const [lastPull, setLastPull] = useState<PullResult | null>(null);
   const [testAt, setTestAt] = useState<string | null>(null);
+  const [setupDebug, setSetupDebug] = useState<SandboxSetupDebug | null>(null);
 
   const loadMeta = useCallback(async () => {
     setLoadingMeta(true);
@@ -167,21 +192,34 @@ export default function MetrcSandboxPage() {
     void loadMeta();
   }, [loadMeta]);
 
+  const credentialsReady = useMemo(() => {
+    if (meta?.metrcSandboxCredentialsReady) return true;
+    return Boolean(
+      meta?.hasMetrcVendorApiKey &&
+        meta?.hasMetrcUserApiKey &&
+        String(meta?.metrcLicenseNumberDisplay || "").trim(),
+    );
+  }, [meta]);
+
   const connectionLabel = useMemo(() => {
     if (busy === "test") return "Testing…";
+    if (busy === "setup") return "Provisioning…";
+    if (credentialsReady) return "Connected";
     const st = String(meta?.metrcLastConnectionStatus || "").trim();
-    if (st === "connected") return "Connected";
+    if (st === "connected") return "Connected (API test)";
     if (st === "not_connected") return "Not connected";
-    return "Unknown";
-  }, [meta?.metrcLastConnectionStatus, busy]);
+    return "Not ready";
+  }, [meta?.metrcLastConnectionStatus, busy, credentialsReady]);
 
   async function runSetup() {
     setBusy("setup");
     setStatusMsg(null);
     setLastPull(null);
+    setSetupDebug(null);
     try {
       const res = await authFetch("/api/metrc/sandbox/setup", { method: "POST" });
-      const json = (await res.json()) as { ok?: boolean; message?: string; facilityName?: string };
+      const json = (await res.json()) as SandboxSetupJson;
+      if (json.debug) setSetupDebug(json.debug);
       if (!res.ok || !json.ok) {
         setStatusMsg({
           tone: "error",
@@ -189,9 +227,12 @@ export default function MetrcSandboxPage() {
         });
         return;
       }
+      const ok = json as Extract<SandboxSetupJson, { ok: true }>;
       setStatusMsg({
         tone: "ok",
-        text: `Sandbox facility provisioned${json.facilityName ? `: ${json.facilityName}` : ""}. User key stored server-side.`,
+        text: `Sandbox facility provisioned${ok.facilityName ? `: ${ok.facilityName}` : ""}${
+          ok.facilityLicenseNumber ? ` (${ok.facilityLicenseNumber})` : ""
+        }. User API key stored server-side.`,
       });
       await loadMeta();
     } catch {
@@ -374,6 +415,32 @@ export default function MetrcSandboxPage() {
           {rateWarn ? (
             <div style={styles.warn}>
               <strong>Rate limit:</strong> {rateWarn}
+            </div>
+          ) : null}
+          {setupDebug ? (
+            <div
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid #334155",
+                background: "rgba(2, 6, 23, 0.8)",
+                fontSize: 12,
+                color: "#94a3b8",
+              }}
+            >
+              <strong style={{ color: "#93c5fd" }}>Setup parser debug (development only)</strong>
+              <pre
+                style={{
+                  marginTop: 8,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "ui-monospace, monospace",
+                  color: "#cbd5e1",
+                }}
+              >
+                {JSON.stringify(setupDebug, null, 2)}
+              </pre>
             </div>
           ) : null}
         </section>

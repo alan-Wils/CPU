@@ -1,4 +1,5 @@
 import { ConfigService } from "./configService.js";
+import { env } from "../config/env.js";
 import { logInfo, logWarn } from "../lib/logger.js";
 import {
   MetrcClient,
@@ -6,36 +7,12 @@ import {
   resolveSandboxIntegratorSetupUrl,
 } from "../lib/metrcClient.js";
 import { loadCompanyMetrcConfig, readUserApiKey, readVendorApiKey } from "../lib/metrcConfigLoader.js";
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
-}
-
-function pickSetupFields(body: unknown): {
-  userApiKey: string;
-  facilityLicenseNumber: string;
-  username: string;
-  facilityName: string;
-} {
-  const root = asRecord(body);
-  const data = asRecord(root.Data ?? root.data);
-  const src = Object.keys(data).length ? data : root;
-  return {
-    userApiKey: String(
-      src.userApiKey ?? src.UserApiKey ?? src.userKey ?? src.UserKey ?? "",
-    ).trim(),
-    facilityLicenseNumber: String(
-      src.facilityLicenseNumber
-        ?? src.FacilityLicenseNumber
-        ?? src.licenseNumber
-        ?? src.LicenseNumber
-        ?? "",
-    ).trim(),
-    username: String(src.username ?? src.Username ?? "").trim(),
-    facilityName: String(src.facilityName ?? src.FacilityName ?? "").trim(),
-  };
-}
+import {
+  buildMetrcSandboxSetupDebug,
+  parseMetrcSandboxSetupResponse,
+  redactMetrcSandboxPayload,
+  type MetrcSandboxSetupDebugInfo,
+} from "../lib/metrcSandboxSetupParse.js";
 
 export type MetrcSandboxSetupSuccess = {
   ok: true;
@@ -43,13 +20,17 @@ export type MetrcSandboxSetupSuccess = {
   facilityLicenseNumber: string;
   facilityName: string;
   username: string;
-  hasUserApiKey: true;
+  hasUserApiKey: boolean;
+  /** True when vendor key, user key, and license are all stored. */
+  credentialsReady: boolean;
+  debug?: MetrcSandboxSetupDebugInfo;
 };
 
 export type MetrcSandboxSetupFailure = {
   ok: false;
   status: number;
   message: string;
+  debug?: MetrcSandboxSetupDebugInfo;
 };
 
 export type MetrcSandboxSetupResponse = MetrcSandboxSetupSuccess | MetrcSandboxSetupFailure;
@@ -112,23 +93,47 @@ export class MetrcSandboxService {
       return { ok: false, status: result.status || 502, message: result.message };
     }
 
-    const fields = pickSetupFields(result.data);
-    if (!fields.userApiKey) {
+    const parsed = parseMetrcSandboxSetupResponse(result.data, { vendorApiKey });
+    const debug = buildMetrcSandboxSetupDebug(result.data, parsed);
+    const devMode = env.NODE_ENV === "development";
+
+    logInfo("[METRC] sandbox_setup_response_shape", {
+      companyId: input.companyId,
+      topLevelKeys: debug.topLevelKeys,
+      fieldsFound: parsed.fieldsFound,
+      parserPaths: parsed.parserPaths,
+      hasUserApiKey: Boolean(parsed.userApiKey),
+      redactedPayload: redactMetrcSandboxPayload(result.data),
+      structureOutline: debug.structureOutline,
+    });
+
+    if (!parsed.userApiKey) {
+      logWarn("[METRC] sandbox_setup_missing_user_key", {
+        companyId: input.companyId,
+        topLevelKeys: debug.topLevelKeys,
+        parserPaths: parsed.parserPaths,
+        fieldsFound: parsed.fieldsFound,
+      });
       return {
         ok: false,
         status: 502,
-        message: "Sandbox setup succeeded but no user API key was returned. Check METRC sandbox response format.",
+        message:
+          "Sandbox setup returned facility details but no user API key. Check server logs for [METRC] sandbox_setup_response_shape (development responses include parser debug).",
+        ...(devMode ? { debug } : {}),
       };
     }
 
     const setupAt = new Date().toISOString();
+    const licenseNumber = parsed.facilityLicenseNumber || loaded.licenseNumber;
     const nextMetrc: Record<string, unknown> = {
       ...loaded.metrc,
       apiKey: vendorApiKey,
-      userKey: fields.userApiKey,
-      licenseNumber: fields.facilityLicenseNumber || loaded.licenseNumber,
-      username: fields.username,
-      facilityName: fields.facilityName || loaded.facilityName,
+      userKey: parsed.userApiKey,
+      userApiKey: parsed.userApiKey,
+      licenseNumber,
+      facilityLicenseNumber: licenseNumber,
+      username: parsed.username,
+      facilityName: parsed.facilityName || loaded.facilityName,
       environment: "sandbox",
       stateCode: stateCode.toUpperCase(),
       integrationEnabled: true,
@@ -146,9 +151,15 @@ export class MetrcSandboxService {
       value: nextCompany,
     });
 
+    const credentialsReady = Boolean(vendorApiKey && parsed.userApiKey && licenseNumber);
+
     logInfo("[METRC] sandbox_setup_ok", {
       companyId: input.companyId,
-      licenseNumber: fields.facilityLicenseNumber,
+      licenseNumber,
+      facilityName: parsed.facilityName,
+      username: parsed.username,
+      userApiKeyParserPath: parsed.parserPaths.userApiKey,
+      credentialsReady,
       durationMs: result.durationMs,
       retries: result.retries,
     });
@@ -156,10 +167,12 @@ export class MetrcSandboxService {
     return {
       ok: true,
       setupAt,
-      facilityLicenseNumber: fields.facilityLicenseNumber,
-      facilityName: fields.facilityName,
-      username: fields.username,
+      facilityLicenseNumber: licenseNumber,
+      facilityName: parsed.facilityName,
+      username: parsed.username,
       hasUserApiKey: true,
+      credentialsReady,
+      ...(devMode ? { debug } : {}),
     };
   }
 }
