@@ -157,28 +157,6 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
     [filtered, storageConfig.dryRooms, storageEdits],
   );
 
-  useEffect(() => {
-    if (!open) return;
-    const autoExpand = new Set<string>();
-    for (const row of filtered) {
-      const locId = storageEdits[row.id] ?? row.storageLocationId ?? "";
-      const key = storageZoneKey(row.materialType, locId || UNASSIGNED_STORAGE_GROUP_ID);
-      if (!locId) {
-        autoExpand.add(key);
-        continue;
-      }
-      const groups =
-        row.materialType === "FRESH_FROZEN" ? freshFrozenGroups : trimGroups;
-      const group = groups.find((g) => g.id === locId);
-      if (group && group.rows.length === 1) autoExpand.add(key);
-    }
-    setExpandedZones((prev) => {
-      const next = new Set(prev);
-      autoExpand.forEach((k) => next.add(k));
-      return next;
-    });
-  }, [open, filtered, storageEdits, freshFrozenGroups, trimGroups]);
-
   function toggleSelect(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
