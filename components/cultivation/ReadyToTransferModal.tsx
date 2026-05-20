@@ -15,8 +15,10 @@ import {
   type CultivationStorageLocationsConfig,
 } from "@/lib/cultivationStorageConfig";
 import {
+  formatTransferStorageGroupSummary,
   groupTransfersByStorage,
   storageZoneKey,
+  summarizeTransferStorageGroup,
   UNASSIGNED_STORAGE_GROUP_ID,
 } from "@/lib/cultivationTransferStorageGroups";
 import { fetchCachedCompanyConfig } from "@/lib/configClient";
@@ -668,6 +670,8 @@ export default function ReadyToTransferModal({
             const isExpanded = expandedZones.has(zoneKey);
             const packageLabel =
               group.rows.length === 1 ? "1 package" : `${group.rows.length} packages`;
+            const groupSummary = summarizeTransferStorageGroup(group.rows);
+            const summaryLine = formatTransferStorageGroupSummary(groupSummary);
             return (
               <div
                 key={zoneKey}
@@ -684,9 +688,9 @@ export default function ReadyToTransferModal({
                   style={{
                     width: "100%",
                     display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 12,
+                    flexDirection: "column",
+                    alignItems: "stretch",
+                    gap: 8,
                     padding: "12px 14px",
                     border: "none",
                     background:
@@ -696,24 +700,53 @@ export default function ReadyToTransferModal({
                     textAlign: "left",
                   }}
                 >
-                  <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      width: "100%",
+                    }}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                      <span
+                        style={{
+                          display: "inline-block",
+                          flexShrink: 0,
+                          transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                          transition: "transform 0.15s ease",
+                          color: "#94a3b8",
+                          fontSize: 12,
+                        }}
+                        aria-hidden
+                      >
+                        ▶
+                      </span>
+                      <span style={{ fontWeight: 800, fontSize: 15 }}>{group.name}</span>
+                    </span>
                     <span
                       style={{
-                        display: "inline-block",
-                        transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-                        transition: "transform 0.15s ease",
                         color: "#94a3b8",
-                        fontSize: 12,
+                        fontSize: 13,
+                        fontWeight: 600,
+                        flexShrink: 0,
                       }}
-                      aria-hidden
                     >
-                      ▶
+                      {packageLabel}
                     </span>
-                    <span style={{ fontWeight: 800, fontSize: 15 }}>{group.name}</span>
                   </span>
-                  <span style={{ color: "#94a3b8", fontSize: 13, fontWeight: 600 }}>
-                    {packageLabel}
-                  </span>
+                  <div
+                    style={{
+                      color: "#cbd5e1",
+                      fontSize: 13,
+                      lineHeight: 1.45,
+                      paddingLeft: 22,
+                      fontWeight: 500,
+                    }}
+                  >
+                    {summaryLine}
+                  </div>
                 </button>
                 {isExpanded ? (
                   <div
