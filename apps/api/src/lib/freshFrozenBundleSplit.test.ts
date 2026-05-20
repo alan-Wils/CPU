@@ -1,11 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
+    bundleSlotCountFromTotalGrams,
     splitGramsAcrossFixedBundleCount,
     splitGramsEvenly,
 } from "./freshFrozenBundleSplit.js";
 
+describe("bundleSlotCountFromTotalGrams", () => {
+    it("counts full bundles plus partial remainder slot", () => {
+        expect(bundleSlotCountFromTotalGrams(62692, 6000)).toBe(11);
+        expect(bundleSlotCountFromTotalGrams(60000, 6000)).toBe(10);
+        expect(bundleSlotCountFromTotalGrams(6001, 6000)).toBe(2);
+    });
+});
+
 describe("splitGramsAcrossFixedBundleCount", () => {
     it("assigns configured weight to all but last bundle", () => {
+        expect(splitGramsAcrossFixedBundleCount(62692, 6000, 11)).toEqual([
+            6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 6000, 2692,
+        ]);
         expect(splitGramsAcrossFixedBundleCount(40857, 5100, 8)).toEqual([
             5100, 5100, 5100, 5100, 5100, 5100, 5100, 5157,
         ]);

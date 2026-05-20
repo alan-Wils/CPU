@@ -21,6 +21,7 @@ import {
 } from "@/lib/cultivationTransferStorageGroups";
 import { fetchCachedCompanyConfig } from "@/lib/configClient";
 import {
+  bundleSlotCountFromTotalGrams,
   isPlaceholderFreshFrozenMetrcTag,
   parseFreshFrozenGramsPerBundle,
 } from "@/lib/freshFrozenPackageDisplay";
@@ -110,6 +111,30 @@ function fieldEditsFromRow(row: CultivationExtractionTransferRow): PackageFieldE
 
 function metrcTagNeedsEntry(tag: unknown): boolean {
   return isPlaceholderFreshFrozenMetrcTag(tag);
+}
+
+function totalGramsForRow(
+  row: CultivationExtractionTransferRow,
+  edits?: PackageFieldEdits,
+): number {
+  const parsed = edits ? parseNum(edits.grams) : null;
+  if (parsed != null && parsed >= 0) return parsed;
+  return Math.max(0, Number(row.grams ?? 0));
+}
+
+/** Slots from config (full + partial last); otherwise stored bundle count on the row. */
+function splitBundleCountForRow(
+  row: CultivationExtractionTransferRow,
+  edits: PackageFieldEdits | undefined,
+  gramsPerBundle: number,
+): number {
+  const total = totalGramsForRow(row, edits);
+  if (gramsPerBundle > 0 && total > 0)
+    return bundleSlotCountFromTotalGrams(total, gramsPerBundle);
+  const stored = Math.max(0, Math.floor(Number(row.bundles) || 0));
+  const parsed = edits ? parseNum(edits.bundles) : null;
+  if (parsed != null && parsed >= 2) return Math.floor(parsed);
+  return Math.max(2, stored);
 }
 
 function parseNum(value: string): number | null {
@@ -281,11 +306,7 @@ export default function ReadyToTransferModal({
 
   async function splitRowIntoBundles(row: CultivationExtractionTransferRow) {
     const edits = fieldEdits[row.id];
-    const parsed = edits ? parseNum(edits.bundles) : null;
-    const bundleCount =
-      parsed != null && parsed >= 2
-        ? Math.floor(parsed)
-        : Math.max(2, Math.floor(Number(row.bundles) || 0));
+    const bundleCount = splitBundleCountForRow(row, edits, freshFrozenGramsPerBundle);
     if (bundleCount < 2) {
       setError("Enter at least 2 bundles before splitting, or use a row that already has multiple bundles.");
       return;
@@ -294,7 +315,10 @@ export default function ReadyToTransferModal({
     setSavingRowId(row.id);
     setError("");
     try {
-      await splitTransferIntoBundles(row.id, { bundleCount });
+      await splitTransferIntoBundles(
+        row.id,
+        freshFrozenGramsPerBundle > 0 ? {} : { bundleCount },
+      );
       await loadRows();
     } catch (e) {
       setError(formatCultivationTransferApiError(e));
@@ -327,10 +351,14 @@ export default function ReadyToTransferModal({
       const grams = parseNum(edits.grams);
       if (grams != null && grams >= 0 && grams !== Number(row.grams ?? 0))
         patch.grams = grams;
-      const bundleCount = Math.floor(Number(row.bundles) || 0);
-      if (bundleCount <= 1) {
+      const storedBundles = Math.floor(Number(row.bundles) || 0);
+      if (storedBundles > 1 && freshFrozenGramsPerBundle > 0) {
+        const total = totalGramsForRow(row, edits);
+        const slots = bundleSlotCountFromTotalGrams(total, freshFrozenGramsPerBundle);
+        if (slots >= 2 && slots !== storedBundles) patch.bundles = slots;
+      } else if (storedBundles <= 1) {
         const bundles = parseNum(edits.bundles);
-        if (bundles != null && bundles >= 0 && Math.floor(bundles) !== bundleCount)
+        if (bundles != null && bundles >= 0 && Math.floor(bundles) !== storedBundles)
           patch.bundles = Math.floor(bundles);
       }
     } else {
@@ -419,8 +447,9 @@ export default function ReadyToTransferModal({
     const edits = fieldEdits[row.id] ?? fieldEditsFromRow(row);
     const rowSaving = savingRowId === row.id;
     const isFf = row.materialType === "FRESH_FROZEN";
-    const bundleCount = Math.max(0, Math.floor(Number(row.bundles) || 0));
-    const isCombinedBundle = isFf && bundleCount > 1;
+    const storedBundles = Math.max(0, Math.floor(Number(row.bundles) || 0));
+    const splitBundleCount = splitBundleCountForRow(row, edits, freshFrozenGramsPerBundle);
+    const isCombinedBundle = isFf && (storedBundles > 1 || splitBundleCount > 1);
     const metrcTag = edits.metrcTag.trim();
     const metrcMissing = isFf && metrcTagNeedsEntry(metrcTag);
 
@@ -519,10 +548,21 @@ export default function ReadyToTransferModal({
                               fontSize: 13,
                             }}
                           >
-                            {bundleCount} bundles combined on this row
-                            {freshFrozenGramsPerBundle > 0
-                              ? ` · split uses ${freshFrozenGramsPerBundle.toLocaleString()} g each, remainder on last`
-                              : ""}
+                            {splitBundleCount} bundle{splitBundleCount === 1 ? "" : "s"} from{" "}
+                            {totalGramsForRow(row, edits).toLocaleString()} g
+                            {freshFrozenGramsPerBundle > 0 ? (
+                              <>
+                                {" "}
+                                ({Math.floor(
+                                  totalGramsForRow(row, edits) / freshFrozenGramsPerBundle,
+                                )}{" "}
+                                × {freshFrozenGramsPerBundle.toLocaleString()} g + partial last)
+                              </>
+                            ) : storedBundles > 1 ? (
+                              ` · stored count ${storedBundles}`
+                            ) : (
+                              ""
+                            )}
                           </div>
                         ) : (
                           <input
@@ -592,7 +632,7 @@ export default function ReadyToTransferModal({
                   fontWeight: 700,
                 }}
               >
-                Split into {bundleCount} bundles
+                Split into {splitBundleCount} bundles
                 {freshFrozenGramsPerBundle > 0
                   ? ` (${freshFrozenGramsPerBundle.toLocaleString()} g + off last)`
                   : ""}

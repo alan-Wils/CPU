@@ -30,6 +30,14 @@ export function splitGramsAcrossFixedBundleCount(
     return amounts;
 }
 
+/** Bundle slots for total grams (full bundles + partial last), same as harvest UI. */
+export function bundleSlotCountFromTotalGrams(totalGrams: number, gramsPerBundle: number): number {
+    const g = Math.max(0, Number(totalGrams) || 0);
+    const per = Math.floor(Number(gramsPerBundle) || 0);
+    if (g <= 0 || per <= 0) return 0;
+    return Math.ceil(g / per);
+}
+
 /** Even split fallback when company config has no grams-per-bundle. */
 export function splitGramsEvenly(totalGrams: number, count: number): number[] {
     const total = Math.max(0, Math.round(totalGrams * 100) / 100);

@@ -14,6 +14,7 @@ import {
 } from "../lib/cultivationStorageConfig.js";
 import { pruneLegacyMonolithicFreshFrozenFromStore } from "../lib/extractionSourceAvailability.js";
 import {
+    bundleSlotCountFromTotalGrams,
     parseFreshFrozenGramsPerBundle,
     splitGramsAcrossFixedBundleCount,
     splitGramsEvenly,
@@ -389,26 +390,29 @@ export class CultivationTransferService {
             throw new AppError("Cannot split after transfer to extraction", 400);
 
         const storedBundles = Math.max(0, Math.floor(Number(existing.bundles) || 0));
-        const bundleCount = Math.max(
-            2,
-            Math.floor(Number(params.bundleCount) || storedBundles || 0),
-        );
-        if (storedBundles <= 1 && bundleCount < 2)
-            throw new AppError("This package is already a single bundle", 400);
 
         const totalGrams = Math.max(0, Number(existing.grams ?? 0));
         if (totalGrams <= 0)
             throw new AppError("Cannot split: total grams must be greater than zero", 400);
 
         const gramsPerBundle = await this.loadFreshFrozenGramsPerBundle(params.companyId);
+        let bundleCount: number;
+        if (gramsPerBundle > 0) {
+            bundleCount = bundleSlotCountFromTotalGrams(totalGrams, gramsPerBundle);
+            if (bundleCount < 1)
+                throw new AppError("Total grams are below configured bundle size", 400);
+        } else {
+            bundleCount = Math.max(
+                2,
+                Math.floor(Number(params.bundleCount) || storedBundles || 0),
+            );
+        }
+
+        if (storedBundles <= 1 && bundleCount < 2)
+            throw new AppError("This package is already a single bundle", 400);
+
         let gramsEach: number[];
         if (gramsPerBundle > 0) {
-            if (bundleCount > 1 && totalGrams < gramsPerBundle * (bundleCount - 1)) {
-                throw new AppError(
-                    `Total ${totalGrams} g is too low for ${bundleCount} bundles at ${gramsPerBundle} g each. Adjust total weight or bundle count.`,
-                    400,
-                );
-            }
             gramsEach = splitGramsAcrossFixedBundleCount(
                 totalGrams,
                 gramsPerBundle,
