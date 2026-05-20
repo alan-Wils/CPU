@@ -13,6 +13,11 @@ import {
   normalizeCultivationStorageLocationsConfig,
   type CultivationStorageLocationsConfig,
 } from "@/lib/cultivationStorageConfig";
+import {
+  groupTransfersByStorage,
+  storageZoneKey,
+  UNASSIGNED_STORAGE_GROUP_ID,
+} from "@/lib/cultivationTransferStorageGroups";
 import { fetchCachedCompanyConfig } from "@/lib/configClient";
 
 type Props = {
@@ -75,6 +80,7 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
     normalizeCultivationStorageLocationsConfig(null),
   );
   const [storageEdits, setStorageEdits] = useState<Record<string, string>>({});
+  const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set());
 
   const loadRows = useCallback(async () => {
     setLoading(true);
@@ -92,6 +98,7 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
 
   useEffect(() => {
     if (!open) return;
+    setExpandedZones(new Set());
     void loadRows();
     void fetchCachedCompanyConfig<{ cultivation?: { storageLocations?: unknown } }>(
       "/api/config/cultivation",
@@ -109,7 +116,10 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
     const q = search.trim().toLowerCase();
     return rows.filter((row) => {
       if (filterType && row.materialType !== filterType) return false;
-      if (storageFilter && row.storageLocationId !== storageFilter) return false;
+      if (storageFilter) {
+        const effectiveLoc = storageEdits[row.id] ?? row.storageLocationId ?? "";
+        if (effectiveLoc !== storageFilter) return false;
+      }
       if (!q) return true;
       const hay = [
         row.displayName,
@@ -125,16 +135,64 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [rows, filterType, search, storageFilter]);
+  }, [rows, filterType, search, storageFilter, storageEdits]);
 
-  const freshFrozenRows = filtered.filter((r) => r.materialType === "FRESH_FROZEN");
-  const trimRows = filtered.filter((r) => r.materialType === "TRIM");
+  const freshFrozenGroups = useMemo(
+    () =>
+      groupTransfersByStorage(
+        filtered.filter((r) => r.materialType === "FRESH_FROZEN"),
+        storageConfig.freezers,
+        storageEdits,
+      ),
+    [filtered, storageConfig.freezers, storageEdits],
+  );
+
+  const trimGroups = useMemo(
+    () =>
+      groupTransfersByStorage(
+        filtered.filter((r) => r.materialType === "TRIM"),
+        storageConfig.dryRooms,
+        storageEdits,
+      ),
+    [filtered, storageConfig.dryRooms, storageEdits],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const autoExpand = new Set<string>();
+    for (const row of filtered) {
+      const locId = storageEdits[row.id] ?? row.storageLocationId ?? "";
+      const key = storageZoneKey(row.materialType, locId || UNASSIGNED_STORAGE_GROUP_ID);
+      if (!locId) {
+        autoExpand.add(key);
+        continue;
+      }
+      const groups =
+        row.materialType === "FRESH_FROZEN" ? freshFrozenGroups : trimGroups;
+      const group = groups.find((g) => g.id === locId);
+      if (group && group.rows.length === 1) autoExpand.add(key);
+    }
+    setExpandedZones((prev) => {
+      const next = new Set(prev);
+      autoExpand.forEach((k) => next.add(k));
+      return next;
+    });
+  }, [open, filtered, storageEdits, freshFrozenGroups, trimGroups]);
 
   function toggleSelect(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleZone(zoneKey: string) {
+    setExpandedZones((prev) => {
+      const next = new Set(prev);
+      if (next.has(zoneKey)) next.delete(zoneKey);
+      else next.add(zoneKey);
       return next;
     });
   }
@@ -201,7 +259,7 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
     }
   }
 
-  function renderRow(row: CultivationExtractionTransferRow) {
+  function renderRow(row: CultivationExtractionTransferRow, inZone: boolean) {
     const locs = locationsForRow(row);
     const currentLoc = storageEdits[row.id] ?? row.storageLocationId ?? "";
     return (
@@ -222,7 +280,7 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
             onChange={() => toggleSelect(row.id)}
             style={{ marginTop: 4 }}
           />
-          <TransferRowDetails row={row} />
+          <TransferRowDetails row={row} hideStorage={inZone} />
         </label>
         {canWrite ? (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, marginLeft: 24 }}>
@@ -262,10 +320,86 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
     );
   }
 
-  function renderSection(title: string, sectionRows: CultivationExtractionTransferRow[]) {
-    if (sectionRows.length === 0) return null;
+  function renderMaterialSection(
+    title: string,
+    materialType: CultivationTransferMaterialType,
+    groups: ReturnType<typeof groupTransfersByStorage>,
+  ) {
+    if (groups.length === 0) return null;
     return (
-      <TransferSection title={title} sectionRows={sectionRows} renderRow={renderRow} />
+      <div style={{ marginBottom: 20 }}>
+        <h3 style={{ margin: "0 0 10px", color: "#a5f3fc", fontSize: 16 }}>{title}</h3>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {groups.map((group) => {
+            const zoneKey = storageZoneKey(materialType, group.id);
+            const isExpanded = expandedZones.has(zoneKey);
+            const packageLabel =
+              group.rows.length === 1 ? "1 package" : `${group.rows.length} packages`;
+            return (
+              <div
+                key={zoneKey}
+                style={{
+                  border: "1px solid #334155",
+                  borderRadius: 10,
+                  overflow: "hidden",
+                  background: "#0c1222",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleZone(zoneKey)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    padding: "12px 14px",
+                    border: "none",
+                    background:
+                      group.id === UNASSIGNED_STORAGE_GROUP_ID ? "#422006" : "#1e293b",
+                    color: "#f1f5f9",
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span
+                      style={{
+                        display: "inline-block",
+                        transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                        transition: "transform 0.15s ease",
+                        color: "#94a3b8",
+                        fontSize: 12,
+                      }}
+                      aria-hidden
+                    >
+                      ▶
+                    </span>
+                    <span style={{ fontWeight: 800, fontSize: 15 }}>{group.name}</span>
+                  </span>
+                  <span style={{ color: "#94a3b8", fontSize: 13, fontWeight: 600 }}>
+                    {packageLabel}
+                  </span>
+                </button>
+                {isExpanded ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 10,
+                      padding: 12,
+                      borderTop: "1px solid #334155",
+                    }}
+                  >
+                    {group.rows.map((row) => renderRow(row, true))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
     );
   }
 
@@ -308,7 +442,7 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
           <div>
             <h2 style={{ margin: 0, color: "#f8fafc" }}>Ready to Transfer</h2>
             <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 14 }}>
-              Assign storage, then transfer Fresh Frozen or Trim to Extraction when ready.
+              Packages are grouped by freezer or dry room. Expand a zone to view and transfer.
             </p>
           </div>
           <button type="button" onClick={onClose} style={closeBtnStyle}>
@@ -382,8 +516,8 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
             </p>
           ) : (
             <>
-              {renderSection("Fresh Frozen", freshFrozenRows)}
-              {renderSection("Trim (dry flower)", trimRows)}
+              {renderMaterialSection("Fresh Frozen", "FRESH_FROZEN", freshFrozenGroups)}
+              {renderMaterialSection("Trim (dry flower)", "TRIM", trimGroups)}
             </>
           )}
         </div>
@@ -425,7 +559,13 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
   );
 }
 
-function TransferRowDetails({ row }: { row: CultivationExtractionTransferRow }) {
+function TransferRowDetails({
+  row,
+  hideStorage = false,
+}: {
+  row: CultivationExtractionTransferRow;
+  hideStorage?: boolean;
+}) {
   return (
     <div>
       <div style={{ fontWeight: 800, color: "#f1f5f9" }}>{row.displayName}</div>
@@ -439,28 +579,12 @@ function TransferRowDetails({ row }: { row: CultivationExtractionTransferRow }) 
         {row.sourceDryFlowerBatchId ? ` · Dry ${row.sourceDryFlowerBatchId}` : ""}
       </div>
       <div style={{ color: "#cbd5e1", fontSize: 13, marginTop: 4 }}>{formatWeight(row)}</div>
-      <div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>
-        Storage: {row.storageLocationName || "Not assigned"}
-      </div>
+      {!hideStorage ? (
+        <div style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>
+          Storage: {row.storageLocationName || "Not assigned"}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function TransferSection({
-  title,
-  sectionRows,
-  renderRow,
-}: {
-  title: string;
-  sectionRows: CultivationExtractionTransferRow[];
-  renderRow: (row: CultivationExtractionTransferRow) => React.ReactNode;
-}) {
-  return (
-    <div style={{ marginBottom: 20 }}>
-      <h3 style={{ margin: "0 0 10px", color: "#a5f3fc", fontSize: 16 }}>{title}</h3>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {sectionRows.map((row) => renderRow(row))}
-      </div>
-    </div>
-  );
-}
