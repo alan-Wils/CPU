@@ -22,7 +22,18 @@ import {
   patchSourcePackageCanonicalName,
 } from "@/lib/sourceBatchApi";
 import { makeExtractionMarketBatchCode } from "@/lib/batchChainCodes";
-import { getSourceAvailable, isCompletedSourceBatch } from "@/lib/sourceBatchActive";
+import {
+  getSourceAvailable,
+  getSourceAvailableGrams,
+  isCompletedSourceBatch,
+} from "@/lib/sourceBatchActive";
+import {
+  EMPTY_WEIGHT_DASH,
+  formatOptionalGrams,
+  gramsInputToLbs,
+  lbsToGrams,
+  lbsToGramsInputString,
+} from "@/lib/weightUnits";
 import { normalizeSourceBatchList } from "@/lib/repairMisclassifiedSourceBatch";
 import { filterSourceBatchesForExtractionAvailability } from "@/lib/extractionSourceAvailability";
 import {
@@ -209,7 +220,7 @@ function mergeCompletedSourceBatchLists(
   return [...byId.values()];
 }
 
-/** True when `id` is a Prisma `SourcePackage` cuid (merged from the real DB), not a legacy `FF-â€¦` / `TRIM-â€¦` tag. */
+/** True when `id` is a Prisma `SourcePackage` cuid (merged from the real DB), not a legacy `FF-...` / `TRIM-...` tag. */
 function isLikelyDatabaseSourcePackageId(id: unknown): boolean {
   const s = String(id ?? "").trim();
   if (!s) return false;
@@ -629,7 +640,7 @@ export default function Extraction() {
       return;
     }
     const lbs = extractionBatchBiomassLbs(selectedExt);
-    setCombineSurvivorLbs(lbs > 0 ? String(lbs) : "");
+    setCombineSurvivorLbs(lbsToGramsInputString(lbs));
   }, [selectedTask, selectedExt?.id]);
 
   useEffect(() => {
@@ -642,7 +653,7 @@ export default function Extraction() {
       return;
     }
     const lbs = extractionBatchBiomassLbs(partner);
-    setCombinePartnerLbs(lbs > 0 ? String(lbs) : "");
+    setCombinePartnerLbs(lbsToGramsInputString(lbs));
   }, [selectedTask, combinePartnerBatchId, selectedExt?.id]);
 
   useEffect(() => {
@@ -1057,7 +1068,7 @@ export default function Extraction() {
       blendKey: parts.join("|"),
       blendLabel: parts
         .map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase()))
-        .join(" Â· "),
+        .join(" · "),
     };
   }
 
@@ -1234,7 +1245,7 @@ export default function Extraction() {
   }
 
   function formatDuration(ms: number) {
-    if (!Number.isFinite(ms) || ms <= 0) return "â€”";
+    if (!Number.isFinite(ms) || ms <= 0) return "—";
 
     const totalSeconds = Math.floor(ms / 1000);
     const hours = Math.floor(totalSeconds / 3600);
@@ -1262,7 +1273,7 @@ export default function Extraction() {
     return {
       startTime,
       stoppedAt,
-      duration: startMs > 0 && stopMs > 0 ? formatDuration(stopMs - startMs) : "â€”",
+      duration: startMs > 0 && stopMs > 0 ? formatDuration(stopMs - startMs) : "—",
       totalSocks: num(stopData.totalSocksPacked),
       sockWeightsGrams: Array.isArray(stopData.sockWeightsGrams)
         ? stopData.sockWeightsGrams.map((value: any) => num(value))
@@ -1282,7 +1293,7 @@ export default function Extraction() {
     const startTime = getPackSockStartTime(batch);
     const startMs = startTime ? new Date(startTime).getTime() : 0;
 
-    if (startMs <= 0) return "â€”";
+    if (startMs <= 0) return "—";
 
     return formatDuration(Date.now() - startMs);
   }
@@ -1593,10 +1604,10 @@ export default function Extraction() {
     for (let i = 1; i < packages.length; i += 1) {
       const id = String(packages[i].id);
       const src = getSource(id);
-      const avail = src ? getSourceAvailable(src) : 0;
+      const avail = src ? getSourceAvailableGrams(src) : 0;
       next.push({
         sourceId: id,
-        amount: avail > 0 ? String(+avail.toFixed(2)) : "",
+        amount: avail > 0 ? String(Math.round(avail)) : "",
       });
     }
 
@@ -1977,14 +1988,14 @@ export default function Extraction() {
     );
     setEditSourceCultivationId(String(row.source || "").trim());
     setEditSourceBundles(String(row.bundles ?? ""));
-    setEditSourceGrams(String(row.grams ?? ""));
-    const lbs =
-      row.weightLbs != null && row.weightLbs !== ""
-        ? row.weightLbs
-        : row.grams != null && Number(row.grams) > 0
-          ? +(Number(row.grams) / GRAMS_PER_LB).toFixed(4)
-          : "";
-    setEditSourceWeightLbs(String(lbs ?? ""));
+    const rowGrams =
+      row.grams != null && Number(row.grams) > 0
+        ? Number(row.grams)
+        : row.weightLbs != null && Number(row.weightLbs) > 0
+          ? lbsToGrams(Number(row.weightLbs))
+          : 0;
+    setEditSourceGrams(rowGrams > 0 ? String(Math.round(rowGrams)) : "");
+    setEditSourceWeightLbs("");
     setEditSourceStatus(
       String(row.status || "Available for Extraction").trim() || "Available for Extraction",
     );
@@ -2156,7 +2167,11 @@ export default function Extraction() {
     const source = editSourceCultivationId.trim();
     const bundles = Math.max(0, Math.floor(num(editSourceBundles)));
     const grams = Math.max(0, num(String(editSourceGrams).replace(/,/g, "")));
-    const weightLbs = Math.max(0, num(String(editSourceWeightLbs).replace(/,/g, "")));
+    const trimGrams = Math.max(0, num(String(editSourceGrams).replace(/,/g, "")));
+    const weightLbs =
+      type === "Dry Trim"
+        ? gramsInputToLbs(trimGrams)
+        : Math.max(0, num(String(editSourceWeightLbs).replace(/,/g, "")));
     const status = editSourceStatus.trim() || "Available for Extraction";
 
     if (
@@ -2182,7 +2197,7 @@ export default function Extraction() {
     const amount =
       type === "Fresh Frozen"
         ? `${bundles} bundles / ${grams} grams`
-        : `${weightLbs} lbs`;
+        : `${trimGrams} g`;
 
     const payload: Record<string, unknown> = {
       id: nextId,
@@ -2328,7 +2343,7 @@ export default function Extraction() {
     if (rowsWithAnyValue.length === 0) {
       showNotice(
         "Missing Source Material",
-        "Please select at least one source batch and enter lbs used."
+        "Please select at least one source batch and enter grams used."
       );
       return false;
     }
@@ -2340,7 +2355,7 @@ export default function Extraction() {
         return false;
       }
 
-      if (!requirePositiveNumber(`Source ${i + 1} lbs used`, row.amount)) {
+      if (!requirePositiveNumber(`Source ${i + 1} grams used`, row.amount)) {
         return false;
       }
     }
@@ -2382,7 +2397,7 @@ export default function Extraction() {
         survivorPutPayloadAfterPhantomMergeClear(live),
       );
       showSyncMessageNotice(
-        "Cleared false merge link â€” these batches were never combined.",
+        "Cleared false merge link — these batches were never combined.",
       );
       forceRefresh();
       return true;
@@ -2522,7 +2537,7 @@ export default function Extraction() {
         extractionBatchPutPayloadAfterUncombinePartner(pRestore),
       )) && ok;
     showSyncMessageNotice(
-      ok ? "Uncombine synced to server." : "Uncombine saved locally â€” server sync failed.",
+      ok ? "Uncombine synced to server." : "Uncombine saved locally — server sync failed.",
     );
     return true;
   }
@@ -2659,10 +2674,10 @@ export default function Extraction() {
       }
       const survivorLabel = combineUsesOilGrams
         ? "This batch extracted oil (g)"
-        : "This batch total (lbs)";
+        : "This batch total (g)";
       const partnerLabel = combineUsesOilGrams
         ? "Partner batch extracted oil (g)"
-        : "Partner batch total (lbs)";
+        : "Partner batch total (g)";
       if (!requirePositiveNumber(survivorLabel, combineSurvivorLbs)) {
         return false;
       }
@@ -2889,7 +2904,7 @@ export default function Extraction() {
           name: source?.name || source?.type || row.sourceId,
           acronym: getSourceAcronym(source || row),
           materialType: getSourceMaterialType(source),
-          amountUsed: +num(row.amount).toFixed(2),
+          amountUsed: +gramsInputToLbs(row.amount).toFixed(4),
         };
       });
 
@@ -2937,26 +2952,27 @@ export default function Extraction() {
 
     for (const row of usedSources) {
       const source = getSource(row.sourceId);
-      const available = getSourceAvailable(source);
+      const availableGrams = getSourceAvailableGrams(source);
+      const usedGrams = num(row.amount);
 
       if (!source) {
         showNotice("Source Not Found", `Source batch ${row.sourceId} was not found.`);
         return;
       }
 
-      if (available <= 0 || source.status === "Used in Extraction") {
+      if (availableGrams <= 0 || source.status === "Used in Extraction") {
         showNotice(
           "Source Unavailable",
-          `${row.sourceId} has 0 lbs available and cannot be used.`
+          `${row.sourceId} has 0 g available and cannot be used.`
         );
         return;
       }
 
-      if (row.amountUsed > available) {
+      if (usedGrams > availableGrams) {
         showNotice(
           "Not Enough Source Material",
-          `${row.sourceId} only has ${available} lbs available.`,
-          `You entered ${row.amountUsed} lbs.`
+          `${row.sourceId} only has ${Math.round(availableGrams).toLocaleString()} g available.`,
+          `You entered ${Math.round(usedGrams).toLocaleString()} g.`
         );
         return;
       }
@@ -2965,7 +2981,7 @@ export default function Extraction() {
     const sourceUpdatePlans = usedSources.map((row) => {
       const source = getSource(row.sourceId);
       const available = getSourceAvailable(source);
-      const remaining = Math.max(available - row.amountUsed, 0);
+      const remaining = Math.max(available - gramsInputToLbs(row.amount), 0);
       const updatedSource = {
         ...source,
         remainingAmount: +remaining.toFixed(2),
@@ -2995,7 +3011,7 @@ export default function Extraction() {
           .map((row) => String(row.name || "").trim())
           .filter(Boolean)
       ),
-    ].join(" Â· ");
+    ].join(" · ");
 
     const batch = {
       id: productionBatchId,
@@ -3008,7 +3024,7 @@ export default function Extraction() {
         usedSources,
         productionBatchId
       ),
-      amount: `${+totalAmount.toFixed(2)} lbs`,
+      amount: `${Math.round(totalAmount * GRAMS_PER_LB).toLocaleString()} g`,
       totalBiomassUsed: +totalAmount.toFixed(2),
       status: "Ready For Pack Socks Start",
       completedTasks: [],
@@ -3074,7 +3090,7 @@ export default function Extraction() {
       batch: batch.id,
       task: "Extraction Batch Created",
       output: `Created ${type} using ${+totalAmount.toFixed(2)} lbs from ${usedSources
-        .map((row) => `${row.sourceId}: ${row.amountUsed} lbs`)
+        .map((row) => `${row.sourceId}: ${Math.round(row.amountUsed * GRAMS_PER_LB)} g`)
         .join(" | ")}`,
       source: batch.source,
       loggedBy,
@@ -3139,7 +3155,7 @@ export default function Extraction() {
         averageGramsPerSock: +averageGramsPerSock.toFixed(2),
         totalPreparedGrams: +totalPreparedGrams.toFixed(2),
         totalPreparedLbs: +totalPreparedLbs.toFixed(2),
-        prepDuration: startMs > 0 ? formatDuration(stopMs - startMs) : "â€”",
+        prepDuration: startMs > 0 ? formatDuration(stopMs - startMs) : "—",
       };
     }
 
@@ -3150,7 +3166,7 @@ export default function Extraction() {
         dymoCalibration: dymoSavedCalibration,
         labelPrintCopies: dymoLabelPrintCopiesClamped,
         printerModel: "DYMO LabelWriter",
-        labelStock: `${dymoSavedCalibration.labelWidth} Ã— ${dymoSavedCalibration.labelHeight}`,
+        labelStock: `${dymoSavedCalibration.labelWidth} × ${dymoSavedCalibration.labelHeight}`,
       };
     }
 
@@ -3158,7 +3174,7 @@ export default function Extraction() {
       return {
         runTime,
         finalProduct,
-        totalGasLossLbs: totalGasLoss,
+        totalGasLossLbs: gramsInputToLbs(totalGasLoss),
         totalSilicaUsedGrams: totalSilicaUsed,
         totalB80UsedGrams: totalB80Used,
         howManyTechs,
@@ -3284,7 +3300,7 @@ export default function Extraction() {
       .map(([key, value]: [string, unknown]) => {
         if (Array.isArray(value)) return `${key}: ${value.join(", ")}`;
         if (typeof value === "object" && value !== null) return "";
-        return `${key}: ${value || "â€”"}`;
+        return `${key}: ${value || "—"}`;
       })
       .filter(Boolean)
       .join(" | ");
@@ -3391,7 +3407,7 @@ export default function Extraction() {
 
       if (usesOilGrams) {
         setExtractionBatchCombinedOilGrams(selectedExt, combinedWeight);
-        survivorOutput = `Merged ${partnerId} (${priorPartnerWeight} g oil) into ${survivorId} â€” total extracted oil now ${combinedWeight} g${
+        survivorOutput = `Merged ${partnerId} (${priorPartnerWeight} g oil) into ${survivorId} — total extracted oil now ${combinedWeight} g${
           notes ? `. Notes: ${notes}` : ""
         }`;
         partnerOutput = `Merged into survivor ${survivorId} (${priorSurvivorWeight} + ${priorPartnerWeight} = ${combinedWeight} g oil on survivor)${
@@ -3410,21 +3426,22 @@ export default function Extraction() {
           notes,
         };
       } else {
-        setExtractionBatchTotalBiomassLbs(selectedExt, combinedWeight);
-        survivorOutput = `Merged ${partnerId} (${priorPartnerWeight} lbs) into ${survivorId} â€” total biomass now ${combinedWeight} lbs${
+        const combinedLbs = gramsInputToLbs(combinedWeight);
+        setExtractionBatchTotalBiomassLbs(selectedExt, combinedLbs);
+        survivorOutput = `Merged ${partnerId} (${Math.round(priorPartnerWeight)} g) into ${survivorId} — total biomass now ${Math.round(combinedWeight)} g${
           notes ? `. Notes: ${notes}` : ""
         }`;
-        partnerOutput = `Merged into survivor ${survivorId} (${priorSurvivorWeight} + ${priorPartnerWeight} = ${combinedWeight} lbs on survivor)${
+        partnerOutput = `Merged into survivor ${survivorId} (${Math.round(priorSurvivorWeight)} + ${Math.round(priorPartnerWeight)} = ${Math.round(combinedWeight)} g on survivor)${
           notes ? `. Notes: ${notes}` : ""
         }`;
         mergeData = {
           combineBatches: true,
           survivorBatchId: survivorId,
           absorbedBatchId: partnerId,
-          combineWeightUnit: "lbs",
-          biomassBeforeSurvivor: priorSurvivorWeight,
-          biomassBeforePartner: priorPartnerWeight,
-          biomassAfterCombine: combinedWeight,
+          combineWeightUnit: "grams",
+          biomassBeforeSurvivor: gramsInputToLbs(priorSurvivorWeight),
+          biomassBeforePartner: gramsInputToLbs(priorPartnerWeight),
+          biomassAfterCombine: combinedLbs,
           uiStageBucket: stageA,
           notes,
         };
@@ -3486,7 +3503,7 @@ export default function Extraction() {
         let ok = await updateExtractionBatch(survivorId, localSnapshot);
         ok = (await updateExtractionBatch(partnerId, partner)) && ok;
         showSyncMessageNotice(
-          ok ? "Merge synced to server." : "Merge saved locally â€” server sync failed (check connectivity).",
+          ok ? "Merge synced to server." : "Merge saved locally — server sync failed (check connectivity).",
         );
         const mergedPartnerId = partnerId;
         const mergedSurvivorId = survivorId;
@@ -3869,7 +3886,7 @@ export default function Extraction() {
       "Delete Extraction Batch",
       `Delete extraction batch "${batchId}"?`,
       () => runDeleteBatch(batchId),
-      "The server will refuse the delete if any packaging lots are still linked to this run in the databaseâ€”delete or unlink those first."
+      "The server will refuse the delete if any packaging lots are still linked to this run in the database—delete or unlink those first."
     );
   }
 
@@ -4127,19 +4144,19 @@ export default function Extraction() {
                   >
                     Total available:{" "}
                     <span style={{ color: "#f8fafc" }}>
-                      {+availableSourcesTotalLbs.toFixed(2)} lbs
-                    </span>
-                    {" Â· "}
-                    <span style={{ color: "#f8fafc" }}>
                       {availableSourcesTotalGrams.toLocaleString()} g
                     </span>
-                    {" Â· "}
+                    <span style={{ color: "#64748b", fontWeight: 500 }}>
+                      {" "}
+                      ({+availableSourcesTotalLbs.toFixed(2)} lbs)
+                    </span>
+                    {" · "}
                     <span style={{ color: "#f8fafc" }}>
                       {availableSourcesHasFreshFrozen
                         ? `${availableSourcesTotalBundles} bundle${
                             availableSourcesTotalBundles === 1 ? "" : "s"
                           }`
-                        : "â€”"}
+                        : EMPTY_WEIGHT_DASH}
                     </span>
                   </span>
                 ) : null}
@@ -4182,7 +4199,7 @@ export default function Extraction() {
             <div style={{ flex: "1 1 280px" }}>
               <h2 style={{ margin: 0 }}>Extraction Batches</h2>
               <p style={{ color: "#94a3b8", margin: "6px 0 0" }}>
-                {`Required path: Pack Socks Start â†’ Pack Socks Stop â†’ Run Extraction â†’ Start Purge â†’ End Purge â†’ Testing Passed â†’ Finish Batch. Print Batch Label is available anytime (reprints allowed). Optional tasks (Whip, Adding Terps, etc.) can be logged while purge is active.`}
+                {`Required path: Pack Socks Start → Pack Socks Stop → Run Extraction → Start Purge → End Purge → Testing Passed → Finish Batch. Print Batch Label is available anytime (reprints allowed). Optional tasks (Whip, Adding Terps, etc.) can be logged while purge is active.`}
               </p>
             </div>
 
@@ -4231,7 +4248,7 @@ export default function Extraction() {
                     {meta.helper}
                   </span>
                   <span style={{ color: "#22d3ee", fontWeight: 800, fontSize: 12, marginTop: 4 }}>
-                    View this stage â†’
+                    View this stage →
                   </span>
                 </button>
               );
@@ -4271,7 +4288,7 @@ export default function Extraction() {
               <p style={{ color: "#94a3b8", margin: 0 }}>
                 {activeExtractionBatches.length === 0
                   ? "No extraction batches yet. Create a batch above, then pick a stage card to filter the list."
-                  : "Select a stage above to view batches. Your teamâ€™s workflow is grouped the same way as cultivation stages."}
+                  : "Select a stage above to view batches. Your team's workflow is grouped the same way as cultivation stages."}
               </p>
             ) : visibleExtractionBatches.length === 0 ? (
               <p style={{ color: "#94a3b8", margin: 0 }}>No batches in this stage yet.</p>
@@ -4292,14 +4309,14 @@ export default function Extraction() {
                   >
                     <b>{extractionBatchMarketBatchCode(b)}</b> | {b.name} | Biomass Used:{" "}
                     {extractionBatchBiomassLbs(b) > 0
-                      ? `${extractionBatchBiomassLbs(b)} lbs`
-                      : "â€”"}{" "}
+                      ? formatOptionalGrams(lbsToGrams(extractionBatchBiomassLbs(b)))
+                      : EMPTY_WEIGHT_DASH}{" "}
                     | Final:{" "}
                     {(() => {
                       const finalG =
                         num(b.totalFinalGrams) ||
                         extractionBatchOilGrams(b) + num(b.extraTerpsGrams);
-                      return finalG > 0 ? `${finalG} g` : "â€”";
+                      return formatOptionalGrams(finalG);
                     })()}{" "}
                     | Status: {b.status}
                     <ExtractionBatchYieldSummary
@@ -4312,7 +4329,7 @@ export default function Extraction() {
                     {getMergedPartnerIds(b).length > 0 ? (
                       <div style={{ fontSize: 12, marginTop: 6, color: "#fbbf24", fontWeight: 600 }}>
                         Merged with {getMergedPartnerIds(b).length} batch
-                        {getMergedPartnerIds(b).length === 1 ? "" : "es"} â€” use Undo Combine to restore
+                        {getMergedPartnerIds(b).length === 1 ? "" : "es"} — use Undo Combine to restore
                       </div>
                     ) : null}
                     {extractionBatchCultivationFooter(b) ? (
@@ -4390,7 +4407,7 @@ export default function Extraction() {
               completedMergedExtractionBatches.map((b: any) => (
                 <div key={b.id} style={{ ...rowStyle, background: "#111827" }}>
                   <div style={{ flex: 1 }}>
-                    <b>{extractionBatchMarketBatchCode(b)}</b> | {b.name || "â€”"} | Status:{" "}
+                    <b>{extractionBatchMarketBatchCode(b)}</b> | {b.name || "—"} | Status:{" "}
                     {b.status || "Merged"}
                     {b.mergedIntoBatchId ? (
                       <span style={{ color: "#fbbf24" }}> | Merged into {b.mergedIntoBatchId}</span>
@@ -4452,7 +4469,7 @@ export default function Extraction() {
                         <b>{b.name || b.type || "Source package"}</b>
                         <span style={{ color: "#94a3b8", fontSize: 13 }}>
                           {" "}
-                          Â· {b.id}
+                          · {b.id}
                         </span>
                         {" | Status: Complete | Completed: "}
                       </>
@@ -4639,7 +4656,7 @@ export default function Extraction() {
                           }
                         >
                           {uncombineBusyPartnerId === mergedId
-                            ? "Restoringâ€¦"
+                            ? "Restoring..."
                             : `Undo ${mergedId}`}
                         </button>
                       ))}
@@ -4678,7 +4695,7 @@ export default function Extraction() {
                       placeholder={
                         combineUsesOilGrams
                           ? "This batch extracted oil (g)"
-                          : "This batch total (lbs)"
+                          : "This batch total (g)"
                       }
                       value={combineSurvivorLbs}
                       onChange={(e) => setCombineSurvivorLbs(e.target.value)}
@@ -4689,11 +4706,11 @@ export default function Extraction() {
                       value={combinePartnerBatchId}
                       onChange={(e) => setCombinePartnerBatchId(e.target.value)}
                     >
-                      <option value="">Select partner batchâ€¦</option>
+                      <option value="">Select partner batch...</option>
                       {combinePartnerOptions.map((b: any) => (
                         <option key={b.id} value={b.id}>
                           {extractionBatchMarketBatchCode(b)}
-                          {b.sourceBlendLabel ? ` Â· ${b.sourceBlendLabel}` : ""}
+                          {b.sourceBlendLabel ? ` · ${b.sourceBlendLabel}` : ""}
                           {combineUsesOilGrams
                             ? extractionBatchOilGrams(b) > 0
                               ? ` (${extractionBatchOilGrams(b).toFixed(2)} g oil on file)`
@@ -4717,7 +4734,7 @@ export default function Extraction() {
                       placeholder={
                         combineUsesOilGrams
                           ? "Partner batch extracted oil (g)"
-                          : "Partner batch total (lbs)"
+                          : "Partner batch total (g)"
                       }
                       value={combinePartnerLbs}
                       onChange={(e) => setCombinePartnerLbs(e.target.value)}
@@ -4753,7 +4770,7 @@ export default function Extraction() {
                       value={undoCombinePartnerId}
                       onChange={(e) => setUndoCombinePartnerId(e.target.value)}
                     >
-                      <option value="">Select batch to restoreâ€¦</option>
+                      <option value="">Select batch to restore...</option>
                       {getMergedPartnerIds(selectedExt).map((mergedId) => (
                         <option key={mergedId} value={mergedId}>
                           {mergedId}
@@ -4845,14 +4862,14 @@ export default function Extraction() {
                     )}
 
                     <p style={{ color: "#94a3b8", margin: 0 }}>
-                      Total Socks Prepared: {num(totalSocksPacked) || "â€”"}
+                      Total Socks Prepared: {num(totalSocksPacked) || "—"}
                     </p>
 
                     <p style={{ color: "#94a3b8", margin: 0 }}>
                       Total Biomass Prepared: {
                         sockGramInputs.length > 0 && getSockGramTotal() > 0
                           ? `${+getSockGramTotal().toFixed(2)} g / ${+(getSockGramTotal() / 453.592).toFixed(2)} lbs`
-                          : "â€”"
+                          : "—"
                       }
                     </p>
 
@@ -4860,7 +4877,7 @@ export default function Extraction() {
                       Average Per Sock: {
                         sockGramInputs.length > 0 && getSockGramTotal() > 0
                           ? `${+(getSockGramTotal() / sockGramInputs.length).toFixed(2)} g`
-                          : "â€”"
+                          : "—"
                       }
                     </p>
                   </>
@@ -4880,7 +4897,7 @@ export default function Extraction() {
                       This task is <strong style={{ color: "#e2e8f0" }}>always available</strong> at
                       any workflow stage so you can reprint labels. Layout is anchored to the{" "}
                       <strong style={{ color: "#e2e8f0" }}>top</strong> of one sticker with lines using the full
-                      calibrated width â€” sized from{" "}
+                      calibrated width — sized from{" "}
                       <strong style={{ color: "#e2e8f0" }}>DYMO calibration</strong> below.{" "}
                       <strong style={{ color: "#e2e8f0" }}>Print label</strong> uses{" "}
                       <strong style={{ color: "#e2e8f0" }}>saved</strong> settings; use{" "}
@@ -4960,10 +4977,10 @@ export default function Extraction() {
                           }
                         }}
                       >
-                        Print label (saved calibration: {dymoSavedCalibration.labelWidth} Ã—{" "}
+                        Print label (saved calibration: {dymoSavedCalibration.labelWidth} ×{" "}
                         {dymoSavedCalibration.labelHeight}
                         {dymoLabelPrintCopiesClamped > 1
-                          ? ` Â· Ã—${dymoLabelPrintCopiesClamped}`
+                          ? ` · ×${dymoLabelPrintCopiesClamped}`
                           : ""}
                         )
                       </button>
@@ -5014,7 +5031,7 @@ export default function Extraction() {
 
                     <input
                       style={inputStyle}
-                      placeholder="Total Gas Loss (lbs)"
+                      placeholder="Total Gas Loss (g)"
                       value={totalGasLoss}
                       onChange={(e) => setTotalGasLoss(e.target.value)}
                     />
@@ -5293,7 +5310,7 @@ export default function Extraction() {
                           {formatYieldGramsDisplay(finishDecarbYieldPreview.terpsToAddBackGrams)}
                           {finishDecarbYieldPreview.terpAddBackCapped ? (
                             <span style={{ color: "#fbbf24", marginLeft: 8 }}>
-                              (capped at collected â€” only{" "}
+                              (capped at collected — only{" "}
                               {formatYieldGramsDisplay(
                                 finishDecarbYieldPreview.actualTerpsAddedBackGrams,
                               )}{" "}
@@ -5451,7 +5468,7 @@ export default function Extraction() {
 
                     <p style={{ color: "#94a3b8" }}>
                       Total Final Weight:{" "}
-                      {num(finalOilGrams) + num(extraTerpsGrams) || "â€”"} g
+                      {num(finalOilGrams) + num(extraTerpsGrams) || "—"} g
                     </p>
 
                     <p style={{ color: "#94a3b8" }}>
@@ -5460,7 +5477,7 @@ export default function Extraction() {
                         ...selectedExt,
                         finalOilGrams,
                         extraTerpsGrams,
-                      }) || "â€”"}
+                      }) || "—"}
                     </p>
 
                     <p style={{ color: "#94a3b8" }}>
@@ -5476,7 +5493,7 @@ export default function Extraction() {
                             ? collectStrainNamesForExtractionBatch(selectedExt)[0]
                             : "") ||
                           selectedExt?.name ||
-                          "â€”"}
+                          "—"}
                       </b>
                       {(draftFinishBatchCode || selectedExt?.marketBatchCode) ? (
                         <>
@@ -5618,7 +5635,7 @@ export default function Extraction() {
                   disabled={aiNameLoading}
                   onClick={() => void generateAiProductNames()}
                 >
-                  {aiNameLoading ? "Generatingâ€¦" : "Generate suggestions"}
+                  {aiNameLoading ? "Generating..." : "Generate suggestions"}
                 </button>
                 <button
                   type="button"
@@ -5773,15 +5790,19 @@ export default function Extraction() {
                 </>
               ) : null}
 
-              <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
-                Weight (lbs)
-              </label>
-              <input
-                style={{ ...inputStyle, marginBottom: 14 }}
-                value={editSourceWeightLbs}
-                onChange={(e) => setEditSourceWeightLbs(e.target.value)}
-                autoComplete="off"
-              />
+              {editSourceType === "Dry Trim" ? (
+                <>
+                  <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+                    Weight (g)
+                  </label>
+                  <input
+                    style={{ ...inputStyle, marginBottom: 14 }}
+                    value={editSourceGrams}
+                    onChange={(e) => setEditSourceGrams(e.target.value)}
+                    autoComplete="off"
+                  />
+                </>
+              ) : null}
 
               <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
                 Status
@@ -5908,7 +5929,7 @@ export default function Extraction() {
                     autoComplete="off"
                   />
                   <p style={{ fontSize: 12, color: "#64748b", margin: "8px 0 0" }}>
-                    Sources and completed tasks are unchanged here â€” use workflow tasks to log
+                    Sources and completed tasks are unchanged here — use workflow tasks to log
                     process steps.
                   </p>
                 </div>
@@ -5921,9 +5942,9 @@ export default function Extraction() {
                   <p>
                     {viewBatch.name} | Status: {viewBatch.status} | Biomass Used:{" "}
                     {extractionBatchBiomassLbs(viewBatch) > 0
-                      ? `${extractionBatchBiomassLbs(viewBatch)} lbs`
-                      : "â€”"}{" "}
-                    | Final: {num(viewBatch.totalFinalGrams) || "â€”"} g
+                      ? formatOptionalGrams(lbsToGrams(extractionBatchBiomassLbs(viewBatch)))
+                      : EMPTY_WEIGHT_DASH}{" "}
+                    | Final: {formatOptionalGrams(num(viewBatch.totalFinalGrams))}
                   </p>
                   <ExtractionBatchYieldSummary
                     batch={viewBatch}
@@ -5956,7 +5977,7 @@ export default function Extraction() {
                     >
                       <p style={{ margin: "0 0 10px", fontSize: 13, color: "#fbbf24" }}>
                         This batch absorbed others via <b>Combine Batches</b>. Use <b>Undo combine</b> if
-                        the wrong partner was merged â€” restores that batch and fixes survivor totals.
+                        the wrong partner was merged — restores that batch and fixes survivor totals.
                       </p>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                         {viewBatch.combinedFromBatchIds.map((mergedId: string) => (
@@ -5973,7 +5994,7 @@ export default function Extraction() {
                             }
                           >
                             {uncombineBusyPartnerId === mergedId
-                              ? "Restoringâ€¦"
+                              ? "Restoring..."
                               : `Undo ${mergedId}`}
                           </button>
                         ))}
@@ -6014,7 +6035,7 @@ export default function Extraction() {
                       onClick={() => void saveViewBatchEdits()}
                       disabled={editBatchSaving}
                     >
-                      {editBatchSaving ? "Savingâ€¦" : "Save changes"}
+                      {editBatchSaving ? "Saving..." : "Save changes"}
                     </button>
                   </>
                 ) : null}
@@ -6058,7 +6079,7 @@ export default function Extraction() {
 
               <h3>Completed Tasks</h3>
               <p>
-                {getCompletedTasks(viewBatch).join(" â†’ ") ||
+                {getCompletedTasks(viewBatch).join(" → ") ||
                   "No tasks completed yet."}
               </p>
 
@@ -6108,7 +6129,7 @@ export default function Extraction() {
                       <div>
                         <b>{log.task}</b>
                       </div>
-                      <div>Output: {log.output || "â€”"}</div>
+                      <div>Output: {log.output || "—"}</div>
                       <div>Time: {formatLogDisplayTime(log)}</div>
                       <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
                         Logged By: {formatLoggedBy(log.loggedBy || log.data?.loggedBy)}

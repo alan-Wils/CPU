@@ -3,6 +3,8 @@
  * Mirrors the client logic used on the Extraction page.
  */
 
+import { GRAMS_PER_LB } from "@/lib/freshFrozenPackageDisplay";
+
 function num(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -40,6 +42,11 @@ export function getSourceAvailable(source: unknown): number {
   }
 
   return +original.toFixed(2);
+}
+
+/** Available material in grams (for grams-first inputs). */
+export function getSourceAvailableGrams(source: unknown): number {
+  return +(getSourceAvailable(source) * GRAMS_PER_LB).toFixed(2);
 }
 
 export function isCompletedSourceBatch(batch: unknown): boolean {

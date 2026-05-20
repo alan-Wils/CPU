@@ -28,6 +28,7 @@ import {
   isPlaceholderFreshFrozenMetrcTag,
   parseFreshFrozenGramsPerBundle,
 } from "@/lib/freshFrozenPackageDisplay";
+import { gramsInputToLbs, lbsToGrams } from "@/lib/weightUnits";
 
 export type CultivationTransferToExtractionResult = {
   rows?: CultivationExtractionTransferRow[];
@@ -117,7 +118,10 @@ function fieldEditsFromRow(row: CultivationExtractionTransferRow): PackageFieldE
     metrcTag: String(row.metrcTag || "").trim(),
     grams: row.grams != null ? String(row.grams) : "",
     bundles: row.bundles != null ? String(row.bundles) : "1",
-    weightLbs: row.weightLbs != null ? String(row.weightLbs) : "",
+    weightLbs:
+      row.weightLbs != null && Number(row.weightLbs) > 0
+        ? String(Math.round(lbsToGrams(Number(row.weightLbs))))
+        : "",
   };
 }
 
@@ -400,9 +404,12 @@ export default function ReadyToTransferModal({
           patch.bundles = Math.floor(bundles);
       }
     } else {
-      const lbs = parseNum(edits.weightLbs);
-      if (lbs != null && lbs >= 0 && lbs !== Number(row.weightLbs ?? 0))
-        patch.weightLbs = lbs;
+      const grams = parseNum(edits.weightLbs);
+      const storedLbs = Number(row.weightLbs ?? 0);
+      const storedGrams = lbsToGrams(storedLbs);
+      if (grams != null && grams >= 0 && Math.round(grams) !== Math.round(storedGrams)) {
+        patch.weightLbs = gramsInputToLbs(grams);
+      }
     }
 
     if (Object.keys(patch).length === 0) return;
@@ -617,7 +624,7 @@ export default function ReadyToTransferModal({
                   ) : (
                     <div>
                       <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
-                        Weight (lbs)
+                        Weight (g)
                       </div>
                       <input
                         style={inputStyle}

@@ -88,7 +88,7 @@ export function freshFrozenPackageDisplay(src: unknown): FreshFrozenPackageDispl
 
 export function freshFrozenAvailableLine(availableLbs: number): string {
   const a = num(availableLbs);
-  if (a <= 0) return "Available: 0 lbs";
   const ag = Math.round(a * GRAMS_PER_LB);
-  return `Available: ${+a.toFixed(4)} lbs (~${ag} g)`;
+  if (ag <= 0) return "Available: 0 g";
+  return `Available: ${ag.toLocaleString()} g (${+a.toFixed(2)} lbs)`;
 }

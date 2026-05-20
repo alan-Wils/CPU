@@ -107,6 +107,7 @@ import {
 } from "@/lib/laborBreaks";
 import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
 import { parseFreshFrozenGramsPerBundle } from "@/lib/freshFrozenPackageDisplay";
+import { gramsInputToLbs } from "@/lib/weightUnits";
 import {
   DRY_FLOWER_UI_STAGE_META,
   DRY_FLOWER_UI_STAGE_ORDER,
@@ -3692,11 +3693,11 @@ export default function Cultivation() {
       selectedDryFlowerTask === "Packaging" &&
       dryPackagingMode === "Multiple 1 lb packages"
         ? num(dryPackageCount)
-        : num(dryOutput);
+        : gramsInputToLbs(dryOutput);
 
     if (selectedDryFlowerTask === "Bucking") {
-      const wholePlant = num(dryBuckWholePlant);
-      const stemWaste = num(dryBuckStemWaste);
+      const wholePlant = gramsInputToLbs(dryBuckWholePlant);
+      const stemWaste = gramsInputToLbs(dryBuckStemWaste);
       const existingTrimOutForCap =
         num(selectedDryFlowerBatch.trimmedWeightLbs) +
         num(selectedDryFlowerBatch.popcornWeightLbs) +
@@ -3733,9 +3734,9 @@ export default function Cultivation() {
 
     if (selectedDryFlowerTask === "Trimming") {
       const aGradeFlowerWeight = enteredWeight;
-      const popcornWeight = num(dryPopcornWeight);
-      const trimFromTrimming = num(dryTrimWeight);
-      const trimFromBuck = num(dryTrimFromBucking);
+      const popcornWeight = gramsInputToLbs(dryPopcornWeight);
+      const trimFromTrimming = gramsInputToLbs(dryTrimWeight);
+      const trimFromBuck = gramsInputToLbs(dryTrimFromBucking);
       const totalTrimForExtraction = trimFromTrimming + trimFromBuck;
       const cap = getBuckWholePlantLbs(selectedDryFlowerBatch);
       const totalOutForCap = aGradeFlowerWeight + popcornWeight + trimFromTrimming;
@@ -11208,13 +11209,13 @@ export default function Cultivation() {
                 <>
                   <input
                     style={inputStyle}
-                    placeholder="Whole plant weight (to trim), lbs"
+                    placeholder="Whole plant weight (to trim), grams"
                     value={dryBuckWholePlant}
                     onChange={(e) => setDryBuckWholePlant(e.target.value)}
                   />
                   <input
                     style={inputStyle}
-                    placeholder="Stem / waste weight, lbs (0 if none)"
+                    placeholder="Stem / waste weight, grams (0 if none)"
                     value={dryBuckStemWaste}
                     onChange={(e) => setDryBuckStemWaste(e.target.value)}
                   />
@@ -11240,11 +11241,11 @@ export default function Cultivation() {
                       is entered below and is <b>not</b> part of this cap; it is added to total trim for extraction.
                     </span>
                   </div>
-                  <input style={inputStyle} placeholder="Total A Grade Flower in lbs" value={dryOutput} onChange={(e) => setDryOutput(e.target.value)} />
-                  <input style={inputStyle} placeholder="Total Popcorn in lbs" value={dryPopcornWeight} onChange={(e) => setDryPopcornWeight(e.target.value)} />
+                  <input style={inputStyle} placeholder="Total A Grade Flower (grams)" value={dryOutput} onChange={(e) => setDryOutput(e.target.value)} />
+                  <input style={inputStyle} placeholder="Total Popcorn (grams)" value={dryPopcornWeight} onChange={(e) => setDryPopcornWeight(e.target.value)} />
                   <input
                     style={inputStyle}
-                    placeholder="Trim from trimming (lbs)"
+                    placeholder="Trim from trimming (grams)"
                     value={dryTrimWeight}
                     onChange={(e) => setDryTrimWeight(e.target.value)}
                   />
@@ -11264,7 +11265,7 @@ export default function Cultivation() {
                     </span>
                     <input
                       style={{ ...inputStyle, margin: 0 }}
-                      placeholder="Trim from bucking (lbs, 0 if none)"
+                      placeholder="Trim from bucking (grams, 0 if none)"
                       value={dryTrimFromBucking}
                       onChange={(e) => setDryTrimFromBucking(e.target.value)}
                     />
@@ -11298,7 +11299,7 @@ export default function Cultivation() {
                   </div>
                   <input
                     style={inputStyle}
-                    placeholder="Decon output weight in lbs"
+                    placeholder="Decon output weight (grams)"
                     value={dryOutput}
                     onChange={(e) => setDryOutput(e.target.value)}
                   />
@@ -11433,7 +11434,7 @@ export default function Cultivation() {
                   {dryPackagingMode === "Single package by weight" ? (
                     <input
                       style={inputStyle}
-                      placeholder={`${dryPackageCategory} package weight in lbs`}
+                      placeholder={`${dryPackageCategory} package weight (grams)`}
                       value={dryOutput}
                       onChange={(e) => setDryOutput(e.target.value)}
                     />

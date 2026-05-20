@@ -5,6 +5,7 @@ import {
   freshFrozenAvailableLine,
   freshFrozenPackageDisplay,
 } from "@/lib/freshFrozenPackageDisplay";
+import { getSourceAvailableGrams } from "@/lib/sourceBatchActive";
 import {
   findHarvestGroupKeyForSourceId,
   formatHarvestGroupSelectLabelWithStrain,
@@ -51,15 +52,16 @@ function packageOptionLabel(
 ): string {
   const materialType = getSourceMaterialType(b);
   const metrcTag = String(b.metrcTag || b.plantTag || "").trim();
-  const avail = getSourceAvailable(b);
+  const availLbs = getSourceAvailable(b);
+  const availG = getSourceAvailableGrams(b);
 
   if (materialType === "freshFrozen") {
     const tagPart = metrcTag ? `METRC ${metrcTag}` : sourcePackageDisplayId(b);
-    return `${tagPart} · ${freshFrozenAvailableLine(avail)}`;
+    return `${tagPart} · ${freshFrozenAvailableLine(availLbs)}`;
   }
 
   const name = String(b.name || b.type || sourcePackageDisplayId(b)).trim();
-  return `${name} · ${avail.toFixed(2)} lbs available`;
+  return `${name} · ${Math.round(availG).toLocaleString()} g available`;
 }
 
 export default function ExtractionCreateSourcePickerRow({
@@ -109,7 +111,7 @@ export default function ExtractionCreateSourcePickerRow({
 
   const selectedSource =
     availableSources.find((b: any) => String(b?.id) === row.sourceId) ?? null;
-  const selectedAvailable = selectedSource ? getSourceAvailable(selectedSource) : 0;
+  const selectedAvailable = selectedSource ? getSourceAvailableGrams(selectedSource) : 0;
   const selectedMaterialType = selectedSource ? getSourceMaterialType(selectedSource) : "";
 
   const activeGroup = harvestGroups.find((g) => g.key === selectedGroupKey) ?? null;
@@ -182,8 +184,8 @@ export default function ExtractionCreateSourcePickerRow({
           style={inputStyle}
           placeholder={
             selectedSource
-              ? `Lbs (max ${selectedAvailable.toFixed(2)})`
-              : "Lbs used"
+              ? `Grams (max ${Math.round(selectedAvailable).toLocaleString()})`
+              : "Grams used"
           }
           value={row.amount}
           onChange={(e) => onAmountChange(index, e.target.value)}
