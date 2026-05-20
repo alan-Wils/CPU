@@ -1524,6 +1524,18 @@ legacyCpuRouter.post(
     }),
 );
 
+legacyCpuRouter.delete(
+    "/cultivation-extraction-transfers/:id",
+    requireRole(cultivationTransferManagerRoles),
+    validate({ params: cultivationTransferIdParamSchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const { id } = req.params;
+        const out = await cultivationTransferService.deleteTransfer({ companyId, id });
+        res.json(out);
+    }),
+);
+
 legacyCpuRouter.patch(
     "/cultivation-extraction-transfers/:id",
     requireRole(cultivationTransferManagerRoles),

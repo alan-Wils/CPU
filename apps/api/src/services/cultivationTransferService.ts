@@ -574,6 +574,24 @@ export class CultivationTransferService {
         return toDto(row);
     }
 
+    async deleteTransfer(params: {
+        companyId: string;
+        id: string;
+    }): Promise<{ ok: true; id: string }> {
+        const existing = await prisma.cultivationExtractionTransfer.findFirst({
+            where: { id: params.id, companyId: params.companyId },
+        });
+        if (!existing)
+            throw new AppError("Transfer record not found", 404);
+        if (existing.transferStatus === CultivationTransferStatus.TRANSFERRED_TO_EXTRACTION)
+            throw new AppError("Cannot delete after transfer to extraction", 400);
+
+        await prisma.cultivationExtractionTransfer.delete({
+            where: { id: existing.id },
+        });
+        return { ok: true, id: existing.id };
+    }
+
     private buildLegacySourceBatchFromTransfer(
         transfer: NonNullable<Awaited<ReturnType<typeof prisma.cultivationExtractionTransfer.findFirst>>>,
         sourceBatchId: string,

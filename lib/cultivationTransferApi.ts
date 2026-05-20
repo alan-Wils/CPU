@@ -98,6 +98,14 @@ export async function createFreshFrozenBundleTransfers(body: {
   });
 }
 
+export async function deleteCultivationExtractionTransfer(
+  id: string,
+): Promise<{ ok: true; id: string }> {
+  return apiRequest(`/api/cultivation-extraction-transfers/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function patchCultivationExtractionTransfer(
   id: string,
   body: {

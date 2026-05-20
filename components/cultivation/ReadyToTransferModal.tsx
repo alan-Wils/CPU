@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  deleteCultivationExtractionTransfer,
   formatCultivationTransferApiError,
   listCultivationExtractionTransfers,
   patchCultivationExtractionTransfer,
@@ -85,6 +86,15 @@ const refreshBtnStyle: React.CSSProperties = {
   border: "1px solid #475569",
   background: "#1e293b",
   color: "#e2e8f0",
+  fontWeight: 700,
+};
+
+const dangerBtnStyle: React.CSSProperties = {
+  padding: "8px 12px",
+  borderRadius: 8,
+  border: "1px solid #b91c1c",
+  background: "#7f1d1d",
+  color: "#fecaca",
   fontWeight: 700,
 };
 
@@ -299,6 +309,32 @@ export default function ReadyToTransferModal({
         storageLocationName: loc.name,
       });
       applyRowUpdate(updated);
+    } catch (e) {
+      setError(formatCultivationTransferApiError(e));
+    } finally {
+      setSavingRowId(null);
+    }
+  }
+
+  async function deleteRow(row: CultivationExtractionTransferRow) {
+    const label = String(row.displayName || row.metrcTag || row.id).trim();
+    const batch = String(row.sourceCultivationBatchId || "").trim();
+    const detail = batch ? `\n\nBatch: ${batch}` : "";
+    const ok = window.confirm(
+      `Delete "${label}" from Ready to Transfer?${detail}\n\nThis cannot be undone.`,
+    );
+    if (!ok) return;
+
+    setSavingRowId(row.id);
+    setError("");
+    try {
+      await deleteCultivationExtractionTransfer(row.id);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(row.id);
+        return next;
+      });
+      await loadRows();
     } catch (e) {
       setError(formatCultivationTransferApiError(e));
     } finally {
@@ -640,6 +676,14 @@ export default function ReadyToTransferModal({
                   : ""}
               </button>
             ) : null}
+            <button
+              type="button"
+              disabled={busy || rowSaving}
+              onClick={() => void deleteRow(row)}
+              style={dangerBtnStyle}
+            >
+              Delete
+            </button>
             {rowSaving ? (
               <span style={{ color: "#94a3b8", fontSize: 13, alignSelf: "center" }}>
                 Saving…
@@ -808,7 +852,7 @@ export default function ReadyToTransferModal({
           <div>
             <h2 style={{ margin: 0, color: "#f8fafc" }}>Ready to Transfer</h2>
             <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 14 }}>
-              Packages are grouped by freezer or dry room. Managers can edit and split bundles;
+              Packages are grouped by freezer or dry room. Managers can edit, split, or delete;
               others can select and transfer.
             </p>
           </div>
