@@ -30,6 +30,7 @@ import {
   sourceRowBundles,
   sourceRowTotalLbs,
 } from "@/lib/freshFrozenPackageDisplay";
+import ExtractionAvailableSourceList from "@/components/extraction/ExtractionAvailableSourceList";
 import {
   loadExtractionBatches,
   createExtractionBatch,
@@ -3910,84 +3911,19 @@ export default function Extraction() {
           </div>
 
           <div style={lockedListStyle}>
-            {availableSources.length === 0 ? (
-              <p style={{ color: "#94a3b8" }}>
-                No source batches available for extraction.
-              </p>
-            ) : (
-              availableSources.map((b: any) => {
-                const available = getSourceAvailable(b);
-                const isEmpty =
-                  available <= 0 || b.status === "Used in Extraction";
-                const materialType = getSourceMaterialType(b);
-
-                return (
-                  <div
-                    key={b.id}
-                    style={{
-                      ...rowStyle,
-                      background: isEmpty ? "#111827" : "#1e293b",
-                      color: isEmpty ? "#94a3b8" : "white",
-                      opacity: isEmpty ? 0.75 : 1,
-                    }}
-                  >
-                    <div style={{ flex: 1 }}>
-                      {isLikelyDatabaseSourcePackageId(b.id) ? (
-                        <>
-                          <b>{sourcePackageDisplayId(b)}</b>
-                          <span style={{ color: "#94a3b8", fontSize: 13 }}>
-                            {" "}
-                            · {b.name || b.type || "Source package"}
-                          </span>
-                          {" | Cultivation: "}
-                          {b.source || "—"}
-                          {" | Material: "}
-                        </>
-                      ) : (
-                        <>
-                          <b>{sourcePackageDisplayId(b)}</b> | {b.name || b.type} | Cultivation:{" "}
-                          {b.source || "—"} | Material:{" "}
-                        </>
-                      )}
-                      {materialType === "freshFrozen"
-                        ? "Fresh Frozen"
-                        : materialType === "dryTrim"
-                        ? "Dry Trim"
-                        : "Unknown"}{" "}
-                      | Status: {isEmpty ? "Used in Extraction" : b.status}
-                      {materialType === "freshFrozen" ? (
-                        <>
-                          {" "}
-                          | {freshFrozenPackageDisplay(b).packageLine} |{" "}
-                          {freshFrozenAvailableLine(available)}
-                        </>
-                      ) : (
-                        <> | Available: {available} lbs</>
-                      )}
-                    </div>
-
-                    <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                      {userCanWrite ? (
-                        <button
-                          style={blueButtonStyle}
-                          onClick={() => openEditSourcePackage(b)}
-                        >
-                          Edit
-                        </button>
-                      ) : null}
-                      {userCanDelete ? (
-                        <button
-                          style={deleteButtonStyle}
-                          onClick={() => deleteSourceBatch(b.id)}
-                        >
-                          Delete
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })
-            )}
+            <ExtractionAvailableSourceList
+            sources={availableSources}
+            rowStyle={rowStyle}
+            blueButtonStyle={blueButtonStyle}
+            deleteButtonStyle={deleteButtonStyle}
+            userCanWrite={userCanWrite}
+            userCanDelete={userCanDelete}
+            isLikelyDatabaseSourcePackageId={isLikelyDatabaseSourcePackageId}
+            sourcePackageDisplayId={sourcePackageDisplayId}
+            getSourceMaterialType={getSourceMaterialType}
+            onEdit={openEditSourcePackage}
+            onDelete={deleteSourceBatch}
+          />
           </div>
         </div>
 
