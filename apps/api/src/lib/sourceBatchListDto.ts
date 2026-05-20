@@ -21,7 +21,7 @@ function capStr(value: unknown, max = 120): string {
   return `${s.slice(0, max)}…`;
 }
 
-export type SourceBatchListRow = Record<(typeof SUMMARY_KEYS)[number], string | number>;
+export type SourceBatchListRow = Record<string, string | number | boolean>;
 
 export function prismaSourcePackageToListRow(p: {
   id: string;
@@ -57,7 +57,7 @@ export function storeSourceBatchToListRow(row: unknown): SourceBatchListRow | nu
   if (!r) return null;
   const id = String(r.id || "").trim();
   if (!id) return null;
-  return {
+  const out: SourceBatchListRow = {
     id,
     name: capStr(r.name ?? r.id),
     type: capStr(r.type),
@@ -69,4 +69,19 @@ export function storeSourceBatchToListRow(row: unknown): SourceBatchListRow | nu
     bundles: Number.isFinite(Number(r.bundles)) ? Math.trunc(Number(r.bundles)) : 0,
     weightLbs: Number.isFinite(Number(r.weightLbs)) ? Number(r.weightLbs) : 0,
   };
+  if (r.manualTransferToExtraction === true)
+    out.manualTransferToExtraction = true;
+  const cultivationTransferId = String(r.cultivationTransferId || "").trim();
+  if (cultivationTransferId)
+    out.cultivationTransferId = cultivationTransferId;
+  const metrcTag = String(r.metrcTag || r.plantTag || "").trim();
+  if (metrcTag)
+    out.metrcTag = capStr(metrcTag, 80);
+  const harvestCode = String(r.harvestCode || "").trim();
+  if (harvestCode)
+    out.harvestCode = capStr(harvestCode, 80);
+  const parentGroupId = String(r.parentGroupId || "").trim();
+  if (parentGroupId)
+    out.parentGroupId = capStr(parentGroupId, 80);
+  return out;
 }

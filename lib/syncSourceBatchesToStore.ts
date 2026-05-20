@@ -69,6 +69,7 @@ export function syncProductionBatchesFromFfTrimSources(
 }
 
 export function applyFfTrimSourceListToStore(target: StoreLike, sourceList: unknown[]): void {
+  if (!Array.isArray(sourceList) || sourceList.length === 0) return;
   mergeSourceBatchRowsIntoStore(target, sourceList);
   syncProductionBatchesFromFfTrimSources(target, sourceList);
 }

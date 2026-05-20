@@ -24,7 +24,10 @@ import {
     resolveLoggedByForRow,
     type LoggedByDto,
 } from "../../lib/taskLogActorLookup.js";
-import { filterSourceBatchesForExtractionAvailability } from "../../lib/extractionSourceAvailability.js";
+import {
+    filterSourceBatchesForExtractionAvailability,
+    prioritizeTransferredSourceStoreRows,
+} from "../../lib/extractionSourceAvailability.js";
 import {
     prismaSourcePackageToListRow,
     storeSourceBatchToListRow,
@@ -1260,9 +1263,11 @@ legacyCpuRouter.get("/source-batches", asyncHandler(async (req, res) => {
         for (const row of derived)
             byId.set(String(row.id), row);
         if (summary) {
-            const fromStore = await storeService.loadSourceBatchesStoreSlice(companyId);
+            const fromStore = prioritizeTransferredSourceStoreRows(
+                await storeService.loadSourceBatchesStoreSlice(companyId),
+            );
             let legacyAdded = 0;
-            const legacyCap = 60;
+            const legacyCap = 200;
             for (const row of fromStore) {
                 if (legacyAdded >= legacyCap)
                     break;

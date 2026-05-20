@@ -3,6 +3,8 @@
  * (per METRC bundle), not legacy monolithic Fresh Frozen rows tied to the whole harvest.
  */
 
+import { getSourceOriginalLbs } from "@/lib/sourceBatchActive";
+
 export type SourceBatchLike = Record<string, unknown> & {
   id?: string;
   source?: string;
@@ -26,16 +28,32 @@ export function isFreshFrozenSourceRow(row: SourceBatchLike): boolean {
   return t.includes("fresh frozen") || t.includes("fresh-frozen");
 }
 
+/** Prisma workflow shell package with no transferred weight (not usable for extraction). */
+export function isEmptyPrismaSourcePlaceholder(row: SourceBatchLike): boolean {
+  const id = norm(row.id);
+  if (!/^c[a-z0-9]{20,}$/i.test(id)) return false;
+  if (getSourceOriginalLbs(row) > 0) return false;
+  if (norm(row.amount)) return false;
+  return true;
+}
+
 /** Row created by cultivation → extraction transfer (per METRC bundle). */
 export function isPerBundleTransferSource(row: SourceBatchLike): boolean {
   if (row.manualTransferToExtraction === true) return true;
   if (norm(row.cultivationTransferId)) return true;
   const tag = norm(row.metrcTag || row.plantTag);
-  if (!tag) return false;
-  const bundles = Math.floor(Number(row.bundles) || 0);
-  if (bundles <= 1) return true;
-  const harvestCode = norm(row.harvestCode);
-  return harvestCode.includes(tag.replace(/\s+/g, ""));
+  if (tag) {
+    const bundles = Math.floor(Number(row.bundles) || 0);
+    if (bundles <= 1) return true;
+    const harvestCode = norm(row.harvestCode);
+    return harvestCode.includes(tag.replace(/\s+/g, ""));
+  }
+  if (isFreshFrozenSourceRow(row)) {
+    const bundles = Math.floor(Number(row.bundles) || 0);
+    const grams = Number(row.grams) || 0;
+    if (bundles === 1 && grams > 0) return true;
+  }
+  return false;
 }
 
 /**
@@ -62,10 +80,13 @@ export function filterSourceBatchesForExtractionAvailability<T extends SourceBat
 ): T[] {
   if (!rows.length) return rows;
 
+  const usable = rows.filter((row) => !isEmptyPrismaSourcePlaceholder(row));
+  if (!usable.length) return usable;
+
   const sourcesWithBundles = new Set<string>();
   const parentGroupsWithBundles = new Set<string>();
 
-  for (const row of rows) {
+  for (const row of usable) {
     if (!isPerBundleTransferSource(row)) continue;
     const source = norm(row.source);
     if (source) sourcesWithBundles.add(source);
@@ -74,10 +95,10 @@ export function filterSourceBatchesForExtractionAvailability<T extends SourceBat
   }
 
   if (sourcesWithBundles.size === 0 && parentGroupsWithBundles.size === 0) {
-    return rows;
+    return usable;
   }
 
-  return rows.filter((row) => {
+  return usable.filter((row) => {
     if (!isLegacyMonolithicFreshFrozenSource(row)) return true;
     const source = norm(row.source);
     if (source && sourcesWithBundles.has(source)) return false;

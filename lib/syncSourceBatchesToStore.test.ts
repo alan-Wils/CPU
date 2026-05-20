@@ -10,6 +10,15 @@ describe("syncSourceBatchesToStore", () => {
     expect(target.sourceBatches).toHaveLength(2);
   });
 
+  it("does not wipe production when source list is empty", () => {
+    const target = {
+      sourceBatches: [],
+      productionBatches: [{ id: "TRIM-1", type: "Dry Trim", status: "Available for Extraction" }],
+    };
+    applyFfTrimSourceListToStore(target, []);
+    expect(target.productionBatches).toHaveLength(1);
+  });
+
   it("mirrors active trim into productionBatches", () => {
     const target = { sourceBatches: [], productionBatches: [] };
     applyFfTrimSourceListToStore(target, [

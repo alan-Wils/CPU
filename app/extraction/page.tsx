@@ -411,7 +411,7 @@ export default function Extraction() {
         await hydrateTaskLogsFromApi();
 
         const [realSourceBatches, realExtractionBatches] = await Promise.all([
-          loadSourceBatches(),
+          loadSourceBatches({ summary: false }),
           loadExtractionBatches(),
         ]);
 

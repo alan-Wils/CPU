@@ -65,6 +65,7 @@ import { bundleSlotCountFromTotalGrams } from "@/lib/freshFrozenPackageDisplay";
 import ReadyToTransferModal from "@/components/cultivation/ReadyToTransferModal";
 import { makeChainBatchCode, makeDateCode } from "@/lib/batchChainCodes";
 import { isActiveExtractionSourceBatch } from "@/lib/sourceBatchActive";
+import { filterSourceBatchesForExtractionAvailability } from "@/lib/extractionSourceAvailability";
 import { applyFfTrimSourceListToStore } from "@/lib/syncSourceBatchesToStore";
 import {
   createLog,
@@ -1450,12 +1451,14 @@ export default function Cultivation() {
          *
          * Mirror only active FF/trim (same rules as Extraction). `GET /api/source-batches` merges DB + store.
          */
-        const rawSources = await loadSourceBatches().catch(() => null);
-        const sourceList = Array.isArray(rawSources)
-          ? rawSources
-          : [...lastSourceListForProductionRef.current];
+        const rawSources = await loadSourceBatches({ summary: false }).catch(() => null);
+        const sourceList = filterSourceBatchesForExtractionAvailability(
+          Array.isArray(rawSources)
+            ? rawSources
+            : [...lastSourceListForProductionRef.current],
+        );
         if (Array.isArray(rawSources)) {
-          lastSourceListForProductionRef.current = rawSources;
+          lastSourceListForProductionRef.current = sourceList;
         }
 
         applyFfTrimSourceListToStore(s, sourceList);
@@ -2136,14 +2139,18 @@ export default function Cultivation() {
       ? transferResult.sourceBatches
       : [];
     if (mergedFromTransfer.length > 0) {
-      applyFfTrimSourceListToStore(s, mergedFromTransfer);
+      applyFfTrimSourceListToStore(
+        s,
+        filterSourceBatchesForExtractionAvailability(mergedFromTransfer),
+      );
     }
 
     try {
-      const rawSources = await loadSourceBatches({ summary: true });
+      const rawSources = await loadSourceBatches({ summary: false });
       if (Array.isArray(rawSources)) {
-        lastSourceListForProductionRef.current = rawSources;
-        applyFfTrimSourceListToStore(s, rawSources);
+        const sourceList = filterSourceBatchesForExtractionAvailability(rawSources);
+        lastSourceListForProductionRef.current = sourceList;
+        applyFfTrimSourceListToStore(s, sourceList);
       }
     } catch (error) {
       console.error("Could not reload source batches after transfer:", error);
