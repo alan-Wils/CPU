@@ -95,15 +95,24 @@ export function incrementMetrcPackageTag(baseTag: string, step: number): string 
   const prefix = match[1];
   const digits = match[2];
   const width = digits.length;
-  try {
-    const next = BigInt(digits) + BigInt(step);
-    if (next < 0n) return tag;
-    const nextStr = next.toString();
-    const padded = nextStr.length <= width ? nextStr.padStart(width, "0") : nextStr;
-    return `${prefix}${padded}`;
-  } catch {
-    return tag;
+  let nextStr: string;
+  if (width <= 15) {
+    const n = Number(digits);
+    if (!Number.isFinite(n)) return tag;
+    const next = n + step;
+    if (next < 0) return tag;
+    nextStr = String(Math.trunc(next));
+  } else {
+    try {
+      const next = BigInt(digits) + BigInt(step);
+      if (next < BigInt(0)) return tag;
+      nextStr = next.toString();
+    } catch {
+      return tag;
+    }
   }
+  const padded = nextStr.length <= width ? nextStr.padStart(width, "0") : nextStr;
+  return `${prefix}${padded}`;
 }
 
 /** Fill bundle #2+ from bundle #1 tag in ascending order (1111, 1112, 1113, …). */
