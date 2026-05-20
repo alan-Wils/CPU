@@ -38,6 +38,7 @@ import type { ExtractionHarvestSourceGroup } from "@/lib/extractionSourceHarvest
 import {
   formatCultivationTransferApiError,
   returnSourceBatchToCultivation,
+  returnSourceBatchesToCultivationBulk,
   sourceBatchCanReturnToCultivation,
 } from "@/lib/cultivationTransferApi";
 import {
@@ -192,6 +193,24 @@ function asArray(value: any) {
 
 function normalizeSourceBatchList(rows: unknown[]): unknown[] {
   return rows.map((row) => repairMisclassifiedSourceBatchRow(row) || row);
+}
+
+function mergeCompletedSourceBatchLists(
+  fromApi: any[],
+  fromStoreSnapshot: any[],
+): any[] {
+  const byId = new Map<string, any>();
+  for (const row of fromStoreSnapshot) {
+    const id = String(row?.id || "").trim();
+    if (id) byId.set(id, row);
+  }
+  for (const row of fromApi) {
+    const id = String(row?.id || "").trim();
+    if (!id) continue;
+    const prev = byId.get(id);
+    byId.set(id, prev ? { ...prev, ...row } : row);
+  }
+  return [...byId.values()];
 }
 
 /** True when `id` is a Prisma `SourcePackage` cuid (merged from the real DB), not a legacy `FF-â€¦` / `TRIM-â€¦` tag. */
@@ -440,8 +459,12 @@ export default function Extraction() {
           }
           return !isCompletedSourceBatch(batch) && getSourceAvailable(batch) > 0;
         });
-        s.completedSourceBatches = sourceList.filter((batch: any) =>
+        const completedFromApi = sourceList.filter((batch: any) =>
           isCompletedSourceBatch(batch),
+        );
+        s.completedSourceBatches = mergeCompletedSourceBatchLists(
+          completedFromApi,
+          asArray(s.completedSourceBatches),
         );
         const prevExById = new Map<string, any>(
           (s.extractionBatches || [])
@@ -534,6 +557,7 @@ export default function Extraction() {
   const [editSourcePackage, setEditSourcePackage] = useState<any>(null);
   const [editSourceSaving, setEditSourceSaving] = useState(false);
   const [editReturnBusy, setEditReturnBusy] = useState(false);
+  const [bulkReturnBusy, setBulkReturnBusy] = useState(false);
   const [editSourceId, setEditSourceId] = useState("");
   const [editSourceName, setEditSourceName] = useState("");
   const [editSourceType, setEditSourceType] = useState("Fresh Frozen");
@@ -1017,8 +1041,12 @@ export default function Extraction() {
       }
       return !isCompletedSourceBatch(batch) && getSourceAvailable(batch) > 0;
     });
-    s.completedSourceBatches = sourceList.filter((batch: any) =>
+    const completedFromApi = sourceList.filter((batch: any) =>
       isCompletedSourceBatch(batch),
+    );
+    s.completedSourceBatches = mergeCompletedSourceBatchLists(
+      completedFromApi,
+      asArray(s.completedSourceBatches),
     );
     setRefresh((n) => n + 1);
   }
@@ -1991,6 +2019,24 @@ export default function Extraction() {
     );
   }
 
+  async function executeReturnSourceIds(sourceBatchIds: string[]) {
+    const ids = [...new Set(sourceBatchIds.map((id) => String(id || "").trim()).filter(Boolean))];
+    if (ids.length === 0) return { returnedIds: [] as string[], failed: [] as Array<{ sourceBatchId: string; message: string }> };
+
+    if (ids.length === 1) {
+      await returnSourceBatchToCultivation(ids[0]);
+      applyReturnToCultivationLocal(ids[0]);
+      return { returnedIds: ids, failed: [] };
+    }
+
+    const out = await returnSourceBatchesToCultivationBulk(ids);
+    for (const id of out.returnedIds || []) applyReturnToCultivationLocal(id);
+    return {
+      returnedIds: out.returnedIds || [],
+      failed: out.failed || [],
+    };
+  }
+
   async function runReturnSourceToCultivation(row: any) {
     if (!row) return;
     if (!requireWriteAccess("return source packages to cultivation")) return;
@@ -2006,17 +2052,16 @@ export default function Extraction() {
 
     const storageLabel = cultivationReturnDestinationLabel(row);
     showConfirm(
-      "Return to cultivation storage?",
-      `Send ${sourcePackageDisplayId(row)} back to ${storageLabel}? It will show in Cultivation → Ready to Transfer and leave Extraction lists.`,
+      "Return to Ready to Transfer?",
+      `Send ${sourcePackageDisplayId(row)} back to Cultivation (${storageLabel})? It will leave Extraction and appear in Ready to Transfer.`,
       async () => {
         setEditReturnBusy(true);
         try {
-          await returnSourceBatchToCultivation(sourceBatchId);
-          applyReturnToCultivationLocal(sourceBatchId);
+          await executeReturnSourceIds([sourceBatchId]);
           closeEditSourcePackage();
           await reloadExtractionSourceLists();
           showSyncMessageNotice(
-            `Package returned to cultivation (${storageLabel}). Open Ready to Transfer on Cultivation to verify.`,
+            `Package returned. Open Cultivation → Ready to Transfer to verify.`,
           );
           forceRefresh({ skipBackendSave: true });
         } catch (error) {
@@ -2028,6 +2073,60 @@ export default function Extraction() {
           );
         } finally {
           setEditReturnBusy(false);
+        }
+      },
+    );
+  }
+
+  function returnableCompletedSourceRows(): any[] {
+    return (s.completedSourceBatches || []).filter((b: any) =>
+      sourceBatchCanReturnToCultivation(b),
+    );
+  }
+
+  function runReturnAllCompletedToCultivation() {
+    if (!requireWriteAccess("return source packages to cultivation")) return;
+    const rows = returnableCompletedSourceRows();
+    if (rows.length === 0) {
+      showNotice(
+        "Nothing to return",
+        "No completed source packages can be sent back to Cultivation.",
+      );
+      return;
+    }
+
+    showConfirm(
+      "Return all to Ready to Transfer?",
+      `Send ${rows.length} package(s) back to Cultivation → Ready to Transfer? They will be removed from Extraction completed lists.`,
+      async () => {
+        setBulkReturnBusy(true);
+        try {
+          const ids = rows.map((b: any) => String(b.id || "").trim()).filter(Boolean);
+          const { returnedIds, failed } = await executeReturnSourceIds(ids);
+          await reloadExtractionSourceLists();
+          forceRefresh({ skipBackendSave: true });
+          if (returnedIds.length > 0 && failed.length === 0) {
+            showSyncMessageNotice(
+              `${returnedIds.length} package(s) returned. Open Cultivation → Ready to Transfer.`,
+            );
+          } else if (returnedIds.length > 0) {
+            showNotice(
+              "Partial return",
+              `${returnedIds.length} returned, ${failed.length} failed.`,
+              failed.map((f) => `${f.sourceBatchId}: ${f.message}`).join("\n"),
+            );
+          } else {
+            showNotice(
+              "Return failed",
+              failed.map((f) => `${f.sourceBatchId}: ${f.message}`).join("\n") ||
+                "No packages could be returned.",
+            );
+          }
+        } catch (error) {
+          console.error("Bulk return to cultivation failed:", error);
+          showNotice("Return failed", formatCultivationTransferApiError(error));
+        } finally {
+          setBulkReturnBusy(false);
         }
       },
     );
@@ -4301,7 +4400,30 @@ export default function Extraction() {
         </div>
 
         <div style={cardStyle}>
-          <h2 style={{ marginTop: 0 }}>Completed / Used Source Batches</h2>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+              marginBottom: 10,
+            }}
+          >
+            <h2 style={{ marginTop: 0, marginBottom: 0 }}>Completed / Used Source Batches</h2>
+            {userCanWrite && returnableCompletedSourceRows().length > 0 ? (
+              <button
+                type="button"
+                style={blueButtonStyle}
+                disabled={bulkReturnBusy || editReturnBusy}
+                onClick={() => runReturnAllCompletedToCultivation()}
+              >
+                {bulkReturnBusy
+                  ? "Returning…"
+                  : `Return all to Ready to Transfer (${returnableCompletedSourceRows().length})`}
+              </button>
+            ) : null}
+          </div>
 
           <div style={lockedListStyle}>
             {s.completedSourceBatches.length === 0 ? (
@@ -4331,10 +4453,20 @@ export default function Extraction() {
                   </div>
 
                   <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                    {userCanWrite ? (
+                    {userCanWrite && sourceBatchCanReturnToCultivation(b) ? (
                       <button
                         type="button"
                         style={blueButtonStyle}
+                        disabled={bulkReturnBusy || editReturnBusy}
+                        onClick={() => void runReturnSourceToCultivation(b)}
+                      >
+                        Return
+                      </button>
+                    ) : null}
+                    {userCanWrite ? (
+                      <button
+                        type="button"
+                        style={buttonStyle}
                         onClick={() => openEditSourcePackage(b)}
                       >
                         Edit

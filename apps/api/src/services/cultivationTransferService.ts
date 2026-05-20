@@ -685,6 +685,48 @@ export class CultivationTransferService {
      * Move a package from Extraction back to cultivation storage (freezer / dry room).
      * Appears again in Cultivation → Ready to Transfer.
      */
+    private findStoreSourceRow(
+        snap: Awaited<ReturnType<StoreService["load"]>>,
+        sourceBatchId: string,
+    ): Record<string, unknown> | null {
+        const id = sourceBatchId.trim();
+        if (!id)
+            return null;
+        const pools = [
+            ...(Array.isArray(snap.sourceBatches) ? snap.sourceBatches : []),
+            ...(Array.isArray(snap.completedSourceBatches) ? snap.completedSourceBatches : []),
+        ];
+        for (const raw of pools) {
+            if (!raw || typeof raw !== "object")
+                continue;
+            const row = raw as Record<string, unknown>;
+            if (String(row.id || "").trim() === id)
+                return row;
+        }
+        return null;
+    }
+
+    private async resolveTransferredRowForReturn(
+        companyId: string,
+        sourceBatchId: string,
+        storeRow: Record<string, unknown> | null,
+    ) {
+        const cultivationTransferId = String(storeRow?.cultivationTransferId || "").trim();
+        const or: Prisma.CultivationExtractionTransferWhereInput[] = [
+            { extractionSourceBatchId: sourceBatchId },
+            { harvestCode: sourceBatchId },
+        ];
+        if (cultivationTransferId)
+            or.push({ id: cultivationTransferId });
+        return prisma.cultivationExtractionTransfer.findFirst({
+            where: {
+                companyId,
+                transferStatus: CultivationTransferStatus.TRANSFERRED_TO_EXTRACTION,
+                OR: or,
+            },
+        });
+    }
+
     async returnToCultivationStorage(params: {
         companyId: string;
         actorUserId: string;
@@ -718,16 +760,12 @@ export class CultivationTransferService {
             }
         }
 
-        const transfer = await prisma.cultivationExtractionTransfer.findFirst({
-            where: {
-                companyId: params.companyId,
-                transferStatus: CultivationTransferStatus.TRANSFERRED_TO_EXTRACTION,
-                OR: [
-                    { extractionSourceBatchId: sourceBatchId },
-                    { harvestCode: sourceBatchId },
-                ],
-            },
-        });
+        const storeRow = this.findStoreSourceRow(snap, sourceBatchId);
+        const transfer = await this.resolveTransferredRowForReturn(
+            params.companyId,
+            sourceBatchId,
+            storeRow,
+        );
         if (!transfer)
             throw new AppError(
                 "No cultivation transfer record found for this package (it may already be in a freezer or was created outside Ready to Transfer).",
@@ -764,5 +802,48 @@ export class CultivationTransferService {
         });
 
         return toDto(updatedRow);
+    }
+
+    /** Return many packages from Extraction back to Cultivation Ready to Transfer. */
+    async returnManyToCultivationStorage(params: {
+        companyId: string;
+        actorUserId: string;
+        sourceBatchIds: string[];
+    }): Promise<{
+        rows: CultivationTransferDto[];
+        returnedIds: string[];
+        failed: Array<{ sourceBatchId: string; message: string }>;
+    }> {
+        const ids = [
+            ...new Set(
+                params.sourceBatchIds.map((id) => String(id || "").trim()).filter(Boolean),
+            ),
+        ];
+        const rows: CultivationTransferDto[] = [];
+        const returnedIds: string[] = [];
+        const failed: Array<{ sourceBatchId: string; message: string }> = [];
+
+        for (const sourceBatchId of ids) {
+            try {
+                const row = await this.returnToCultivationStorage({
+                    companyId: params.companyId,
+                    actorUserId: params.actorUserId,
+                    sourceBatchId,
+                });
+                rows.push(row);
+                returnedIds.push(sourceBatchId);
+            }
+            catch (error) {
+                const message =
+                    error instanceof AppError
+                        ? error.message
+                        : error instanceof Error
+                          ? error.message
+                          : "Return failed";
+                failed.push({ sourceBatchId, message });
+            }
+        }
+
+        return { rows, returnedIds, failed };
     }
 }

@@ -38,6 +38,7 @@ import { validate } from "../../middleware/validate.js";
 import {
     cultivationMotherPlantsPutSchema,
     cultivationReturnToCultivationSchema,
+    cultivationReturnBulkToCultivationSchema,
     cultivationTransferBulkSchema,
     cultivationTransferCreateSchema,
     cultivationTransferIdParamSchema,
@@ -1293,7 +1294,10 @@ legacyCpuRouter.get("/source-batches", asyncHandler(async (req, res) => {
         else {
             const snap = await storeService.load(companyId);
             const fromStore = Array.isArray(snap.sourceBatches) ? snap.sourceBatches : [];
-            for (const row of fromStore) {
+            const fromCompleted = Array.isArray(snap.completedSourceBatches)
+                ? snap.completedSourceBatches
+                : [];
+            for (const row of [...fromStore, ...fromCompleted]) {
                 const id = String(row?.id || "").trim();
                 if (!id || byId.has(id) || isLikelyPrismaSourcePackageId(id))
                     continue;
@@ -1561,5 +1565,23 @@ legacyCpuRouter.post(
         });
         invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
         res.json({ row });
+    }),
+);
+
+legacyCpuRouter.post(
+    "/cultivation-extraction-transfers/return-to-cultivation/bulk",
+    requireRole(sourceBatchWriteRoles),
+    validate({ body: cultivationReturnBulkToCultivationSchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const body = req.body as z.infer<typeof cultivationReturnBulkToCultivationSchema>;
+        const out = await cultivationTransferService.returnManyToCultivationStorage({
+            companyId,
+            actorUserId: req.auth.userId,
+            sourceBatchIds: body.sourceBatchIds,
+        });
+        if (out.returnedIds.length > 0)
+            invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
+        res.json(out);
     }),
 );

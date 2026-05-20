@@ -127,6 +127,7 @@ export function sourceBatchCanReturnToCultivation(row: unknown): boolean {
   const r = row as Record<string, unknown>;
   const id = String(r.id || "").trim();
   if (!id || /^c[a-z0-9]{20,}$/i.test(id)) return false;
+  if (/^(FF|TRIM)-/i.test(id)) return true;
   if (r.manualTransferToExtraction === true) return true;
   if (String(r.cultivationTransferId || "").trim()) return true;
   const t = String(r.type || r.name || "").toLowerCase();
@@ -139,5 +140,16 @@ export async function returnSourceBatchToCultivation(sourceBatchId: string): Pro
   return apiRequest("/api/cultivation-extraction-transfers/return-to-cultivation", {
     method: "POST",
     body: { sourceBatchId },
+  });
+}
+
+export async function returnSourceBatchesToCultivationBulk(sourceBatchIds: string[]): Promise<{
+  rows: CultivationExtractionTransferRow[];
+  returnedIds: string[];
+  failed: Array<{ sourceBatchId: string; message: string }>;
+}> {
+  return apiRequest("/api/cultivation-extraction-transfers/return-to-cultivation/bulk", {
+    method: "POST",
+    body: { sourceBatchIds },
   });
 }

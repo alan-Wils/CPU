@@ -768,3 +768,7 @@ export const cultivationTransferBulkSchema = z.object({
 export const cultivationReturnToCultivationSchema = z.object({
     sourceBatchId: z.string().trim().min(1).max(120),
 });
+
+export const cultivationReturnBulkToCultivationSchema = z.object({
+    sourceBatchIds: z.array(z.string().trim().min(1).max(120)).min(1).max(50),
+});
