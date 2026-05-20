@@ -105,6 +105,7 @@ export async function patchCultivationExtractionTransfer(
     storageLocationName?: string;
     transferStatus?: CultivationTransferStatus;
     displayName?: string;
+    metrcTag?: string;
     grams?: number;
     bundles?: number;
     weightLbs?: number;

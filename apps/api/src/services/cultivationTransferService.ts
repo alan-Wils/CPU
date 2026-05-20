@@ -18,6 +18,7 @@ import {
     splitGramsAcrossFixedBundleCount,
     splitGramsEvenly,
 } from "../lib/freshFrozenBundleSplit.js";
+import { isPlaceholderFreshFrozenMetrcTag } from "../lib/freshFrozenMetrcTag.js";
 import { repairMisclassifiedSourceBatchRow } from "../lib/repairMisclassifiedSourceBatch.js";
 import { StoreService } from "./storeService.js";
 
@@ -498,6 +499,7 @@ export class CultivationTransferService {
         storageLocationId?: string;
         storageLocationName?: string;
         displayName?: string;
+        metrcTag?: string;
         grams?: number;
         bundles?: number;
         weightLbs?: number;
@@ -530,6 +532,23 @@ export class CultivationTransferService {
         const displayName = String(params.displayName ?? "").trim();
         if (displayName)
             data.displayName = displayName;
+
+        if (params.metrcTag !== undefined) {
+            const metrcTag = String(params.metrcTag).trim();
+            if (!metrcTag)
+                throw new AppError("METRC tag is required", 400);
+            data.metrcTag = metrcTag;
+            const parentGroupId =
+                String(existing.parentGroupId || "").trim()
+                || `ff-${existing.sourceCultivationBatchId}`;
+            data.harvestCode = `${parentGroupId}-${metrcTag.replace(/\s+/g, "")}`;
+            const currentDisplay = String(existing.displayName || "");
+            if (/\s+FF\s*·/i.test(currentDisplay)) {
+                const nameBase = currentDisplay.replace(/\s*FF\s*·.*$/i, "").trim();
+                if (nameBase)
+                    data.displayName = `${nameBase} FF · ${metrcTag}`;
+            }
+        }
 
         if (existing.materialType === CultivationTransferMaterialType.FRESH_FROZEN) {
             if (params.grams !== undefined) {
@@ -637,6 +656,22 @@ export class CultivationTransferService {
         });
         if (rows.length !== ids.length)
             throw new AppError("One or more transfer records were not found or already transferred", 404);
+
+        const missingMetrc = rows.filter(
+            (r) =>
+                r.materialType === CultivationTransferMaterialType.FRESH_FROZEN
+                && isPlaceholderFreshFrozenMetrcTag(r.metrcTag),
+        );
+        if (missingMetrc.length > 0) {
+            const labels = missingMetrc
+                .slice(0, 3)
+                .map((r) => String(r.displayName || r.id).trim())
+                .join(", ");
+            throw new AppError(
+                `Each Fresh Frozen bundle needs a METRC tag before transfer${labels ? `: ${labels}` : ""}`,
+                400,
+            );
+        }
 
         const sourceBatches: Record<string, unknown>[] = [];
         const updated: CultivationTransferDto[] = [];

@@ -1538,6 +1538,7 @@ legacyCpuRouter.patch(
             storageLocationId: body.storageLocationId,
             storageLocationName: body.storageLocationName,
             displayName: body.displayName,
+            metrcTag: body.metrcTag,
             grams: body.grams,
             bundles: body.bundles,
             weightLbs: body.weightLbs,

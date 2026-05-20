@@ -7,6 +7,13 @@ function num(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** True when tag is missing or an auto-generated split placeholder (e.g. BUNDLE, BUNDLE-3). */
+export function isPlaceholderFreshFrozenMetrcTag(tag: unknown): boolean {
+  const t = String(tag ?? "").trim();
+  if (!t) return true;
+  return /^BUNDLE(?:-\d+)?$/i.test(t);
+}
+
 /** From company config `cultivation.freshFrozenGramsPerBundle`; 0 = manual bundles only. */
 export function parseFreshFrozenGramsPerBundle(raw: unknown): number {
   const n = Math.floor(num(raw));

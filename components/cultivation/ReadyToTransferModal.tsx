@@ -20,7 +20,10 @@ import {
   UNASSIGNED_STORAGE_GROUP_ID,
 } from "@/lib/cultivationTransferStorageGroups";
 import { fetchCachedCompanyConfig } from "@/lib/configClient";
-import { parseFreshFrozenGramsPerBundle } from "@/lib/freshFrozenPackageDisplay";
+import {
+  isPlaceholderFreshFrozenMetrcTag,
+  parseFreshFrozenGramsPerBundle,
+} from "@/lib/freshFrozenPackageDisplay";
 
 export type CultivationTransferToExtractionResult = {
   rows?: CultivationExtractionTransferRow[];
@@ -39,6 +42,7 @@ type Props = {
 
 type PackageFieldEdits = {
   displayName: string;
+  metrcTag: string;
   grams: string;
   bundles: string;
   weightLbs: string;
@@ -97,10 +101,15 @@ function formatWeight(row: CultivationExtractionTransferRow): string {
 function fieldEditsFromRow(row: CultivationExtractionTransferRow): PackageFieldEdits {
   return {
     displayName: String(row.displayName || "").trim(),
+    metrcTag: String(row.metrcTag || "").trim(),
     grams: row.grams != null ? String(row.grams) : "",
     bundles: row.bundles != null ? String(row.bundles) : "1",
     weightLbs: row.weightLbs != null ? String(row.weightLbs) : "",
   };
+}
+
+function metrcTagNeedsEntry(tag: unknown): boolean {
+  return isPlaceholderFreshFrozenMetrcTag(tag);
 }
 
 function parseNum(value: string): number | null {
@@ -300,6 +309,7 @@ export default function ReadyToTransferModal({
 
     const patch: {
       displayName?: string;
+      metrcTag?: string;
       grams?: number;
       bundles?: number;
       weightLbs?: number;
@@ -310,6 +320,10 @@ export default function ReadyToTransferModal({
       patch.displayName = name;
 
     if (row.materialType === "FRESH_FROZEN") {
+      const metrcTag = edits.metrcTag.trim();
+      const prevMetrc = String(row.metrcTag || "").trim();
+      if (metrcTag && metrcTag !== prevMetrc)
+        patch.metrcTag = metrcTag;
       const grams = parseNum(edits.grams);
       if (grams != null && grams >= 0 && grams !== Number(row.grams ?? 0))
         patch.grams = grams;
@@ -347,7 +361,13 @@ export default function ReadyToTransferModal({
     setFieldEdits((prev) => ({
       ...prev,
       [rowId]: {
-        ...(prev[rowId] || { displayName: "", grams: "", bundles: "1", weightLbs: "" }),
+        ...(prev[rowId] || {
+          displayName: "",
+          metrcTag: "",
+          grams: "",
+          bundles: "1",
+          weightLbs: "",
+        }),
         [key]: value,
       },
     }));
@@ -362,6 +382,17 @@ export default function ReadyToTransferModal({
     });
     if (missingStorage.length > 0) {
       setError("Assign a storage location to each selected item before transferring to Extraction.");
+      return;
+    }
+    const needsMetrc = rows.filter((r) => {
+      if (!ids.includes(r.id) || r.materialType !== "FRESH_FROZEN") return false;
+      const tag = fieldEdits[r.id]?.metrcTag ?? r.metrcTag;
+      return metrcTagNeedsEntry(tag);
+    });
+    if (needsMetrc.length > 0) {
+      setError(
+        "Enter a METRC tag on each selected Fresh Frozen bundle (split placeholders like BUNDLE-1 must be replaced).",
+      );
       return;
     }
     setBusy(true);
@@ -390,6 +421,8 @@ export default function ReadyToTransferModal({
     const isFf = row.materialType === "FRESH_FROZEN";
     const bundleCount = Math.max(0, Math.floor(Number(row.bundles) || 0));
     const isCombinedBundle = isFf && bundleCount > 1;
+    const metrcTag = edits.metrcTag.trim();
+    const metrcMissing = isFf && metrcTagNeedsEntry(metrcTag);
 
     return (
       <div
@@ -422,9 +455,27 @@ export default function ReadyToTransferModal({
                     onBlur={() => void savePackageDetails(row)}
                   />
                 </div>
-                {String(row.metrcTag || "").trim() ? (
-                  <div style={{ color: "#67e8f9", fontSize: 13, fontWeight: 700 }}>
-                    METRC {String(row.metrcTag || "").trim()}
+                {isFf ? (
+                  <div>
+                    <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
+                      METRC tag
+                      {metrcMissing ? (
+                        <span style={{ color: "#fbbf24", marginLeft: 6 }}>required</span>
+                      ) : null}
+                    </div>
+                    <input
+                      style={{
+                        ...inputStyle,
+                        borderColor: metrcMissing ? "#f59e0b" : "#475569",
+                      }}
+                      value={edits.metrcTag}
+                      disabled={busy || rowSaving}
+                      placeholder={
+                        metrcMissing ? "Enter METRC package tag…" : "METRC package tag"
+                      }
+                      onChange={(e) => updateFieldEdit(row.id, "metrcTag", e.target.value)}
+                      onBlur={() => void savePackageDetails(row)}
+                    />
                   </div>
                 ) : null}
                 <div style={{ color: "#94a3b8", fontSize: 13 }}>
@@ -812,9 +863,19 @@ function TransferRowDetails({
   return (
     <div>
       <div style={{ fontWeight: 800, color: "#f1f5f9" }}>{row.displayName}</div>
-      {String(row.metrcTag || "").trim() ? (
-        <div style={{ color: "#67e8f9", fontSize: 13, marginTop: 4, fontWeight: 700 }}>
-          METRC {String(row.metrcTag || "").trim()}
+      {row.materialType === "FRESH_FROZEN" ? (
+        <div
+          style={{
+            color: metrcTagNeedsEntry(row.metrcTag) ? "#fbbf24" : "#67e8f9",
+            fontSize: 13,
+            marginTop: 4,
+            fontWeight: 700,
+          }}
+        >
+          METRC{" "}
+          {metrcTagNeedsEntry(row.metrcTag)
+            ? "tag required (ask a manager to enter)"
+            : String(row.metrcTag || "").trim()}
         </div>
       ) : null}
       <div style={{ color: "#94a3b8", fontSize: 13, marginTop: 4 }}>

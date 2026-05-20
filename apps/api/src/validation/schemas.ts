@@ -761,6 +761,7 @@ export const cultivationTransferPatchSchema = z
         storageLocationId: z.string().trim().min(1).max(80).optional(),
         storageLocationName: z.string().trim().max(120).optional(),
         displayName: z.string().trim().min(1).max(200).optional(),
+        metrcTag: z.string().trim().min(1).max(80).optional(),
         grams: z.number().min(0).optional(),
         bundles: z.number().int().min(0).optional(),
         weightLbs: z.number().min(0).optional(),
@@ -769,6 +770,7 @@ export const cultivationTransferPatchSchema = z
         (data) =>
             data.storageLocationId !== undefined
             || data.displayName !== undefined
+            || data.metrcTag !== undefined
             || data.grams !== undefined
             || data.bundles !== undefined
             || data.weightLbs !== undefined,
