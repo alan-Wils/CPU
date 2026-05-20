@@ -35,6 +35,11 @@ import ExtractionAvailableSourceList from "@/components/extraction/ExtractionAva
 import ExtractionCreateSourcePickerRow from "@/components/extraction/ExtractionCreateSourcePickerRow";
 import type { ExtractionHarvestSourceGroup } from "@/lib/extractionSourceHarvestGroups";
 import {
+  formatCultivationTransferApiError,
+  returnSourceBatchToCultivation,
+  sourceBatchCanReturnToCultivation,
+} from "@/lib/cultivationTransferApi";
+import {
   loadExtractionBatches,
   createExtractionBatch,
   updateExtractionBatch,
@@ -525,6 +530,7 @@ export default function Extraction() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editSourcePackage, setEditSourcePackage] = useState<any>(null);
   const [editSourceSaving, setEditSourceSaving] = useState(false);
+  const [editReturnBusy, setEditReturnBusy] = useState(false);
   const [editSourceId, setEditSourceId] = useState("");
   const [editSourceName, setEditSourceName] = useState("");
   const [editSourceType, setEditSourceType] = useState("Fresh Frozen");
@@ -986,12 +992,34 @@ export default function Extraction() {
     return true;
   }
 
-  function forceRefresh() {
+  function forceRefresh(opts?: { skipBackendSave?: boolean }) {
     setRefresh((n) => n + 1);
 
-    saveBackendStore().catch((error) => {
-      console.error("Could not save backend store from Extraction page:", error);
+    if (!opts?.skipBackendSave) {
+      saveBackendStore().catch((error) => {
+        console.error("Could not save backend store from Extraction page:", error);
+      });
+    }
+  }
+
+  async function reloadExtractionSourceLists() {
+    const realSourceBatches = await loadSourceBatches({ summary: false });
+    const sourceList = filterSourceBatchesForExtractionAvailability(asArray(realSourceBatches));
+    s.sourceBatches = sourceList.filter((batch: any) => {
+      const isDbSourcePackage = isLikelyDatabaseSourcePackageId(batch?.id);
+      if (isDbSourcePackage) {
+        return !isCompletedSourceBatch(batch) && getSourceAvailable(batch) > 0;
+      }
+      return !isCompletedSourceBatch(batch) && getSourceAvailable(batch) > 0;
     });
+    s.completedSourceBatches = sourceList.filter((batch: any) => {
+      const isDbSourcePackage = isLikelyDatabaseSourcePackageId(batch?.id);
+      if (isDbSourcePackage) {
+        return isCompletedSourceBatch(batch);
+      }
+      return isCompletedSourceBatch(batch) || getSourceAvailable(batch) <= 0;
+    });
+    setRefresh((n) => n + 1);
   }
 
   function makeBlendSignatureFromBatch(batch: any) {
@@ -1940,6 +1968,68 @@ export default function Extraction() {
   function closeEditSourcePackage() {
     setEditSourcePackage(null);
     setEditSourceSaving(false);
+    setEditReturnBusy(false);
+  }
+
+  function cultivationReturnDestinationLabel(row: any): string {
+    const materialType = getSourceMaterialType(row);
+    const loc = String(row?.storageLocationName || "").trim();
+    if (loc) return loc;
+    return materialType === "dryTrim" ? "assigned dry room" : "assigned freezer";
+  }
+
+  function applyReturnToCultivationLocal(sourceBatchId: string) {
+    const id = String(sourceBatchId || "").trim();
+    if (!id) return;
+    s.sourceBatches = (s.sourceBatches || []).filter((b: any) => String(b?.id) !== id);
+    s.completedSourceBatches = (s.completedSourceBatches || []).filter(
+      (b: any) => String(b?.id) !== id,
+    );
+    s.productionBatches = (s.productionBatches || []).filter(
+      (b: any) => String(b?.id) !== id,
+    );
+  }
+
+  async function runReturnSourceToCultivation(row: any) {
+    if (!row) return;
+    if (!requireWriteAccess("return source packages to cultivation")) return;
+    const sourceBatchId = String(row.id || "").trim();
+    if (!sourceBatchId) return;
+    if (!sourceBatchCanReturnToCultivation(row)) {
+      showNotice(
+        "Cannot return",
+        "Only packages that were sent from Cultivation → Ready to Transfer can go back to storage.",
+      );
+      return;
+    }
+
+    const storageLabel = cultivationReturnDestinationLabel(row);
+    showConfirm(
+      "Return to cultivation storage?",
+      `Send ${sourcePackageDisplayId(row)} back to ${storageLabel}? It will show in Cultivation → Ready to Transfer and leave Extraction lists.`,
+      async () => {
+        setEditReturnBusy(true);
+        try {
+          await returnSourceBatchToCultivation(sourceBatchId);
+          applyReturnToCultivationLocal(sourceBatchId);
+          closeEditSourcePackage();
+          await reloadExtractionSourceLists();
+          showSyncMessageNotice(
+            `Package returned to cultivation (${storageLabel}). Open Ready to Transfer on Cultivation to verify.`,
+          );
+          forceRefresh({ skipBackendSave: true });
+        } catch (error) {
+          console.error("Could not return source to cultivation:", error);
+          showNotice(
+            "Return failed",
+            formatCultivationTransferApiError(error),
+            "If this package is on an extraction batch, remove it from that batch first.",
+          );
+        } finally {
+          setEditReturnBusy(false);
+        }
+      },
+    );
   }
 
   async function saveEditSourcePackage() {
@@ -4239,14 +4329,26 @@ export default function Extraction() {
                     {b.completedAt}
                   </div>
 
-                  {userCanDelete ? (
-                    <button
-                      style={deleteButtonStyle}
-                      onClick={() => deleteCompletedSourceBatch(b.id)}
-                    >
-                      Delete
-                    </button>
-                  ) : null}
+                  <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                    {userCanWrite ? (
+                      <button
+                        type="button"
+                        style={blueButtonStyle}
+                        onClick={() => openEditSourcePackage(b)}
+                      >
+                        Edit
+                      </button>
+                    ) : null}
+                    {userCanDelete ? (
+                      <button
+                        type="button"
+                        style={deleteButtonStyle}
+                        onClick={() => deleteCompletedSourceBatch(b.id)}
+                      >
+                        Delete
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ))
             )}
@@ -5548,6 +5650,33 @@ export default function Extraction() {
                 <option value="Used in Extraction">Used in Extraction</option>
               </select>
 
+              {sourceBatchCanReturnToCultivation(editSourcePackage) ? (
+                <div
+                  style={{
+                    marginBottom: 16,
+                    padding: 12,
+                    borderRadius: 8,
+                    border: "1px solid rgba(56, 189, 248, 0.45)",
+                    background: "rgba(15, 23, 42, 0.6)",
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>Return to cultivation</div>
+                  <p style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 10px" }}>
+                    Send this package back to{" "}
+                    <b>{cultivationReturnDestinationLabel(editSourcePackage)}</b>. It will appear in
+                    Cultivation under Ready to Transfer and be removed from Extraction lists.
+                  </p>
+                  <button
+                    type="button"
+                    style={blueButtonStyle}
+                    onClick={() => void runReturnSourceToCultivation(editSourcePackage)}
+                    disabled={editReturnBusy || editSourceSaving}
+                  >
+                    {editReturnBusy ? "Returning…" : "Send back to freezer / dry room"}
+                  </button>
+                </div>
+              ) : null}
+
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
                 <button type="button" style={buttonStyle} onClick={closeEditSourcePackage}>
                   Cancel
@@ -5556,9 +5685,9 @@ export default function Extraction() {
                   type="button"
                   style={greenButtonStyle}
                   onClick={() => void saveEditSourcePackage()}
-                  disabled={editSourceSaving}
+                  disabled={editSourceSaving || editReturnBusy}
                 >
-                  {editSourceSaving ? "Savingâ€¦" : "Save"}
+                  {editSourceSaving ? "Saving…" : "Save"}
                 </button>
               </div>
             </div>

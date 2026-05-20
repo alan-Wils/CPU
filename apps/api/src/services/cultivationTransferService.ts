@@ -561,4 +561,89 @@ export class CultivationTransferService {
 
         return added;
     }
+
+    /**
+     * Move a package from Extraction back to cultivation storage (freezer / dry room).
+     * Appears again in Cultivation → Ready to Transfer.
+     */
+    async returnToCultivationStorage(params: {
+        companyId: string;
+        actorUserId: string;
+        sourceBatchId: string;
+    }): Promise<CultivationTransferDto> {
+        const sourceBatchId = String(params.sourceBatchId || "").trim();
+        if (!sourceBatchId)
+            throw new AppError("sourceBatchId is required", 400);
+
+        const snap = await this.storeService.load(params.companyId);
+        const snapRecord = snap as Record<string, unknown>;
+        const extractionLists = [
+            ...(Array.isArray(snap.extractionBatches) ? snap.extractionBatches : []),
+            ...(Array.isArray(snapRecord.completedExtractionBatches)
+                ? snapRecord.completedExtractionBatches
+                : []),
+        ];
+        for (const raw of extractionLists) {
+            const batch = raw && typeof raw === "object" ? (raw as { id?: string; sources?: unknown }) : null;
+            if (!batch)
+                continue;
+            const sources = Array.isArray(batch.sources) ? batch.sources : [];
+            const hit = sources.some(
+                (s) => String((s as { sourceId?: string })?.sourceId || "").trim() === sourceBatchId,
+            );
+            if (hit) {
+                throw new AppError(
+                    `This package is on extraction batch ${String(batch.id || "").trim()}. Remove it from that batch before sending back to cultivation.`,
+                    409,
+                );
+            }
+        }
+
+        const transfer = await prisma.cultivationExtractionTransfer.findFirst({
+            where: {
+                companyId: params.companyId,
+                transferStatus: CultivationTransferStatus.TRANSFERRED_TO_EXTRACTION,
+                OR: [
+                    { extractionSourceBatchId: sourceBatchId },
+                    { harvestCode: sourceBatchId },
+                ],
+            },
+        });
+        if (!transfer)
+            throw new AppError(
+                "No cultivation transfer record found for this package (it may already be in a freezer or was created outside Ready to Transfer).",
+                404,
+            );
+
+        const updatedRow = await prisma.cultivationExtractionTransfer.update({
+            where: { id: transfer.id },
+            data: {
+                transferStatus: CultivationTransferStatus.STORED,
+                extractionSourceBatchId: null,
+                transferredAt: null,
+                transferredByUserId: null,
+            },
+        });
+
+        const sourceBatches = Array.isArray(snap.sourceBatches) ? snap.sourceBatches : [];
+        const completedSourceBatches = Array.isArray(snap.completedSourceBatches)
+            ? snap.completedSourceBatches
+            : [];
+        const productionBatches = Array.isArray(snap.productionBatches) ? snap.productionBatches : [];
+
+        await this.storeService.save(params.companyId, params.actorUserId, {
+            ...snap,
+            sourceBatches: sourceBatches.filter(
+                (b) => String((b as { id?: string })?.id || "").trim() !== sourceBatchId,
+            ),
+            completedSourceBatches: completedSourceBatches.filter(
+                (b) => String((b as { id?: string })?.id || "").trim() !== sourceBatchId,
+            ),
+            productionBatches: productionBatches.filter(
+                (b) => String((b as { id?: string })?.id || "").trim() !== sourceBatchId,
+            ),
+        });
+
+        return toDto(updatedRow);
+    }
 }

@@ -37,6 +37,7 @@ import { enrichLegacyPackagingRowsWithOilPool } from "../../lib/extractionOilPoo
 import { validate } from "../../middleware/validate.js";
 import {
     cultivationMotherPlantsPutSchema,
+    cultivationReturnToCultivationSchema,
     cultivationTransferBulkSchema,
     cultivationTransferCreateSchema,
     cultivationTransferIdParamSchema,
@@ -1537,5 +1538,22 @@ legacyCpuRouter.post(
         });
         invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
         res.json(out);
+    }),
+);
+
+legacyCpuRouter.post(
+    "/cultivation-extraction-transfers/return-to-cultivation",
+    requireRole(sourceBatchWriteRoles),
+    validate({ body: cultivationReturnToCultivationSchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const body = req.body as z.infer<typeof cultivationReturnToCultivationSchema>;
+        const row = await cultivationTransferService.returnToCultivationStorage({
+            companyId,
+            actorUserId: req.auth.userId,
+            sourceBatchId: body.sourceBatchId,
+        });
+        invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
+        res.json({ row });
     }),
 );

@@ -120,3 +120,24 @@ export async function transferCultivationExtractionToExtraction(
     body: { ids },
   });
 }
+
+/** True for legacy store packages that came from cultivation Ready to Transfer. */
+export function sourceBatchCanReturnToCultivation(row: unknown): boolean {
+  if (!row || typeof row !== "object") return false;
+  const r = row as Record<string, unknown>;
+  const id = String(r.id || "").trim();
+  if (!id || /^c[a-z0-9]{20,}$/i.test(id)) return false;
+  if (r.manualTransferToExtraction === true) return true;
+  if (String(r.cultivationTransferId || "").trim()) return true;
+  const t = String(r.type || r.name || "").toLowerCase();
+  return t.includes("fresh frozen") || t.includes("dry trim");
+}
+
+export async function returnSourceBatchToCultivation(sourceBatchId: string): Promise<{
+  row: CultivationExtractionTransferRow;
+}> {
+  return apiRequest("/api/cultivation-extraction-transfers/return-to-cultivation", {
+    method: "POST",
+    body: { sourceBatchId },
+  });
+}
