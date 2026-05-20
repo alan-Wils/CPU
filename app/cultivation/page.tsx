@@ -52,6 +52,7 @@ import {
   createFreshFrozenBundleTransfers,
 } from "@/lib/cultivationTransferApi";
 import {
+  fillAscendingMetrcTagsFromFirstBundle,
   freshFrozenBundleRowsFromHarvestSheet,
   newFreshFrozenBundleRow,
   parseFreshFrozenBundleGrams,
@@ -9939,9 +9940,28 @@ export default function Cultivation() {
                       >
                         <div style={{ color: "#e2e8f0", fontWeight: 700 }}>METRC package tags</div>
                         <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
-                          Enter one METRC tag per bundle. Grams are filled from total weight and bundle size
+                          Enter one METRC tag per bundle, or put the first tag on bundle #1 and use auto-fill.
+                          Grams are filled from total weight and bundle size
                           {freshFrozenGramsPerBundle > 0 ? " (partial last bundle allowed)" : ""}.
                         </p>
+                        {freshFrozenBundleRows.length > 1 ? (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                            <button
+                              type="button"
+                              style={{ ...buttonStyle, borderColor: "#38bdf8", color: "#38bdf8" }}
+                              onClick={() => {
+                                const result = fillAscendingMetrcTagsFromFirstBundle(freshFrozenBundleRows);
+                                if (!result.ok) {
+                                  showNotice("Auto-fill tags", result.message ?? "Could not auto-fill tags.");
+                                  return;
+                                }
+                                setFreshFrozenBundleRows(result.rows);
+                              }}
+                            >
+                              Auto-fill tags from #1
+                            </button>
+                          </div>
+                        ) : null}
                         {freshFrozenBundleRows.map((row, idx) => {
                           const rowGrams = parseFreshFrozenBundleGrams(row.grams);
                           const isPartial =

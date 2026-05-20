@@ -86,6 +86,55 @@ export function splitGramsByConfiguredBundleSize(
   return rows;
 }
 
+/** Increment trailing digits on a METRC-style tag (e.g. 1111 → 1112). */
+export function incrementMetrcPackageTag(baseTag: string, step: number): string {
+  const tag = String(baseTag ?? "").trim();
+  if (!tag || step < 0) return tag;
+  const match = tag.match(/^(.*?)(\d+)$/);
+  if (!match) return tag;
+  const prefix = match[1];
+  const digits = match[2];
+  const width = digits.length;
+  try {
+    const next = BigInt(digits) + BigInt(step);
+    if (next < 0n) return tag;
+    const nextStr = next.toString();
+    const padded = nextStr.length <= width ? nextStr.padStart(width, "0") : nextStr;
+    return `${prefix}${padded}`;
+  } catch {
+    return tag;
+  }
+}
+
+/** Fill bundle #2+ from bundle #1 tag in ascending order (1111, 1112, 1113, …). */
+export function fillAscendingMetrcTagsFromFirstBundle(rows: FreshFrozenBundleDraft[]): {
+  rows: FreshFrozenBundleDraft[];
+  ok: boolean;
+  message?: string;
+} {
+  if (rows.length === 0) {
+    return { rows, ok: false, message: "No bundles to fill." };
+  }
+  const seed = String(rows[0]?.metrcTag ?? "").trim();
+  if (!seed) {
+    return { rows, ok: false, message: "Enter a METRC tag on bundle #1 first." };
+  }
+  if (rows.length > 1 && incrementMetrcPackageTag(seed, 1) === seed) {
+    return {
+      rows,
+      ok: false,
+      message: "Bundle #1 tag must end in numbers (e.g. 1111) to auto-fill the rest.",
+    };
+  }
+  return {
+    rows: rows.map((row, idx) => ({
+      ...row,
+      metrcTag: idx === 0 ? seed : incrementMetrcPackageTag(seed, idx),
+    })),
+    ok: true,
+  };
+}
+
 export function splitGramsAcrossFreshFrozenBundles(
   totalGrams: number,
   count: number,
