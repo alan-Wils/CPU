@@ -103,3 +103,48 @@ export function groupSourceBatchesByHarvest(
 
   return groups;
 }
+
+export function findHarvestGroupForSourceId(
+  groups: ExtractionHarvestSourceGroup[],
+  sourceId: string,
+): ExtractionHarvestSourceGroup | null {
+  const id = String(sourceId ?? "").trim();
+  if (!id) return null;
+  return groups.find((g) => g.rows.some((r) => String(r.id ?? "").trim() === id)) ?? null;
+}
+
+export function findHarvestGroupKeyForSourceId(
+  groups: ExtractionHarvestSourceGroup[],
+  sourceId: string,
+): string {
+  return findHarvestGroupForSourceId(groups, sourceId)?.key ?? "";
+}
+
+/** Dropdown label for harvest batch (cultivation / parent group). */
+export function formatHarvestGroupSelectLabel(group: ExtractionHarvestSourceGroup): string {
+  const id = group.harvestBatchId || group.label.replace(/^Batch\s+/i, "");
+  const material = group.hasFreshFrozen ? "Fresh Frozen" : "Dry Trim";
+  const pkg =
+    group.packageCount === 1 ? "1 package" : `${group.packageCount} packages`;
+  let line = `${id} · ${material} · ${pkg} · ${group.totalLbs.toFixed(2)} lbs`;
+  if (group.hasFreshFrozen && group.totalBundles > 0) {
+    line += ` · ${group.totalBundles} bundle${group.totalBundles === 1 ? "" : "s"}`;
+  }
+  return line;
+}
+
+export function strainHintFromSourceRow(row: SourceBatchLike): string {
+  const name = String(row.name ?? "").trim();
+  if (!name) return "";
+  const ffIdx = name.indexOf(" FF");
+  if (ffIdx > 0) return name.slice(0, ffIdx).trim();
+  const trimIdx = name.toLowerCase().indexOf(" trim");
+  if (trimIdx > 0) return name.slice(0, trimIdx).trim();
+  return name.split("·")[0]?.trim() || name;
+}
+
+export function formatHarvestGroupSelectLabelWithStrain(group: ExtractionHarvestSourceGroup): string {
+  const strain = strainHintFromSourceRow(group.rows[0] ?? {});
+  const base = formatHarvestGroupSelectLabel(group);
+  return strain ? `${strain} — ${base}` : base;
+}

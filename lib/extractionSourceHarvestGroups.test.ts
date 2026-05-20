@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  findHarvestGroupKeyForSourceId,
+  formatHarvestGroupSelectLabelWithStrain,
   groupSourceBatchesByHarvest,
   harvestGroupKeyForSourceBatch,
   harvestGroupLabelForSourceBatch,
@@ -50,5 +52,15 @@ describe("extractionSourceHarvestGroups", () => {
       { id: "b", source: "BUKU.4.051926", harvestDate: "2026-05-20", type: "Fresh Frozen" },
     ];
     expect(groupSourceBatchesByHarvest(rows)).toHaveLength(2);
+  });
+
+  it("findHarvestGroupKeyForSourceId resolves package to group", () => {
+    const rows = [
+      { id: "ff-1", source: "BUKU.052026", parentGroupId: "g1", type: "Fresh Frozen", grams: 100 },
+      { id: "ff-2", source: "BUKU.052026", parentGroupId: "g1", type: "Fresh Frozen", grams: 200 },
+    ];
+    const groups = groupSourceBatchesByHarvest(rows);
+    expect(findHarvestGroupKeyForSourceId(groups, "ff-2")).toBe(groups[0].key);
+    expect(formatHarvestGroupSelectLabelWithStrain(groups[0])).toContain("BUKU.052026");
   });
 });
