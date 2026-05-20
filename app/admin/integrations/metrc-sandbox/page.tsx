@@ -1,0 +1,464 @@
+"use client";
+
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Nav from "@/components/Nav";
+import PageAccessGate from "@/components/PageAccessGate";
+import {
+  API_BASE_URL,
+  appendCompanyIdQuery,
+  getSelectedCompanyId,
+} from "@/lib/api";
+import { getAuthToken } from "@/lib/auth";
+import { formatCompanyTimestamp } from "@/lib/companyTimezone";
+import type { MetrcLastConnectionStatus } from "@/lib/metrcCompanyConfig";
+
+type IntegrationsMeta = {
+  metrcIntegrationEnabled?: boolean;
+  metrcStateCode?: string;
+  metrcEnvironment?: string;
+  metrcLicenseNumberDisplay?: string;
+  metrcFacilityName?: string;
+  metrcUsernameDisplay?: string;
+  hasMetrcVendorApiKey?: boolean;
+  hasMetrcUserApiKey?: boolean;
+  metrcLastConnectionStatus?: MetrcLastConnectionStatus | "";
+  metrcLastConnectionCheckedAt?: string | null;
+  metrcSandboxLastFacilitiesSyncAt?: string | null;
+  metrcSandboxLastStrainsSyncAt?: string | null;
+  metrcSandboxLastPackagesSyncAt?: string | null;
+  metrcSandboxLastFacilitiesCount?: number | null;
+  metrcSandboxLastStrainsCount?: number | null;
+  metrcSandboxLastPackagesCount?: number | null;
+  metrcSandboxLastRateLimitWarning?: string | null;
+};
+
+type PullResult = {
+  ok: boolean;
+  resource?: string;
+  count?: number;
+  syncedAt?: string;
+  sample?: { id?: unknown; name?: unknown; label?: unknown }[];
+  message?: string;
+  rateLimitWarning?: string | null;
+};
+
+type TestConnectionJson =
+  | { ok: true; connected: true; checkedAt: string; locationCount: number }
+  | { ok: false; connected: false; checkedAt: string; message: string; status: number };
+
+const styles: Record<string, React.CSSProperties> = {
+  page: { minHeight: "100vh", background: "#020617", color: "#e5e7eb", padding: 24 },
+  header: {
+    maxWidth: 960,
+    margin: "24px auto",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 16,
+    flexWrap: "wrap",
+  },
+  title: { fontSize: 28, fontWeight: 900, margin: 0 },
+  subtitle: { color: "#94a3b8", marginTop: 8, lineHeight: 1.5 },
+  card: {
+    maxWidth: 960,
+    margin: "16px auto",
+    background: "#0f172a",
+    border: "1px solid #334155",
+    borderRadius: 16,
+    padding: 20,
+  },
+  row: { display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 },
+  btn: {
+    border: "1px solid rgba(56, 189, 248, 0.45)",
+    background: "rgba(8, 47, 73, 0.55)",
+    color: "#bae6fd",
+    borderRadius: 10,
+    padding: "10px 14px",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  btnPrimary: {
+    border: "1px solid rgba(34, 197, 94, 0.5)",
+    background: "rgba(6, 78, 59, 0.45)",
+    color: "#bbf7d0",
+  },
+  metaGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+    gap: 12,
+    marginTop: 12,
+  },
+  metaItem: {
+    background: "rgba(2, 6, 23, 0.65)",
+    border: "1px solid #334155",
+    borderRadius: 10,
+    padding: 12,
+  },
+  metaLabel: { fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.06em" },
+  metaValue: { marginTop: 4, fontWeight: 700, color: "#e2e8f0" },
+  warn: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    border: "1px solid rgba(251, 191, 36, 0.45)",
+    background: "rgba(69, 26, 3, 0.35)",
+    color: "#fde68a",
+    fontSize: 13,
+  },
+  error: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    border: "1px solid rgba(248, 113, 113, 0.45)",
+    background: "rgba(69, 10, 10, 0.35)",
+    color: "#fecaca",
+    fontSize: 13,
+  },
+  ok: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    border: "1px solid rgba(34, 197, 94, 0.4)",
+    background: "rgba(6, 78, 59, 0.3)",
+    color: "#bbf7d0",
+    fontSize: 13,
+  },
+  sampleTable: { width: "100%", marginTop: 10, borderCollapse: "collapse", fontSize: 13 },
+};
+
+async function authFetch(path: string, init?: RequestInit) {
+  const token = getAuthToken();
+  const companyId = getSelectedCompanyId();
+  const url = `${API_BASE_URL}${appendCompanyIdQuery(path, companyId)}`;
+  return fetch(url, {
+    ...init,
+    headers: {
+      Accept: "application/json",
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers || {}),
+    },
+  });
+}
+
+export default function MetrcSandboxPage() {
+  const [meta, setMeta] = useState<IntegrationsMeta | null>(null);
+  const [loadingMeta, setLoadingMeta] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [statusMsg, setStatusMsg] = useState<{ tone: "ok" | "error" | "warn"; text: string } | null>(null);
+  const [lastPull, setLastPull] = useState<PullResult | null>(null);
+  const [testAt, setTestAt] = useState<string | null>(null);
+
+  const loadMeta = useCallback(async () => {
+    setLoadingMeta(true);
+    try {
+      const res = await authFetch("/api/config/integrations");
+      const json = res.ok ? ((await res.json()) as IntegrationsMeta) : null;
+      setMeta(json);
+    } catch {
+      setMeta(null);
+    } finally {
+      setLoadingMeta(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMeta();
+  }, [loadMeta]);
+
+  const connectionLabel = useMemo(() => {
+    if (busy === "test") return "Testing…";
+    const st = String(meta?.metrcLastConnectionStatus || "").trim();
+    if (st === "connected") return "Connected";
+    if (st === "not_connected") return "Not connected";
+    return "Unknown";
+  }, [meta?.metrcLastConnectionStatus, busy]);
+
+  async function runSetup() {
+    setBusy("setup");
+    setStatusMsg(null);
+    setLastPull(null);
+    try {
+      const res = await authFetch("/api/metrc/sandbox/setup", { method: "POST" });
+      const json = (await res.json()) as { ok?: boolean; message?: string; facilityName?: string };
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text: json.message || "Sandbox setup failed. Ensure vendor API key is saved in Company Config.",
+        });
+        return;
+      }
+      setStatusMsg({
+        tone: "ok",
+        text: `Sandbox facility provisioned${json.facilityName ? `: ${json.facilityName}` : ""}. User key stored server-side.`,
+      });
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Unable to reach the API server." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runTestConnection() {
+    setBusy("test");
+    setStatusMsg(null);
+    try {
+      const res = await authFetch("/api/metrc/test-connection");
+      const json = (await res.json()) as TestConnectionJson;
+      setTestAt(json.checkedAt || new Date().toISOString());
+      if (json.ok && "connected" in json && json.connected) {
+        setStatusMsg({
+          tone: "ok",
+          text: `Connection OK — ${json.locationCount} active location(s).`,
+        });
+      } else {
+        const fail = json as Extract<TestConnectionJson, { ok: false }>;
+        setStatusMsg({
+          tone: "error",
+          text: fail.message || "Connection test failed.",
+        });
+      }
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Connection test could not reach the API." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runPull(resource: "facilities" | "strains" | "packages") {
+    setBusy(resource);
+    setStatusMsg(null);
+    setLastPull(null);
+    try {
+      const res = await authFetch(`/api/metrc/${resource}`);
+      const json = (await res.json()) as PullResult;
+      setLastPull(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text: json.message || `Failed to pull ${resource}.`,
+        });
+        return;
+      }
+      const warn = json.rateLimitWarning ? ` ${json.rateLimitWarning}` : "";
+      setStatusMsg({
+        tone: json.rateLimitWarning ? "warn" : "ok",
+        text: `Pulled ${json.count ?? 0} ${resource}.${warn}`,
+      });
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: `Pull ${resource} failed — network error.` });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const rateWarn =
+    String(meta?.metrcSandboxLastRateLimitWarning || "").trim() ||
+    (lastPull?.rateLimitWarning ?? "");
+
+  return (
+    <PageAccessGate allowedRoles={["OWNER", "ADMIN", "OPERATIONS_MANAGER"]}>
+      <main style={styles.page}>
+        <Nav />
+        <header style={styles.header}>
+          <div>
+            <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>
+              <Link href="/admin" style={{ color: "#93c5fd", textDecoration: "none" }}>
+                Admin
+              </Link>
+              {" / "}
+              <Link href="/admin/config" style={{ color: "#93c5fd", textDecoration: "none" }}>
+                Integrations
+              </Link>
+              {" / METRC Sandbox"}
+            </p>
+            <h1 style={styles.title}>METRC Sandbox</h1>
+            <p style={styles.subtitle}>
+              Provision and test Colorado-style sandbox credentials. API keys never leave the server — only
+              status and counts are shown here.
+            </p>
+          </div>
+          <Link
+            href="/admin/config"
+            style={{
+              textDecoration: "none",
+              border: "1px solid #475569",
+              color: "#cbd5e1",
+              borderRadius: 10,
+              padding: "10px 14px",
+              fontWeight: 700,
+            }}
+          >
+            Company Config
+          </Link>
+        </header>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Facility info</h2>
+          {loadingMeta ? (
+            <p style={{ color: "#94a3b8", marginTop: 12 }}>Loading…</p>
+          ) : (
+            <div style={styles.metaGrid}>
+              <div style={styles.metaItem}>
+                <div style={styles.metaLabel}>Environment</div>
+                <div style={styles.metaValue}>{meta?.metrcEnvironment || "—"}</div>
+              </div>
+              <div style={styles.metaItem}>
+                <div style={styles.metaLabel}>State</div>
+                <div style={styles.metaValue}>{meta?.metrcStateCode || "—"}</div>
+              </div>
+              <div style={styles.metaItem}>
+                <div style={styles.metaLabel}>License</div>
+                <div style={styles.metaValue}>{meta?.metrcLicenseNumberDisplay || "—"}</div>
+              </div>
+              <div style={styles.metaItem}>
+                <div style={styles.metaLabel}>Facility name</div>
+                <div style={styles.metaValue}>{meta?.metrcFacilityName || "—"}</div>
+              </div>
+              <div style={styles.metaItem}>
+                <div style={styles.metaLabel}>Username</div>
+                <div style={styles.metaValue}>{meta?.metrcUsernameDisplay || "—"}</div>
+              </div>
+              <div style={styles.metaItem}>
+                <div style={styles.metaLabel}>Vendor key</div>
+                <div style={styles.metaValue}>
+                  {meta?.hasMetrcVendorApiKey ? "Configured" : "Missing — set in Company Config"}
+                </div>
+              </div>
+              <div style={styles.metaItem}>
+                <div style={styles.metaLabel}>User key</div>
+                <div style={styles.metaValue}>
+                  {meta?.hasMetrcUserApiKey ? "Configured (server)" : "Not provisioned"}
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>API status</h2>
+          <div style={styles.metaGrid}>
+            <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>Connection</div>
+              <div style={styles.metaValue}>{connectionLabel}</div>
+            </div>
+            <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>Last connection test</div>
+              <div style={styles.metaValue}>
+                {formatCompanyTimestamp(testAt || meta?.metrcLastConnectionCheckedAt || "") || "—"}
+              </div>
+            </div>
+            <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>Last strains sync</div>
+              <div style={styles.metaValue}>
+                {formatCompanyTimestamp(meta?.metrcSandboxLastStrainsSyncAt || "") || "—"}
+                {meta?.metrcSandboxLastStrainsCount != null
+                  ? ` (${meta.metrcSandboxLastStrainsCount})`
+                  : ""}
+              </div>
+            </div>
+            <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>Last packages sync</div>
+              <div style={styles.metaValue}>
+                {formatCompanyTimestamp(meta?.metrcSandboxLastPackagesSyncAt || "") || "—"}
+                {meta?.metrcSandboxLastPackagesCount != null
+                  ? ` (${meta.metrcSandboxLastPackagesCount})`
+                  : ""}
+              </div>
+            </div>
+          </div>
+          {rateWarn ? (
+            <div style={styles.warn}>
+              <strong>Rate limit:</strong> {rateWarn}
+            </div>
+          ) : null}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Actions</h2>
+          <div style={styles.row}>
+            <button
+              type="button"
+              style={{ ...styles.btn, ...styles.btnPrimary, opacity: busy ? 0.6 : 1 }}
+              disabled={!!busy}
+              onClick={() => void runSetup()}
+            >
+              {busy === "setup" ? "Generating…" : "Generate Sandbox Facility"}
+            </button>
+            <button
+              type="button"
+              style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+              disabled={!!busy}
+              onClick={() => void runTestConnection()}
+            >
+              {busy === "test" ? "Testing…" : "Test Connection"}
+            </button>
+            <button
+              type="button"
+              style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+              disabled={!!busy}
+              onClick={() => void runPull("facilities")}
+            >
+              {busy === "facilities" ? "Pulling…" : "Pull Facilities"}
+            </button>
+            <button
+              type="button"
+              style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+              disabled={!!busy}
+              onClick={() => void runPull("strains")}
+            >
+              {busy === "strains" ? "Pulling…" : "Pull Strains"}
+            </button>
+            <button
+              type="button"
+              style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+              disabled={!!busy}
+              onClick={() => void runPull("packages")}
+            >
+              {busy === "packages" ? "Pulling…" : "Pull Packages"}
+            </button>
+          </div>
+
+          {statusMsg ? (
+            <div
+              style={
+                statusMsg.tone === "error"
+                  ? styles.error
+                  : statusMsg.tone === "warn"
+                    ? styles.warn
+                    : styles.ok
+              }
+            >
+              {statusMsg.text}
+            </div>
+          ) : null}
+
+          {lastPull?.ok && lastPull.sample && lastPull.sample.length > 0 ? (
+            <table style={styles.sampleTable}>
+              <thead>
+                <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+                  <th style={{ padding: "6px 8px" }}>ID</th>
+                  <th style={{ padding: "6px 8px" }}>Name / label</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lastPull.sample.slice(0, 10).map((row, i) => (
+                  <tr key={i} style={{ borderTop: "1px solid #334155" }}>
+                    <td style={{ padding: "6px 8px" }}>{String(row.id ?? "—")}</td>
+                    <td style={{ padding: "6px 8px" }}>
+                      {String(row.name ?? row.label ?? "—")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : null}
+        </section>
+      </main>
+    </PageAccessGate>
+  );
+}

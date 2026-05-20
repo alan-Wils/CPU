@@ -37,6 +37,8 @@ import {
 } from "@/lib/companyTimezone";
 import {
   defaultMetrcCompanyConfig,
+  MASKED_METRC_SECRET_PLACEHOLDER,
+  prepareMetrcSecretsForSave,
   type MetrcCompanyConfig,
   type MetrcLastConnectionStatus,
   resolveMetrcApiBaseUrl,
@@ -267,10 +269,6 @@ type AppConfig = {
     notes: string;
   };
 };
-
-/** Shown on METRC / Autogrow secret fields when the API returned a scrubbed empty value but a credential exists server-side. */
-const MASKED_SECRET_FIELD_PLACEHOLDER =
-  "•••••••• configured — enter a new key only if you intend to replace the stored value.";
 
 const emptyConfig: AppConfig = {
   company: {
@@ -878,6 +876,9 @@ export default function ConfigPage() {
   const [displayTimezoneDraft, setDisplayTimezoneDraft] = useState("");
   const [timeZoneFilter, setTimeZoneFilter] = useState("");
   const [showMetrcSecrets, setShowMetrcSecrets] = useState(false);
+  /** True only after the operator edits a METRC key field this session (avoids autofill overwriting stored keys on save). */
+  const [metrcVendorKeyTouched, setMetrcVendorKeyTouched] = useState(false);
+  const [metrcUserKeyTouched, setMetrcUserKeyTouched] = useState(false);
   const [showAutogrowSecrets, setShowAutogrowSecrets] = useState(false);
   const [metrcConnectionTesting, setMetrcConnectionTesting] = useState(false);
   /** Last connection-test diagnostics (from API; keys never included). */
@@ -1108,6 +1109,8 @@ export default function ConfigPage() {
         },
       });
       syncCompanyTimezoneFromConfigPayload(raw);
+      setMetrcVendorKeyTouched(false);
+      setMetrcUserKeyTouched(false);
     } catch (error) {
       console.error(error);
       alert("Could not load config. Make sure you are logged in as admin.");
@@ -1170,6 +1173,13 @@ export default function ConfigPage() {
       const savePath = appendCompanyIdQuery("/api/config", companyId);
       const payload = {
         ...config,
+        company: {
+          ...config.company,
+          metrc: prepareMetrcSecretsForSave(config.company.metrc, {
+            vendorKey: metrcVendorKeyTouched,
+            userKey: metrcUserKeyTouched,
+          }),
+        },
         sales: {
           ...config.sales,
           inventoryPrintLogoMaxWidthPx: clampInventoryLogoMaxWidthPx(config.sales.inventoryPrintLogoMaxWidthPx),
@@ -1205,6 +1215,8 @@ export default function ConfigPage() {
 
       const data = await res.json();
       invalidateCompanyConfigClientCache();
+      setMetrcVendorKeyTouched(false);
+      setMetrcUserKeyTouched(false);
       setConfig({
         ...emptyConfig,
         ...data,
@@ -2260,6 +2272,21 @@ export default function ConfigPage() {
           }}
         >
           <h3 style={{ ...styles.subTitle, marginTop: 0 }}>METRC API (facility)</h3>
+          <Link
+            href="/admin/integrations/metrc-sandbox"
+            style={{
+              textDecoration: "none",
+              fontSize: 12,
+              fontWeight: 800,
+              border: "1px solid rgba(56, 189, 248, 0.4)",
+              background: "rgba(8, 47, 73, 0.45)",
+              color: "#7dd3fc",
+              borderRadius: "999px",
+              padding: "5px 12px",
+            }}
+          >
+            Sandbox tools →
+          </Link>
           <span
             title="METRC connection status (last test)"
             style={{
@@ -2615,6 +2642,10 @@ export default function ConfigPage() {
             API base URL override (optional)
             <input
               style={styles.input}
+              name="metrc-api-base-url-override"
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
               placeholder="https://api-co.metrc.com"
               value={config.company.metrc.apiBaseUrlOverride}
               onChange={(e) =>
@@ -2662,7 +2693,38 @@ export default function ConfigPage() {
         <div style={styles.grid}>
           <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
             Software vendor API key (optional — integrator key from METRC)
-            {showMetrcSecrets ? (
+            {config.company.metrc.hasMetrcVendorApiKey &&
+            !metrcVendorKeyTouched &&
+            !String(config.company.metrc.apiKey || "").trim() ? (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: "12px 14px",
+                  borderRadius: 10,
+                  border: "1px solid #166534",
+                  background: "rgba(6, 78, 59, 0.35)",
+                  color: "#bbf7d0",
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                Vendor API key is saved on the server (hidden for security). Use{" "}
+                <strong>Replace vendor key</strong> to enter a new value, then save config.
+                <div style={{ marginTop: 10 }}>
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.saveButton,
+                      fontSize: 13,
+                      padding: "8px 12px",
+                    }}
+                    onClick={() => setMetrcVendorKeyTouched(true)}
+                  >
+                    Replace vendor key
+                  </button>
+                </div>
+              </div>
+            ) : showMetrcSecrets ? (
               <textarea
                 style={{
                   ...styles.textarea,
@@ -2672,15 +2734,15 @@ export default function ConfigPage() {
                 }}
                 rows={3}
                 spellCheck={false}
+                name="metrc-vendor-api-key"
                 autoComplete="off"
-                placeholder={
-                  !String(config.company.metrc.apiKey || "").trim() &&
-                  config.company.metrc.hasMetrcVendorApiKey
-                    ? MASKED_SECRET_FIELD_PLACEHOLDER
-                    : ""
-                }
+                autoCorrect="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                placeholder="Paste METRC integrator (vendor) API key"
                 value={config.company.metrc.apiKey}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setMetrcVendorKeyTouched(true);
                   setConfig((prev) => ({
                     ...prev,
                     company: {
@@ -2690,22 +2752,22 @@ export default function ConfigPage() {
                         apiKey: e.target.value,
                       },
                     },
-                  }))
-                }
+                  }));
+                }}
               />
             ) : (
               <input
                 style={styles.input}
                 type="password"
-                autoComplete="off"
-                placeholder={
-                  !String(config.company.metrc.apiKey || "").trim() &&
-                  config.company.metrc.hasMetrcVendorApiKey
-                    ? MASKED_SECRET_FIELD_PLACEHOLDER
-                    : ""
-                }
+                name="metrc-vendor-api-key"
+                autoComplete="new-password"
+                autoCorrect="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                placeholder="Paste METRC integrator (vendor) API key"
                 value={config.company.metrc.apiKey}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setMetrcVendorKeyTouched(true);
                   setConfig((prev) => ({
                     ...prev,
                     company: {
@@ -2715,20 +2777,50 @@ export default function ConfigPage() {
                         apiKey: e.target.value,
                       },
                     },
-                  }))
-                }
+                  }));
+                }}
               />
             )}
             <span style={{ color: "#64748b", fontSize: 12, marginTop: 4, lineHeight: 1.45 }}>
               Vendor key may be required for official production integrations. Leave empty to test with only the
               facility user key (the server will try Bearer and other safe fallbacks on 401). Do not put passwords
-              here — only the integrator key from METRC.
+              here — only the integrator key from METRC. NexBatch login passwords are not METRC keys.
             </span>
           </label>
 
           <label style={{ ...styles.label, gridColumn: "1 / -1" }}>
             User API key (facility user key from METRC)
-            {showMetrcSecrets ? (
+            {config.company.metrc.hasMetrcUserApiKey &&
+            !metrcUserKeyTouched &&
+            !String(config.company.metrc.userKey || "").trim() ? (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: "12px 14px",
+                  borderRadius: 10,
+                  border: "1px solid #166534",
+                  background: "rgba(6, 78, 59, 0.35)",
+                  color: "#bbf7d0",
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                User API key is saved on the server (hidden for security).
+                <div style={{ marginTop: 10 }}>
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.saveButton,
+                      fontSize: 13,
+                      padding: "8px 12px",
+                    }}
+                    onClick={() => setMetrcUserKeyTouched(true)}
+                  >
+                    Replace user key
+                  </button>
+                </div>
+              </div>
+            ) : showMetrcSecrets ? (
               <textarea
                 style={{
                   ...styles.textarea,
@@ -2738,15 +2830,15 @@ export default function ConfigPage() {
                 }}
                 rows={4}
                 spellCheck={false}
+                name="metrc-user-api-key"
                 autoComplete="off"
-                placeholder={
-                  !String(config.company.metrc.userKey || "").trim() &&
-                  config.company.metrc.hasMetrcUserApiKey
-                    ? MASKED_SECRET_FIELD_PLACEHOLDER
-                    : ""
-                }
+                autoCorrect="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                placeholder="Paste METRC facility user API key"
                 value={config.company.metrc.userKey}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setMetrcUserKeyTouched(true);
                   setConfig((prev) => ({
                     ...prev,
                     company: {
@@ -2756,22 +2848,22 @@ export default function ConfigPage() {
                         userKey: e.target.value,
                       },
                     },
-                  }))
-                }
+                  }));
+                }}
               />
             ) : (
               <input
                 style={styles.input}
                 type="password"
-                autoComplete="off"
-                placeholder={
-                  !String(config.company.metrc.userKey || "").trim() &&
-                  config.company.metrc.hasMetrcUserApiKey
-                    ? MASKED_SECRET_FIELD_PLACEHOLDER
-                    : ""
-                }
+                name="metrc-user-api-key"
+                autoComplete="new-password"
+                autoCorrect="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                placeholder="Paste METRC facility user API key"
                 value={config.company.metrc.userKey}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setMetrcUserKeyTouched(true);
                   setConfig((prev) => ({
                     ...prev,
                     company: {
@@ -2781,8 +2873,8 @@ export default function ConfigPage() {
                         userKey: e.target.value,
                       },
                     },
-                  }))
-                }
+                  }));
+                }}
               />
             )}
             <span style={{ color: "#64748b", fontSize: 12, marginTop: 4, lineHeight: 1.45 }}>
@@ -4580,7 +4672,7 @@ export default function ConfigPage() {
               placeholder={
                 !String(config.company.climateControl.autogrow.apiKey || "").trim() &&
                 config.company.climateControl.autogrow.hasAutogrowApiKey
-                  ? MASKED_SECRET_FIELD_PLACEHOLDER
+                  ? MASKED_METRC_SECRET_PLACEHOLDER
                   : ""
               }
               value={config.company.climateControl.autogrow.apiKey}
@@ -4605,7 +4697,7 @@ export default function ConfigPage() {
               placeholder={
                 !String(config.company.climateControl.autogrow.apiKey || "").trim() &&
                 config.company.climateControl.autogrow.hasAutogrowApiKey
-                  ? MASKED_SECRET_FIELD_PLACEHOLDER
+                  ? MASKED_METRC_SECRET_PLACEHOLDER
                   : ""
               }
               value={config.company.climateControl.autogrow.apiKey}

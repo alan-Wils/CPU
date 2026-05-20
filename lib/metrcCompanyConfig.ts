@@ -10,8 +10,12 @@ export type MetrcLastConnectionStatus = "connected" | "not_connected";
 export type MetrcCompanyConfig = {
   /** Software vendor / integrator API key from METRC (optional; dual-key auth when set with user key). */
   apiKey: string;
+  /** Alias for `apiKey` in some METRC sandbox docs; stored as `apiKey` in DB. */
+  vendorApiKey?: string;
   /** User API key (facility operator key from METRC) */
   userKey: string;
+  /** METRC account username (from sandbox integrator setup; used for Basic auth). */
+  username: string;
   /** Facility license number (often required in URL paths) */
   licenseNumber: string;
   facilityName: string;
@@ -39,11 +43,55 @@ export type MetrcCompanyConfig = {
   /** Present when API scrubbed secrets; key still stored server-side. */
   hasMetrcVendorApiKey?: boolean;
   hasMetrcUserApiKey?: boolean;
+  /** Last sandbox/resource pull timestamps (ISO); no secrets. */
+  metrcSandboxLastFacilitiesSyncAt?: string;
+  metrcSandboxLastStrainsSyncAt?: string;
+  metrcSandboxLastItemsSyncAt?: string;
+  metrcSandboxLastRoomsSyncAt?: string;
+  metrcSandboxLastPackagesSyncAt?: string;
+  metrcSandboxLastFacilitiesCount?: number | null;
+  metrcSandboxLastStrainsCount?: number | null;
+  metrcSandboxLastItemsCount?: number | null;
+  metrcSandboxLastRoomsCount?: number | null;
+  metrcSandboxLastPackagesCount?: number | null;
+  /** Non-secret warning from last METRC client rate-limit / retry behavior. */
+  metrcSandboxLastRateLimitWarning?: string;
 };
+
+/** Shown when GET scrubbed secrets but a credential still exists server-side. */
+export const MASKED_METRC_SECRET_PLACEHOLDER =
+  "•••••••• configured — enter a new key only if you intend to replace the stored value.";
+
+export function isMaskedMetrcSecretPlaceholder(value: unknown): boolean {
+  const s = String(value ?? "").trim();
+  if (!s) return false;
+  if (s === MASKED_METRC_SECRET_PLACEHOLDER) return true;
+  return s.includes("configured — enter a new key");
+}
+
+/**
+ * Prepare `company.metrc` for PUT /api/config — never send scrubbed `has*` flags;
+ * omit blank keys unless the operator edited that field (server merge preserves stored secrets).
+ */
+export function prepareMetrcSecretsForSave(
+  metrc: MetrcCompanyConfig,
+  touched: { vendorKey?: boolean; userKey?: boolean },
+): MetrcCompanyConfig {
+  const m = { ...metrc };
+  delete m.hasMetrcVendorApiKey;
+  delete m.hasMetrcUserApiKey;
+  delete m.vendorApiKey;
+  if (isMaskedMetrcSecretPlaceholder(m.apiKey)) m.apiKey = "";
+  if (isMaskedMetrcSecretPlaceholder(m.userKey)) m.userKey = "";
+  if (!touched.vendorKey) m.apiKey = "";
+  if (!touched.userKey) m.userKey = "";
+  return m;
+}
 
 export const defaultMetrcCompanyConfig: MetrcCompanyConfig = {
   apiKey: "",
   userKey: "",
+  username: "",
   licenseNumber: "",
   facilityName: "",
   notes: "",

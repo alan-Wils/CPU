@@ -33,6 +33,7 @@
     "@types/express": "latest",
     "@types/jsonwebtoken": "latest",
     "@types/node": "latest",
+    "axios": "^1.16.1",
     "bcryptjs": "latest",
     "compression": "^1.8.1",
     "cors": "latest",

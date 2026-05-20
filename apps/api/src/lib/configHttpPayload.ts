@@ -12,6 +12,13 @@ function nonEmptyString(v: unknown): boolean {
     return typeof v === "string" && v.trim().length > 0;
 }
 
+/** Treat UI placeholder copy as empty so saves do not overwrite stored METRC keys. */
+function isEmptyOrMaskedMetrcSecret(value: unknown): boolean {
+    if (!nonEmptyString(value)) return true;
+    const s = String(value).trim();
+    return s.includes("configured — enter a new key");
+}
+
 /**
  * Strip METRC / Autogrow secrets from `company` for any HTTP response.
  * Adds `hasMetrcVendorApiKey`, `hasMetrcUserApiKey`, `hasAutogrowApiKey` for admin UI placeholders.
@@ -25,10 +32,12 @@ export function scrubCompanySecretsForHttp(company: unknown): unknown {
         ? (c.metrc as Record<string, unknown>)
         : null;
     if (metrc) {
-        const hasVendor = nonEmptyString(metrc.apiKey);
-        const hasUser = nonEmptyString(metrc.userKey);
+        const hasVendor = nonEmptyString(metrc.apiKey) || nonEmptyString(metrc.vendorApiKey);
+        const hasUser = nonEmptyString(metrc.userKey) || nonEmptyString(metrc.userApiKey);
         metrc.apiKey = "";
         metrc.userKey = "";
+        if ("vendorApiKey" in metrc) metrc.vendorApiKey = "";
+        if ("userApiKey" in metrc) metrc.userApiKey = "";
         metrc.hasMetrcVendorApiKey = hasVendor;
         metrc.hasMetrcUserApiKey = hasUser;
         c.metrc = metrc;
@@ -78,12 +87,18 @@ export function mergeCompanyValuePreserveMaskedSecrets(prevCompany: unknown, inc
         ? (out.metrc as Record<string, unknown>)
         : null;
     if (nextMet && prevMet) {
-        if (!nonEmptyString(nextMet.apiKey) && nonEmptyString(prevMet.apiKey))
+        if (isEmptyOrMaskedMetrcSecret(nextMet.apiKey) && nonEmptyString(prevMet.apiKey))
             nextMet.apiKey = prevMet.apiKey;
-        if (!nonEmptyString(nextMet.userKey) && nonEmptyString(prevMet.userKey))
+        if (isEmptyOrMaskedMetrcSecret(nextMet.apiKey) && nonEmptyString(prevMet.vendorApiKey))
+            nextMet.apiKey = prevMet.vendorApiKey;
+        if (isEmptyOrMaskedMetrcSecret(nextMet.userKey) && nonEmptyString(prevMet.userKey))
             nextMet.userKey = prevMet.userKey;
+        if (isEmptyOrMaskedMetrcSecret(nextMet.userKey) && nonEmptyString(prevMet.userApiKey))
+            nextMet.userKey = prevMet.userApiKey;
         delete nextMet.hasMetrcVendorApiKey;
         delete nextMet.hasMetrcUserApiKey;
+        delete nextMet.vendorApiKey;
+        delete nextMet.userApiKey;
     }
     const prevCc = prev.climateControl && typeof prev.climateControl === "object" && !Array.isArray(prev.climateControl)
         ? (prev.climateControl as Record<string, unknown>)
@@ -348,8 +363,23 @@ export function buildIntegrationsMetaView(merged: MergedCompanyConfig): Record<s
         metrcStateCode: String(metrc.stateCode ?? "").trim(),
         metrcEnvironment: String(metrc.environment ?? ""),
         metrcLicenseNumberDisplay: String(metrc.licenseNumber ?? "").trim(),
-        hasMetrcVendorApiKey: nonEmptyString(metrc.apiKey),
-        hasMetrcUserApiKey: nonEmptyString(metrc.userKey),
+        metrcFacilityName: String(metrc.facilityName ?? "").trim(),
+        metrcUsernameDisplay: String(metrc.username ?? "").trim(),
+        hasMetrcVendorApiKey: nonEmptyString(metrc.apiKey) || nonEmptyString(metrc.vendorApiKey),
+        hasMetrcUserApiKey: nonEmptyString(metrc.userKey) || nonEmptyString(metrc.userApiKey),
+        metrcLastConnectionStatus: String(metrc.metrcLastConnectionStatus ?? "").trim(),
+        metrcLastConnectionCheckedAt: String(metrc.metrcLastConnectionCheckedAt ?? "").trim() || null,
+        metrcSandboxLastFacilitiesSyncAt: String(metrc.metrcSandboxLastFacilitiesSyncAt ?? "").trim() || null,
+        metrcSandboxLastStrainsSyncAt: String(metrc.metrcSandboxLastStrainsSyncAt ?? "").trim() || null,
+        metrcSandboxLastItemsSyncAt: String(metrc.metrcSandboxLastItemsSyncAt ?? "").trim() || null,
+        metrcSandboxLastRoomsSyncAt: String(metrc.metrcSandboxLastRoomsSyncAt ?? "").trim() || null,
+        metrcSandboxLastPackagesSyncAt: String(metrc.metrcSandboxLastPackagesSyncAt ?? "").trim() || null,
+        metrcSandboxLastFacilitiesCount: metrc.metrcSandboxLastFacilitiesCount ?? null,
+        metrcSandboxLastStrainsCount: metrc.metrcSandboxLastStrainsCount ?? null,
+        metrcSandboxLastItemsCount: metrc.metrcSandboxLastItemsCount ?? null,
+        metrcSandboxLastRoomsCount: metrc.metrcSandboxLastRoomsCount ?? null,
+        metrcSandboxLastPackagesCount: metrc.metrcSandboxLastPackagesCount ?? null,
+        metrcSandboxLastRateLimitWarning: String(metrc.metrcSandboxLastRateLimitWarning ?? "").trim() || null,
         autogrowIntegrationEnabled: Boolean(ag.integrationEnabled),
         hasAutogrowApiKey: nonEmptyString(ag.apiKey),
     };
