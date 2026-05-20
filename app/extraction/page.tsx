@@ -28,6 +28,12 @@ import {
   isCompletedSourceBatch,
 } from "@/lib/sourceBatchActive";
 import {
+  applyExtractionBatchSourceRestorePlansToStore,
+  buildExtractionBatchSourceRestorePlans,
+  extractionBatchCanRestoreSources,
+  formatRestoreSourcesSummary,
+} from "@/lib/restoreExtractionBatchSources";
+import {
   EMPTY_WEIGHT_DASH,
   formatOptionalGrams,
   gramsInputToLbs,
@@ -3803,7 +3809,37 @@ export default function Extraction() {
     }
   }
 
-  async function runDeleteBatch(batchId: string) {
+  async function restoreSourcesForDeletedExtractionBatch(batch: any): Promise<boolean> {
+    const storeSlice = {
+      sourceBatches: s.sourceBatches,
+      completedSourceBatches: s.completedSourceBatches,
+      productionBatches: s.productionBatches,
+    };
+    const plans = buildExtractionBatchSourceRestorePlans(batch, storeSlice);
+    if (!plans.length) return true;
+
+    try {
+      await Promise.all(
+        plans.map((plan) => updateSourceBatch(plan.sourceId, plan.updatedSource)),
+      );
+    } catch (error) {
+      console.error("Could not restore source batches after extraction cancel:", error);
+      const msg =
+        error instanceof Error
+          ? error.message
+          : "The server rejected restoring source material.";
+      showNotice("Could not return source material", msg);
+      return false;
+    }
+
+    applyExtractionBatchSourceRestorePlansToStore(storeSlice, plans);
+    return true;
+  }
+
+  async function runDeleteBatch(
+    batchId: string,
+    options?: { restoreSources?: boolean },
+  ) {
     const deletedExtraction = s.extractionBatches.find((b: any) => b.id === batchId) || null;
     const deletedPackaging =
       s.packagingBatches.find(
@@ -3813,6 +3849,26 @@ export default function Extraction() {
           String(b.sourceBatchId || "") === batchId
       ) || null;
     const loggedBy = getLoggedBy();
+    const shouldRestoreSources =
+      options?.restoreSources === true &&
+      deletedExtraction &&
+      extractionBatchCanRestoreSources(
+        deletedExtraction,
+        s.extractionBatches,
+        s.completedExtractionBatches || [],
+      );
+
+    let restoreSummary = "";
+    if (shouldRestoreSources && deletedExtraction) {
+      restoreSummary = formatRestoreSourcesSummary(
+        buildExtractionBatchSourceRestorePlans(deletedExtraction, {
+          sourceBatches: s.sourceBatches,
+          completedSourceBatches: s.completedSourceBatches,
+        }),
+      );
+      const restored = await restoreSourcesForDeletedExtractionBatch(deletedExtraction);
+      if (!restored) return;
+    }
 
     try {
       await deleteExtractionBatchRecord(batchId);
@@ -3829,14 +3885,18 @@ export default function Extraction() {
     saveLog({
       area: "Audit",
       batch: batchId,
-      task: "Deleted Record",
-      output: `Deleted extraction batch: ${batchId}${deletedPackaging ? " and linked packaging batch" : ""}`,
+      task: shouldRestoreSources ? "Cancelled Extraction Batch" : "Deleted Record",
+      output: shouldRestoreSources
+        ? `Cancelled extraction batch ${batchId} and returned source material: ${restoreSummary || "n/a"}`
+        : `Deleted extraction batch: ${batchId}${deletedPackaging ? " and linked packaging batch" : ""}`,
       loggedBy,
       data: {
         deletedRecordType: "Extraction Batch",
         deletedRecordId: batchId,
         deletedExtraction,
         deletedPackaging,
+        sourcesRestored: shouldRestoreSources,
+        restoreSummary: restoreSummary || undefined,
         deletedBy: loggedBy,
         deletedAtIso: new Date().toISOString(),
       },
@@ -3876,17 +3936,69 @@ export default function Extraction() {
     forceRefresh();
   }
 
+  function cancelExtractionBatch(batchId: string) {
+    if (!requireWriteAccess("cancel extraction batches")) return;
+
+    const batch = s.extractionBatches.find((b: any) => b.id === batchId);
+    if (!batch) {
+      showNotice("Batch Not Found", `Extraction batch ${batchId} was not found.`);
+      return;
+    }
+
+    if (
+      !extractionBatchCanRestoreSources(
+        batch,
+        s.extractionBatches,
+        s.completedExtractionBatches || [],
+      )
+    ) {
+      showNotice(
+        "Cannot cancel this batch",
+        "This batch already has logged tasks or is merged with another batch.",
+        "Use Undo Combine for merged batches, or ask a manager to delete if work has already been logged.",
+      );
+      return;
+    }
+
+    const restoreSummary = formatRestoreSourcesSummary(
+      buildExtractionBatchSourceRestorePlans(batch, {
+        sourceBatches: s.sourceBatches,
+        completedSourceBatches: s.completedSourceBatches,
+      }),
+    );
+
+    showConfirm(
+      "Cancel batch & return material",
+      `Remove batch "${batchId}" and put the source packages back in Available?`,
+      () => runDeleteBatch(batchId, { restoreSources: true }),
+      restoreSummary
+        ? `Material to return: ${restoreSummary}`
+        : "Source amounts from this batch will be restored on the server and in this browser.",
+    );
+  }
+
   function deleteBatch(batchId: string) {
     if (!userCanDelete) {
       showNotice("Access Denied", "Only Manager, Admin, or Owner users can delete records.");
       return;
     }
 
+    const batch = s.extractionBatches.find((b: any) => b.id === batchId) || null;
+    const canRestore =
+      batch &&
+      extractionBatchCanRestoreSources(
+        batch,
+        s.extractionBatches,
+        s.completedExtractionBatches || [],
+      );
+
     showConfirm(
       "Delete Extraction Batch",
       `Delete extraction batch "${batchId}"?`,
-      () => runDeleteBatch(batchId),
-      "The server will refuse the delete if any packaging lots are still linked to this run in the database—delete or unlink those first."
+      () => runDeleteBatch(batchId, { restoreSources: Boolean(canRestore) }),
+      canRestore
+        ? "Source material used by this batch will be returned to Available."
+        : "The server will refuse the delete if any packaging lots are still linked to this run in the database—delete or unlink those first. Source material will not be restored automatically because this batch has logged tasks or merge history.",
     );
   }
 
@@ -4379,10 +4491,36 @@ export default function Extraction() {
                     </button>
                   ) : null}
 
+                  {userCanWrite &&
+                  extractionBatchCanRestoreSources(
+                    b,
+                    s.extractionBatches,
+                    s.completedExtractionBatches || [],
+                  ) ? (
+                    <button
+                      type="button"
+                      style={{
+                        ...buttonStyle,
+                        background: "#7c2d12",
+                        border: "1px solid #ea580c",
+                        color: "white",
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        cancelExtractionBatch(b.id);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  ) : null}
+
                   {userCanDelete ? (
                     <button
                       style={deleteButtonStyle}
-                      onClick={() => deleteBatch(b.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteBatch(b.id);
+                      }}
                     >
                       Delete
                     </button>
