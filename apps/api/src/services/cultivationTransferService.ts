@@ -355,6 +355,125 @@ export class CultivationTransferService {
         });
     }
 
+    /** Split one aggregated FF row (bundles > 1) into separate one-bundle transfer rows. */
+    async splitIntoIndividualBundles(params: {
+        companyId: string;
+        id: string;
+        bundleCount?: number;
+    }): Promise<CultivationTransferDto[]> {
+        const existing = await prisma.cultivationExtractionTransfer.findFirst({
+            where: { id: params.id, companyId: params.companyId },
+        });
+        if (!existing)
+            throw new AppError("Transfer record not found", 404);
+        if (existing.materialType !== CultivationTransferMaterialType.FRESH_FROZEN)
+            throw new AppError("Only Fresh Frozen packages can be split into bundles", 400);
+        if (existing.transferStatus === CultivationTransferStatus.TRANSFERRED_TO_EXTRACTION)
+            throw new AppError("Cannot split after transfer to extraction", 400);
+
+        const storedBundles = Math.max(0, Math.floor(Number(existing.bundles) || 0));
+        const bundleCount = Math.max(
+            2,
+            Math.floor(Number(params.bundleCount) || storedBundles || 0),
+        );
+        if (storedBundles <= 1 && bundleCount < 2)
+            throw new AppError("This package is already a single bundle", 400);
+
+        const totalGrams = Math.max(0, Number(existing.grams ?? 0));
+        if (totalGrams <= 0)
+            throw new AppError("Cannot split: total grams must be greater than zero", 400);
+
+        const gramsEach = this.splitGramsEvenly(totalGrams, bundleCount);
+        const parentGroupId =
+            String(existing.parentGroupId || "").trim()
+            || `ff-${existing.sourceCultivationBatchId}-${Date.now()}`;
+        const basePayload =
+            existing.materialPayload && typeof existing.materialPayload === "object"
+                ? (existing.materialPayload as Record<string, unknown>)
+                : {};
+        const baseTag = String(existing.metrcTag || "BUNDLE").trim();
+        const nameBase = String(existing.displayName || "Fresh Frozen")
+            .replace(/\s*FF\s*·.*$/i, "")
+            .trim();
+
+        const out: CultivationTransferDto[] = [];
+
+        for (let i = 0; i < bundleCount; i++) {
+            const grams = gramsEach[i];
+            const weightLbs = +(grams / 453.592).toFixed(4);
+            const tag = `${baseTag}-${i + 1}`;
+            const harvestCode = `${parentGroupId}-${tag.replace(/\s+/g, "")}`;
+            const displayName = nameBase ? `${nameBase} FF · ${tag}` : `${existing.displayName} · ${tag}`;
+            const payload = {
+                ...basePayload,
+                splitFromTransferId: existing.id,
+                bundleIndex: i + 1,
+                bundleCount,
+                splitAt: new Date().toISOString(),
+            };
+
+            if (i === 0) {
+                const row = await prisma.cultivationExtractionTransfer.update({
+                    where: { id: existing.id },
+                    data: {
+                        grams,
+                        weightLbs,
+                        bundles: 1,
+                        metrcTag: tag,
+                        harvestCode,
+                        displayName,
+                        parentGroupId,
+                        materialPayload: payload as Prisma.InputJsonValue,
+                    },
+                });
+                out.push(toDto(row));
+                continue;
+            }
+
+            const row = await prisma.cultivationExtractionTransfer.create({
+                data: {
+                    companyId: params.companyId,
+                    materialType: CultivationTransferMaterialType.FRESH_FROZEN,
+                    transferStatus: existing.transferStatus,
+                    sourceCultivationBatchId: existing.sourceCultivationBatchId,
+                    sourceDryFlowerBatchId: existing.sourceDryFlowerBatchId,
+                    sourceEventType: existing.sourceEventType,
+                    sourceEventAt: existing.sourceEventAt,
+                    storageType: existing.storageType,
+                    storageLocationId: existing.storageLocationId,
+                    storageLocationName: existing.storageLocationName,
+                    displayName,
+                    harvestCode,
+                    metrcTag: tag,
+                    parentGroupId,
+                    weightLbs,
+                    grams,
+                    bundles: 1,
+                    materialPayload: payload as Prisma.InputJsonValue,
+                },
+            });
+            out.push(toDto(row));
+        }
+
+        return out;
+    }
+
+    private splitGramsEvenly(totalGrams: number, count: number): number[] {
+        const total = Math.max(0, Math.round(totalGrams * 100) / 100);
+        const n = Math.max(1, Math.floor(count));
+        const base = Math.floor((total / n) * 100) / 100;
+        const amounts = Array.from({ length: n }, () => base);
+        let remainder = Math.round((total - base * n) * 100) / 100;
+        let idx = n - 1;
+        while (remainder > 0.009 && idx >= 0) {
+            const add = Math.min(0.01, remainder);
+            amounts[idx] = Math.round((amounts[idx] + add) * 100) / 100;
+            remainder = Math.round((remainder - add) * 100) / 100;
+            idx--;
+        }
+        return amounts;
+    }
+
     async patchTransfer(params: {
         companyId: string;
         id: string;

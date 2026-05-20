@@ -779,6 +779,10 @@ export const cultivationTransferBulkSchema = z.object({
     ids: z.array(z.string().cuid()).min(1).max(50),
 });
 
+export const cultivationTransferSplitBundlesSchema = z.object({
+    bundleCount: z.number().int().min(2).max(100).optional(),
+});
+
 export const cultivationReturnToCultivationSchema = z.object({
     sourceBatchId: z.string().trim().min(1).max(120),
     storePackage: z.record(z.string(), z.unknown()).optional(),

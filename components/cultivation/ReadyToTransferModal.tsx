@@ -5,6 +5,7 @@ import {
   formatCultivationTransferApiError,
   listCultivationExtractionTransfers,
   patchCultivationExtractionTransfer,
+  splitTransferIntoBundles,
   transferCultivationExtractionToExtraction,
   type CultivationExtractionTransferRow,
   type CultivationTransferMaterialType,
@@ -29,7 +30,10 @@ type Props = {
   open: boolean;
   onClose: () => void;
   onTransferred?: (result: CultivationTransferToExtractionResult) => void;
+  /** Select packages and transfer to Extraction (cultivation write roles). */
   canWrite: boolean;
+  /** Edit fields, change freezer, and split combined bundles (Manager tier and up). */
+  canManageRows: boolean;
 };
 
 type PackageFieldEdits = {
@@ -103,7 +107,13 @@ function parseNum(value: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export default function ReadyToTransferModal({ open, onClose, onTransferred, canWrite }: Props) {
+export default function ReadyToTransferModal({
+  open,
+  onClose,
+  onTransferred,
+  canWrite,
+  canManageRows,
+}: Props) {
   const [rows, setRows] = useState<CultivationExtractionTransferRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -256,6 +266,30 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
     }
   }
 
+  async function splitRowIntoBundles(row: CultivationExtractionTransferRow) {
+    const edits = fieldEdits[row.id];
+    const parsed = edits ? parseNum(edits.bundles) : null;
+    const bundleCount =
+      parsed != null && parsed >= 2
+        ? Math.floor(parsed)
+        : Math.max(2, Math.floor(Number(row.bundles) || 0));
+    if (bundleCount < 2) {
+      setError("Enter at least 2 bundles before splitting, or use a row that already has multiple bundles.");
+      return;
+    }
+
+    setSavingRowId(row.id);
+    setError("");
+    try {
+      await splitTransferIntoBundles(row.id, { bundleCount });
+      await loadRows();
+    } catch (e) {
+      setError(formatCultivationTransferApiError(e));
+    } finally {
+      setSavingRowId(null);
+    }
+  }
+
   async function savePackageDetails(row: CultivationExtractionTransferRow) {
     const edits = fieldEdits[row.id];
     if (!edits) return;
@@ -275,9 +309,12 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
       const grams = parseNum(edits.grams);
       if (grams != null && grams >= 0 && grams !== Number(row.grams ?? 0))
         patch.grams = grams;
-      const bundles = parseNum(edits.bundles);
-      if (bundles != null && bundles >= 0 && Math.floor(bundles) !== Number(row.bundles ?? 0))
-        patch.bundles = Math.floor(bundles);
+      const bundleCount = Math.floor(Number(row.bundles) || 0);
+      if (bundleCount <= 1) {
+        const bundles = parseNum(edits.bundles);
+        if (bundles != null && bundles >= 0 && Math.floor(bundles) !== bundleCount)
+          patch.bundles = Math.floor(bundles);
+      }
     } else {
       const lbs = parseNum(edits.weightLbs);
       if (lbs != null && lbs >= 0 && lbs !== Number(row.weightLbs ?? 0))
@@ -347,6 +384,8 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
     const edits = fieldEdits[row.id] ?? fieldEditsFromRow(row);
     const rowSaving = savingRowId === row.id;
     const isFf = row.materialType === "FRESH_FROZEN";
+    const bundleCount = Math.max(0, Math.floor(Number(row.bundles) || 0));
+    const isCombinedBundle = isFf && bundleCount > 1;
 
     return (
       <div
@@ -367,7 +406,7 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
             style={{ marginTop: 4 }}
           />
           <div style={{ flex: 1, minWidth: 0 }}>
-            {canWrite ? (
+            {canManageRows ? (
               <div style={{ display: "grid", gap: 8 }}>
                 <div>
                   <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Name</div>
@@ -414,14 +453,29 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
                         <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
                           Bundles
                         </div>
-                        <input
-                          style={inputStyle}
-                          value={edits.bundles}
-                          disabled={busy || rowSaving}
-                          inputMode="numeric"
-                          onChange={(e) => updateFieldEdit(row.id, "bundles", e.target.value)}
-                          onBlur={() => void savePackageDetails(row)}
-                        />
+                        {isCombinedBundle ? (
+                          <div
+                            style={{
+                              padding: "8px 10px",
+                              borderRadius: 8,
+                              border: "1px solid #f59e0b",
+                              background: "rgba(120, 53, 15, 0.35)",
+                              color: "#fcd34d",
+                              fontSize: 13,
+                            }}
+                          >
+                            {bundleCount} bundles combined on this row
+                          </div>
+                        ) : (
+                          <input
+                            style={inputStyle}
+                            value={edits.bundles}
+                            disabled={busy || rowSaving}
+                            inputMode="numeric"
+                            onChange={(e) => updateFieldEdit(row.id, "bundles", e.target.value)}
+                            onBlur={() => void savePackageDetails(row)}
+                          />
+                        )}
                       </div>
                     </>
                   ) : (
@@ -447,7 +501,7 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
             )}
           </div>
         </label>
-        {canWrite ? (
+        {canManageRows ? (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, marginLeft: 24 }}>
             <select
               value={currentLoc}
@@ -466,11 +520,32 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
                 </option>
               ))}
             </select>
+            {isCombinedBundle ? (
+              <button
+                type="button"
+                disabled={busy || rowSaving}
+                onClick={() => void splitRowIntoBundles(row)}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #f59e0b",
+                  background: "#78350f",
+                  color: "#fef3c7",
+                  fontWeight: 700,
+                }}
+              >
+                Split into {bundleCount} bundles
+              </button>
+            ) : null}
             {rowSaving ? (
               <span style={{ color: "#94a3b8", fontSize: 13, alignSelf: "center" }}>
                 Saving…
               </span>
             ) : null}
+          </div>
+        ) : canWrite && currentLoc ? (
+          <div style={{ marginTop: 8, marginLeft: 24, color: "#64748b", fontSize: 12 }}>
+            Storage: {locs.find((l) => l.id === currentLoc)?.name || row.storageLocationName || "—"}
           </div>
         ) : null}
       </div>
@@ -599,7 +674,8 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
           <div>
             <h2 style={{ margin: 0, color: "#f8fafc" }}>Ready to Transfer</h2>
             <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 14 }}>
-              Packages are grouped by freezer or dry room. Edits save automatically.
+              Packages are grouped by freezer or dry room. Managers can edit and split bundles;
+              others can select and transfer.
             </p>
           </div>
           <button type="button" onClick={onClose} style={closeBtnStyle}>

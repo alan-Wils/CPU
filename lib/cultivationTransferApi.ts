@@ -116,6 +116,19 @@ export async function patchCultivationExtractionTransfer(
   });
 }
 
+export async function splitTransferIntoBundles(
+  id: string,
+  body?: { bundleCount?: number },
+): Promise<{ rows: CultivationExtractionTransferRow[] }> {
+  return apiRequest(
+    `/api/cultivation-extraction-transfers/${encodeURIComponent(id)}/split-bundles`,
+    {
+      method: "POST",
+      body: body ?? {},
+    },
+  );
+}
+
 export async function transferCultivationExtractionToExtraction(
   ids: string[],
 ): Promise<{ rows: CultivationExtractionTransferRow[]; sourceBatches: unknown[] }> {

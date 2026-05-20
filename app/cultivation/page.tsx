@@ -12245,6 +12245,7 @@ export default function Cultivation() {
         open={showReadyToTransferModal}
         onClose={() => setShowReadyToTransferModal(false)}
         canWrite={canWriteRecords}
+        canManageRows={hasMinimumRole("MANAGER")}
         onTransferred={(result) => {
           void refreshSourceBatchesAfterExtractionTransfer(result).then(() => {
             forceRefresh({ skipBackendSave: true });

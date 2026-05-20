@@ -44,6 +44,7 @@ import {
     cultivationTransferIdParamSchema,
     cultivationTransferListQuerySchema,
     cultivationTransferPatchSchema,
+    cultivationTransferSplitBundlesSchema,
     freshFrozenBundlesHarvestSchema,
 } from "../../validation/schemas.js";
 import { CultivationTransferService } from "../../services/cultivationTransferService.js";
@@ -1217,6 +1218,13 @@ const sourceBatchWriteRoles = [
     "CULTIVATION_SPECIALIST",
     "EXTRACTION_SPECIALIST"
 ];
+/** Manager-tier: edit / split Ready to Transfer packages (not just select + transfer). */
+const cultivationTransferManagerRoles = [
+    "OWNER",
+    "ADMIN",
+    "OPERATIONS_MANAGER",
+    "MANAGER",
+];
 legacyCpuRouter.get("/source-batches", asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const summary =
@@ -1518,7 +1526,7 @@ legacyCpuRouter.post(
 
 legacyCpuRouter.patch(
     "/cultivation-extraction-transfers/:id",
-    requireRole(sourceBatchWriteRoles),
+    requireRole(cultivationTransferManagerRoles),
     validate({ params: cultivationTransferIdParamSchema, body: cultivationTransferPatchSchema }),
     asyncHandler(async (req, res) => {
         const companyId = getScopedCompanyId(req);
@@ -1535,6 +1543,26 @@ legacyCpuRouter.patch(
             weightLbs: body.weightLbs,
         });
         res.json(row);
+    }),
+);
+
+legacyCpuRouter.post(
+    "/cultivation-extraction-transfers/:id/split-bundles",
+    requireRole(cultivationTransferManagerRoles),
+    validate({
+        params: cultivationTransferIdParamSchema,
+        body: cultivationTransferSplitBundlesSchema,
+    }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const { id } = req.params;
+        const body = req.body as z.infer<typeof cultivationTransferSplitBundlesSchema>;
+        const rows = await cultivationTransferService.splitIntoIndividualBundles({
+            companyId,
+            id,
+            bundleCount: body.bundleCount,
+        });
+        res.json({ rows });
     }),
 );
 
