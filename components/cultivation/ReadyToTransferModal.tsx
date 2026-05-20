@@ -56,9 +56,8 @@ function materialLabel(t: CultivationTransferMaterialType): string {
 function formatWeight(row: CultivationExtractionTransferRow): string {
   if (row.materialType === "FRESH_FROZEN") {
     const g = Number(row.grams ?? 0);
-    const b = Number(row.bundles ?? 0);
     const lbs = row.weightLbs != null ? Number(row.weightLbs) : g / 453.592;
-    return `${b} bundles · ${g.toLocaleString()} g · ${lbs.toFixed(2)} lbs`;
+    return `${g.toLocaleString()} g · ${lbs.toFixed(2)} lbs`;
   }
   return `${Number(row.weightLbs ?? 0).toFixed(2)} lbs`;
 }
@@ -117,6 +116,8 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
         row.sourceCultivationBatchId,
         row.sourceDryFlowerBatchId,
         row.harvestCode,
+        row.metrcTag,
+        row.parentGroupId,
         row.storageLocationName,
       ]
         .filter(Boolean)
@@ -325,7 +326,7 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
           }}
         >
           <input
-            placeholder="Search batch, name, code…"
+            placeholder="Search batch, METRC tag, name…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{
@@ -428,6 +429,11 @@ function TransferRowDetails({ row }: { row: CultivationExtractionTransferRow }) 
   return (
     <div>
       <div style={{ fontWeight: 800, color: "#f1f5f9" }}>{row.displayName}</div>
+      {String(row.metrcTag || "").trim() ? (
+        <div style={{ color: "#67e8f9", fontSize: 13, marginTop: 4, fontWeight: 700 }}>
+          METRC {String(row.metrcTag || "").trim()}
+        </div>
+      ) : null}
       <div style={{ color: "#94a3b8", fontSize: 13, marginTop: 4 }}>
         {materialLabel(row.materialType)} · Batch {row.sourceCultivationBatchId}
         {row.sourceDryFlowerBatchId ? ` · Dry ${row.sourceDryFlowerBatchId}` : ""}

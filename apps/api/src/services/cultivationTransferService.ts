@@ -41,6 +41,8 @@ export type CultivationTransferDto = {
     storageLocationName: string | null;
     displayName: string;
     harvestCode: string | null;
+    metrcTag: string | null;
+    parentGroupId: string | null;
     weightLbs: number | null;
     grams: number | null;
     bundles: number | null;
@@ -65,6 +67,8 @@ function toDto(row: {
     storageLocationName: string | null;
     displayName: string;
     harvestCode: string | null;
+    metrcTag: string | null;
+    parentGroupId: string | null;
     weightLbs: number | null;
     grams: number | null;
     bundles: number | null;
@@ -88,6 +92,8 @@ function toDto(row: {
         storageLocationName: row.storageLocationName,
         displayName: row.displayName,
         harvestCode: row.harvestCode,
+        metrcTag: row.metrcTag,
+        parentGroupId: row.parentGroupId,
         weightLbs: row.weightLbs,
         grams: row.grams,
         bundles: row.bundles,
@@ -176,6 +182,8 @@ export class CultivationTransferService {
                 { sourceDryFlowerBatchId: { contains: batchQ } },
                 { displayName: { contains: batchQ } },
                 { harvestCode: { contains: batchQ } },
+                { metrcTag: { contains: batchQ } },
+                { parentGroupId: { contains: batchQ } },
             ];
         }
         const locId = String(params.storageLocationId ?? "").trim();
@@ -199,6 +207,8 @@ export class CultivationTransferService {
         sourceEventAt?: Date | string | null;
         displayName: string;
         harvestCode?: string | null;
+        metrcTag?: string | null;
+        parentGroupId?: string | null;
         weightLbs?: number | null;
         grams?: number | null;
         bundles?: number | null;
@@ -253,6 +263,8 @@ export class CultivationTransferService {
                 storageLocationName: hasStorage ? storage.storageLocationName : null,
                 displayName,
                 harvestCode: params.harvestCode ? String(params.harvestCode).trim() : null,
+                metrcTag: params.metrcTag ? String(params.metrcTag).trim() : null,
+                parentGroupId: params.parentGroupId ? String(params.parentGroupId).trim() : null,
                 weightLbs: params.weightLbs ?? null,
                 grams: params.grams ?? null,
                 bundles: params.bundles != null ? Math.trunc(Number(params.bundles) || 0) : null,
@@ -262,6 +274,69 @@ export class CultivationTransferService {
             },
         });
         return toDto(row);
+    }
+
+    async createFreshFrozenBundles(params: {
+        companyId: string;
+        sourceCultivationBatchId: string;
+        strainName: string;
+        parentGroupId?: string | null;
+        sourceEventAt?: Date | string | null;
+        harvestDate?: string | null;
+        plantsHarvested?: number | null;
+        sharedPayload?: Record<string, unknown> | null;
+        bundles: Array<{
+            metrcTag: string;
+            grams: number;
+            storageLocationId?: string | null;
+            storageLocationName?: string | null;
+        }>;
+    }): Promise<CultivationTransferDto[]> {
+        const parentGroupId =
+            String(params.parentGroupId || "").trim() ||
+            `ff-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        const harvestYmd =
+            String(params.harvestDate || "").trim() ||
+            new Date().toISOString().slice(0, 10);
+        const out: CultivationTransferDto[] = [];
+        for (let i = 0; i < params.bundles.length; i++) {
+            const b = params.bundles[i];
+            const tag = String(b.metrcTag || "").trim();
+            const grams = Number(b.grams);
+            if (!tag)
+                throw new AppError(`Bundle ${i + 1}: METRC tag is required`, 400);
+            if (!Number.isFinite(grams) || grams <= 0)
+                throw new AppError(`Bundle ${i + 1}: grams must be greater than zero`, 400);
+            const weightLbs = +(grams / 453.592).toFixed(4);
+            const harvestCode = `${parentGroupId}-${tag.replace(/\s+/g, "")}`;
+            const row = await this.create({
+                companyId: params.companyId,
+                materialType: CultivationTransferMaterialType.FRESH_FROZEN,
+                sourceCultivationBatchId: params.sourceCultivationBatchId,
+                sourceEventType: "HARVEST_FRESH_FROZEN_BUNDLE",
+                sourceEventAt: params.sourceEventAt,
+                displayName: `${params.strainName} FF · ${tag}`,
+                harvestCode,
+                metrcTag: tag,
+                parentGroupId,
+                weightLbs,
+                grams,
+                bundles: 1,
+                materialPayload: {
+                    ...(params.sharedPayload || {}),
+                    harvestDate: harvestYmd,
+                    bundleIndex: i + 1,
+                    bundleCount: params.bundles.length,
+                    ...(params.plantsHarvested != null
+                        ? { plantsHarvested: params.plantsHarvested }
+                        : {}),
+                },
+                storageLocationId: b.storageLocationId,
+                storageLocationName: b.storageLocationName,
+            });
+            out.push(row);
+        }
+        return out;
     }
 
     async updateStorage(params: {
@@ -310,9 +385,10 @@ export class CultivationTransferService {
             transfer.materialType === CultivationTransferMaterialType.FRESH_FROZEN
                 ? "Fresh Frozen"
                 : "Dry Trim";
+        const tag = String(transfer.metrcTag || "").trim();
         const base: Record<string, unknown> = {
             id: sourceBatchId,
-            name: transfer.displayName,
+            name: tag ? `${transfer.displayName}` : transfer.displayName,
             type,
             source: transfer.sourceCultivationBatchId,
             status: "Available for Extraction",
@@ -322,6 +398,8 @@ export class CultivationTransferService {
             storageType: transfer.storageType,
             storageLocationId: transfer.storageLocationId,
             storageLocationName: transfer.storageLocationName,
+            ...(tag ? { metrcTag: tag, plantTag: tag } : {}),
+            ...(transfer.parentGroupId ? { parentGroupId: transfer.parentGroupId } : {}),
         };
         if (transfer.harvestCode) {
             base.harvestCode = transfer.harvestCode;
@@ -340,7 +418,10 @@ export class CultivationTransferService {
             base.grams = grams;
             base.bundles = bundles;
             base.weightLbs = weightLbs;
-            base.amount = `${bundles} bundles / ${grams} grams`;
+            base.amount =
+                bundles <= 1 && tag
+                    ? `1 bundle (${tag}) / ${grams} g`
+                    : `${bundles} bundles / ${grams} grams`;
             if (payload.plantsHarvested != null)
                 base.plantsHarvested = payload.plantsHarvested;
             if (payload.harvestSheetSnapshot)

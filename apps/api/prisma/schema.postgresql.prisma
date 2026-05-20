@@ -776,6 +776,10 @@ model CultivationExtractionTransfer {
 
   displayName  String
   harvestCode  String?
+  /// METRC package tag when material is a single Fresh Frozen bundle.
+  metrcTag       String?
+  /// Links multiple bundle transfers from one harvest event.
+  parentGroupId  String?
   weightLbs    Float?
   grams        Float?
   bundles      Int?
@@ -791,6 +795,7 @@ model CultivationExtractionTransfer {
   @@index([companyId, transferStatus])
   @@index([companyId, materialType])
   @@index([companyId, sourceCultivationBatchId])
+  @@index([companyId, parentGroupId])
 }
 
 model CultivationBatch {

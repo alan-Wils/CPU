@@ -724,12 +724,32 @@ export const cultivationTransferCreateSchema = z.object({
     sourceEventAt: z.string().datetime().optional(),
     displayName: z.string().trim().min(1).max(200),
     harvestCode: z.string().trim().max(120).optional(),
+    metrcTag: z.string().trim().max(80).optional(),
+    parentGroupId: z.string().trim().max(80).optional(),
     weightLbs: z.coerce.number().finite().min(0).optional(),
     grams: z.coerce.number().finite().min(0).optional(),
     bundles: z.coerce.number().int().min(0).optional(),
     materialPayload: z.record(z.string(), z.unknown()).optional(),
     storageLocationId: z.string().trim().max(80).optional(),
     storageLocationName: z.string().trim().max(120).optional(),
+});
+
+export const freshFrozenBundleHarvestItemSchema = z.object({
+    metrcTag: z.string().trim().min(1).max(80),
+    grams: z.coerce.number().finite().positive(),
+    storageLocationId: z.string().trim().max(80).optional(),
+    storageLocationName: z.string().trim().max(120).optional(),
+});
+
+export const freshFrozenBundlesHarvestSchema = z.object({
+    sourceCultivationBatchId: z.string().min(1).max(120),
+    sourceEventAt: z.string().datetime().optional(),
+    parentGroupId: z.string().trim().max(80).optional(),
+    strainName: z.string().trim().min(1).max(120),
+    harvestDate: z.string().trim().max(20).optional(),
+    plantsHarvested: z.coerce.number().finite().min(0).optional(),
+    materialPayload: z.record(z.string(), z.unknown()).optional(),
+    bundles: z.array(freshFrozenBundleHarvestItemSchema).min(1).max(100),
 });
 
 export const cultivationTransferIdParamSchema = z.object({

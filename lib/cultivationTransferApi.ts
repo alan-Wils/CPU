@@ -35,6 +35,8 @@ export type CultivationExtractionTransferRow = {
   storageLocationName: string | null;
   displayName: string;
   harvestCode: string | null;
+  metrcTag: string | null;
+  parentGroupId: string | null;
   weightLbs: number | null;
   grams: number | null;
   bundles: number | null;
@@ -68,6 +70,29 @@ export async function listCultivationExtractionTransfers(
 
 export async function createCultivationExtractionTransfer(body: Record<string, unknown>) {
   return apiRequest("/api/cultivation-extraction-transfers", {
+    method: "POST",
+    body,
+  });
+}
+
+export type FreshFrozenBundleHarvestInput = {
+  metrcTag: string;
+  grams: number;
+  storageLocationId?: string;
+  storageLocationName?: string;
+};
+
+export async function createFreshFrozenBundleTransfers(body: {
+  sourceCultivationBatchId: string;
+  strainName: string;
+  parentGroupId?: string;
+  sourceEventAt?: string;
+  harvestDate?: string;
+  plantsHarvested?: number;
+  materialPayload?: Record<string, unknown>;
+  bundles: FreshFrozenBundleHarvestInput[];
+}): Promise<{ rows: CultivationExtractionTransferRow[]; parentGroupId: string | null }> {
+  return apiRequest("/api/cultivation-extraction-transfers/fresh-frozen-bundles", {
     method: "POST",
     body,
   });

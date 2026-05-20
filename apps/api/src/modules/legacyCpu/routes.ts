@@ -38,6 +38,7 @@ import {
     cultivationTransferIdParamSchema,
     cultivationTransferListQuerySchema,
     cultivationTransferPatchSchema,
+    freshFrozenBundlesHarvestSchema,
 } from "../../validation/schemas.js";
 import { CultivationTransferService } from "../../services/cultivationTransferService.js";
 import { CultivationTransferMaterialType } from "@prisma/client";
@@ -1441,6 +1442,28 @@ legacyCpuRouter.get(
 );
 
 legacyCpuRouter.post(
+    "/cultivation-extraction-transfers/fresh-frozen-bundles",
+    requireRole(sourceBatchWriteRoles),
+    validate({ body: freshFrozenBundlesHarvestSchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const body = req.body as z.infer<typeof freshFrozenBundlesHarvestSchema>;
+        const rows = await cultivationTransferService.createFreshFrozenBundles({
+            companyId,
+            sourceCultivationBatchId: body.sourceCultivationBatchId,
+            strainName: body.strainName,
+            parentGroupId: body.parentGroupId,
+            sourceEventAt: body.sourceEventAt,
+            harvestDate: body.harvestDate,
+            plantsHarvested: body.plantsHarvested,
+            sharedPayload: body.materialPayload,
+            bundles: body.bundles,
+        });
+        res.status(201).json({ rows, parentGroupId: rows[0]?.parentGroupId ?? null });
+    }),
+);
+
+legacyCpuRouter.post(
     "/cultivation-extraction-transfers",
     requireRole(sourceBatchWriteRoles),
     validate({ body: cultivationTransferCreateSchema }),
@@ -1456,6 +1479,8 @@ legacyCpuRouter.post(
             sourceEventAt: body.sourceEventAt,
             displayName: body.displayName,
             harvestCode: body.harvestCode,
+            metrcTag: body.metrcTag,
+            parentGroupId: body.parentGroupId,
             weightLbs: body.weightLbs,
             grams: body.grams,
             bundles: body.bundles,

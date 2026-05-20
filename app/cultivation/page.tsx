@@ -47,7 +47,18 @@ import { fetchCachedCompanyConfig } from "@/lib/configClient";
 import { extractHarvestSheet, uploadHarvestSheetImage } from "@/lib/harvestSheetApi";
 import { fileToBase64DataUrl, shrinkHarvestSheetImageFileIfLarge } from "@/lib/shrinkHarvestSheetImage";
 import { loadSourceBatches } from "@/lib/sourceBatchApi";
-import { createCultivationExtractionTransfer } from "@/lib/cultivationTransferApi";
+import {
+  createCultivationExtractionTransfer,
+  createFreshFrozenBundleTransfers,
+} from "@/lib/cultivationTransferApi";
+import {
+  freshFrozenBundleRowsFromHarvestSheet,
+  newFreshFrozenBundleRow,
+  parseFreshFrozenBundleGrams,
+  splitGramsAcrossFreshFrozenBundles,
+  sumFreshFrozenBundleGrams,
+  type FreshFrozenBundleDraft,
+} from "@/lib/freshFrozenBundleRows";
 import ReadyToTransferModal from "@/components/cultivation/ReadyToTransferModal";
 import { makeChainBatchCode, makeDateCode } from "@/lib/batchChainCodes";
 import { isActiveExtractionSourceBatch } from "@/lib/sourceBatchActive";
@@ -89,10 +100,7 @@ import {
   normalizeLaborBreaksFromConfig,
 } from "@/lib/laborBreaks";
 import { sortStrainsAlphabetically } from "@/lib/sortStrainsAlphabetically";
-import {
-  bundlesFromTotalGrams,
-  parseFreshFrozenGramsPerBundle,
-} from "@/lib/freshFrozenPackageDisplay";
+import { parseFreshFrozenGramsPerBundle } from "@/lib/freshFrozenPackageDisplay";
 import {
   DRY_FLOWER_UI_STAGE_META,
   DRY_FLOWER_UI_STAGE_ORDER,
@@ -1139,7 +1147,9 @@ export default function Cultivation() {
 
   const [harvestType, setHarvestType] = useState("A Grade Flower");
   const [harvestPlants, setHarvestPlants] = useState("");
-  const [freshFrozenBundles, setFreshFrozenBundles] = useState("");
+  const [freshFrozenBundleRows, setFreshFrozenBundleRows] = useState<FreshFrozenBundleDraft[]>([
+    newFreshFrozenBundleRow(),
+  ]);
   const [freshFrozenGrams, setFreshFrozenGrams] = useState("");
   /** Company config: grams per FF bundle (0 = manual bundles only). Kept in ref for async harvest-sheet extract. */
   const [freshFrozenGramsPerBundle, setFreshFrozenGramsPerBundle] = useState(0);
@@ -3100,10 +3110,18 @@ export default function Cultivation() {
     ];
 
     if (harvestType === "Fresh Frozen") {
-      requiredHarvestFields.push(
-        { label: "Bundles", value: freshFrozenBundles, positive: true },
-        { label: "Grams", value: freshFrozenGrams, positive: true }
+      const validBundles = freshFrozenBundleRows.filter(
+        (row) =>
+          String(row.metrcTag || "").trim() &&
+          parseFreshFrozenBundleGrams(row.grams) > 0,
       );
+      if (validBundles.length === 0) {
+        showNotice(
+          "Fresh Frozen bundles required",
+          "Add at least one bundle with a METRC tag and grams. Each bundle can be stored in a different freezer when you transfer to Extraction.",
+        );
+        return;
+      }
     }
 
     if (!requireFieldsStyled(requiredHarvestFields)) {
@@ -3246,7 +3264,13 @@ export default function Cultivation() {
         num(selectedBatch.plantsHarvestedFreshFrozen) + plantsHarvested;
       recomputeDryCanopyForCultivationBatch(selectedBatch, cultivationRooms);
 
-      const gramsParsed = num(String(freshFrozenGrams ?? "").replace(/,/g, ""));
+      const bundleInputs = freshFrozenBundleRows
+        .map((row) => ({
+          metrcTag: String(row.metrcTag || "").trim(),
+          grams: parseFreshFrozenBundleGrams(row.grams),
+        }))
+        .filter((row) => row.metrcTag && row.grams > 0);
+      const gramsParsed = sumFreshFrozenBundleGrams(freshFrozenBundleRows);
       const aiSumGrams =
         harvestSheetSnapshot &&
         typeof harvestSheetSnapshot.harvestSheetSumGramsFromRows === "number"
@@ -3259,47 +3283,37 @@ export default function Cultivation() {
         gramsParsed >= 0
           ? Math.max(0, Math.round((Number(aiSumGrams) - gramsParsed) * 100) / 100)
           : null;
-      const weightLbs = +(gramsParsed / 453.592).toFixed(4);
       const harvestYmd = new Date().toISOString().slice(0, 10);
-      const harvestAcronym =
-        String(selectedBatch.acronym || "").trim().toUpperCase() ||
-        getConfigStrainAcronym(getCloneStrainByName(selectedBatch.strain, configStrains) || {}) ||
-        "BATCH";
-      const harvestPackageId = makeChainBatchCode(
-        harvestAcronym,
-        harvestYmd,
-        collectHarvestSourcePackageIds(s),
-      );
-      let transferId = harvestPackageId;
+      let parentGroupId: string | null = null;
+      let transferIds: string[] = [];
       try {
-        const created = await createCultivationExtractionTransfer({
-          materialType: "FRESH_FROZEN",
+        const created = await createFreshFrozenBundleTransfers({
           sourceCultivationBatchId: selectedBatch.id,
-          sourceEventType: "HARVEST_FRESH_FROZEN",
+          strainName: String(selectedBatch.strain || "Batch"),
           sourceEventAt: new Date().toISOString(),
-          displayName: `${selectedBatch.strain} Fresh Frozen`,
-          harvestCode: harvestPackageId,
-          weightLbs,
-          grams: gramsParsed,
-          bundles: Number(freshFrozenBundles || 0),
+          harvestDate: harvestYmd,
+          plantsHarvested,
           materialPayload: {
-            harvestDate: harvestYmd,
-            plantsHarvested,
             ...(harvestSheetSnapshot ? { harvestSheetSnapshot } : {}),
             ...(stemWasteGrams != null ? { freshFrozenStemWasteGrams: stemWasteGrams } : {}),
             ...(aiSumGrams != null ? { harvestSheetAiTotalGrams: aiSumGrams } : {}),
           },
+          bundles: bundleInputs,
         });
-        if (created?.id) transferId = String(created.id);
+        parentGroupId = created?.parentGroupId ?? null;
+        transferIds = Array.isArray(created?.rows)
+          ? created.rows.map((r) => String(r.id)).filter(Boolean)
+          : [];
       } catch (error) {
-        console.error("Could not stage Fresh Frozen for transfer:", error);
+        console.error("Could not stage Fresh Frozen bundles for transfer:", error);
         showNotice(
           "Backend Save Warning",
-          "Fresh Frozen was harvested, but it could not be added to Ready to Transfer.",
+          "Fresh Frozen was harvested, but bundles could not be added to Ready to Transfer.",
           "Check the backend terminal for errors."
         );
       }
 
+      const tagSummary = bundleInputs.map((b) => b.metrcTag).join(", ");
       s.logs.unshift(withLoggedBy({
         area: "Cultivation",
         batch: selectedBatch.id,
@@ -3308,9 +3322,9 @@ export default function Cultivation() {
         minutes: lab.minutesStr,
         totalLaborMinutes: lab.totalLaborMinutes,
         output: `${plantsHarvested} plants harvested for Fresh Frozen | ${
-          freshFrozenBundles || 0
-        } bundles / ${freshFrozenGrams || 0} grams — ready for transfer (not sent to Extraction yet)${lab.outputSuffix}${leftoverLogSuffix}`,
-        linkedBatch: transferId,
+          bundleInputs.length
+        } bundle(s) / ${gramsParsed} g — tags: ${tagSummary} — assign freezers in Ready to Transfer${lab.outputSuffix}${leftoverLogSuffix}`,
+        linkedBatch: parentGroupId || transferIds[0] || selectedBatch.id,
         data: {
           ...lab.laborDetail,
           totalLaborMinutes: lab.totalLaborMinutes,
@@ -3348,7 +3362,7 @@ export default function Cultivation() {
     setTaskEndTime("");
     setOutput("");
     setHarvestPlants("");
-    setFreshFrozenBundles("");
+    setFreshFrozenBundleRows([newFreshFrozenBundleRow()]);
     setFreshFrozenGrams("");
     resetHarvestSheetForm();
     setShowTaskWindow(false);
@@ -4369,17 +4383,22 @@ export default function Cultivation() {
         })),
       );
       if (harvestType === "Fresh Frozen") {
-        const per = freshFrozenGramsPerBundleRef.current;
         if (ex.totalGrams != null && Number.isFinite(ex.totalGrams)) {
-          const g = Math.round(ex.totalGrams);
-          setFreshFrozenGrams(String(g));
-          if (per > 0) {
-            setFreshFrozenBundles(String(bundlesFromTotalGrams(g, per)));
-          } else if (ex.bundles != null && Number.isFinite(ex.bundles)) {
-            setFreshFrozenBundles(String(Math.round(ex.bundles)));
-          }
-        } else if (per <= 0 && ex.bundles != null && Number.isFinite(ex.bundles)) {
-          setFreshFrozenBundles(String(Math.round(ex.bundles)));
+          setFreshFrozenGrams(String(Math.round(ex.totalGrams)));
+        }
+        const sheetRows = ex.rows.map((r) => ({
+          tag: r.tag || "",
+          weightValue:
+            r.weightValue != null && Number.isFinite(r.weightValue) ? String(r.weightValue) : "",
+          unitGuess: r.unitGuess || "unknown",
+        }));
+        const bundleDrafts = freshFrozenBundleRowsFromHarvestSheet(sheetRows);
+        if (
+          bundleDrafts.some(
+            (r) => String(r.metrcTag || "").trim() && parseFreshFrozenBundleGrams(r.grams) > 0,
+          )
+        ) {
+          setFreshFrozenBundleRows(bundleDrafts);
         }
       }
       showSyncMessageNotice("Harvest sheet data extracted — review rows before saving.");
@@ -9846,37 +9865,111 @@ export default function Cultivation() {
 
                   {harvestType === "Fresh Frozen" && (
                     <>
-                      <input
-                        style={inputStyle}
-                        placeholder="Total grams (harvest weight)"
-                        value={freshFrozenGrams}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setFreshFrozenGrams(v);
-                          const g = num(String(v ?? "").replace(/,/g, ""));
-                          if (freshFrozenGramsPerBundle > 0 && g > 0) {
-                            setFreshFrozenBundles(
-                              String(bundlesFromTotalGrams(g, freshFrozenGramsPerBundle)),
-                            );
-                          }
+                      <div
+                        style={{
+                          ...inputStyle,
+                          display: "grid",
+                          gap: 10,
+                          background: "#0f172a",
+                          borderColor: "#475569",
                         }}
-                      />
+                      >
+                        <div style={{ color: "#e2e8f0", fontWeight: 700 }}>Fresh Frozen bundles</div>
+                        {freshFrozenBundleRows.map((row) => (
+                          <div
+                            key={row.id}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 120px auto",
+                              gap: 8,
+                              alignItems: "center",
+                            }}
+                          >
+                            <input
+                              style={{ ...inputStyle, margin: 0 }}
+                              placeholder="METRC package tag"
+                              value={row.metrcTag}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setFreshFrozenBundleRows((prev) =>
+                                  prev.map((r) => (r.id === row.id ? { ...r, metrcTag: v } : r)),
+                                );
+                              }}
+                            />
+                            <input
+                              style={{ ...inputStyle, margin: 0 }}
+                              placeholder="Grams"
+                              value={row.grams}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setFreshFrozenBundleRows((prev) =>
+                                  prev.map((r) => (r.id === row.id ? { ...r, grams: v } : r)),
+                                );
+                              }}
+                            />
+                            <button
+                              type="button"
+                              style={buttonStyle}
+                              disabled={freshFrozenBundleRows.length <= 1}
+                              onClick={() =>
+                                setFreshFrozenBundleRows((prev) =>
+                                  prev.filter((r) => r.id !== row.id),
+                                )
+                              }
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                          <button
+                            type="button"
+                            style={buttonStyle}
+                            onClick={() =>
+                              setFreshFrozenBundleRows((prev) => [...prev, newFreshFrozenBundleRow()])
+                            }
+                          >
+                            + Add bundle
+                          </button>
+                          <button
+                            type="button"
+                            style={buttonStyle}
+                            onClick={() => {
+                              const total = num(String(freshFrozenGrams ?? "").replace(/,/g, ""));
+                              const n = Math.max(
+                                1,
+                                Math.floor(
+                                  Number(
+                                    window.prompt(
+                                      "How many bundles should we split the total grams across?",
+                                      String(freshFrozenBundleRows.length || 1),
+                                    ) || freshFrozenBundleRows.length || 1,
+                                  ),
+                                ),
+                              );
+                              const base = total > 0 ? total : sumFreshFrozenBundleGrams(freshFrozenBundleRows);
+                              setFreshFrozenBundleRows(splitGramsAcrossFreshFrozenBundles(base, n));
+                            }}
+                          >
+                            Split grams into N bundles
+                          </button>
+                        </div>
+                        <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                          Total:{" "}
+                          <b style={{ color: "#e2e8f0" }}>
+                            {sumFreshFrozenBundleGrams(freshFrozenBundleRows).toLocaleString()} g
+                          </b>{" "}
+                          across {freshFrozenBundleRows.length} bundle
+                          {freshFrozenBundleRows.length === 1 ? "" : "s"}. Assign each bundle to a freezer in{" "}
+                          <b>Ready to Transfer</b> after harvest.
+                        </p>
+                      </div>
                       <input
                         style={inputStyle}
-                        placeholder="Bundles"
-                        value={freshFrozenBundles}
-                        onChange={(e) => setFreshFrozenBundles(e.target.value)}
+                        placeholder="Reference total grams (optional, for split / sheet compare)"
+                        value={freshFrozenGrams}
+                        onChange={(e) => setFreshFrozenGrams(e.target.value)}
                       />
-                      {freshFrozenGramsPerBundle > 0 ? (
-                        <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
-                          Bundles auto-fill as grams ÷ {freshFrozenGramsPerBundle} g/bundle (you can edit).
-                        </p>
-                      ) : (
-                        <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
-                          Set grams per bundle under Admin → Company Config → Cultivation → Fresh Frozen harvest to
-                          auto-fill bundles.
-                        </p>
-                      )}
                     </>
                   )}
 
@@ -9927,16 +10020,20 @@ export default function Cultivation() {
                           type="button"
                           style={buttonStyle}
                           onClick={() => {
-                            const sum = String(sumGramsFromHarvestSheetRows(harvestSheetRows));
-                            setFreshFrozenGrams(sum);
-                            const per = freshFrozenGramsPerBundleRef.current;
-                            const g = num(sum.replace(/,/g, ""));
-                            if (per > 0 && g > 0) {
-                              setFreshFrozenBundles(String(bundlesFromTotalGrams(g, per)));
-                            }
+                            const sum = sumGramsFromHarvestSheetRows(harvestSheetRows);
+                            setFreshFrozenGrams(String(sum));
+                            setFreshFrozenBundleRows(
+                              freshFrozenBundleRowsFromHarvestSheet(
+                                harvestSheetRows.map((r) => ({
+                                  tag: r.tag,
+                                  weightValue: r.weightValue,
+                                  unitGuess: r.unitGuess,
+                                })),
+                              ),
+                            );
                           }}
                         >
-                          Sum rows → grams
+                          Sheet rows → bundles
                         </button>
                       ) : null}
                     </div>
