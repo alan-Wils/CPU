@@ -56,9 +56,11 @@ import {
   newFreshFrozenBundleRow,
   parseFreshFrozenBundleGrams,
   splitGramsAcrossFreshFrozenBundles,
+  splitGramsByConfiguredBundleSize,
   sumFreshFrozenBundleGrams,
   type FreshFrozenBundleDraft,
 } from "@/lib/freshFrozenBundleRows";
+import { bundleSlotCountFromTotalGrams } from "@/lib/freshFrozenPackageDisplay";
 import ReadyToTransferModal from "@/components/cultivation/ReadyToTransferModal";
 import { makeChainBatchCode, makeDateCode } from "@/lib/batchChainCodes";
 import { isActiveExtractionSourceBatch } from "@/lib/sourceBatchActive";
@@ -1154,6 +1156,19 @@ export default function Cultivation() {
   /** Company config: grams per FF bundle (0 = manual bundles only). Kept in ref for async harvest-sheet extract. */
   const [freshFrozenGramsPerBundle, setFreshFrozenGramsPerBundle] = useState(0);
   const freshFrozenGramsPerBundleRef = useRef(0);
+
+  useEffect(() => {
+    if (harvestType !== "Fresh Frozen" || freshFrozenGramsPerBundle <= 0) return;
+    const g = num(String(freshFrozenGrams ?? "").replace(/,/g, ""));
+    if (g <= 0) {
+      setFreshFrozenBundleRows([newFreshFrozenBundleRow()]);
+      return;
+    }
+    setFreshFrozenBundleRows((prev) =>
+      splitGramsByConfiguredBundleSize(g, freshFrozenGramsPerBundle, prev),
+    );
+  }, [freshFrozenGramsPerBundle, harvestType, freshFrozenGrams]);
+
   /** Final live plant count when using Finish batch — must be 0 to close the batch. */
   const [finishBatchPlantCount, setFinishBatchPlantCount] = useState("0");
 
@@ -4386,19 +4401,22 @@ export default function Cultivation() {
         if (ex.totalGrams != null && Number.isFinite(ex.totalGrams)) {
           setFreshFrozenGrams(String(Math.round(ex.totalGrams)));
         }
-        const sheetRows = ex.rows.map((r) => ({
-          tag: r.tag || "",
-          weightValue:
-            r.weightValue != null && Number.isFinite(r.weightValue) ? String(r.weightValue) : "",
-          unitGuess: r.unitGuess || "unknown",
-        }));
-        const bundleDrafts = freshFrozenBundleRowsFromHarvestSheet(sheetRows);
-        if (
-          bundleDrafts.some(
-            (r) => String(r.metrcTag || "").trim() && parseFreshFrozenBundleGrams(r.grams) > 0,
-          )
-        ) {
-          setFreshFrozenBundleRows(bundleDrafts);
+        const per = freshFrozenGramsPerBundleRef.current;
+        if (per <= 0) {
+          const sheetRows = ex.rows.map((r) => ({
+            tag: r.tag || "",
+            weightValue:
+              r.weightValue != null && Number.isFinite(r.weightValue) ? String(r.weightValue) : "",
+            unitGuess: r.unitGuess || "unknown",
+          }));
+          const bundleDrafts = freshFrozenBundleRowsFromHarvestSheet(sheetRows);
+          if (
+            bundleDrafts.some(
+              (r) => String(r.metrcTag || "").trim() && parseFreshFrozenBundleGrams(r.grams) > 0,
+            )
+          ) {
+            setFreshFrozenBundleRows(bundleDrafts);
+          }
         }
       }
       showSyncMessageNotice("Harvest sheet data extracted — review rows before saving.");
@@ -9865,6 +9883,51 @@ export default function Cultivation() {
 
                   {harvestType === "Fresh Frozen" && (
                     <>
+                      <input
+                        style={inputStyle}
+                        placeholder="Total grams (harvest weight)"
+                        value={freshFrozenGrams}
+                        onChange={(e) => setFreshFrozenGrams(e.target.value)}
+                      />
+                      {freshFrozenGramsPerBundle > 0 ? (
+                        <p style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 4px" }}>
+                          Company config:{" "}
+                          <b style={{ color: "#e2e8f0" }}>{freshFrozenGramsPerBundle.toLocaleString()} g</b> per
+                          bundle
+                          {num(String(freshFrozenGrams ?? "").replace(/,/g, "")) > 0 ? (
+                            <>
+                              {" "}
+                              →{" "}
+                              <b style={{ color: "#e2e8f0" }}>
+                                {bundleSlotCountFromTotalGrams(
+                                  num(String(freshFrozenGrams ?? "").replace(/,/g, "")),
+                                  freshFrozenGramsPerBundle,
+                                )}
+                              </b>{" "}
+                              bundle
+                              {bundleSlotCountFromTotalGrams(
+                                num(String(freshFrozenGrams ?? "").replace(/,/g, "")),
+                                freshFrozenGramsPerBundle,
+                              ) === 1
+                                ? ""
+                                : "s"}
+                              {(() => {
+                                const g = num(String(freshFrozenGrams ?? "").replace(/,/g, ""));
+                                const remainder = g % freshFrozenGramsPerBundle;
+                                if (g > 0 && remainder > 0) {
+                                  return ` (last bundle partial: ${remainder.toLocaleString()} g)`;
+                                }
+                                return "";
+                              })()}
+                            </>
+                          ) : null}
+                        </p>
+                      ) : (
+                        <p style={{ color: "#fbbf24", fontSize: 13, margin: "0 0 4px" }}>
+                          Set <b>grams per Fresh Frozen bundle</b> in Admin → Company Config → Cultivation to
+                          auto-calculate bundle count from total grams.
+                        </p>
+                      )}
                       <div
                         style={{
                           ...inputStyle,
@@ -9874,18 +9937,31 @@ export default function Cultivation() {
                           borderColor: "#475569",
                         }}
                       >
-                        <div style={{ color: "#e2e8f0", fontWeight: 700 }}>Fresh Frozen bundles</div>
-                        {freshFrozenBundleRows.map((row) => (
-                          <div
-                            key={row.id}
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "1fr 120px auto",
-                              gap: 8,
-                              alignItems: "center",
-                            }}
-                          >
-                            <input
+                        <div style={{ color: "#e2e8f0", fontWeight: 700 }}>METRC package tags</div>
+                        <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                          Enter one METRC tag per bundle. Grams are filled from total weight and bundle size
+                          {freshFrozenGramsPerBundle > 0 ? " (partial last bundle allowed)" : ""}.
+                        </p>
+                        {freshFrozenBundleRows.map((row, idx) => {
+                          const rowGrams = parseFreshFrozenBundleGrams(row.grams);
+                          const isPartial =
+                            freshFrozenGramsPerBundle > 0 &&
+                            rowGrams > 0 &&
+                            rowGrams < freshFrozenGramsPerBundle;
+                          return (
+                            <div
+                              key={row.id}
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "72px 1fr 120px auto",
+                                gap: 8,
+                                alignItems: "center",
+                              }}
+                            >
+                              <span style={{ color: "#94a3b8", fontSize: 13, fontWeight: 600 }}>
+                                #{idx + 1}
+                              </span>
+                              <input
                               style={{ ...inputStyle, margin: 0 }}
                               placeholder="METRC package tag"
                               value={row.metrcTag}
@@ -9900,27 +9976,48 @@ export default function Cultivation() {
                               style={{ ...inputStyle, margin: 0 }}
                               placeholder="Grams"
                               value={row.grams}
+                              readOnly={freshFrozenGramsPerBundle > 0}
+                              title={
+                                freshFrozenGramsPerBundle > 0
+                                  ? "Grams come from total weight and bundle size in config"
+                                  : undefined
+                              }
                               onChange={(e) => {
+                                if (freshFrozenGramsPerBundle > 0) return;
                                 const v = e.target.value;
                                 setFreshFrozenBundleRows((prev) =>
                                   prev.map((r) => (r.id === row.id ? { ...r, grams: v } : r)),
                                 );
                               }}
                             />
-                            <button
-                              type="button"
-                              style={buttonStyle}
-                              disabled={freshFrozenBundleRows.length <= 1}
-                              onClick={() =>
-                                setFreshFrozenBundleRows((prev) =>
-                                  prev.filter((r) => r.id !== row.id),
-                                )
-                              }
-                            >
-                              Remove
-                            </button>
+                            {freshFrozenGramsPerBundle <= 0 ? (
+                              <button
+                                type="button"
+                                style={buttonStyle}
+                                disabled={freshFrozenBundleRows.length <= 1}
+                                onClick={() =>
+                                  setFreshFrozenBundleRows((prev) =>
+                                    prev.filter((r) => r.id !== row.id),
+                                  )
+                                }
+                              >
+                                Remove
+                              </button>
+                            ) : (
+                              <span
+                                style={{
+                                  color: isPartial ? "#fbbf24" : "#64748b",
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {isPartial ? "Partial" : "Full"}
+                              </span>
+                            )}
                           </div>
-                        ))}
+                          );
+                        })}
+                        {freshFrozenGramsPerBundle <= 0 ? (
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                           <button
                             type="button"
@@ -9954,22 +10051,14 @@ export default function Cultivation() {
                             Split grams into N bundles
                           </button>
                         </div>
+                        ) : null}
                         <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
-                          Total:{" "}
-                          <b style={{ color: "#e2e8f0" }}>
-                            {sumFreshFrozenBundleGrams(freshFrozenBundleRows).toLocaleString()} g
-                          </b>{" "}
-                          across {freshFrozenBundleRows.length} bundle
+                          {sumFreshFrozenBundleGrams(freshFrozenBundleRows).toLocaleString()} g across{" "}
+                          {freshFrozenBundleRows.length} bundle
                           {freshFrozenBundleRows.length === 1 ? "" : "s"}. Assign each bundle to a freezer in{" "}
                           <b>Ready to Transfer</b> after harvest.
                         </p>
                       </div>
-                      <input
-                        style={inputStyle}
-                        placeholder="Reference total grams (optional, for split / sheet compare)"
-                        value={freshFrozenGrams}
-                        onChange={(e) => setFreshFrozenGrams(e.target.value)}
-                      />
                     </>
                   )}
 
@@ -10022,18 +10111,21 @@ export default function Cultivation() {
                           onClick={() => {
                             const sum = sumGramsFromHarvestSheetRows(harvestSheetRows);
                             setFreshFrozenGrams(String(sum));
-                            setFreshFrozenBundleRows(
-                              freshFrozenBundleRowsFromHarvestSheet(
-                                harvestSheetRows.map((r) => ({
-                                  tag: r.tag,
-                                  weightValue: r.weightValue,
-                                  unitGuess: r.unitGuess,
-                                })),
-                              ),
-                            );
+                            const per = freshFrozenGramsPerBundleRef.current;
+                            if (per <= 0) {
+                              setFreshFrozenBundleRows(
+                                freshFrozenBundleRowsFromHarvestSheet(
+                                  harvestSheetRows.map((r) => ({
+                                    tag: r.tag,
+                                    weightValue: r.weightValue,
+                                    unitGuess: r.unitGuess,
+                                  })),
+                                ),
+                              );
+                            }
                           }}
                         >
-                          Sheet rows → bundles
+                          Sheet total → grams
                         </button>
                       ) : null}
                     </div>

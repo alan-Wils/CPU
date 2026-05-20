@@ -55,6 +55,37 @@ export function freshFrozenBundleRowsFromHarvestSheet(
   return out.length > 0 ? out : [newFreshFrozenBundleRow()];
 }
 
+/** Split total grams into full bundles of `gramsPerBundle` plus one partial remainder row. */
+export function splitGramsByConfiguredBundleSize(
+  totalGrams: number,
+  gramsPerBundle: number,
+  existingRows: FreshFrozenBundleDraft[] = [],
+): FreshFrozenBundleDraft[] {
+  const total = Math.max(0, totalGrams);
+  const per = Math.floor(gramsPerBundle);
+  if (total <= 0 || per <= 0) {
+    return existingRows.length > 0 ? existingRows : [newFreshFrozenBundleRow()];
+  }
+
+  const count = Math.ceil(total / per);
+  const rows: FreshFrozenBundleDraft[] = [];
+  let remaining = total;
+
+  for (let i = 0; i < count; i++) {
+    const isLast = i === count - 1;
+    const bundleGrams = isLast ? +remaining.toFixed(2) : per;
+    remaining = +(remaining - bundleGrams).toFixed(2);
+    const existing = existingRows[i];
+    rows.push({
+      id: existing?.id ?? newFreshFrozenBundleRow().id,
+      metrcTag: existing?.metrcTag ?? "",
+      grams: bundleGrams > 0 ? String(bundleGrams) : "",
+    });
+  }
+
+  return rows;
+}
+
 export function splitGramsAcrossFreshFrozenBundles(
   totalGrams: number,
   count: number,

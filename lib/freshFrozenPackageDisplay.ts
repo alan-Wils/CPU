@@ -22,6 +22,14 @@ export function bundlesFromTotalGrams(totalGrams: number, gramsPerBundle: number
   return Math.floor(g / per);
 }
 
+/** Bundle slots needed for total grams, counting a partial final bundle (ceil). */
+export function bundleSlotCountFromTotalGrams(totalGrams: number, gramsPerBundle: number): number {
+  const g = num(totalGrams);
+  const per = num(gramsPerBundle);
+  if (g <= 0 || per <= 0) return 0;
+  return Math.ceil(g / per);
+}
+
 export function sourceRowTotalGrams(src: unknown): number {
   if (!src || typeof src !== "object") return 0;
   const s = src as Record<string, unknown>;
