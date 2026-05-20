@@ -2959,7 +2959,7 @@ export default function Extraction() {
     for (const row of usedSources) {
       const source = getSource(row.sourceId);
       const availableGrams = getSourceAvailableGrams(source);
-      const usedGrams = num(row.amount);
+      const usedGrams = lbsToGrams(row.amountUsed);
 
       if (!source) {
         showNotice("Source Not Found", `Source batch ${row.sourceId} was not found.`);
@@ -2987,7 +2987,7 @@ export default function Extraction() {
     const sourceUpdatePlans = usedSources.map((row) => {
       const source = getSource(row.sourceId);
       const available = getSourceAvailable(source);
-      const remaining = Math.max(available - gramsInputToLbs(row.amount), 0);
+      const remaining = Math.max(available - row.amountUsed, 0);
       const updatedSource = {
         ...source,
         remainingAmount: +remaining.toFixed(2),
