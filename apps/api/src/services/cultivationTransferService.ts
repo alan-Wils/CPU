@@ -13,6 +13,7 @@ import {
     type CultivationStorageLocationsConfig,
 } from "../lib/cultivationStorageConfig.js";
 import { pruneLegacyMonolithicFreshFrozenFromStore } from "../lib/extractionSourceAvailability.js";
+import { repairMisclassifiedSourceBatchRow } from "../lib/repairMisclassifiedSourceBatch.js";
 import { StoreService } from "./storeService.js";
 
 const PENDING_STATUSES: CultivationTransferStatus[] = [
@@ -560,6 +561,124 @@ export class CultivationTransferService {
         }
 
         return added;
+    }
+
+    /**
+     * Fix store rows marked Complete while still holding transferred weight (never used in extraction).
+     */
+    async reconcileMisclassifiedTransferredSources(params: {
+        companyId: string;
+        actorUserId: string;
+    }): Promise<number> {
+        const transferred = await prisma.cultivationExtractionTransfer.findMany({
+            where: {
+                companyId: params.companyId,
+                transferStatus: CultivationTransferStatus.TRANSFERRED_TO_EXTRACTION,
+                extractionSourceBatchId: { not: null },
+            },
+            take: 500,
+        });
+        if (transferred.length === 0)
+            return 0;
+
+        const snap = await this.storeService.load(params.companyId);
+        const snapRecord = snap as Record<string, unknown>;
+        const extractionLists = [
+            ...(Array.isArray(snap.extractionBatches) ? snap.extractionBatches : []),
+            ...(Array.isArray(snapRecord.completedExtractionBatches)
+                ? snapRecord.completedExtractionBatches
+                : []),
+        ];
+        const usedOnExtractionBatch = new Set<string>();
+        for (const raw of extractionLists) {
+            const batch = raw && typeof raw === "object" ? (raw as { sources?: unknown }) : null;
+            if (!batch)
+                continue;
+            const sources = Array.isArray(batch.sources) ? batch.sources : [];
+            for (const s of sources) {
+                const sourceId = String(
+                    (s as { sourceId?: string })?.sourceId || "",
+                ).trim();
+                if (sourceId)
+                    usedOnExtractionBatch.add(sourceId);
+            }
+        }
+
+        let list = Array.isArray(snap.sourceBatches) ? [...snap.sourceBatches] : [];
+        let completed = Array.isArray(snap.completedSourceBatches)
+            ? [...snap.completedSourceBatches]
+            : [];
+        let fixed = 0;
+
+        const repairId = (sourceBatchId: string) => {
+            const id = sourceBatchId.trim();
+            if (!id || usedOnExtractionBatch.has(id))
+                return;
+
+            const inListIdx = list.findIndex(
+                (b) => String((b as { id?: string })?.id || "").trim() === id,
+            );
+            const inCompletedIdx = completed.findIndex(
+                (b) => String((b as { id?: string })?.id || "").trim() === id,
+            );
+            const row =
+                inListIdx >= 0
+                    ? list[inListIdx]
+                    : inCompletedIdx >= 0
+                      ? completed[inCompletedIdx]
+                      : null;
+            if (!row)
+                return;
+
+            const repaired = repairMisclassifiedSourceBatchRow(row);
+            if (!repaired)
+                return;
+
+            if (inListIdx >= 0)
+                list[inListIdx] = repaired;
+            else
+                list.unshift(repaired);
+
+            if (inCompletedIdx >= 0)
+                completed.splice(inCompletedIdx, 1);
+
+            fixed++;
+        };
+
+        for (const row of transferred) {
+            const sourceBatchId = String(row.extractionSourceBatchId || "").trim();
+            if (sourceBatchId)
+                repairId(sourceBatchId);
+        }
+
+        for (let i = completed.length - 1; i >= 0; i--) {
+            const row = completed[i];
+            const repaired = repairMisclassifiedSourceBatchRow(row);
+            if (!repaired)
+                continue;
+            const id = String((repaired as { id?: string }).id || "").trim();
+            if (!id || usedOnExtractionBatch.has(id))
+                continue;
+            completed.splice(i, 1);
+            const inListIdx = list.findIndex(
+                (b) => String((b as { id?: string })?.id || "").trim() === id,
+            );
+            if (inListIdx >= 0)
+                list[inListIdx] = repaired;
+            else
+                list.unshift(repaired);
+            fixed++;
+        }
+
+        if (fixed > 0) {
+            await this.storeService.save(params.companyId, params.actorUserId, {
+                ...snap,
+                sourceBatches: list,
+                completedSourceBatches: completed,
+            });
+        }
+
+        return fixed;
     }
 
     /**

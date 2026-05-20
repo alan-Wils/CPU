@@ -23,6 +23,7 @@ import {
 } from "@/lib/sourceBatchApi";
 import { makeExtractionMarketBatchCode } from "@/lib/batchChainCodes";
 import { getSourceAvailable, isCompletedSourceBatch } from "@/lib/sourceBatchActive";
+import { repairMisclassifiedSourceBatchRow } from "@/lib/repairMisclassifiedSourceBatch";
 import { filterSourceBatchesForExtractionAvailability } from "@/lib/extractionSourceAvailability";
 import {
   freshFrozenAvailableLine,
@@ -187,6 +188,10 @@ function asArray(value: any) {
   if (Array.isArray(value)) return value;
   if (value === undefined || value === null) return [];
   return [value];
+}
+
+function normalizeSourceBatchList(rows: unknown[]): unknown[] {
+  return rows.map((row) => repairMisclassifiedSourceBatchRow(row) || row);
 }
 
 /** True when `id` is a Prisma `SourcePackage` cuid (merged from the real DB), not a legacy `FF-â€¦` / `TRIM-â€¦` tag. */
@@ -422,7 +427,9 @@ export default function Extraction() {
 
         if (!active) return;
 
-        const sourceList = filterSourceBatchesForExtractionAvailability(asArray(realSourceBatches));
+        const sourceList = filterSourceBatchesForExtractionAvailability(
+          normalizeSourceBatchList(asArray(realSourceBatches)),
+        );
         const extractionList = asArray(realExtractionBatches);
 
         s.sourceBatches = sourceList.filter((batch: any) => {
@@ -433,13 +440,9 @@ export default function Extraction() {
           }
           return !isCompletedSourceBatch(batch) && getSourceAvailable(batch) > 0;
         });
-        s.completedSourceBatches = sourceList.filter((batch: any) => {
-          const isDbSourcePackage = isLikelyDatabaseSourcePackageId(batch?.id);
-          if (isDbSourcePackage) {
-            return isCompletedSourceBatch(batch);
-          }
-          return isCompletedSourceBatch(batch) || getSourceAvailable(batch) <= 0;
-        });
+        s.completedSourceBatches = sourceList.filter((batch: any) =>
+          isCompletedSourceBatch(batch),
+        );
         const prevExById = new Map<string, any>(
           (s.extractionBatches || [])
             .map((b: any): [string, any] => [String(b?.id || ""), b])
@@ -1004,7 +1007,9 @@ export default function Extraction() {
 
   async function reloadExtractionSourceLists() {
     const realSourceBatches = await loadSourceBatches({ summary: false });
-    const sourceList = filterSourceBatchesForExtractionAvailability(asArray(realSourceBatches));
+    const sourceList = filterSourceBatchesForExtractionAvailability(
+      normalizeSourceBatchList(asArray(realSourceBatches)),
+    );
     s.sourceBatches = sourceList.filter((batch: any) => {
       const isDbSourcePackage = isLikelyDatabaseSourcePackageId(batch?.id);
       if (isDbSourcePackage) {
@@ -1012,13 +1017,9 @@ export default function Extraction() {
       }
       return !isCompletedSourceBatch(batch) && getSourceAvailable(batch) > 0;
     });
-    s.completedSourceBatches = sourceList.filter((batch: any) => {
-      const isDbSourcePackage = isLikelyDatabaseSourcePackageId(batch?.id);
-      if (isDbSourcePackage) {
-        return isCompletedSourceBatch(batch);
-      }
-      return isCompletedSourceBatch(batch) || getSourceAvailable(batch) <= 0;
-    });
+    s.completedSourceBatches = sourceList.filter((batch: any) =>
+      isCompletedSourceBatch(batch),
+    );
     setRefresh((n) => n + 1);
   }
 

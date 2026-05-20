@@ -43,12 +43,24 @@ export function getSourceAvailable(source: unknown): number {
 }
 
 export function isCompletedSourceBatch(batch: unknown): boolean {
-  const status = String((batch as { status?: unknown })?.status || "").toLowerCase();
-  return (
-    status === "complete" ||
-    status === "used in extraction" ||
-    status.includes("complete")
-  );
+  if (!batch || typeof batch !== "object") return false;
+  const status = String((batch as { status?: unknown })?.status || "")
+    .trim()
+    .toLowerCase();
+
+  if (status === "used in extraction") return true;
+
+  if (status === "partially used in extraction") {
+    return getSourceAvailable(batch) <= 0;
+  }
+
+  if (status === "complete" || status.includes("complete")) {
+    // Transferred packages were sometimes saved as Complete without an extraction run.
+    if (getSourceAvailable(batch) > 0) return false;
+    return true;
+  }
+
+  return false;
 }
 
 /** Same predicate as Extraction's `sourceBatches` list (available material, not terminal status). */

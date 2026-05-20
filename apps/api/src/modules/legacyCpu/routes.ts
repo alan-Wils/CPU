@@ -1224,11 +1224,17 @@ legacyCpuRouter.get("/source-batches", asyncHandler(async (req, res) => {
     const cacheKey = `legacy:source-batches:${companyId}:${summary ? "sum" : "full"}`;
     const ttlMs = 20_000;
     const dbStarted = Date.now();
+    const actorUserId = req.auth.userId;
     const repaired = await cultivationTransferService.reconcileMissingExtractionSourceBatches({
         companyId,
-        actorUserId: req.auth.userId,
+        actorUserId,
     });
-    if (repaired > 0)
+    const unmisclassified =
+        await cultivationTransferService.reconcileMisclassifiedTransferredSources({
+            companyId,
+            actorUserId,
+        });
+    if (repaired > 0 || unmisclassified > 0)
         invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
     const { value: items, cacheHit, inflightJoined } = await memoizedReadWithMeta(cacheKey, ttlMs, async () => {
         const pkgWhere = { sourceChain: { companyId } };

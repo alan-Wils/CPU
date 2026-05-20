@@ -67,6 +67,7 @@ import { makeChainBatchCode, makeDateCode } from "@/lib/batchChainCodes";
 import { isActiveExtractionSourceBatch } from "@/lib/sourceBatchActive";
 import { filterSourceBatchesForExtractionAvailability } from "@/lib/extractionSourceAvailability";
 import { applyFfTrimSourceListToStore } from "@/lib/syncSourceBatchesToStore";
+import { repairMisclassifiedSourceBatchRow } from "@/lib/repairMisclassifiedSourceBatch";
 import {
   createLog,
   deleteLog as deleteTaskLogRemote,
@@ -658,6 +659,10 @@ function collectHarvestSourcePackageIds(
   return [...(s.sourceBatches || []), ...(s.productionBatches || [])] as Array<
     string | { id?: unknown }
   >;
+}
+
+function normalizeSourceBatchList(rows: unknown[]): unknown[] {
+  return rows.map((row) => repairMisclassifiedSourceBatchRow(row) || row);
 }
 
 /** Last segment of batch id is `MMDDYY` per `makeDateCode` (e.g. `ACRONYM.MMDDYY` or `ACRONYM.N.MMDDYY`). */
@@ -1453,9 +1458,11 @@ export default function Cultivation() {
          */
         const rawSources = await loadSourceBatches({ summary: false }).catch(() => null);
         const sourceList = filterSourceBatchesForExtractionAvailability(
-          Array.isArray(rawSources)
-            ? rawSources
-            : [...lastSourceListForProductionRef.current],
+          normalizeSourceBatchList(
+            Array.isArray(rawSources)
+              ? rawSources
+              : [...lastSourceListForProductionRef.current],
+          ),
         );
         if (Array.isArray(rawSources)) {
           lastSourceListForProductionRef.current = sourceList;
@@ -2141,14 +2148,18 @@ export default function Cultivation() {
     if (mergedFromTransfer.length > 0) {
       applyFfTrimSourceListToStore(
         s,
-        filterSourceBatchesForExtractionAvailability(mergedFromTransfer),
+        filterSourceBatchesForExtractionAvailability(
+          normalizeSourceBatchList(mergedFromTransfer),
+        ),
       );
     }
 
     try {
       const rawSources = await loadSourceBatches({ summary: false });
       if (Array.isArray(rawSources)) {
-        const sourceList = filterSourceBatchesForExtractionAvailability(rawSources);
+        const sourceList = filterSourceBatchesForExtractionAvailability(
+          normalizeSourceBatchList(rawSources),
+        );
         lastSourceListForProductionRef.current = sourceList;
         applyFfTrimSourceListToStore(s, sourceList);
       }
