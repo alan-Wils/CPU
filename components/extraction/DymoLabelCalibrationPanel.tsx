@@ -99,9 +99,9 @@ export function DymoLabelCalibrationPanel({
       </h3>
       <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
         Layout is <strong style={{ color: "#e2e8f0" }}>pinned to the top</strong> of the sticker. Three lines read{" "}
-        <strong style={{ color: "#e2e8f0" }}>top → bottom</strong>: extraction number (e.g. GMO-051226-1), strain blend, then product —
+        <strong style={{ color: "#e2e8f0" }}>top \u2192 bottom</strong>: extraction number (e.g. GMO-051226-1), strain blend, then product \u2014
         all bold; <strong style={{ color: "#e2e8f0" }}>rotation</strong> still turns the{" "}
-        <em>whole</em> label if your driver/die needs it. Vertical centering tends to print across two roll stickers —
+        <em>whole</em> label if your driver/die needs it. Vertical centering tends to print across two roll stickers \u2014
         stay top-pinned. Adjust{" "}
         <strong style={{ color: "#e2e8f0" }}>Whole label</strong> X/Y,{" "}
         <strong style={{ color: "#e2e8f0" }}>Top/start offset</strong>, rotation, and inner nudges only when your{" "}
@@ -109,7 +109,7 @@ export function DymoLabelCalibrationPanel({
         <code style={{ color: "#a5b4fc" }}>1in</code>,{" "}
         <code style={{ color: "#a5b4fc" }}>-18px</code>, or plain{" "}
         <code style={{ color: "#a5b4fc" }}>-18</code>
-        {" "}→ <code style={{ color: "#a5b4fc" }}>-18px</code>.
+        {" "}\u2192 <code style={{ color: "#a5b4fc" }}>-18px</code>.
       </p>
       <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
         If ink still bridges between stickers or Chrome rescales oddly, tweak{" "}
@@ -137,7 +137,7 @@ export function DymoLabelCalibrationPanel({
       <p style={{ margin: "0 0 12px", fontSize: 11, color: "#64748b", lineHeight: 1.42 }}>
         <strong style={{ color: "#cbd5e1" }}>Paper size ≠ preview?</strong> DYMO on Windows usually drives the printable
         area (Chrome&apos;s preview may stay Letter-sized). Always set{" "}
-        <strong style={{ color: "#cbd5e1" }}>More settings → Paper size</strong> to your stock,{" "}
+        <strong style={{ color: "#cbd5e1" }}>More settings \u2192 Paper size</strong> to your stock,{" "}
         <strong style={{ color: "#cbd5e1" }}>100% scale</strong>, minimum margins where possible; use Label width /
         height for the <em>narrow × long</em> edge (often <code style={{ color: "#a5b4fc" }}>1in</code> ×{" "}
         <code style={{ color: "#a5b4fc" }}>1.5in</code>, width = narrow side).
@@ -185,7 +185,7 @@ export function DymoLabelCalibrationPanel({
           marginBottom: calibrationOptionsOpen ? 12 : 0,
         }}
       >
-        <span aria-hidden="true">{calibrationOptionsOpen ? "▼" : "▶"}</span>
+        <span aria-hidden="true">{calibrationOptionsOpen ? "▼" : "\u25b6"}</span>
         <span>{calibrationOptionsOpen ? "Hide calibration options" : "Calibration options"}</span>
       </button>
 

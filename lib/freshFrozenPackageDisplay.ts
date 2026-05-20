@@ -77,11 +77,11 @@ export function freshFrozenPackageDisplay(src: unknown): FreshFrozenPackageDispl
   const gramsInt = g > 0 ? Math.round(g) : Math.round(lbs * GRAMS_PER_LB);
   const b = sourceRowBundles(src);
 
-  const totalLbsLabel = lbs > 0 ? `${+lbs.toFixed(4)} lbs` : "— lbs";
-  const totalGramsLabel = gramsInt > 0 ? `${gramsInt} g` : "— g";
-  const bundlesLabel = b > 0 ? `${b}` : "—";
+  const totalLbsLabel = lbs > 0 ? `${+lbs.toFixed(4)} lbs` : "\u2014 lbs";
+  const totalGramsLabel = gramsInt > 0 ? `${gramsInt} g` : "\u2014 g";
+  const bundlesLabel = b > 0 ? `${b}` : "\u2014";
 
-  const packageLine = `Package: ${totalLbsLabel} · ${totalGramsLabel} · ${bundlesLabel} bundles`;
+  const packageLine = `Package: ${totalLbsLabel} \u00b7 ${totalGramsLabel} \u00b7 ${bundlesLabel} bundles`;
 
   return { totalLbsLabel, totalGramsLabel, bundlesLabel, packageLine };
 }

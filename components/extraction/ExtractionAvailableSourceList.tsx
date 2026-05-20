@@ -102,16 +102,16 @@ export default function ExtractionAvailableSourceList({
                   }}
                   aria-hidden
                 >
-                  ▶
+                  \u25b6
                 </span>
                 <span>
                   <span style={{ fontWeight: 800, fontSize: 15 }}>{group.label}</span>
                   <span style={{ color: "#94a3b8", fontSize: 13, marginLeft: 8 }}>
                     {packageLabel}
-                    {" · "}
-                    {group.totalGrams.toLocaleString()} g · {group.totalLbs.toFixed(2)} lbs
+                    {" \u00b7 "}
+                    {group.totalGrams.toLocaleString()} g \u00b7 {group.totalLbs.toFixed(2)} lbs
                     {group.hasFreshFrozen && group.totalBundles > 0
-                      ? ` · ${group.totalBundles} bundle${group.totalBundles === 1 ? "" : "s"}`
+                      ? ` \u00b7 ${group.totalBundles} bundle${group.totalBundles === 1 ? "" : "s"}`
                       : ""}
                   </span>
                 </span>
@@ -150,7 +150,7 @@ export default function ExtractionAvailableSourceList({
                             {b.name ? (
                               <span style={{ color: "#94a3b8", fontWeight: 400 }}>
                                 {" "}
-                                · {b.name}
+                                \u00b7 {b.name}
                               </span>
                             ) : null}
                           </div>
@@ -160,7 +160,7 @@ export default function ExtractionAvailableSourceList({
                             <b>{sourcePackageDisplayId(b)}</b>
                             <span style={{ color: "#94a3b8", fontSize: 13 }}>
                               {" "}
-                              · {b.name || b.type || "Source package"}
+                              \u00b7 {b.name || b.type || "Source package"}
                             </span>
                             {" | Material: "}
                           </>

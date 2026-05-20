@@ -4,8 +4,12 @@ export { GRAMS_PER_LB } from "@/lib/freshFrozenPackageDisplay";
 
 import { GRAMS_PER_LB } from "@/lib/freshFrozenPackageDisplay";
 
-/** Placeholder for missing numeric weight (UTF-8 em dash). */
-export const EMPTY_WEIGHT_DASH = "—";
+import { EM_DASH, MIDDLE_DOT } from "@/lib/textSymbols";
+
+export { EM_DASH, MIDDLE_DOT } from "@/lib/textSymbols";
+
+/** Placeholder for missing numeric weight. */
+export const EMPTY_WEIGHT_DASH = EM_DASH;
 
 export function num(value: unknown): number {
   const n = Number(String(value ?? "").replace(/,/g, "").trim());
@@ -24,7 +28,7 @@ export function gramsToLbs(grams: number): number {
   return +(g / GRAMS_PER_LB).toFixed(4);
 }
 
-/** User-entered grams → lbs for legacy store / API fields. */
+/** User-entered grams \u2192 lbs for legacy store / API fields. */
 export function gramsInputToLbs(raw: string | number): number {
   return gramsToLbs(num(raw));
 }
@@ -44,5 +48,5 @@ export function formatGramsAndLbs(grams: number): string {
   const g = num(grams);
   if (g <= 0) return EMPTY_WEIGHT_DASH;
   const lbs = gramsToLbs(g);
-  return `${Math.round(g).toLocaleString()} g · ${lbs.toFixed(2)} lbs`;
+  return `${Math.round(g).toLocaleString()} g ${MIDDLE_DOT} ${lbs.toFixed(2)} lbs`;
 }

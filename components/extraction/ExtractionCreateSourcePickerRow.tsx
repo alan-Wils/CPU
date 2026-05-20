@@ -57,11 +57,11 @@ function packageOptionLabel(
 
   if (materialType === "freshFrozen") {
     const tagPart = metrcTag ? `METRC ${metrcTag}` : sourcePackageDisplayId(b);
-    return `${tagPart} · ${freshFrozenAvailableLine(availLbs)}`;
+    return `${tagPart} \u00b7 ${freshFrozenAvailableLine(availLbs)}`;
   }
 
   const name = String(b.name || b.type || sourcePackageDisplayId(b)).trim();
-  return `${name} · ${Math.round(availG).toLocaleString()} g available`;
+  return `${name} \u00b7 ${Math.round(availG).toLocaleString()} g available`;
 }
 
 export default function ExtractionCreateSourcePickerRow({
@@ -233,7 +233,7 @@ export default function ExtractionCreateSourcePickerRow({
           }}
         >
           <div>
-            <b>Batch:</b> {activeGroup ? formatHarvestGroupSelectLabelWithStrain(activeGroup) : "—"}
+            <b>Batch:</b> {activeGroup ? formatHarvestGroupSelectLabelWithStrain(activeGroup) : "\u2014"}
           </div>
           <div>
             <b>Package:</b> {sourcePackageDisplayId(selectedSource)}

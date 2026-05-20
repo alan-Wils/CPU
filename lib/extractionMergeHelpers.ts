@@ -106,7 +106,7 @@ export function filterActiveExtractionBatches(batches: any[]): any[] {
 }
 
 /**
- * Move merged partners from active → completed (API poll can briefly return them as active).
+ * Move merged partners from active \u2192 completed (API poll can briefly return them as active).
  */
 export function sweepMergedExtractionBatchesToCompleted(store: {
   extractionBatches?: any[];
@@ -375,7 +375,7 @@ export function rebuildExtractionBatchSourceSummary(batch: any, sources: any[]) 
     ...new Set(rows.map((row) => String(row?.name || "").trim()).filter(Boolean)),
   ];
   if (blendNames.length > 0) {
-    batch.sourceBlendLabel = blendNames.join(" · ");
+    batch.sourceBlendLabel = blendNames.join(" \u00b7 ");
   }
   batch.inputGrams = +(num(batch.inputGrams) > 0 ? num(batch.inputGrams) : totalBiomassUsed * 453.592).toFixed(
     2,

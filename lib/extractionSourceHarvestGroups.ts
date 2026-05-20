@@ -126,9 +126,9 @@ export function formatHarvestGroupSelectLabel(group: ExtractionHarvestSourceGrou
   const material = group.hasFreshFrozen ? "Fresh Frozen" : "Dry Trim";
   const pkg =
     group.packageCount === 1 ? "1 package" : `${group.packageCount} packages`;
-  let line = `${id} · ${material} · ${pkg} · ${group.totalLbs.toFixed(2)} lbs`;
+  let line = `${id} \u00b7 ${material} \u00b7 ${pkg} \u00b7 ${group.totalLbs.toFixed(2)} lbs`;
   if (group.hasFreshFrozen && group.totalBundles > 0) {
-    line += ` · ${group.totalBundles} bundle${group.totalBundles === 1 ? "" : "s"}`;
+    line += ` \u00b7 ${group.totalBundles} bundle${group.totalBundles === 1 ? "" : "s"}`;
   }
   return line;
 }
@@ -140,11 +140,11 @@ export function strainHintFromSourceRow(row: SourceBatchLike): string {
   if (ffIdx > 0) return name.slice(0, ffIdx).trim();
   const trimIdx = name.toLowerCase().indexOf(" trim");
   if (trimIdx > 0) return name.slice(0, trimIdx).trim();
-  return name.split("·")[0]?.trim() || name;
+  return name.split("\u00b7")[0]?.trim() || name;
 }
 
 export function formatHarvestGroupSelectLabelWithStrain(group: ExtractionHarvestSourceGroup): string {
   const strain = strainHintFromSourceRow(group.rows[0] ?? {});
   const base = formatHarvestGroupSelectLabel(group);
-  return strain ? `${strain} — ${base}` : base;
+  return strain ? `${strain} \u2014 ${base}` : base;
 }

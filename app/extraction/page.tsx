@@ -1074,7 +1074,7 @@ export default function Extraction() {
       blendKey: parts.join("|"),
       blendLabel: parts
         .map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase()))
-        .join(" · "),
+        .join(" \u00b7 "),
     };
   }
 
@@ -1251,7 +1251,7 @@ export default function Extraction() {
   }
 
   function formatDuration(ms: number) {
-    if (!Number.isFinite(ms) || ms <= 0) return "—";
+    if (!Number.isFinite(ms) || ms <= 0) return "\u2014";
 
     const totalSeconds = Math.floor(ms / 1000);
     const hours = Math.floor(totalSeconds / 3600);
@@ -1279,7 +1279,7 @@ export default function Extraction() {
     return {
       startTime,
       stoppedAt,
-      duration: startMs > 0 && stopMs > 0 ? formatDuration(stopMs - startMs) : "—",
+      duration: startMs > 0 && stopMs > 0 ? formatDuration(stopMs - startMs) : "\u2014",
       totalSocks: num(stopData.totalSocksPacked),
       sockWeightsGrams: Array.isArray(stopData.sockWeightsGrams)
         ? stopData.sockWeightsGrams.map((value: any) => num(value))
@@ -1299,7 +1299,7 @@ export default function Extraction() {
     const startTime = getPackSockStartTime(batch);
     const startMs = startTime ? new Date(startTime).getTime() : 0;
 
-    if (startMs <= 0) return "—";
+    if (startMs <= 0) return "\u2014";
 
     return formatDuration(Date.now() - startMs);
   }
@@ -2076,7 +2076,7 @@ export default function Extraction() {
     if (!sourceBatchCanReturnToCultivation(row)) {
       showNotice(
         "Cannot return",
-        "Only packages that were sent from Cultivation → Ready to Transfer can go back to storage.",
+        "Only packages that were sent from Cultivation \u2192 Ready to Transfer can go back to storage.",
       );
       return;
     }
@@ -2092,7 +2092,7 @@ export default function Extraction() {
           closeEditSourcePackage();
           await reloadExtractionSourceLists();
           showSyncMessageNotice(
-            `Package returned. Open Cultivation → Ready to Transfer to verify.`,
+            `Package returned. Open Cultivation \u2192 Ready to Transfer to verify.`,
           );
           forceRefresh({ skipBackendSave: true });
         } catch (error) {
@@ -2128,7 +2128,7 @@ export default function Extraction() {
 
     showConfirm(
       "Return all to Ready to Transfer?",
-      `Send ${rows.length} package(s) back to Cultivation → Ready to Transfer? They will be removed from Extraction completed lists.`,
+      `Send ${rows.length} package(s) back to Cultivation \u2192 Ready to Transfer? They will be removed from Extraction completed lists.`,
       async () => {
         setBulkReturnBusy(true);
         try {
@@ -2137,7 +2137,7 @@ export default function Extraction() {
           forceRefresh({ skipBackendSave: true });
           if (returnedIds.length > 0 && failed.length === 0) {
             showSyncMessageNotice(
-              `${returnedIds.length} package(s) returned. Open Cultivation → Ready to Transfer.`,
+              `${returnedIds.length} package(s) returned. Open Cultivation \u2192 Ready to Transfer.`,
             );
           } else if (returnedIds.length > 0) {
             showNotice(
@@ -2403,7 +2403,7 @@ export default function Extraction() {
         survivorPutPayloadAfterPhantomMergeClear(live),
       );
       showSyncMessageNotice(
-        "Cleared false merge link — these batches were never combined.",
+        "Cleared false merge link \u2014 these batches were never combined.",
       );
       forceRefresh();
       return true;
@@ -2543,7 +2543,7 @@ export default function Extraction() {
         extractionBatchPutPayloadAfterUncombinePartner(pRestore),
       )) && ok;
     showSyncMessageNotice(
-      ok ? "Uncombine synced to server." : "Uncombine saved locally — server sync failed.",
+      ok ? "Uncombine synced to server." : "Uncombine saved locally \u2014 server sync failed.",
     );
     return true;
   }
@@ -3017,7 +3017,7 @@ export default function Extraction() {
           .map((row) => String(row.name || "").trim())
           .filter(Boolean)
       ),
-    ].join(" · ");
+    ].join(" \u00b7 ");
 
     const batch = {
       id: productionBatchId,
@@ -3161,7 +3161,7 @@ export default function Extraction() {
         averageGramsPerSock: +averageGramsPerSock.toFixed(2),
         totalPreparedGrams: +totalPreparedGrams.toFixed(2),
         totalPreparedLbs: +totalPreparedLbs.toFixed(2),
-        prepDuration: startMs > 0 ? formatDuration(stopMs - startMs) : "—",
+        prepDuration: startMs > 0 ? formatDuration(stopMs - startMs) : "\u2014",
       };
     }
 
@@ -3306,7 +3306,7 @@ export default function Extraction() {
       .map(([key, value]: [string, unknown]) => {
         if (Array.isArray(value)) return `${key}: ${value.join(", ")}`;
         if (typeof value === "object" && value !== null) return "";
-        return `${key}: ${value || "—"}`;
+        return `${key}: ${value || "\u2014"}`;
       })
       .filter(Boolean)
       .join(" | ");
@@ -3413,7 +3413,7 @@ export default function Extraction() {
 
       if (usesOilGrams) {
         setExtractionBatchCombinedOilGrams(selectedExt, combinedWeight);
-        survivorOutput = `Merged ${partnerId} (${priorPartnerWeight} g oil) into ${survivorId} — total extracted oil now ${combinedWeight} g${
+        survivorOutput = `Merged ${partnerId} (${priorPartnerWeight} g oil) into ${survivorId} \u2014 total extracted oil now ${combinedWeight} g${
           notes ? `. Notes: ${notes}` : ""
         }`;
         partnerOutput = `Merged into survivor ${survivorId} (${priorSurvivorWeight} + ${priorPartnerWeight} = ${combinedWeight} g oil on survivor)${
@@ -3434,7 +3434,7 @@ export default function Extraction() {
       } else {
         const combinedLbs = gramsInputToLbs(combinedWeight);
         setExtractionBatchTotalBiomassLbs(selectedExt, combinedLbs);
-        survivorOutput = `Merged ${partnerId} (${Math.round(priorPartnerWeight)} g) into ${survivorId} — total biomass now ${Math.round(combinedWeight)} g${
+        survivorOutput = `Merged ${partnerId} (${Math.round(priorPartnerWeight)} g) into ${survivorId} \u2014 total biomass now ${Math.round(combinedWeight)} g${
           notes ? `. Notes: ${notes}` : ""
         }`;
         partnerOutput = `Merged into survivor ${survivorId} (${Math.round(priorSurvivorWeight)} + ${Math.round(priorPartnerWeight)} = ${Math.round(combinedWeight)} g on survivor)${
@@ -3509,7 +3509,7 @@ export default function Extraction() {
         let ok = await updateExtractionBatch(survivorId, localSnapshot);
         ok = (await updateExtractionBatch(partnerId, partner)) && ok;
         showSyncMessageNotice(
-          ok ? "Merge synced to server." : "Merge saved locally — server sync failed (check connectivity).",
+          ok ? "Merge synced to server." : "Merge saved locally \u2014 server sync failed (check connectivity).",
         );
         const mergedPartnerId = partnerId;
         const mergedSurvivorId = survivorId;
@@ -3998,7 +3998,7 @@ export default function Extraction() {
       () => runDeleteBatch(batchId, { restoreSources: Boolean(canRestore) }),
       canRestore
         ? "Source material used by this batch will be returned to Available."
-        : "The server will refuse the delete if any packaging lots are still linked to this run in the database—delete or unlink those first. Source material will not be restored automatically because this batch has logged tasks or merge history.",
+        : "The server will refuse the delete if any packaging lots are still linked to this run in the database\u2014delete or unlink those first. Source material will not be restored automatically because this batch has logged tasks or merge history.",
     );
   }
 
@@ -4262,7 +4262,7 @@ export default function Extraction() {
                       {" "}
                       ({+availableSourcesTotalLbs.toFixed(2)} lbs)
                     </span>
-                    {" · "}
+                    {" \u00b7 "}
                     <span style={{ color: "#f8fafc" }}>
                       {availableSourcesHasFreshFrozen
                         ? `${availableSourcesTotalBundles} bundle${
@@ -4311,7 +4311,7 @@ export default function Extraction() {
             <div style={{ flex: "1 1 280px" }}>
               <h2 style={{ margin: 0 }}>Extraction Batches</h2>
               <p style={{ color: "#94a3b8", margin: "6px 0 0" }}>
-                {`Required path: Pack Socks Start → Pack Socks Stop → Run Extraction → Start Purge → End Purge → Testing Passed → Finish Batch. Print Batch Label is available anytime (reprints allowed). Optional tasks (Whip, Adding Terps, etc.) can be logged while purge is active.`}
+                {`Required path: Pack Socks Start \u2192 Pack Socks Stop \u2192 Run Extraction \u2192 Start Purge \u2192 End Purge \u2192 Testing Passed \u2192 Finish Batch. Print Batch Label is available anytime (reprints allowed). Optional tasks (Whip, Adding Terps, etc.) can be logged while purge is active.`}
               </p>
             </div>
 
@@ -4360,7 +4360,7 @@ export default function Extraction() {
                     {meta.helper}
                   </span>
                   <span style={{ color: "#22d3ee", fontWeight: 800, fontSize: 12, marginTop: 4 }}>
-                    View this stage →
+                    View this stage \u2192
                   </span>
                 </button>
               );
@@ -4441,7 +4441,7 @@ export default function Extraction() {
                     {getMergedPartnerIds(b).length > 0 ? (
                       <div style={{ fontSize: 12, marginTop: 6, color: "#fbbf24", fontWeight: 600 }}>
                         Merged with {getMergedPartnerIds(b).length} batch
-                        {getMergedPartnerIds(b).length === 1 ? "" : "es"} — use Undo Combine to restore
+                        {getMergedPartnerIds(b).length === 1 ? "" : "es"} \u2014 use Undo Combine to restore
                       </div>
                     ) : null}
                     {extractionBatchCultivationFooter(b) ? (
@@ -4545,7 +4545,7 @@ export default function Extraction() {
               completedMergedExtractionBatches.map((b: any) => (
                 <div key={b.id} style={{ ...rowStyle, background: "#111827" }}>
                   <div style={{ flex: 1 }}>
-                    <b>{extractionBatchMarketBatchCode(b)}</b> | {b.name || "—"} | Status:{" "}
+                    <b>{extractionBatchMarketBatchCode(b)}</b> | {b.name || "\u2014"} | Status:{" "}
                     {b.status || "Merged"}
                     {b.mergedIntoBatchId ? (
                       <span style={{ color: "#fbbf24" }}> | Merged into {b.mergedIntoBatchId}</span>
@@ -4607,7 +4607,7 @@ export default function Extraction() {
                         <b>{b.name || b.type || "Source package"}</b>
                         <span style={{ color: "#94a3b8", fontSize: 13 }}>
                           {" "}
-                          · {b.id}
+                          \u00b7 {b.id}
                         </span>
                         {" | Status: Complete | Completed: "}
                       </>
@@ -4848,7 +4848,7 @@ export default function Extraction() {
                       {combinePartnerOptions.map((b: any) => (
                         <option key={b.id} value={b.id}>
                           {extractionBatchMarketBatchCode(b)}
-                          {b.sourceBlendLabel ? ` · ${b.sourceBlendLabel}` : ""}
+                          {b.sourceBlendLabel ? ` \u00b7 ${b.sourceBlendLabel}` : ""}
                           {combineUsesOilGrams
                             ? extractionBatchOilGrams(b) > 0
                               ? ` (${extractionBatchOilGrams(b).toFixed(2)} g oil on file)`
@@ -5000,14 +5000,14 @@ export default function Extraction() {
                     )}
 
                     <p style={{ color: "#94a3b8", margin: 0 }}>
-                      Total Socks Prepared: {num(totalSocksPacked) || "—"}
+                      Total Socks Prepared: {num(totalSocksPacked) || "\u2014"}
                     </p>
 
                     <p style={{ color: "#94a3b8", margin: 0 }}>
                       Total Biomass Prepared: {
                         sockGramInputs.length > 0 && getSockGramTotal() > 0
                           ? `${+getSockGramTotal().toFixed(2)} g / ${+(getSockGramTotal() / 453.592).toFixed(2)} lbs`
-                          : "—"
+                          : "\u2014"
                       }
                     </p>
 
@@ -5015,7 +5015,7 @@ export default function Extraction() {
                       Average Per Sock: {
                         sockGramInputs.length > 0 && getSockGramTotal() > 0
                           ? `${+(getSockGramTotal() / sockGramInputs.length).toFixed(2)} g`
-                          : "—"
+                          : "\u2014"
                       }
                     </p>
                   </>
@@ -5035,7 +5035,7 @@ export default function Extraction() {
                       This task is <strong style={{ color: "#e2e8f0" }}>always available</strong> at
                       any workflow stage so you can reprint labels. Layout is anchored to the{" "}
                       <strong style={{ color: "#e2e8f0" }}>top</strong> of one sticker with lines using the full
-                      calibrated width — sized from{" "}
+                      calibrated width \u2014 sized from{" "}
                       <strong style={{ color: "#e2e8f0" }}>DYMO calibration</strong> below.{" "}
                       <strong style={{ color: "#e2e8f0" }}>Print label</strong> uses{" "}
                       <strong style={{ color: "#e2e8f0" }}>saved</strong> settings; use{" "}
@@ -5118,7 +5118,7 @@ export default function Extraction() {
                         Print label (saved calibration: {dymoSavedCalibration.labelWidth} ×{" "}
                         {dymoSavedCalibration.labelHeight}
                         {dymoLabelPrintCopiesClamped > 1
-                          ? ` · ×${dymoLabelPrintCopiesClamped}`
+                          ? ` \u00b7 ×${dymoLabelPrintCopiesClamped}`
                           : ""}
                         )
                       </button>
@@ -5448,7 +5448,7 @@ export default function Extraction() {
                           {formatYieldGramsDisplay(finishDecarbYieldPreview.terpsToAddBackGrams)}
                           {finishDecarbYieldPreview.terpAddBackCapped ? (
                             <span style={{ color: "#fbbf24", marginLeft: 8 }}>
-                              (capped at collected — only{" "}
+                              (capped at collected \u2014 only{" "}
                               {formatYieldGramsDisplay(
                                 finishDecarbYieldPreview.actualTerpsAddedBackGrams,
                               )}{" "}
@@ -5606,7 +5606,7 @@ export default function Extraction() {
 
                     <p style={{ color: "#94a3b8" }}>
                       Total Final Weight:{" "}
-                      {num(finalOilGrams) + num(extraTerpsGrams) || "—"} g
+                      {num(finalOilGrams) + num(extraTerpsGrams) || "\u2014"} g
                     </p>
 
                     <p style={{ color: "#94a3b8" }}>
@@ -5615,7 +5615,7 @@ export default function Extraction() {
                         ...selectedExt,
                         finalOilGrams,
                         extraTerpsGrams,
-                      }) || "—"}
+                      }) || "\u2014"}
                     </p>
 
                     <p style={{ color: "#94a3b8" }}>
@@ -5631,7 +5631,7 @@ export default function Extraction() {
                             ? collectStrainNamesForExtractionBatch(selectedExt)[0]
                             : "") ||
                           selectedExt?.name ||
-                          "—"}
+                          "\u2014"}
                       </b>
                       {(draftFinishBatchCode || selectedExt?.marketBatchCode) ? (
                         <>
@@ -6067,7 +6067,7 @@ export default function Extraction() {
                     autoComplete="off"
                   />
                   <p style={{ fontSize: 12, color: "#64748b", margin: "8px 0 0" }}>
-                    Sources and completed tasks are unchanged here — use workflow tasks to log
+                    Sources and completed tasks are unchanged here \u2014 use workflow tasks to log
                     process steps.
                   </p>
                 </div>
@@ -6115,7 +6115,7 @@ export default function Extraction() {
                     >
                       <p style={{ margin: "0 0 10px", fontSize: 13, color: "#fbbf24" }}>
                         This batch absorbed others via <b>Combine Batches</b>. Use <b>Undo combine</b> if
-                        the wrong partner was merged — restores that batch and fixes survivor totals.
+                        the wrong partner was merged \u2014 restores that batch and fixes survivor totals.
                       </p>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                         {viewBatch.combinedFromBatchIds.map((mergedId: string) => (
@@ -6217,7 +6217,7 @@ export default function Extraction() {
 
               <h3>Completed Tasks</h3>
               <p>
-                {getCompletedTasks(viewBatch).join(" → ") ||
+                {getCompletedTasks(viewBatch).join(" \u2192 ") ||
                   "No tasks completed yet."}
               </p>
 
@@ -6267,7 +6267,7 @@ export default function Extraction() {
                       <div>
                         <b>{log.task}</b>
                       </div>
-                      <div>Output: {log.output || "—"}</div>
+                      <div>Output: {log.output || "\u2014"}</div>
                       <div>Time: {formatLogDisplayTime(log)}</div>
                       <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
                         Logged By: {formatLoggedBy(log.loggedBy || log.data?.loggedBy)}

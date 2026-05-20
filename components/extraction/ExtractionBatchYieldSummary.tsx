@@ -22,7 +22,7 @@ export function ExtractionBatchYieldSummary({
   if (hasExtractionDetailedYields(batch)) {
     const metrics = computeExtractionYieldMetrics(batch, terpAddBackPercent);
     if (!metrics) {
-      return <span>Yield: —</span>;
+      return <span>Yield: \u2014</span>;
     }
 
     const lineStyle = compact
@@ -32,11 +32,11 @@ export function ExtractionBatchYieldSummary({
     return (
       <div style={lineStyle}>
         <span>
-          Oil: {formatYieldPercentDisplay(metrics.oilYieldPercent)} · Terp:{" "}
-          {formatYieldPercentDisplay(metrics.terpYieldPercent)} · Total:{" "}
-          {formatYieldPercentDisplay(metrics.totalBatchYieldPercent)} · Terped:{" "}
+          Oil: {formatYieldPercentDisplay(metrics.oilYieldPercent)} \u00b7 Terp:{" "}
+          {formatYieldPercentDisplay(metrics.terpYieldPercent)} \u00b7 Total:{" "}
+          {formatYieldPercentDisplay(metrics.totalBatchYieldPercent)} \u00b7 Terped:{" "}
           {formatYieldGramsDisplay(metrics.terpedOilGrams)} (
-          {formatYieldPercentDisplay(metrics.terpedOilYieldPercent)}) · Leftover:{" "}
+          {formatYieldPercentDisplay(metrics.terpedOilYieldPercent)}) \u00b7 Leftover:{" "}
           {formatYieldGramsDisplay(metrics.leftoverTerpsGrams)} (
           {formatYieldPercentDisplay(metrics.leftoverTerpsPercent)})
         </span>
@@ -52,5 +52,5 @@ export function ExtractionBatchYieldSummary({
   }
 
   const legacy = getLegacyFinishBatchYieldPercent(batch);
-  return <span>Yield: {legacy || "—"}</span>;
+  return <span>Yield: {legacy || "\u2014"}</span>;
 }

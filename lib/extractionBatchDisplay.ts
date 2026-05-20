@@ -3,7 +3,7 @@
  * vs internal EXT-… run ids and linked cultivation source batches.
  */
 
-/** `EXT-GMO0-051226` → `GMO.051226` (acronym.date, no run suffix). */
+/** `EXT-GMO0-051226` \u2192 `GMO.051226` (acronym.date, no run suffix). */
 export function marketBatchCodeFromExtId(extId: string): string {
   const id = String(extId || "").trim();
   if (!id) return "";
@@ -23,7 +23,7 @@ export function extractionBatchMarketBatchCode(batch: {
   const fromExt = marketBatchCodeFromExtId(String(batch?.id ?? "").trim());
   if (fromExt) return fromExt;
   const id = String(batch?.id ?? "").trim();
-  return id || "—";
+  return id || "\u2014";
 }
 
 export function collectExtractionCultivationSourceLabels(
@@ -62,7 +62,7 @@ export function collectExtractionCultivationSourceLabels(
 
 export function formatExtractionCultivationSourceFooter(labels: string[]): string {
   if (labels.length === 0) return "";
-  return labels.join(" · ");
+  return labels.join(" \u00b7 ");
 }
 
 /** Saved `marketBatchCode` on the batch record (not derived from EXT id). */
@@ -81,7 +81,7 @@ function marketBatchCodesMatch(a: string, b: string): boolean {
 
 /**
  * Another active extraction batch already uses this market lot code.
- * Compares explicit `marketBatchCode` only — not display fallbacks from EXT ids.
+ * Compares explicit `marketBatchCode` only \u2014 not display fallbacks from EXT ids.
  */
 export function findActiveExtractionBatchWithMarketCode(
   batches: any[],

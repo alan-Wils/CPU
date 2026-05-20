@@ -131,12 +131,12 @@ export function hasExtractionDetailedYields(batch: any): boolean {
 }
 
 export function formatYieldPercentDisplay(value: number): string {
-  if (!Number.isFinite(value)) return "—";
+  if (!Number.isFinite(value)) return "\u2014";
   return `${value.toFixed(2)}%`;
 }
 
 export function formatYieldGramsDisplay(value: number): string {
-  if (!Number.isFinite(value)) return "—";
+  if (!Number.isFinite(value)) return "\u2014";
   return `${value.toFixed(2)} g`;
 }
 

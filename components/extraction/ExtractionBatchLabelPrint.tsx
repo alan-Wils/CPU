@@ -37,11 +37,11 @@ export type ExtractionBatchLabelFields = {
 
 /**
  * Turns stored ids like `EXT-GMO0-051226` / `EXT-GMO0-051226-2` into label copy `GMO-051226-1` / `GMO-051226-2`:
- * drops the `EXT-` prefix, strips trailing zeros from the acronym token (so `GMO0` → `GMO`), and always appends an explicit run (default `1`).
+ * drops the `EXT-` prefix, strips trailing zeros from the acronym token (so `GMO0` \u2192 `GMO`), and always appends an explicit run (default `1`).
  */
 export function formatExtractionBatchLabelNumber(batchId: string): string {
   const id = String(batchId || "").trim();
-  if (!id || id === "—") return id || "—";
+  if (!id || id === "\u2014") return id || "\u2014";
   const m = id.match(/^EXT-([A-Za-z0-9]+)-(\d{6})(?:-(\d+))?$/i);
   if (!m) return id;
   const rawAcronym = m[1];
@@ -78,20 +78,20 @@ export function buildExtractionBatchLabelFields(
   },
   resolveSource?: (sourceId: string) => { source?: string } | null | undefined,
 ): ExtractionBatchLabelFields {
-  const product = String(batch?.productType || batch?.name || "").trim() || "—";
+  const product = String(batch?.productType || batch?.name || "").trim() || "\u2014";
   const marketBatchCode = extractionBatchMarketBatchCode(batch);
-  let strain = "—";
+  let strain = "\u2014";
   if (Array.isArray(batch?.sources) && batch.sources.length > 0) {
     const names = collectStrainNamesFromSources(batch.sources);
     if (names.length > 0) {
       strain = names
         .map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase()))
-        .join(" · ");
+        .join(" \u00b7 ");
     }
   }
-  if (strain === "—") {
+  if (strain === "\u2014") {
     strain =
-      String(batch?.sourceBlendLabel || batch?.source || "").trim() || "—";
+      String(batch?.sourceBlendLabel || batch?.source || "").trim() || "\u2014";
   }
   const cultivationSourceLine = formatExtractionCultivationSourceFooter(
     collectExtractionCultivationSourceLabels(batch, resolveSource),
@@ -139,7 +139,7 @@ function buildDymoLabelJobTransform(s: DymoLabelCalibrationSettings): string {
   ].join(" ");
 }
 
-/** Inner content: fine nudge + scale only (no rotation — rotation is on the job). */
+/** Inner content: fine nudge + scale only (no rotation \u2014 rotation is on the job). */
 function buildDymoLabelContentTransform(s: DymoLabelCalibrationSettings): string {
   return [
     `translateX(${s.contentOffsetX})`,
@@ -149,8 +149,8 @@ function buildDymoLabelContentTransform(s: DymoLabelCalibrationSettings): string
 }
 
 /**
- * Full HTML document for a hidden iframe (no inline script — parent calls print()).
- * Label copy: market batch code → strain → product; cultivation source batch(es) in a small footer line.
+ * Full HTML document for a hidden iframe (no inline script \u2014 parent calls print()).
+ * Label copy: market batch code \u2192 strain \u2192 product; cultivation source batch(es) in a small footer line.
  * @param copies Number of identical labels (each on its own @page); clamped {@link clampDymoLabelPrintCopies}.
  */
 export function buildDymoExtractionBatchLabelPrintHtml(
@@ -440,7 +440,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
       height: 100% !important;
       page-break-inside: avoid;
       break-inside: avoid;
-      /* Whole-label / inner translateX spills past nominal box — let @page trim, don't pre-clip here. */
+      /* Whole-label / inner translateX spills past nominal box \u2014 let @page trim, don't pre-clip here. */
       overflow: visible !important;
     }
     .dymo-label-printable-area {
@@ -453,7 +453,7 @@ export function buildDymoExtractionBatchLabelPrintHtml(
 </style></head><body>${bodyPages}</body></html>`;
 }
 
-/** @deprecated Use {@link buildDymoExtractionBatchLabelPrintHtml} — alias keeps older imports working */
+/** @deprecated Use {@link buildDymoExtractionBatchLabelPrintHtml} \u2014 alias keeps older imports working */
 export function buildLabelPrintDocumentHtml(
   f: ExtractionBatchLabelFields,
   calibration?: DymoLabelCalibrationSettings,
@@ -532,8 +532,8 @@ function openDymoLabelPrintViaHiddenIframe(
 }
 
 /**
- * Opens Chrome/Edge print from a narrow hidden iframe. DYMO/Windows drivers often ignore CSS @page in the preview —
- * Paper size must match stock in Print → More settings; we keep iframe small without extra popup windows.
+ * Opens Chrome/Edge print from a narrow hidden iframe. DYMO/Windows drivers often ignore CSS @page in the preview \u2014
+ * Paper size must match stock in Print \u2192 More settings; we keep iframe small without extra popup windows.
  */
 export function openExtractionBatchLabelPrintWindow(
   f: ExtractionBatchLabelFields,
@@ -609,10 +609,10 @@ export function ExtractionBatchLabelPreview({ fields, calibration, style }: Prev
             maxWidth: 420,
           }}
         >
-          Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}). Lines top → bottom:{" "}
-          <strong style={{ color: "#e2e8f0" }}>market code → strain → product</strong>; cultivation source at bottom.{" "}
-          <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job ·{" "}
-          <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame ·{" "}
+          Outer white area = calibrated sticker ({s.labelWidth} × {s.labelHeight}). Lines top \u2192 bottom:{" "}
+          <strong style={{ color: "#e2e8f0" }}>market code \u2192 strain \u2192 product</strong>; cultivation source at bottom.{" "}
+          <strong style={{ color: "#2dd4bf" }}>Teal</strong> = whole job \u00b7{" "}
+          <strong style={{ color: "#93c5fd" }}>Blue</strong> = frame \u00b7{" "}
           <strong style={{ color: "#c4b5fd" }}>Violet</strong> = inner content.
         </p>
       ) : null}
