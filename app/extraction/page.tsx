@@ -150,8 +150,10 @@ import {
 import {
   buildExtractionBatchSheetModel,
   buildAndPrintExtractionBatchSheet,
+  buildMipSamplePlanModel,
   ExtractionBatchSheetPreview,
 } from "@/components/extraction/ExtractionBatchSheetPrint";
+import { readMipSamplePlanFacilityFromConfig } from "@/lib/mipSamplePlan";
 import {
   collectExtractionCultivationSourceLabels,
   extractionBatchMarketBatchCode,
@@ -603,6 +605,9 @@ export default function Extraction() {
   const [finishBatchManualName, setFinishBatchManualName] = useState("");
   const [blendNameHistory, setBlendNameHistory] = useState<BlendNameHistoryRow[]>([]);
   const [terpAddBackPercentOfOilWeight, setTerpAddBackPercentOfOilWeight] = useState(0);
+  const [mipSamplePlanFacility, setMipSamplePlanFacility] = useState(() =>
+    readMipSamplePlanFacilityFromConfig({}),
+  );
 
   const [dymoSavedCalibration, setDymoSavedCalibration] =
     useState<DymoLabelCalibrationSettings>(defaultDymoLabelCalibrationSettings);
@@ -1094,6 +1099,7 @@ export default function Extraction() {
         : [];
       setBlendNameHistory(rows as BlendNameHistoryRow[]);
       setTerpAddBackPercentOfOilWeight(readTerpAddBackPercentFromConfig(cfg?.extraction));
+      setMipSamplePlanFacility(readMipSamplePlanFacilityFromConfig(cfg));
       setRewardsCfg(extractRewardsFromCompanyConfig(cfg));
       const defs = extractCustomTasksRewardDefsFromCompanyConfig(cfg);
       setCustomTasksRewardDefs(defs);
@@ -3189,12 +3195,15 @@ export default function Extraction() {
     }
 
     if (selectedTask === "Print Batch Sheet") {
-      const sheet = buildExtractionBatchSheetModel(selectedExt, {
+      const process = buildExtractionBatchSheetModel(selectedExt, {
         resolveSource: getSource,
         nextRequiredTask: getNextAllowedTask(selectedExt),
       });
+      const mip = buildMipSamplePlanModel(selectedExt, process, mipSamplePlanFacility);
       return {
-        sheet,
+        processSheet: process,
+        mipSamplePlan: mip,
+        sheetCount: 2,
         printedAtIso: new Date().toISOString(),
       };
     }
@@ -4334,7 +4343,7 @@ export default function Extraction() {
             <div style={{ flex: "1 1 280px" }}>
               <h2 style={{ margin: 0 }}>Extraction Batches</h2>
               <p style={{ color: "#94a3b8", margin: "6px 0 0" }}>
-                {`Required path: Pack Socks Start ${ARROW_RIGHT} Pack Socks Stop ${ARROW_RIGHT} Run Extraction ${ARROW_RIGHT} Start Purge ${ARROW_RIGHT} End Purge ${ARROW_RIGHT} Testing Passed ${ARROW_RIGHT} Finish Batch. Print Batch Label and Print Batch Sheet are available anytime (reprints allowed). Optional tasks (Whip, Adding Terps, etc.) can be logged while purge is active.`}
+                {`Required path: Pack Socks Start ${ARROW_RIGHT} Pack Socks Stop ${ARROW_RIGHT} Run Extraction ${ARROW_RIGHT} Start Purge ${ARROW_RIGHT} End Purge ${ARROW_RIGHT} Testing Passed ${ARROW_RIGHT} Finish Batch. Print Batch Label and Print Batch Sheet (2 pages: process reference + MIP sample plan) are available anytime. Optional tasks (Whip, Adding Terps, etc.) can be logged while purge is active.`}
               </p>
             </div>
 
@@ -4500,6 +4509,7 @@ export default function Extraction() {
                         const ok = buildAndPrintExtractionBatchSheet(b, {
                           resolveSource: getSource,
                           nextRequiredTask: getNextAllowedTask(b),
+                          mipFacility: mipSamplePlanFacility,
                         });
                         if (!ok) {
                           showNotice(
@@ -5208,15 +5218,20 @@ export default function Extraction() {
                         lineHeight: 1.45,
                       }}
                     >
-                      Print a <strong style={{ color: "#e2e8f0" }}>letter-size reference sheet</strong> with
-                      strains, METRC tags, weights per source package, cultivation batch codes, pack socks
-                      totals, and completed tasks. Keep it with the physical batch through prep and extraction.
+                      Prints <strong style={{ color: "#e2e8f0" }}>two letter-size sheets</strong> in one job:
+                      (1) <strong style={{ color: "#22d3ee" }}>Process reference</strong> — market code, strain,
+                      product, and every source package with METRC tags and weights (follows the batch through
+                      extraction); (2) <strong style={{ color: "#a78bfa" }}>MIP sample plan</strong> — your lab
+                      sampling form with containers, 0.25 g increments, signatures, and test checkboxes (use at
+                      testing and packaging handoff).
                     </p>
                     <ExtractionBatchSheetPreview
-                      model={buildExtractionBatchSheetModel(selectedExt, {
+                      process={buildExtractionBatchSheetModel(selectedExt, {
                         resolveSource: getSource,
                         nextRequiredTask: getNextAllowedTask(selectedExt),
                       })}
+                      batch={selectedExt}
+                      mipFacility={mipSamplePlanFacility}
                     />
                     <button
                       type="button"
@@ -5237,6 +5252,7 @@ export default function Extraction() {
                         const ok = buildAndPrintExtractionBatchSheet(selectedExt, {
                           resolveSource: getSource,
                           nextRequiredTask: getNextAllowedTask(selectedExt),
+                          mipFacility: mipSamplePlanFacility,
                         });
                         if (!ok) {
                           showNotice(
@@ -5246,7 +5262,7 @@ export default function Extraction() {
                         }
                       }}
                     >
-                      Print batch sheet
+                      Print both sheets (2 pages)
                     </button>
                     <p
                       style={{
@@ -5258,8 +5274,9 @@ export default function Extraction() {
                         lineHeight: 1.4,
                       }}
                     >
-                      Save this task to the log after printing if you want a record of when the sheet was
-                      issued.
+                      Sheet 1 stays with extraction; Sheet 2 (MIP) goes to testing/packaging. Save this task
+                      to log when sheets were issued. Facility header on Sheet 2 uses company config
+                      (extraction.mipSamplePlan).
                     </p>
                   </>
                 )}

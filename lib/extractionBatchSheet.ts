@@ -228,78 +228,117 @@ function renderSourceTable(rows: ExtractionBatchSheetSourceRow[]): string {
   </table>`;
 }
 
-export function buildExtractionBatchSheetPrintHtml(model: ExtractionBatchSheetModel): string {
-  const metaRows = [
-    ["Extraction run ID", model.runId],
-    ["Market batch code", model.marketBatchCode],
-    ["Product type", model.productType],
-    ["Batch name", model.batchName],
-    ["Status", model.status],
-    ["Created", model.createdAt],
-    ["Strain blend", model.sourceBlendLabel],
-    ["Cultivation sources", model.cultivationSourceLine || EM_DASH],
-    ["Total biomass", `${model.totalBiomassGramsLabel} (${model.totalBiomassLbsLabel})`],
-    ["Final oil (if logged)", model.finalOilGramsLabel],
-    ["Next required task", model.nextRequiredTask],
-  ]
-    .map(
-      ([label, value]) =>
-        `<tr><th>${escapeHtml(String(label))}</th><td>${escapeHtml(String(value))}</td></tr>`,
-    )
-    .join("");
-
-  const packBlock =
-    model.packSocksLines.length > 0
-      ? `<h2>Pack socks</h2><ul>${model.packSocksLines.map((l) => `<li>${escapeHtml(l)}</li>`).join("")}</ul>`
-      : "";
-
-  const tasksBlock =
-    model.completedTasks.length > 0
-      ? `<h2>Completed tasks</h2><ul class="tasks">${model.completedTasks
-          .map((t) => `<li>${escapeHtml(t)}</li>`)
-          .join("")}</ul>`
-      : `<p class="muted">No tasks logged yet.</p>`;
-
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Batch sheet ${escapeHtml(model.marketBatchCode)}</title>
-<style>
+const BATCH_PRINT_SHARED_CSS = `
   * { box-sizing: border-box; }
-  body { font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; color: #111; margin: 0; padding: 16px 18px; font-size: 12px; line-height: 1.4; }
-  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: 0.02em; }
-  .subtitle { font-size: 13px; color: #444; margin: 0 0 14px; }
-  h2 { font-size: 14px; margin: 18px 0 8px; border-bottom: 2px solid #222; padding-bottom: 4px; }
-  table.meta { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
-  table.meta th, table.meta td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; vertical-align: top; }
-  table.meta th { width: 32%; background: #f0f0f0; font-weight: 600; }
+  body { font-family: Arial, Helvetica, system-ui, sans-serif; color: #111; margin: 0; padding: 0; font-size: 11px; line-height: 1.35; }
+  .sheet { padding: 14px 16px; }
+  .sheet.process h1 { font-size: 22px; margin: 0 0 6px; }
+  .sheet-tag { font-size: 11px; color: #444; margin: 0 0 12px; font-weight: 600; }
+  .hero { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .hero .card { border: 2px solid #222; padding: 10px 12px; min-height: 52px; }
+  .hero .lbl { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #333; margin-bottom: 4px; }
+  .hero .val { font-size: 15px; font-weight: 700; word-break: break-word; }
+  h2 { font-size: 13px; margin: 12px 0 6px; border-bottom: 2px solid #222; padding-bottom: 3px; }
   table.sources { width: 100%; border-collapse: collapse; font-size: 11px; }
   table.sources th, table.sources td { border: 1px solid #333; padding: 5px 6px; text-align: left; vertical-align: top; }
   table.sources th { background: #e8e8e8; font-weight: 700; }
   table.sources tr:nth-child(even) td { background: #fafafa; }
-  ul { margin: 0; padding-left: 18px; }
-  ul.tasks { columns: 2; column-gap: 24px; }
+  .meta-row { font-size: 10px; color: #444; margin-top: 10px; }
+  .footer { margin-top: 12px; font-size: 10px; color: #666; border-top: 1px solid #ccc; padding-top: 6px; }
   .muted { color: #555; font-style: italic; }
-  .footer { margin-top: 20px; font-size: 10px; color: #666; border-top: 1px solid #ccc; padding-top: 8px; }
-  .no-print { margin: 12px 0; }
+  .no-print { margin: 12px 16px; }
   .no-print button { font-size: 14px; padding: 8px 16px; cursor: pointer; }
+  .sheet.mip h1 { font-size: 18px; text-align: center; margin: 0 0 4px; text-decoration: underline; }
+  table.form-lines { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+  table.form-lines td { border: 1px solid #333; padding: 4px 6px; vertical-align: middle; }
+  table.form-lines .lbl { font-weight: 700; white-space: nowrap; background: #f5f5f5; width: 1%; }
+  table.form-lines .lbl.wide { min-width: 180px; }
+  table.two-col .lbl { width: 28%; }
+  .inline-lbl { margin: 8px 0 4px; font-weight: 700; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
+  table.grid td { border: 1px solid #333; padding: 3px 5px; font-size: 10px; }
+  table.grid .lbl { font-weight: 700; background: #f0f0f0; }
+  .inc-title { font-weight: 700; font-size: 10px; text-align: center; margin-bottom: 4px; }
+  table.increments { width: 100%; border-collapse: collapse; font-size: 9px; }
+  table.increments th, table.increments td { border: 1px solid #333; padding: 2px 3px; text-align: center; }
+  table.increments .loc { font-weight: 700; background: #fafafa; height: 14px; }
+  table.increments .wt { height: 14px; }
+  table.mini { margin-top: 6px; }
+  .box { border: 1px solid #333; margin-top: 6px; }
+  .box-lbl { font-weight: 700; font-size: 10px; padding: 4px 6px; border-bottom: 1px solid #333; background: #f5f5f5; }
+  .box-body { min-height: 48px; padding: 6px; }
+  .box-body.tall { min-height: 72px; }
+  .tested { margin: 8px 0; font-size: 10px; }
+  .test { margin-right: 6px; }
+  .test.on { font-weight: 700; text-decoration: underline; }
+  .lbl-inline { font-weight: 700; }
+  .blank { display: inline-block; min-width: 80%; border-bottom: 1px solid #999; min-height: 14px; }
   @media print {
     .no-print { display: none !important; }
-    body { padding: 10mm; }
-    @page { size: letter portrait; margin: 12mm; }
-    table.sources { page-break-inside: auto; }
+    .sheet { page-break-after: always; padding: 10mm; }
+    .sheet:last-child { page-break-after: auto; }
+    @page { size: letter portrait; margin: 10mm; }
     tr { page-break-inside: avoid; }
   }
-</style></head><body>
-  <h1>Extraction batch reference sheet</h1>
-  <p class="subtitle"><strong>${escapeHtml(model.marketBatchCode)}</strong> &mdash; attach to physical batch through prep, extraction, purge, and testing.</p>
-  <p class="no-print"><button type="button" onclick="window.print()">Print</button></p>
-  <h2>Batch summary</h2>
-  <table class="meta">${metaRows}</table>
-  <h2>Source material (strains, METRC, weights)</h2>
-  ${renderSourceTable(model.sourceRows)}
-  ${packBlock}
-  <h2>Workflow</h2>
-  ${tasksBlock}
-  <div class="footer">Printed ${escapeHtml(model.printedAtLabel)} &middot; NexBatch extraction</div>
+`;
+
+/** Sheet 1: follows the batch through extraction (sources, METRC, weights). */
+export function buildExtractionProcessReferencePrintHtml(model: ExtractionBatchSheetModel): string {
+  const strainDisplay =
+    model.sourceBlendLabel && model.sourceBlendLabel !== EM_DASH
+      ? model.sourceBlendLabel
+      : [...new Set(model.sourceRows.map((r) => r.strain).filter((s) => s && s !== EM_DASH))].join(
+          " · ",
+        ) || EM_DASH;
+
+  const sourceTableSlim =
+    model.sourceRows.length === 0
+      ? `<p class="muted">No source packages on this batch.</p>`
+      : `<table class="sources"><thead><tr>
+          <th>#</th><th>Strain</th><th>METRC #</th><th>Package</th><th>Used (g)</th><th>Used (lbs)</th>
+        </tr></thead><tbody>${model.sourceRows
+          .map(
+            (r) => `<tr>
+            <td>${r.index}</td>
+            <td>${escapeHtml(r.strain)}</td>
+            <td>${escapeHtml(r.metrcTag)}</td>
+            <td>${escapeHtml(r.packageId)}</td>
+            <td>${escapeHtml(r.usedGramsLabel)}</td>
+            <td>${escapeHtml(r.usedLbsLabel)}</td>
+          </tr>`,
+          )
+          .join("")}</tbody></table>`;
+
+  return `<section class="sheet process">
+  <h1>Extraction process reference</h1>
+  <p class="sheet-tag">Sheet 1 of 2 — keep with batch through prep, pack socks, and extraction</p>
+  <div class="hero">
+    <div class="card"><div class="lbl">Market batch code</div><div class="val">${escapeHtml(model.marketBatchCode)}</div></div>
+    <div class="card"><div class="lbl">Strain / blend</div><div class="val">${escapeHtml(strainDisplay)}</div></div>
+    <div class="card"><div class="lbl">Product</div><div class="val">${escapeHtml(model.productType)}</div></div>
+  </div>
+  <p class="meta-row">Run ID: ${escapeHtml(model.runId)} · Status: ${escapeHtml(model.status)} · Biomass: ${escapeHtml(model.totalBiomassGramsLabel)} (${escapeHtml(model.totalBiomassLbsLabel)}) · Next: ${escapeHtml(model.nextRequiredTask)}</p>
+  <h2>Source packages (strains, METRC tags, weights)</h2>
+  ${sourceTableSlim}
+  <div class="footer">Printed ${escapeHtml(model.printedAtLabel)} · NexBatch — attach through extraction; use Sheet 2 for lab sample plan at testing/packaging.</div>
+</section>`;
+}
+
+/** @deprecated Use {@link buildCombinedExtractionBatchSheetsPrintHtml} for two-sheet print. */
+export function buildExtractionBatchSheetPrintHtml(model: ExtractionBatchSheetModel): string {
+  return buildExtractionProcessReferencePrintHtml(model);
+}
+
+export function buildCombinedExtractionBatchSheetsPrintHtml(
+  process: ExtractionBatchSheetModel,
+  mipHtml: string,
+): string {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Batch sheets ${escapeHtml(process.marketBatchCode)}</title>
+<style>${BATCH_PRINT_SHARED_CSS}</style></head><body>
+<p class="no-print"><button type="button" onclick="window.print()">Print both sheets</button></p>
+${buildExtractionProcessReferencePrintHtml(process)}
+${mipHtml}
 </body></html>`;
 }
