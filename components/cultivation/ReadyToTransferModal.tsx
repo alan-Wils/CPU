@@ -20,6 +20,7 @@ import {
   UNASSIGNED_STORAGE_GROUP_ID,
 } from "@/lib/cultivationTransferStorageGroups";
 import { fetchCachedCompanyConfig } from "@/lib/configClient";
+import { parseFreshFrozenGramsPerBundle } from "@/lib/freshFrozenPackageDisplay";
 
 export type CultivationTransferToExtractionResult = {
   rows?: CultivationExtractionTransferRow[];
@@ -129,6 +130,7 @@ export default function ReadyToTransferModal({
   const [storageEdits, setStorageEdits] = useState<Record<string, string>>({});
   const [fieldEdits, setFieldEdits] = useState<Record<string, PackageFieldEdits>>({});
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set());
+  const [freshFrozenGramsPerBundle, setFreshFrozenGramsPerBundle] = useState(0);
 
   const syncEditsFromRows = useCallback((list: CultivationExtractionTransferRow[]) => {
     setFieldEdits(Object.fromEntries(list.map((r) => [r.id, fieldEditsFromRow(r)])));
@@ -154,15 +156,17 @@ export default function ReadyToTransferModal({
     if (!open) return;
     setExpandedZones(new Set());
     void loadRows();
-    void fetchCachedCompanyConfig<{ cultivation?: { storageLocations?: unknown } }>(
-      "/api/config/cultivation",
-    )
+    void fetchCachedCompanyConfig<{
+      cultivation?: { storageLocations?: unknown; freshFrozenGramsPerBundle?: unknown };
+    }>("/api/config/cultivation")
       .then((data) => {
         const cult = data?.cultivation;
         setStorageConfig(normalizeCultivationStorageLocationsConfig(cult?.storageLocations));
+        setFreshFrozenGramsPerBundle(parseFreshFrozenGramsPerBundle(cult?.freshFrozenGramsPerBundle));
       })
       .catch(() => {
         setStorageConfig(normalizeCultivationStorageLocationsConfig(null));
+        setFreshFrozenGramsPerBundle(0);
       });
   }, [open, loadRows]);
 
@@ -465,6 +469,9 @@ export default function ReadyToTransferModal({
                             }}
                           >
                             {bundleCount} bundles combined on this row
+                            {freshFrozenGramsPerBundle > 0
+                              ? ` · split uses ${freshFrozenGramsPerBundle.toLocaleString()} g each, remainder on last`
+                              : ""}
                           </div>
                         ) : (
                           <input
@@ -535,6 +542,9 @@ export default function ReadyToTransferModal({
                 }}
               >
                 Split into {bundleCount} bundles
+                {freshFrozenGramsPerBundle > 0
+                  ? ` (${freshFrozenGramsPerBundle.toLocaleString()} g + off last)`
+                  : ""}
               </button>
             ) : null}
             {rowSaving ? (

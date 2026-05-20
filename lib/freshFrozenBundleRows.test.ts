@@ -5,9 +5,18 @@ import {
 import {
   fillAscendingMetrcTagsFromFirstBundle,
   incrementMetrcPackageTag,
+  splitGramsAcrossFixedBundleCount,
   splitGramsByConfiguredBundleSize,
   sumFreshFrozenBundleGrams,
 } from "./freshFrozenBundleRows";
+
+describe("splitGramsAcrossFixedBundleCount", () => {
+  it("uses config weight for all but the last bundle", () => {
+    expect(splitGramsAcrossFixedBundleCount(40857, 5100, 8)).toEqual([
+      5100, 5100, 5100, 5100, 5100, 5100, 5100, 5157,
+    ]);
+  });
+});
 
 describe("splitGramsByConfiguredBundleSize", () => {
   it("splits into full bundles plus partial remainder", () => {

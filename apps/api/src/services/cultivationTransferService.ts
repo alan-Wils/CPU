@@ -13,6 +13,11 @@ import {
     type CultivationStorageLocationsConfig,
 } from "../lib/cultivationStorageConfig.js";
 import { pruneLegacyMonolithicFreshFrozenFromStore } from "../lib/extractionSourceAvailability.js";
+import {
+    parseFreshFrozenGramsPerBundle,
+    splitGramsAcrossFixedBundleCount,
+    splitGramsEvenly,
+} from "../lib/freshFrozenBundleSplit.js";
 import { repairMisclassifiedSourceBatchRow } from "../lib/repairMisclassifiedSourceBatch.js";
 import { StoreService } from "./storeService.js";
 
@@ -124,6 +129,17 @@ export class CultivationTransferService {
                 ? (cult as Record<string, unknown>).storageLocations
                 : undefined;
         return normalizeCultivationStorageLocationsConfig(storageRaw);
+    }
+
+    private async loadFreshFrozenGramsPerBundle(companyId: string): Promise<number> {
+        const rows = await this.configService.list(companyId);
+        const merged = mergeConfigRowsToMap(rows.map((r) => ({ key: r.key, value: r.value })));
+        const cult = merged.cultivation;
+        if (!cult || typeof cult !== "object" || Array.isArray(cult))
+            return 0;
+        return parseFreshFrozenGramsPerBundle(
+            (cult as Record<string, unknown>).freshFrozenGramsPerBundle,
+        );
     }
 
     private resolveStorageLocation(
@@ -383,7 +399,25 @@ export class CultivationTransferService {
         if (totalGrams <= 0)
             throw new AppError("Cannot split: total grams must be greater than zero", 400);
 
-        const gramsEach = this.splitGramsEvenly(totalGrams, bundleCount);
+        const gramsPerBundle = await this.loadFreshFrozenGramsPerBundle(params.companyId);
+        let gramsEach: number[];
+        if (gramsPerBundle > 0) {
+            if (bundleCount > 1 && totalGrams < gramsPerBundle * (bundleCount - 1)) {
+                throw new AppError(
+                    `Total ${totalGrams} g is too low for ${bundleCount} bundles at ${gramsPerBundle} g each. Adjust total weight or bundle count.`,
+                    400,
+                );
+            }
+            gramsEach = splitGramsAcrossFixedBundleCount(
+                totalGrams,
+                gramsPerBundle,
+                bundleCount,
+            );
+            if (gramsEach.length !== bundleCount)
+                throw new AppError("Could not split bundles with configured bundle weight", 400);
+        } else {
+            gramsEach = splitGramsEvenly(totalGrams, bundleCount);
+        }
         const parentGroupId =
             String(existing.parentGroupId || "").trim()
             || `ff-${existing.sourceCultivationBatchId}-${Date.now()}`;
@@ -456,22 +490,6 @@ export class CultivationTransferService {
         }
 
         return out;
-    }
-
-    private splitGramsEvenly(totalGrams: number, count: number): number[] {
-        const total = Math.max(0, Math.round(totalGrams * 100) / 100);
-        const n = Math.max(1, Math.floor(count));
-        const base = Math.floor((total / n) * 100) / 100;
-        const amounts = Array.from({ length: n }, () => base);
-        let remainder = Math.round((total - base * n) * 100) / 100;
-        let idx = n - 1;
-        while (remainder > 0.009 && idx >= 0) {
-            const add = Math.min(0.01, remainder);
-            amounts[idx] = Math.round((amounts[idx] + add) * 100) / 100;
-            remainder = Math.round((remainder - add) * 100) / 100;
-            idx--;
-        }
-        return amounts;
     }
 
     async patchTransfer(params: {

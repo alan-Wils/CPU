@@ -55,6 +55,31 @@ export function freshFrozenBundleRowsFromHarvestSheet(
   return out.length > 0 ? out : [newFreshFrozenBundleRow()];
 }
 
+/**
+ * Split total grams across a fixed bundle count: first N−1 bundles use configured weight;
+ * the last bundle gets the remainder ("off" weight).
+ */
+export function splitGramsAcrossFixedBundleCount(
+  totalGrams: number,
+  gramsPerBundle: number,
+  bundleCount: number,
+): number[] {
+  const total = Math.max(0, Math.round(totalGrams * 100) / 100);
+  const per = Math.floor(gramsPerBundle);
+  const n = Math.max(1, Math.floor(bundleCount));
+  if (total <= 0 || per <= 0 || n <= 0) return [];
+
+  const amounts: number[] = [];
+  let remaining = total;
+  for (let i = 0; i < n; i++) {
+    const isLast = i === n - 1;
+    const bundleGrams = isLast ? +remaining.toFixed(2) : per;
+    amounts.push(bundleGrams);
+    remaining = +(remaining - bundleGrams).toFixed(2);
+  }
+  return amounts;
+}
+
 /** Split total grams into full bundles of `gramsPerBundle` plus one partial remainder row. */
 export function splitGramsByConfiguredBundleSize(
   totalGrams: number,
@@ -68,22 +93,15 @@ export function splitGramsByConfiguredBundleSize(
   }
 
   const count = Math.ceil(total / per);
-  const rows: FreshFrozenBundleDraft[] = [];
-  let remaining = total;
-
-  for (let i = 0; i < count; i++) {
-    const isLast = i === count - 1;
-    const bundleGrams = isLast ? +remaining.toFixed(2) : per;
-    remaining = +(remaining - bundleGrams).toFixed(2);
+  const gramsList = splitGramsAcrossFixedBundleCount(total, per, count);
+  return gramsList.map((bundleGrams, i) => {
     const existing = existingRows[i];
-    rows.push({
+    return {
       id: existing?.id ?? newFreshFrozenBundleRow().id,
       metrcTag: existing?.metrcTag ?? "",
       grams: bundleGrams > 0 ? String(bundleGrams) : "",
-    });
-  }
-
-  return rows;
+    };
+  });
 }
 
 /** Increment trailing digits on a METRC-style tag (e.g. 1111 → 1112). */
