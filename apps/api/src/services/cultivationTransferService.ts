@@ -347,30 +347,69 @@ export class CultivationTransferService {
         storageLocationId: string;
         storageLocationName?: string;
     }): Promise<CultivationTransferDto> {
+        return this.patchTransfer({
+            companyId: params.companyId,
+            id: params.id,
+            storageLocationId: params.storageLocationId,
+            storageLocationName: params.storageLocationName,
+        });
+    }
+
+    async patchTransfer(params: {
+        companyId: string;
+        id: string;
+        storageLocationId?: string;
+        storageLocationName?: string;
+        displayName?: string;
+        grams?: number;
+        bundles?: number;
+        weightLbs?: number;
+    }): Promise<CultivationTransferDto> {
         const existing = await prisma.cultivationExtractionTransfer.findFirst({
             where: { id: params.id, companyId: params.companyId },
         });
         if (!existing)
             throw new AppError("Transfer record not found", 404);
         if (existing.transferStatus === CultivationTransferStatus.TRANSFERRED_TO_EXTRACTION)
-            throw new AppError("Cannot change storage after transfer to extraction", 400);
+            throw new AppError("Cannot edit after transfer to extraction", 400);
 
-        const config = await this.loadStorageConfig(params.companyId);
-        const storage = this.resolveStorageLocation(
-            config,
-            existing.materialType,
-            params.storageLocationId,
-            params.storageLocationName,
-        );
+        const data: Prisma.CultivationExtractionTransferUpdateInput = {};
+
+        const storageLocationId = String(params.storageLocationId ?? "").trim();
+        if (storageLocationId) {
+            const config = await this.loadStorageConfig(params.companyId);
+            const storage = this.resolveStorageLocation(
+                config,
+                existing.materialType,
+                storageLocationId,
+                params.storageLocationName,
+            );
+            data.storageType = storage.storageType;
+            data.storageLocationId = storage.storageLocationId;
+            data.storageLocationName = storage.storageLocationName;
+            data.transferStatus = CultivationTransferStatus.STORED;
+        }
+
+        const displayName = String(params.displayName ?? "").trim();
+        if (displayName)
+            data.displayName = displayName;
+
+        if (existing.materialType === CultivationTransferMaterialType.FRESH_FROZEN) {
+            if (params.grams !== undefined) {
+                const grams = Math.max(0, Number(params.grams));
+                data.grams = grams;
+                data.weightLbs = +(grams / 453.592).toFixed(4);
+            }
+            if (params.bundles !== undefined)
+                data.bundles = Math.max(0, Math.floor(Number(params.bundles)));
+        }
+        else if (params.weightLbs !== undefined) {
+            data.weightLbs = Math.max(0, Number(params.weightLbs));
+        }
 
         const row = await prisma.cultivationExtractionTransfer.update({
             where: { id: existing.id },
-            data: {
-                storageType: storage.storageType,
-                storageLocationId: storage.storageLocationId,
-                storageLocationName: storage.storageLocationName,
-                transferStatus: CultivationTransferStatus.STORED,
-            },
+            data,
         });
         return toDto(row);
     }

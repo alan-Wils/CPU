@@ -756,10 +756,24 @@ export const cultivationTransferIdParamSchema = z.object({
     id: z.string().cuid(),
 });
 
-export const cultivationTransferPatchSchema = z.object({
-    storageLocationId: z.string().trim().min(1).max(80),
-    storageLocationName: z.string().trim().max(120).optional(),
-});
+export const cultivationTransferPatchSchema = z
+    .object({
+        storageLocationId: z.string().trim().min(1).max(80).optional(),
+        storageLocationName: z.string().trim().max(120).optional(),
+        displayName: z.string().trim().min(1).max(200).optional(),
+        grams: z.number().min(0).optional(),
+        bundles: z.number().int().min(0).optional(),
+        weightLbs: z.number().min(0).optional(),
+    })
+    .refine(
+        (data) =>
+            data.storageLocationId !== undefined
+            || data.displayName !== undefined
+            || data.grams !== undefined
+            || data.bundles !== undefined
+            || data.weightLbs !== undefined,
+        { message: "At least one field to update is required" },
+    );
 
 export const cultivationTransferBulkSchema = z.object({
     ids: z.array(z.string().cuid()).min(1).max(50),

@@ -104,6 +104,10 @@ export async function patchCultivationExtractionTransfer(
     storageLocationId?: string;
     storageLocationName?: string;
     transferStatus?: CultivationTransferStatus;
+    displayName?: string;
+    grams?: number;
+    bundles?: number;
+    weightLbs?: number;
   },
 ) {
   return apiRequest(`/api/cultivation-extraction-transfers/${encodeURIComponent(id)}`, {

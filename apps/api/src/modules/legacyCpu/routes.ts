@@ -1524,11 +1524,15 @@ legacyCpuRouter.patch(
         const companyId = getScopedCompanyId(req);
         const { id } = req.params;
         const body = req.body as z.infer<typeof cultivationTransferPatchSchema>;
-        const row = await cultivationTransferService.updateStorage({
+        const row = await cultivationTransferService.patchTransfer({
             companyId,
             id,
             storageLocationId: body.storageLocationId,
             storageLocationName: body.storageLocationName,
+            displayName: body.displayName,
+            grams: body.grams,
+            bundles: body.bundles,
+            weightLbs: body.weightLbs,
         });
         res.json(row);
     }),

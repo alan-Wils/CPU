@@ -32,12 +32,29 @@ type Props = {
   canWrite: boolean;
 };
 
+type PackageFieldEdits = {
+  displayName: string;
+  grams: string;
+  bundles: string;
+  weightLbs: string;
+};
+
 const selectStyle: React.CSSProperties = {
   padding: "8px 10px",
   borderRadius: 8,
   border: "1px solid #475569",
   background: "#0f172a",
   color: "#e2e8f0",
+};
+
+const inputStyle: React.CSSProperties = {
+  padding: "8px 10px",
+  borderRadius: 8,
+  border: "1px solid #475569",
+  background: "#0f172a",
+  color: "#e2e8f0",
+  width: "100%",
+  boxSizing: "border-box",
 };
 
 const closeBtnStyle: React.CSSProperties = {
@@ -72,10 +89,25 @@ function formatWeight(row: CultivationExtractionTransferRow): string {
   return `${Number(row.weightLbs ?? 0).toFixed(2)} lbs`;
 }
 
+function fieldEditsFromRow(row: CultivationExtractionTransferRow): PackageFieldEdits {
+  return {
+    displayName: String(row.displayName || "").trim(),
+    grams: row.grams != null ? String(row.grams) : "",
+    bundles: row.bundles != null ? String(row.bundles) : "1",
+    weightLbs: row.weightLbs != null ? String(row.weightLbs) : "",
+  };
+}
+
+function parseNum(value: string): number | null {
+  const n = Number(String(value || "").replace(/,/g, "").trim());
+  return Number.isFinite(n) ? n : null;
+}
+
 export default function ReadyToTransferModal({ open, onClose, onTransferred, canWrite }: Props) {
   const [rows, setRows] = useState<CultivationExtractionTransferRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [savingRowId, setSavingRowId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [filterType, setFilterType] = useState<"" | CultivationTransferMaterialType>("");
@@ -85,7 +117,13 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
     normalizeCultivationStorageLocationsConfig(null),
   );
   const [storageEdits, setStorageEdits] = useState<Record<string, string>>({});
+  const [fieldEdits, setFieldEdits] = useState<Record<string, PackageFieldEdits>>({});
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set());
+
+  const syncEditsFromRows = useCallback((list: CultivationExtractionTransferRow[]) => {
+    setFieldEdits(Object.fromEntries(list.map((r) => [r.id, fieldEditsFromRow(r)])));
+    setStorageEdits({});
+  }, []);
 
   const loadRows = useCallback(async () => {
     setLoading(true);
@@ -93,13 +131,14 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
     try {
       const list = await listCultivationExtractionTransfers({ status: "pending" });
       setRows(list);
+      syncEditsFromRows(list);
       setSelected(new Set());
     } catch (e) {
       setError(formatCultivationTransferApiError(e));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [syncEditsFromRows]);
 
   useEffect(() => {
     if (!open) return;
@@ -184,24 +223,93 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
     return row.materialType === "FRESH_FROZEN" ? storageConfig.freezers : storageConfig.dryRooms;
   }
 
-  async function saveStorage(row: CultivationExtractionTransferRow) {
-    const locId = storageEdits[row.id] ?? row.storageLocationId ?? "";
+  function applyRowUpdate(updated: CultivationExtractionTransferRow) {
+    setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+    setFieldEdits((prev) => ({ ...prev, [updated.id]: fieldEditsFromRow(updated) }));
+    setStorageEdits((prev) => {
+      const next = { ...prev };
+      delete next[updated.id];
+      return next;
+    });
+  }
+
+  async function saveStorageLocation(row: CultivationExtractionTransferRow, locId: string) {
     if (!locId) return;
+    const savedLoc = row.storageLocationId ?? "";
+    if (locId === savedLoc) return;
+
     const loc = locationsForRow(row).find((l) => l.id === locId);
     if (!loc) return;
-    setBusy(true);
+
+    setSavingRowId(row.id);
     setError("");
     try {
-      await patchCultivationExtractionTransfer(row.id, {
+      const updated = await patchCultivationExtractionTransfer(row.id, {
         storageLocationId: loc.id,
         storageLocationName: loc.name,
       });
-      await loadRows();
+      applyRowUpdate(updated);
     } catch (e) {
       setError(formatCultivationTransferApiError(e));
     } finally {
-      setBusy(false);
+      setSavingRowId(null);
     }
+  }
+
+  async function savePackageDetails(row: CultivationExtractionTransferRow) {
+    const edits = fieldEdits[row.id];
+    if (!edits) return;
+
+    const patch: {
+      displayName?: string;
+      grams?: number;
+      bundles?: number;
+      weightLbs?: number;
+    } = {};
+
+    const name = edits.displayName.trim();
+    if (name && name !== String(row.displayName || "").trim())
+      patch.displayName = name;
+
+    if (row.materialType === "FRESH_FROZEN") {
+      const grams = parseNum(edits.grams);
+      if (grams != null && grams >= 0 && grams !== Number(row.grams ?? 0))
+        patch.grams = grams;
+      const bundles = parseNum(edits.bundles);
+      if (bundles != null && bundles >= 0 && Math.floor(bundles) !== Number(row.bundles ?? 0))
+        patch.bundles = Math.floor(bundles);
+    } else {
+      const lbs = parseNum(edits.weightLbs);
+      if (lbs != null && lbs >= 0 && lbs !== Number(row.weightLbs ?? 0))
+        patch.weightLbs = lbs;
+    }
+
+    if (Object.keys(patch).length === 0) return;
+
+    setSavingRowId(row.id);
+    setError("");
+    try {
+      const updated = await patchCultivationExtractionTransfer(row.id, patch);
+      applyRowUpdate(updated);
+    } catch (e) {
+      setError(formatCultivationTransferApiError(e));
+    } finally {
+      setSavingRowId(null);
+    }
+  }
+
+  function updateFieldEdit(
+    rowId: string,
+    key: keyof PackageFieldEdits,
+    value: string,
+  ) {
+    setFieldEdits((prev) => ({
+      ...prev,
+      [rowId]: {
+        ...(prev[rowId] || { displayName: "", grams: "", bundles: "1", weightLbs: "" }),
+        [key]: value,
+      },
+    }));
   }
 
   async function transferSelected() {
@@ -218,20 +326,6 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
     setBusy(true);
     setError("");
     try {
-      for (const id of ids) {
-        const row = rows.find((r) => r.id === id);
-        if (!row) continue;
-        const editLoc = storageEdits[id];
-        if (editLoc && editLoc !== row.storageLocationId) {
-          const loc = locationsForRow(row).find((l) => l.id === editLoc);
-          if (loc) {
-            await patchCultivationExtractionTransfer(id, {
-              storageLocationId: loc.id,
-              storageLocationName: loc.name,
-            });
-          }
-        }
-      }
       const transferResult = await transferCultivationExtractionToExtraction(ids);
       onTransferred?.({
         rows: Array.isArray(transferResult?.rows) ? transferResult.rows : [],
@@ -250,6 +344,10 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
   function renderRow(row: CultivationExtractionTransferRow, inZone: boolean) {
     const locs = locationsForRow(row);
     const currentLoc = storageEdits[row.id] ?? row.storageLocationId ?? "";
+    const edits = fieldEdits[row.id] ?? fieldEditsFromRow(row);
+    const rowSaving = savingRowId === row.id;
+    const isFf = row.materialType === "FRESH_FROZEN";
+
     return (
       <div
         key={row.id}
@@ -263,22 +361,103 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
         <label style={{ display: "flex", gap: 8, cursor: canWrite ? "pointer" : "default" }}>
           <input
             type="checkbox"
-            disabled={!canWrite || busy}
+            disabled={!canWrite || busy || rowSaving}
             checked={selected.has(row.id)}
             onChange={() => toggleSelect(row.id)}
             style={{ marginTop: 4 }}
           />
-          <TransferRowDetails row={row} hideStorage={inZone} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {canWrite ? (
+              <div style={{ display: "grid", gap: 8 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Name</div>
+                  <input
+                    style={inputStyle}
+                    value={edits.displayName}
+                    disabled={busy || rowSaving}
+                    onChange={(e) => updateFieldEdit(row.id, "displayName", e.target.value)}
+                    onBlur={() => void savePackageDetails(row)}
+                  />
+                </div>
+                {String(row.metrcTag || "").trim() ? (
+                  <div style={{ color: "#67e8f9", fontSize: 13, fontWeight: 700 }}>
+                    METRC {String(row.metrcTag || "").trim()}
+                  </div>
+                ) : null}
+                <div style={{ color: "#94a3b8", fontSize: 13 }}>
+                  {materialLabel(row.materialType)} · Batch {row.sourceCultivationBatchId}
+                  {row.sourceDryFlowerBatchId ? ` · Dry ${row.sourceDryFlowerBatchId}` : ""}
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: isFf ? "1fr 1fr" : "1fr",
+                    gap: 8,
+                  }}
+                >
+                  {isFf ? (
+                    <>
+                      <div>
+                        <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
+                          Grams
+                        </div>
+                        <input
+                          style={inputStyle}
+                          value={edits.grams}
+                          disabled={busy || rowSaving}
+                          inputMode="decimal"
+                          onChange={(e) => updateFieldEdit(row.id, "grams", e.target.value)}
+                          onBlur={() => void savePackageDetails(row)}
+                        />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
+                          Bundles
+                        </div>
+                        <input
+                          style={inputStyle}
+                          value={edits.bundles}
+                          disabled={busy || rowSaving}
+                          inputMode="numeric"
+                          onChange={(e) => updateFieldEdit(row.id, "bundles", e.target.value)}
+                          onBlur={() => void savePackageDetails(row)}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <div>
+                      <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
+                        Weight (lbs)
+                      </div>
+                      <input
+                        style={inputStyle}
+                        value={edits.weightLbs}
+                        disabled={busy || rowSaving}
+                        inputMode="decimal"
+                        onChange={(e) => updateFieldEdit(row.id, "weightLbs", e.target.value)}
+                        onBlur={() => void savePackageDetails(row)}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div style={{ color: "#cbd5e1", fontSize: 13 }}>{formatWeight(row)}</div>
+              </div>
+            ) : (
+              <TransferRowDetails row={row} hideStorage={inZone} />
+            )}
+          </div>
         </label>
         {canWrite ? (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, marginLeft: 24 }}>
             <select
               value={currentLoc}
-              disabled={busy}
-              onChange={(e) =>
-                setStorageEdits((prev) => ({ ...prev, [row.id]: e.target.value }))
-              }
-              style={{ ...selectStyle, minWidth: 140 }}
+              disabled={busy || rowSaving}
+              onChange={(e) => {
+                const locId = e.target.value;
+                setStorageEdits((prev) => ({ ...prev, [row.id]: locId }));
+                if (locId) void saveStorageLocation(row, locId);
+              }}
+              style={{ ...selectStyle, minWidth: 160 }}
             >
               <option value="">Select storage…</option>
               {locs.map((l) => (
@@ -287,21 +466,11 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
                 </option>
               ))}
             </select>
-            <button
-              type="button"
-              disabled={busy || !currentLoc}
-              onClick={() => void saveStorage(row)}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 8,
-                border: "1px solid #0891b2",
-                background: "#0c4a6e",
-                color: "#a5f3fc",
-                fontWeight: 700,
-              }}
-            >
-              Save location
-            </button>
+            {rowSaving ? (
+              <span style={{ color: "#94a3b8", fontSize: 13, alignSelf: "center" }}>
+                Saving…
+              </span>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -430,7 +599,7 @@ export default function ReadyToTransferModal({ open, onClose, onTransferred, can
           <div>
             <h2 style={{ margin: 0, color: "#f8fafc" }}>Ready to Transfer</h2>
             <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 14 }}>
-              Packages are grouped by freezer or dry room. Expand a zone to view and transfer.
+              Packages are grouped by freezer or dry room. Edits save automatically.
             </p>
           </div>
           <button type="button" onClick={onClose} style={closeBtnStyle}>
@@ -575,4 +744,3 @@ function TransferRowDetails({
     </div>
   );
 }
-
