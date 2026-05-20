@@ -4,6 +4,7 @@
  * so task completion persists `*UiState` JSON on parent rows.
  */
 import { Router } from "express";
+import { z } from "zod";
 import { Prisma, SourceMaterialRole } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
@@ -30,13 +31,23 @@ import {
 import { AppError } from "../../errors/AppError.js";
 import { enrichLegacyPackagingRowsWithOilPool } from "../../lib/extractionOilPool.js";
 import { validate } from "../../middleware/validate.js";
-import { cultivationMotherPlantsPutSchema } from "../../validation/schemas.js";
+import {
+    cultivationMotherPlantsPutSchema,
+    cultivationTransferBulkSchema,
+    cultivationTransferCreateSchema,
+    cultivationTransferIdParamSchema,
+    cultivationTransferListQuerySchema,
+    cultivationTransferPatchSchema,
+} from "../../validation/schemas.js";
+import { CultivationTransferService } from "../../services/cultivationTransferService.js";
+import { CultivationTransferMaterialType } from "@prisma/client";
 export const legacyCpuRouter = Router();
 const workflowService = new WorkflowService();
 const storeService = new StoreService();
 const taskService = new TaskService();
 const strainMetricsService = new StrainMetricsService();
 const configService = new ConfigService();
+const cultivationTransferService = new CultivationTransferService();
 function snapshotForStoreSave(snap) {
     return {
         cultivationBatches: snap.cultivationBatches ?? [],
@@ -1411,3 +1422,82 @@ legacyCpuRouter.delete("/source-batches/:id", requireRole(sourceBatchWriteRoles)
     logInfo("[WORKFLOW_FIX] legacy_source_batch_deleted", { entityType: "LegacySourceBatch", entityId: id });
     res.json({ ok: true });
 }));
+
+legacyCpuRouter.get(
+    "/cultivation-extraction-transfers",
+    validate({ query: cultivationTransferListQuerySchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const q = req.query as z.infer<typeof cultivationTransferListQuerySchema>;
+        const rows = await cultivationTransferService.list({
+            companyId,
+            status: q.status,
+            materialType: q.materialType as CultivationTransferMaterialType | undefined,
+            batch: q.batch,
+            storageLocationId: q.storageLocationId,
+        });
+        res.json({ rows });
+    }),
+);
+
+legacyCpuRouter.post(
+    "/cultivation-extraction-transfers",
+    requireRole(sourceBatchWriteRoles),
+    validate({ body: cultivationTransferCreateSchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const body = req.body as z.infer<typeof cultivationTransferCreateSchema>;
+        const row = await cultivationTransferService.create({
+            companyId,
+            materialType: body.materialType as CultivationTransferMaterialType,
+            sourceCultivationBatchId: body.sourceCultivationBatchId,
+            sourceDryFlowerBatchId: body.sourceDryFlowerBatchId,
+            sourceEventType: body.sourceEventType,
+            sourceEventAt: body.sourceEventAt,
+            displayName: body.displayName,
+            harvestCode: body.harvestCode,
+            weightLbs: body.weightLbs,
+            grams: body.grams,
+            bundles: body.bundles,
+            materialPayload: body.materialPayload,
+            storageLocationId: body.storageLocationId,
+            storageLocationName: body.storageLocationName,
+        });
+        res.status(201).json(row);
+    }),
+);
+
+legacyCpuRouter.patch(
+    "/cultivation-extraction-transfers/:id",
+    requireRole(sourceBatchWriteRoles),
+    validate({ params: cultivationTransferIdParamSchema, body: cultivationTransferPatchSchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const { id } = req.params;
+        const body = req.body as z.infer<typeof cultivationTransferPatchSchema>;
+        const row = await cultivationTransferService.updateStorage({
+            companyId,
+            id,
+            storageLocationId: body.storageLocationId,
+            storageLocationName: body.storageLocationName,
+        });
+        res.json(row);
+    }),
+);
+
+legacyCpuRouter.post(
+    "/cultivation-extraction-transfers/transfer",
+    requireRole(sourceBatchWriteRoles),
+    validate({ body: cultivationTransferBulkSchema }),
+    asyncHandler(async (req, res) => {
+        const companyId = getScopedCompanyId(req);
+        const body = req.body as z.infer<typeof cultivationTransferBulkSchema>;
+        const out = await cultivationTransferService.transferToExtraction({
+            companyId,
+            actorUserId: req.auth.userId,
+            ids: body.ids,
+        });
+        invalidateMemoPrefix(`legacy:source-batches:${companyId}:`);
+        res.json(out);
+    }),
+);

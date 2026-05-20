@@ -89,6 +89,22 @@ enum ExtractionPhase {
   COMPLETED
 }
 
+enum CultivationTransferMaterialType {
+  FRESH_FROZEN
+  TRIM
+}
+
+enum CultivationTransferStorageType {
+  FREEZER
+  DRY_ROOM
+}
+
+enum CultivationTransferStatus {
+  READY_TO_TRANSFER
+  STORED
+  TRANSFERRED_TO_EXTRACTION
+}
+
 enum PackagingRunStatus {
   IN_PROGRESS
   COMPLETED
@@ -196,6 +212,7 @@ model Company {
   trimFlowStates      TrimFlowState[]
   freshFrozenAllocs   FreshFrozenAllocation[]
   extractionBiomass   ExtractionBiomassInput[]
+  cultivationExtractionTransfers CultivationExtractionTransfer[]
   storeSnapshots      CompanyStore[]
   checkCaptures       CheckCapture[]
   cashLogEntries      CashLogEntry[]
@@ -735,6 +752,44 @@ model FreshFrozenAllocation {
   lastExtractionRunId String?
 
   updatedAt DateTime @updatedAt
+}
+
+/// Fresh Frozen / Trim staged for manual transfer from Cultivation → Extraction.
+model CultivationExtractionTransfer {
+  id        String @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  materialType CultivationTransferMaterialType
+  transferStatus CultivationTransferStatus @default(READY_TO_TRANSFER)
+
+  /// UI / legacy cultivation batch id (same as CultivationBatch.id when synced).
+  sourceCultivationBatchId String
+  sourceDryFlowerBatchId   String?
+  sourceEventType          String?
+  sourceEventAt            DateTime?
+
+  storageType         CultivationTransferStorageType?
+  storageLocationId   String?
+  storageLocationName String?
+
+  displayName  String
+  harvestCode  String?
+  weightLbs    Float?
+  grams        Float?
+  bundles      Int?
+  materialPayload Json?
+
+  extractionSourceBatchId String?
+  transferredAt           DateTime?
+  transferredByUserId     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId, transferStatus])
+  @@index([companyId, materialType])
+  @@index([companyId, sourceCultivationBatchId])
 }
 
 model CultivationBatch {

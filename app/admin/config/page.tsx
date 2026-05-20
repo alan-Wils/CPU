@@ -25,6 +25,11 @@ import {
 import { getAuthToken } from "@/lib/auth";
 import { invalidateCompanyConfigClientCache } from "@/lib/configClient";
 import {
+  DEFAULT_CULTIVATION_STORAGE_LOCATIONS,
+  normalizeCultivationStorageLocationsConfig,
+  type CultivationStorageLocation,
+} from "@/lib/cultivationStorageConfig";
+import {
   formatCompanyTimestamp,
   formatInCompanyTimezone,
   setCompanyDisplayTimezone,
@@ -187,6 +192,11 @@ type AppConfig = {
      * bundle count from total grams (floor). Operators can still edit bundles manually.
      */
     freshFrozenGramsPerBundle?: number;
+    /** Freezers (Fresh Frozen) and dry rooms (trim) for Ready to Transfer staging. */
+    storageLocations?: {
+      freezers: Array<{ id: string; name: string }>;
+      dryRooms: Array<{ id: string; name: string }>;
+    };
     /**
      * Per-stage offsets from batch anchors (clone date, first veg move date, first flower move date)
      * used to populate the cultivation section schedule calendar.
@@ -312,6 +322,10 @@ const emptyConfig: AppConfig = {
     customTasks: [],
     climateAlerts: { ...defaultCultivationClimateAlerts },
     freshFrozenGramsPerBundle: 0,
+    storageLocations: {
+      freezers: [{ id: "freezer-1", name: "Freezer 1" }],
+      dryRooms: [{ id: "dry-room-1", name: "Dry Room 1" }],
+    },
     scheduleTemplates: [],
   },
   extraction: {
@@ -5164,6 +5178,137 @@ export default function ConfigPage() {
               }}
             />
           </label>
+        </CollapsibleConfigSubsection>
+
+        <CollapsibleConfigSubsection
+          title="Extraction storage (freezers & dry rooms)"
+          summaryCollapsed={
+            <>
+              <b style={{ color: "#e2e8f0" }}>
+                {(config.cultivation.storageLocations?.freezers ?? []).length}
+              </b>{" "}
+              freezer
+              {(config.cultivation.storageLocations?.freezers ?? []).length === 1 ? "" : "s"} ·{" "}
+              <b style={{ color: "#e2e8f0" }}>
+                {(config.cultivation.storageLocations?.dryRooms ?? []).length}
+              </b>{" "}
+              dry room
+              {(config.cultivation.storageLocations?.dryRooms ?? []).length === 1 ? "" : "s"}
+            </>
+          }
+        >
+          <p style={{ color: "#94a3b8", fontSize: 14, marginTop: 0, marginBottom: 14, lineHeight: 1.5 }}>
+            Used on the Cultivation <b>Ready to Transfer</b> modal. Fresh Frozen is stored in a freezer; trim is stored
+            in a dry room before manual transfer to Extraction.
+          </p>
+          {(["freezers", "dryRooms"] as const).map((suite) => {
+            const label = suite === "freezers" ? "Freezers" : "Dry rooms";
+            const storage = normalizeCultivationStorageLocationsConfig(config.cultivation.storageLocations);
+            const list = suite === "freezers" ? storage.freezers : storage.dryRooms;
+            const prefix = suite === "freezers" ? "freezer" : "dry-room";
+            return (
+              <div key={suite} style={{ marginBottom: 18 }}>
+                <h4 style={{ margin: "0 0 8px", color: "#cbd5e1" }}>{label}</h4>
+                {list.map((loc) => (
+                  <div
+                    key={loc.id}
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                      marginBottom: 8,
+                    }}
+                  >
+                    <input
+                      style={{ ...styles.input, flex: "1 1 200px", maxWidth: 320 }}
+                      value={loc.name}
+                      onChange={(e) => {
+                        const name = e.target.value;
+                        setConfig((prev) => {
+                          const cur = normalizeCultivationStorageLocationsConfig(
+                            prev.cultivation.storageLocations,
+                          );
+                          const nextList = (suite === "freezers" ? cur.freezers : cur.dryRooms).map(
+                            (row: CultivationStorageLocation) =>
+                              row.id === loc.id ? { ...row, name } : row,
+                          );
+                          return {
+                            ...prev,
+                            cultivation: {
+                              ...prev.cultivation,
+                              storageLocations: {
+                                ...cur,
+                                [suite]: nextList,
+                              },
+                            },
+                          };
+                        });
+                      }}
+                    />
+                    <button
+                      type="button"
+                      style={styles.deleteButton}
+                      disabled={list.length <= 1}
+                      onClick={() => {
+                        setConfig((prev) => {
+                          const cur = normalizeCultivationStorageLocationsConfig(
+                            prev.cultivation.storageLocations,
+                          );
+                          const nextList = (suite === "freezers" ? cur.freezers : cur.dryRooms).filter(
+                            (row) => row.id !== loc.id,
+                          );
+                          return {
+                            ...prev,
+                            cultivation: {
+                              ...prev.cultivation,
+                              storageLocations: {
+                                ...cur,
+                                [suite]:
+                                  nextList.length > 0
+                                    ? nextList
+                                    : [...DEFAULT_CULTIVATION_STORAGE_LOCATIONS[suite]],
+                              },
+                            },
+                          };
+                        });
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  style={styles.addButton}
+                  onClick={() => {
+                    setConfig((prev) => {
+                      const cur = normalizeCultivationStorageLocationsConfig(
+                        prev.cultivation.storageLocations,
+                      );
+                      const existing = suite === "freezers" ? cur.freezers : cur.dryRooms;
+                      const n = existing.length + 1;
+                      const id = `${prefix}-${Date.now()}`;
+                      const name = suite === "freezers" ? `Freezer ${n}` : `Dry Room ${n}`;
+                      const nextList = [...existing, { id, name }];
+                      return {
+                        ...prev,
+                        cultivation: {
+                          ...prev.cultivation,
+                          storageLocations: {
+                            ...cur,
+                            [suite]: nextList,
+                          },
+                        },
+                      };
+                    });
+                  }}
+                >
+                  + Add {suite === "freezers" ? "freezer" : "dry room"}
+                </button>
+              </div>
+            );
+          })}
         </CollapsibleConfigSubsection>
 
         <details style={styles.cultivationStrainsOuter}>

@@ -706,3 +706,41 @@ export const vendorBillingManualOverrideSchema = z.object({
     billingPeriodEnd: z.string().datetime().optional(),
     rawUsageJson: z.record(z.string(), z.unknown()).optional(),
 });
+
+export const cultivationTransferMaterialTypeSchema = z.enum(["FRESH_FROZEN", "TRIM"]);
+
+export const cultivationTransferListQuerySchema = z.object({
+    status: z.string().trim().max(40).optional(),
+    materialType: cultivationTransferMaterialTypeSchema.optional(),
+    batch: z.string().trim().max(120).optional(),
+    storageLocationId: z.string().trim().max(80).optional(),
+});
+
+export const cultivationTransferCreateSchema = z.object({
+    materialType: cultivationTransferMaterialTypeSchema,
+    sourceCultivationBatchId: z.string().min(1).max(120),
+    sourceDryFlowerBatchId: z.string().min(1).max(120).optional(),
+    sourceEventType: z.string().trim().max(80).optional(),
+    sourceEventAt: z.string().datetime().optional(),
+    displayName: z.string().trim().min(1).max(200),
+    harvestCode: z.string().trim().max(120).optional(),
+    weightLbs: z.coerce.number().finite().min(0).optional(),
+    grams: z.coerce.number().finite().min(0).optional(),
+    bundles: z.coerce.number().int().min(0).optional(),
+    materialPayload: z.record(z.string(), z.unknown()).optional(),
+    storageLocationId: z.string().trim().max(80).optional(),
+    storageLocationName: z.string().trim().max(120).optional(),
+});
+
+export const cultivationTransferIdParamSchema = z.object({
+    id: z.string().cuid(),
+});
+
+export const cultivationTransferPatchSchema = z.object({
+    storageLocationId: z.string().trim().min(1).max(80),
+    storageLocationName: z.string().trim().max(120).optional(),
+});
+
+export const cultivationTransferBulkSchema = z.object({
+    ids: z.array(z.string().cuid()).min(1).max(50),
+});

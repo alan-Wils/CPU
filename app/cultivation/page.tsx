@@ -46,7 +46,9 @@ import { apiRequest, API_BASE_URL } from "@/lib/api";
 import { fetchCachedCompanyConfig } from "@/lib/configClient";
 import { extractHarvestSheet, uploadHarvestSheetImage } from "@/lib/harvestSheetApi";
 import { fileToBase64DataUrl, shrinkHarvestSheetImageFileIfLarge } from "@/lib/shrinkHarvestSheetImage";
-import { createSourceBatch, loadSourceBatches } from "@/lib/sourceBatchApi";
+import { loadSourceBatches } from "@/lib/sourceBatchApi";
+import { createCultivationExtractionTransfer } from "@/lib/cultivationTransferApi";
+import ReadyToTransferModal from "@/components/cultivation/ReadyToTransferModal";
 import { makeChainBatchCode, makeDateCode } from "@/lib/batchChainCodes";
 import { isActiveExtractionSourceBatch } from "@/lib/sourceBatchActive";
 import {
@@ -1026,6 +1028,7 @@ export default function Cultivation() {
   const [showAddTaskWindow, setShowAddTaskWindow] = useState(false);
   const [selectedStage, setSelectedStage] = useState<StageModalKey>(null);
   const [showMomsModal, setShowMomsModal] = useState(false);
+  const [showReadyToTransferModal, setShowReadyToTransferModal] = useState(false);
   const [motherPlants, setMotherPlants] = useState<MotherPlant[]>([]);
   const [momsModalBusy, setMomsModalBusy] = useState(false);
   const [momsShowRetired, setMomsShowRetired] = useState(false);
@@ -3267,36 +3270,32 @@ export default function Cultivation() {
         harvestYmd,
         collectHarvestSourcePackageIds(s),
       );
-      const freshFrozenBatch = {
-        id: harvestPackageId,
-        name: `${selectedBatch.strain} Fresh Frozen`,
-        harvestDate: harvestYmd,
-        harvestCode: harvestPackageId,
-        type: "Fresh Frozen",
-        amount: `${freshFrozenBundles || 0} bundles / ${gramsParsed} grams`,
-        bundles: Number(freshFrozenBundles || 0),
-        grams: gramsParsed,
-        /** Extraction availability uses weightLbs / grams; always set both for stable sync. */
-        weightLbs,
-        plantsHarvested,
-        source: selectedBatch.id,
-        status: "Available for Extraction",
-        createdAt: nowIsoForLog(),
-        ...(harvestSheetSnapshot ? { harvestSheetSnapshot } : {}),
-        ...(stemWasteGrams != null ? { freshFrozenStemWasteGrams: stemWasteGrams } : {}),
-        ...(aiSumGrams != null ? { harvestSheetAiTotalGrams: aiSumGrams } : {}),
-      };
-
-      s.sourceBatches.unshift(freshFrozenBatch);
-      s.productionBatches.unshift(freshFrozenBatch);
-
+      let transferId = harvestPackageId;
       try {
-        await createSourceBatch(freshFrozenBatch);
+        const created = await createCultivationExtractionTransfer({
+          materialType: "FRESH_FROZEN",
+          sourceCultivationBatchId: selectedBatch.id,
+          sourceEventType: "HARVEST_FRESH_FROZEN",
+          sourceEventAt: new Date().toISOString(),
+          displayName: `${selectedBatch.strain} Fresh Frozen`,
+          harvestCode: harvestPackageId,
+          weightLbs,
+          grams: gramsParsed,
+          bundles: Number(freshFrozenBundles || 0),
+          materialPayload: {
+            harvestDate: harvestYmd,
+            plantsHarvested,
+            ...(harvestSheetSnapshot ? { harvestSheetSnapshot } : {}),
+            ...(stemWasteGrams != null ? { freshFrozenStemWasteGrams: stemWasteGrams } : {}),
+            ...(aiSumGrams != null ? { harvestSheetAiTotalGrams: aiSumGrams } : {}),
+          },
+        });
+        if (created?.id) transferId = String(created.id);
       } catch (error) {
-        console.error("Could not save Fresh Frozen source batch to real table:", error);
+        console.error("Could not stage Fresh Frozen for transfer:", error);
         showNotice(
           "Backend Save Warning",
-          "Fresh Frozen was added locally, but it did not save to the real SourceBatch table.",
+          "Fresh Frozen was harvested, but it could not be added to Ready to Transfer.",
           "Check the backend terminal for errors."
         );
       }
@@ -3310,8 +3309,8 @@ export default function Cultivation() {
         totalLaborMinutes: lab.totalLaborMinutes,
         output: `${plantsHarvested} plants harvested for Fresh Frozen | ${
           freshFrozenBundles || 0
-        } bundles / ${freshFrozenGrams || 0} grams${lab.outputSuffix}${leftoverLogSuffix}`,
-        linkedBatch: freshFrozenBatch.id,
+        } bundles / ${freshFrozenGrams || 0} grams — ready for transfer (not sent to Extraction yet)${lab.outputSuffix}${leftoverLogSuffix}`,
+        linkedBatch: transferId,
         data: {
           ...lab.laborDetail,
           totalLaborMinutes: lab.totalLaborMinutes,
@@ -3754,30 +3753,28 @@ export default function Cultivation() {
           trimHarvestYmd,
           collectHarvestSourcePackageIds(s),
         );
-        const trimBatch = {
-          id: trimPackageId,
-          name: `${selectedDryFlowerBatch.name} Trim`,
-          harvestDate: trimHarvestYmd,
-          harvestCode: trimPackageId,
-          type: "Dry Trim",
-          amount: `${totalTrimForExtraction} lbs`,
-          weightLbs: totalTrimForExtraction,
-          source: selectedDryFlowerBatch.id,
-          parentCultivationBatch: selectedDryFlowerBatch.source,
-          status: "Available for Extraction",
-          createdAt: nowIsoForLog(),
-        };
-
-        s.sourceBatches.unshift(trimBatch);
-        s.productionBatches.unshift(trimBatch);
-
+        let trimTransferId = trimPackageId;
         try {
-          await createSourceBatch(trimBatch);
+          const created = await createCultivationExtractionTransfer({
+            materialType: "TRIM",
+            sourceCultivationBatchId: parentCultivationId || selectedDryFlowerBatch.id,
+            sourceDryFlowerBatchId: selectedDryFlowerBatch.id,
+            sourceEventType: "TRIM_COMPLETE",
+            sourceEventAt: new Date().toISOString(),
+            displayName: `${selectedDryFlowerBatch.name} Trim`,
+            harvestCode: trimPackageId,
+            weightLbs: totalTrimForExtraction,
+            materialPayload: {
+              harvestDate: trimHarvestYmd,
+              parentCultivationBatch: selectedDryFlowerBatch.source,
+            },
+          });
+          if (created?.id) trimTransferId = String(created.id);
         } catch (error) {
-          console.error("Could not save Dry Trim source batch to real table:", error);
+          console.error("Could not stage Dry Trim for transfer:", error);
           showNotice(
             "Backend Save Warning",
-            "Dry Trim was added locally, but it did not save to the real SourceBatch table.",
+            "Trim was recorded, but it could not be added to Ready to Transfer.",
             "Check the backend terminal for errors."
           );
         }
@@ -3787,11 +3784,11 @@ export default function Cultivation() {
             {
               area: "Cultivation",
               batch: selectedDryFlowerBatch.id,
-              task: "Trim Available for Extraction",
+              task: "Trim Ready for Transfer",
               people: "",
               minutes: "",
-              output: `${totalTrimForExtraction} lbs dry trim is available for extraction`,
-              linkedBatch: trimBatch.id,
+              output: `${totalTrimForExtraction} lbs dry trim is ready for transfer (use Ready to Transfer when sending to Extraction)`,
+              linkedBatch: trimTransferId,
               source: selectedDryFlowerBatch.source,
               time: nowIsoForLog(),
             },
@@ -8016,6 +8013,25 @@ export default function Cultivation() {
               >
                 Room stats
               </Link>
+              <button
+                type="button"
+                onClick={() => setShowReadyToTransferModal(true)}
+                style={{
+                  flexShrink: 0,
+                  alignSelf: "center",
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "1px solid #22c55e",
+                  background: "#14532d",
+                  color: "#bbf7d0",
+                  fontWeight: 800,
+                  fontSize: 14,
+                  cursor: "pointer",
+                  boxShadow: "0 0 0 1px rgba(34,197,94,0.25)",
+                }}
+              >
+                Ready to Transfer
+              </button>
             </div>
           </div>
         </div>
@@ -12002,6 +12018,16 @@ export default function Cultivation() {
           </div>
         </div>
       )}
+
+      <ReadyToTransferModal
+        open={showReadyToTransferModal}
+        onClose={() => setShowReadyToTransferModal(false)}
+        canWrite={canWriteRecords}
+        onTransferred={() => {
+          void loadSourceBatches({ summary: true }).catch(() => null);
+          forceRefresh();
+        }}
+      />
       </div>
     </PageAccessGate>
   );
