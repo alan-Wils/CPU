@@ -24,6 +24,7 @@ import {
     resolveLoggedByForRow,
     type LoggedByDto,
 } from "../../lib/taskLogActorLookup.js";
+import { filterSourceBatchesForExtractionAvailability } from "../../lib/extractionSourceAvailability.js";
 import {
     prismaSourcePackageToListRow,
     storeSourceBatchToListRow,
@@ -1281,7 +1282,8 @@ legacyCpuRouter.get("/source-batches", asyncHandler(async (req, res) => {
                 byId.set(id, row);
             }
         }
-        return [...byId.values()].filter((row) => Boolean(row?.id));
+        const merged = [...byId.values()].filter((row) => Boolean(row?.id));
+        return filterSourceBatchesForExtractionAvailability(merged);
     });
     const dbMs = Date.now() - dbStarted;
     const body = JSON.stringify(items);

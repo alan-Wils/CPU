@@ -23,6 +23,7 @@ import {
 } from "@/lib/sourceBatchApi";
 import { makeExtractionMarketBatchCode } from "@/lib/batchChainCodes";
 import { getSourceAvailable, isCompletedSourceBatch } from "@/lib/sourceBatchActive";
+import { filterSourceBatchesForExtractionAvailability } from "@/lib/extractionSourceAvailability";
 import {
   freshFrozenAvailableLine,
   freshFrozenPackageDisplay,
@@ -414,7 +415,7 @@ export default function Extraction() {
 
         if (!active) return;
 
-        const sourceList = asArray(realSourceBatches);
+        const sourceList = filterSourceBatchesForExtractionAvailability(asArray(realSourceBatches));
         const extractionList = asArray(realExtractionBatches);
 
         s.sourceBatches = sourceList.filter((batch: any) => {

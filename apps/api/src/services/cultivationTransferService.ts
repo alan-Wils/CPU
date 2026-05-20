@@ -12,6 +12,7 @@ import {
     storageTypeForMaterialType,
     type CultivationStorageLocationsConfig,
 } from "../lib/cultivationStorageConfig.js";
+import { pruneLegacyMonolithicFreshFrozenFromStore } from "../lib/extractionSourceAvailability.js";
 import { StoreService } from "./storeService.js";
 
 const PENDING_STATUSES: CultivationTransferStatus[] = [
@@ -438,7 +439,7 @@ export class CultivationTransferService {
             if (transfer.sourceDryFlowerBatchId)
                 base.parentCultivationBatch = transfer.sourceCultivationBatchId;
         }
-        return { ...payload, ...base };
+        return { ...base, ...payload, ...base };
     }
 
     async transferToExtraction(params: {
@@ -462,6 +463,11 @@ export class CultivationTransferService {
 
         const sourceBatches: Record<string, unknown>[] = [];
         const updated: CultivationTransferDto[] = [];
+        const affectedCultivationBatchIds = new Set<string>();
+        const affectedParentGroupIds = new Set<string>();
+
+        const snap = await this.storeService.load(params.companyId);
+        let list = Array.isArray(snap.sourceBatches) ? [...snap.sourceBatches] : [];
 
         for (const row of rows) {
             const sourceBatchId =
@@ -469,8 +475,6 @@ export class CultivationTransferService {
                 `xfer-${row.id.slice(0, 8)}-${Date.now()}`;
             const legacyBatch = this.buildLegacySourceBatchFromTransfer(row, sourceBatchId);
 
-            const snap = await this.storeService.load(params.companyId);
-            const list = Array.isArray(snap.sourceBatches) ? [...snap.sourceBatches] : [];
             const existingIdx = list.findIndex(
                 (b) => String((b as { id?: string })?.id || "") === sourceBatchId,
             );
@@ -478,7 +482,13 @@ export class CultivationTransferService {
                 list[existingIdx] = legacyBatch;
             else
                 list.unshift(legacyBatch);
-            await this.storeService.save(params.companyId, params.actorUserId, { ...snap, sourceBatches: list });
+
+            const cultivationId = String(row.sourceCultivationBatchId || "").trim();
+            if (cultivationId)
+                affectedCultivationBatchIds.add(cultivationId);
+            const parentGroupId = String(row.parentGroupId || "").trim();
+            if (parentGroupId)
+                affectedParentGroupIds.add(parentGroupId);
 
             const updatedRow = await prisma.cultivationExtractionTransfer.update({
                 where: { id: row.id },
@@ -492,6 +502,13 @@ export class CultivationTransferService {
             sourceBatches.push(legacyBatch);
             updated.push(toDto(updatedRow));
         }
+
+        list = pruneLegacyMonolithicFreshFrozenFromStore(
+            list,
+            affectedCultivationBatchIds,
+            affectedParentGroupIds,
+        );
+        await this.storeService.save(params.companyId, params.actorUserId, { ...snap, sourceBatches: list });
 
         return { rows: updated, sourceBatches };
     }
