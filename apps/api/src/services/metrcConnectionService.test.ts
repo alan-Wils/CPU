@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { listMock, upsertMock } = vi.hoisted(() => ({
+const { listMock, upsertMock, getMock, fromLoadedConfigMock, loadConfigMock } = vi.hoisted(() => ({
   listMock: vi.fn(),
   upsertMock: vi.fn(),
+  getMock: vi.fn(),
+  fromLoadedConfigMock: vi.fn(),
+  loadConfigMock: vi.fn(),
 }));
 
 vi.mock("./configService.js", () => ({
@@ -12,124 +15,91 @@ vi.mock("./configService.js", () => ({
   },
 }));
 
+vi.mock("../lib/metrcConfigLoader.js", () => ({
+  loadCompanyMetrcConfig: loadConfigMock,
+}));
+
+vi.mock("../lib/metrcClient.js", async () => {
+  const actual = await vi.importActual<typeof import("../lib/metrcClient.js")>("../lib/metrcClient.js");
+  return {
+    ...actual,
+    MetrcClient: class {
+      baseUrl = "https://sandbox-api-co.metrc.com";
+      get = getMock;
+      static fromLoadedConfig = fromLoadedConfigMock;
+    },
+  };
+});
+
 import { MetrcConnectionService } from "./metrcConnectionService.js";
 
-function companyRow(metrc: Record<string, unknown>) {
-  return [{ key: "company", value: { metrc, settings: {} } }];
-}
-
-const baseMetrc = {
-  stateCode: "CO",
-  environment: "production",
-  apiBaseUrlOverride: "",
+const loaded = {
+  company: { metrc: {} },
+  metrc: {},
+  vendorApiKey: "VENDORKEY",
+  userApiKey: "USERKEY1234567890123456789012345678901234567890",
+  username: "user",
   licenseNumber: "LIC-1",
-  apiKey: "",
-  userKey: "USERKEY",
+  facilityName: "Test",
+  stateCode: "CO",
+  environment: "sandbox" as const,
+  apiBaseUrlOverride: "",
 };
 
-describe("MetrcConnectionService diagnostics", () => {
-  const originalFetch = globalThis.fetch;
-
+describe("MetrcConnectionService", () => {
   beforeEach(() => {
     listMock.mockReset();
     upsertMock.mockResolvedValue({});
+    getMock.mockReset();
+    fromLoadedConfigMock.mockImplementation(() => ({
+      baseUrl: "https://sandbox-api-co.metrc.com",
+      get: getMock,
+    }));
+    loadConfigMock.mockResolvedValue(loaded);
   });
 
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("user-key-only: succeeds on first mode (Bearer) with one fetch", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
+  it("succeeds via MetrcClient (same auth as pull)", async () => {
+    getMock.mockResolvedValue({
       ok: true,
       status: 200,
-      text: async () => JSON.stringify({ Data: [{ Id: 1, Name: "Loc" }] }),
+      data: { Data: [{ Id: 1, Name: "Room A" }] },
+      durationMs: 10,
+      retries: 0,
+      rateLimitWaitedMs: 0,
+      authMode: "basic_metrc_user",
     });
-    globalThis.fetch = fetchMock as typeof fetch;
-
-    listMock.mockResolvedValue(companyRow({ ...baseMetrc, apiKey: "", userKey: "UKEY" }));
 
     const svc = new MetrcConnectionService();
     const out = await svc.runTestConnection({ companyId: "c1", actorUserId: "u1" });
 
     expect(out.ok && out.connected).toBe(true);
     if (!out.ok || !out.connected) return;
-    expect(out.authMode).toBe("bearer_user");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer UKEY");
+    expect(out.authMode).toBe("basic_metrc_user");
+    expect(out.userKeyLength).toBeGreaterThan(40);
+    expect(getMock).toHaveBeenCalled();
+    const path = String(getMock.mock.calls[0]?.[0] ?? "");
+    expect(path).toContain("/locations/v2/active");
+    expect(path).toContain("licenseNumber=LIC-1");
   });
 
-  it("user-key-only: tries all three modes when each fails", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 500,
-      text: async () => "{}",
-    });
-    globalThis.fetch = fetchMock as typeof fetch;
-
-    listMock.mockResolvedValue(companyRow({ ...baseMetrc, apiKey: "", userKey: "U" }));
-
-    const svc = new MetrcConnectionService();
-    const out = await svc.runTestConnection({ companyId: "c1", actorUserId: "u1" });
-
-    expect(out.ok).toBe(false);
-    if (out.ok) return;
-    expect(out.failures).toHaveLength(3);
-    expect(out.attemptedModes).toEqual(["bearer_user", "basic_user_colon", "basic_colon_user"]);
-    expect(fetchMock).toHaveBeenCalledTimes(6);
-  });
-
-  it("vendor+user: tries dual-key first then fallbacks until success", async () => {
-    let n = 0;
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      n += 1;
-      const auth = (init?.headers as Record<string, string> | undefined)?.Authorization ?? "";
-      if (n === 1) {
-        expect(auth.startsWith("Basic ")).toBe(true);
-        return { ok: false, status: 401, text: async () => "{}" };
-      }
-      expect(auth.startsWith("Bearer ")).toBe(true);
-      return { ok: true, status: 200, text: async () => "[]" };
-    });
-    globalThis.fetch = fetchMock as typeof fetch;
-
-    listMock.mockResolvedValue(
-      companyRow({
-        ...baseMetrc,
-        apiKey: "VEND",
-        userKey: "USR",
-      }),
-    );
-
-    const svc = new MetrcConnectionService();
-    const out = await svc.runTestConnection({ companyId: "c1", actorUserId: "u1" });
-
-    expect(out.ok && out.connected).toBe(true);
-    if (!out.ok || !out.connected) return;
-    expect(out.authMode).toBe("bearer_user");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("returns failures with timing and modes when all modes fail", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
+  it("returns credential hint when all auth modes fail", async () => {
+    getMock.mockResolvedValue({
       ok: false,
       status: 401,
-      text: async () => '{"Message":"bad"}',
+      message: "Authorization has been denied for this request.",
+      durationMs: 5,
+      retries: 0,
+      rateLimitWaitedMs: 0,
+      attemptedAuthModes: ["basic_metrc_user", "basic_any_user", "bearer_user_vendor"],
     });
-    globalThis.fetch = fetchMock as typeof fetch;
-
-    listMock.mockResolvedValue(companyRow({ ...baseMetrc, apiKey: "V", userKey: "U" }));
 
     const svc = new MetrcConnectionService();
     const out = await svc.runTestConnection({ companyId: "c1", actorUserId: "u1" });
 
     expect(out.ok).toBe(false);
     if (out.ok) return;
-    expect(out.failures.length).toBe(4);
-    expect(out.failures[0].mode).toBe("dual_key_basic");
-    expect(out.failures[0].metrcSnippet).toBe("bad");
-    expect(typeof out.failures[0].durationMs).toBe("number");
-    expect(out.message).toContain("dual_key_basic");
+    expect(out.credentialHint).toContain("user key");
+    expect(out.userKeyLength).toBeGreaterThan(40);
+    expect(out.attemptedModes).toContain("basic_metrc_user");
   });
 });

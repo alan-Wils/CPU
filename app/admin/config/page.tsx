@@ -539,6 +539,9 @@ type MetrcTestConnectionJson =
       message: string;
       baseUrl: string | null;
       licenseNumber: string;
+      credentialHint?: string;
+      userKeyLength?: number;
+      vendorKeyLength?: number;
       attemptedModes?: string[];
       failures?: Array<{
         mode: string;
@@ -553,6 +556,9 @@ const METRC_AUTH_MODE_LABELS: Record<string, string> = {
   bearer_user: "Bearer (user API key)",
   basic_user_colon: "Basic — username=user key, password empty",
   basic_colon_user: "Basic — empty vendor, user key as password",
+  basic_metrc_user: "Colorado sandbox — Basic user metrc + x-metrc-key",
+  basic_any_user: "Colorado sandbox — Basic user any + x-metrc-key",
+  bearer_user_vendor: "Bearer user + x-metrc-key",
 };
 
 function formatMetrcAuthModeLabel(mode: string | undefined | null): string {
@@ -561,6 +567,8 @@ function formatMetrcAuthModeLabel(mode: string | undefined | null): string {
 }
 
 function userFacingMetrcTestFailureMessage(json: Extract<MetrcTestConnectionJson, { ok: false }>): string {
+  const hint = String(json.credentialHint || "").trim();
+  if (hint && (json.status === 401 || json.status === 403)) return hint.slice(0, 4000);
   const fromApi = String(json.message || "").trim();
   if (fromApi) return fromApi.slice(0, 4000);
   const s = Number(json.status);
@@ -2805,7 +2813,11 @@ export default function ConfigPage() {
                   lineHeight: 1.5,
                 }}
               >
-                User API key is saved on the server (hidden for security).
+                User API key is saved on the server
+                {config.company.metrc.metrcUserKeyLength
+                  ? ` (${config.company.metrc.metrcUserKeyLength} characters)`
+                  : ""}{" "}
+                (hidden for security).
                 <div style={{ marginTop: 10 }}>
                   <button
                     type="button"

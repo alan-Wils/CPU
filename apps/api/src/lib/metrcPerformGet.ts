@@ -17,14 +17,19 @@ function asRecord(value: unknown): Record<string, unknown> {
 async function fetchMetrcOnce(
   url: string,
   authorization: string,
+  vendorApiKey?: string,
 ): Promise<{ res: Response; bodyText: string; bodyJson: unknown }> {
+  const headers: Record<string, string> = {
+    Authorization: authorization,
+    Accept: "application/json",
+    "User-Agent": "CPU-Platform/1.0",
+  };
+  const vendor = String(vendorApiKey || "").trim();
+  if (vendor) headers["x-metrc-key"] = vendor;
+
   const res = await fetch(url, {
     method: "GET",
-    headers: {
-      Authorization: authorization,
-      Accept: "application/json",
-      "User-Agent": "CPU-Platform/1.0",
-    },
+    headers,
     signal: AbortSignal.timeout(25_000),
   });
   let bodyText = "";
@@ -96,7 +101,7 @@ export async function performMetrcAuthorizedGet(input: {
   });
   const licenseNumber = String(metrc.licenseNumber || "").trim();
   const apiKey = String(metrc.apiKey || "").trim();
-  const userKey = String(metrc.userKey || "").trim();
+  const userKey = String(metrc.userKey || metrc.userApiKey || "").trim();
 
   if (!baseUrl || !licenseNumber) {
     return {
@@ -149,7 +154,7 @@ export async function performMetrcAuthorizedGet(input: {
 
       attemptedModes.push(mode);
       const t0 = Date.now();
-      const { res, bodyText, bodyJson } = await fetchMetrcOnce(url, authorization);
+      const { res, bodyText, bodyJson } = await fetchMetrcOnce(url, authorization, apiKey);
       const durationMs = Math.max(0, Date.now() - t0);
       const metrcSnippet = extractMetrcApiErrorSummary(bodyJson, bodyText);
 

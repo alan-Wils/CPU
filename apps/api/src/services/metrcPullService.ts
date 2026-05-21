@@ -3,6 +3,10 @@ import { logInfo, logWarn } from "../lib/logger.js";
 import { MetrcClient, isMetrcClientFailure, type MetrcUpstreamError } from "../lib/metrcClient.js";
 import { loadCompanyMetrcConfig } from "../lib/metrcConfigLoader.js";
 import {
+  buildMetrcCredentialHintFromLoaded,
+  logMetrcCredentialDiagnostics,
+} from "../lib/metrcCredentialDiagnostics.js";
+import {
   cacheMetrcEndpointPath,
   metrcEndpointPathKey,
   metrcPullFailureMessage,
@@ -78,6 +82,7 @@ export type MetrcPullFailure = {
   resource: MetrcPullResource;
   status: number;
   message: string;
+  credentialHint?: string;
   endpoint?: string;
   endpointNotAvailable?: boolean;
   error?: MetrcUpstreamError;
@@ -231,6 +236,18 @@ export class MetrcPullService {
       break;
     }
 
+    const credentialHint = buildMetrcCredentialHintFromLoaded(loaded);
+
+    if (lastFailure?.status === 401 || lastFailure?.status === 403) {
+      logMetrcCredentialDiagnostics({
+        companyId: input.companyId,
+        purpose: `pull_${input.resource}`,
+        userKeyLength: loaded.userApiKey.length,
+        vendorKeyLength: loaded.vendorApiKey.length,
+        licensePresent: Boolean(license),
+      });
+    }
+
     logWarn("[METRC] pull_failed", {
       companyId: input.companyId,
       resource: input.resource,
@@ -238,6 +255,14 @@ export class MetrcPullService {
       endpoint: lastFailure?.endpoint,
       errorType: lastFailure?.error?.type ?? null,
     });
+
+    if (lastFailure && (lastFailure.status === 401 || lastFailure.status === 403)) {
+      return {
+        ...lastFailure,
+        message: `${lastFailure.message} ${credentialHint}`.trim().slice(0, 4000),
+        credentialHint,
+      };
+    }
 
     return (
       lastFailure ?? {

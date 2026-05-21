@@ -22,6 +22,8 @@ type IntegrationsMeta = {
   metrcUsernameDisplay?: string;
   hasMetrcVendorApiKey?: boolean;
   hasMetrcUserApiKey?: boolean;
+  metrcUserKeyLength?: number | null;
+  metrcVendorKeyLength?: number | null;
   metrcSandboxCredentialsReady?: boolean;
   metrcSandboxProvisioning?: boolean;
   metrcSandboxReady?: boolean;
@@ -56,9 +58,13 @@ type PullResult = {
   error?: MetrcUpstreamErrorPayload;
   endpoint?: string;
   endpointNotAvailable?: boolean;
+  credentialHint?: string;
 };
 
 function formatMetrcPullError(json: PullResult, resource: string): string {
+  if (json.credentialHint && (json.status === 401 || json.status === 403)) {
+    return json.credentialHint;
+  }
   if (json.endpointNotAvailable || json.status === 404) {
     return "METRC endpoint not available for this resource (HTTP 404).";
   }
@@ -514,7 +520,21 @@ export default function MetrcSandboxPage() {
               <div style={styles.metaItem}>
                 <div style={styles.metaLabel}>User key</div>
                 <div style={styles.metaValue}>
-                  {meta?.hasMetrcUserApiKey ? "Configured (server)" : "Not provisioned"}
+                  {meta?.hasMetrcUserApiKey
+                    ? meta.metrcUserKeyLength
+                      ? `Saved on server (${meta.metrcUserKeyLength} characters)`
+                      : "Saved on server"
+                    : "Not provisioned — paste in Company Config and Save"}
+                </div>
+              </div>
+              <div style={styles.metaItem}>
+                <div style={styles.metaLabel}>Vendor key</div>
+                <div style={styles.metaValue}>
+                  {meta?.hasMetrcVendorApiKey
+                    ? meta.metrcVendorKeyLength
+                      ? `Saved (${meta.metrcVendorKeyLength} characters)`
+                      : "Saved"
+                    : "Missing"}
                 </div>
               </div>
             </div>

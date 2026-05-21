@@ -45,6 +45,9 @@ export type MetrcCompanyConfig = {
   /** Present when API scrubbed secrets; key still stored server-side. */
   hasMetrcVendorApiKey?: boolean;
   hasMetrcUserApiKey?: boolean;
+  /** Server-reported stored key length (never the key itself). */
+  metrcUserKeyLength?: number | null;
+  metrcVendorKeyLength?: number | null;
   /** Last sandbox/resource pull timestamps (ISO); no secrets. */
   metrcSandboxLastFacilitiesSyncAt?: string;
   metrcSandboxLastStrainsSyncAt?: string;

@@ -364,6 +364,8 @@ export function buildIntegrationsMetaView(merged: MergedCompanyConfig): Record<s
         ? (cc.autogrow as Record<string, unknown>)
         : {};
     const licenseDisplay = String(metrc.licenseNumber ?? metrc.facilityLicenseNumber ?? "").trim();
+    const userKeyLen = String(metrc.userKey ?? metrc.userApiKey ?? "").trim().length;
+    const vendorKeyLen = String(metrc.apiKey ?? metrc.vendorApiKey ?? "").trim().length;
     return {
         metrcIntegrationEnabled: Boolean(metrc.integrationEnabled),
         metrcStateCode: String(metrc.stateCode ?? "").trim(),
@@ -373,6 +375,8 @@ export function buildIntegrationsMetaView(merged: MergedCompanyConfig): Record<s
         metrcUsernameDisplay: String(metrc.username ?? "").trim(),
         hasMetrcVendorApiKey: nonEmptyString(metrc.apiKey) || nonEmptyString(metrc.vendorApiKey),
         hasMetrcUserApiKey: nonEmptyString(metrc.userKey) || nonEmptyString(metrc.userApiKey),
+        metrcUserKeyLength: userKeyLen || null,
+        metrcVendorKeyLength: vendorKeyLen || null,
         metrcSandboxCredentialsReady:
             (nonEmptyString(metrc.apiKey) || nonEmptyString(metrc.vendorApiKey))
             && (nonEmptyString(metrc.userKey) || nonEmptyString(metrc.userApiKey))
