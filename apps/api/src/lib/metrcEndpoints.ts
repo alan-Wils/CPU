@@ -12,6 +12,9 @@ export type MetrcEndpointContext = {
   environment: MetrcEnvironment;
 };
 
+export const METRC_ENDPOINT_NOT_AVAILABLE_MESSAGE =
+  "METRC endpoint not available for this resource (HTTP 404).";
+
 /** Path without query string — used for version cache keys. */
 export function metrcEndpointPathKey(pathnameAndQuery: string): string {
   return pathnameAndQuery.split("?")[0] || pathnameAndQuery;
@@ -47,28 +50,32 @@ export function getCachedMetrcEndpointPath(
   return endpointPathCache.get(endpointCacheKey(ctx, resource)) ?? null;
 }
 
+function licenseQuery(licenseNumber: string): string {
+  const license = String(licenseNumber || "").trim();
+  return license ? `?licenseNumber=${encodeURIComponent(license)}` : "";
+}
+
 /**
- * Colorado sandbox–compatible routes (v1 for most resources; packages stay v2).
- * Facilities/strains/items include v2 fallbacks when v1 is unavailable.
+ * Colorado sandbox routes: license-scoped v2/active first, then v1/active.
+ * Facilities: optional `/facilities/v2/` only (no v2/active).
  */
 export function buildMetrcEndpointCandidates(
   resource: MetrcEndpointResource,
   licenseNumber: string,
 ): string[] {
-  const license = String(licenseNumber || "").trim();
-  const q = license ? `?licenseNumber=${encodeURIComponent(license)}` : "";
+  const q = licenseQuery(licenseNumber);
 
   switch (resource) {
     case "facilities":
-      return ["/facilities/v1/active", "/facilities/v2/", "/facilities/v2/active"];
-    case "strains":
-      return [`/strains/v1/active${q}`, `/strains/v2/active${q}`];
-    case "items":
-      return [`/items/v1/active${q}`, `/items/v2/active${q}`];
+      return ["/facilities/v2/"];
     case "rooms":
-      return [`/locations/v1/active${q}`, `/locations/v2/active${q}`];
+      return [`/locations/v2/active${q}`, `/locations/v1/active${q}`];
+    case "strains":
+      return [`/strains/v2/active${q}`, `/strains/v1/active${q}`];
+    case "items":
+      return [`/items/v2/active${q}`, `/items/v1/active${q}`];
     case "packages":
-      return [`/packages/v2/active${q}`];
+      return [`/packages/v2/active${q}`, `/packages/v1/active${q}`];
     default:
       return [];
   }
@@ -97,9 +104,13 @@ export function shouldTryNextMetrcEndpoint(
 ): boolean {
   if (candidateIndex >= candidateCount - 1) return false;
   if (failure.upstreamType === "html_runtime_error") return true;
+  if (resource === "facilities") return false;
   if (failure.status === 404) return true;
-  if (resource === "facilities" || resource === "strains" || resource === "items") {
-    if (failure.status >= 500 && failure.status < 600) return true;
-  }
+  if (failure.status >= 500 && failure.status < 600) return true;
   return false;
+}
+
+export function metrcPullFailureMessage(status: number, fallbackMessage: string): string {
+  if (status === 404) return METRC_ENDPOINT_NOT_AVAILABLE_MESSAGE;
+  return fallbackMessage;
 }

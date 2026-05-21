@@ -77,7 +77,7 @@ describe("MetrcConnectionService diagnostics", () => {
     if (out.ok) return;
     expect(out.failures).toHaveLength(3);
     expect(out.attemptedModes).toEqual(["bearer_user", "basic_user_colon", "basic_colon_user"]);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
   it("vendor+user: tries dual-key first then fallbacks until success", async () => {

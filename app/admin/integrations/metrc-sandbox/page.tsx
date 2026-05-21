@@ -28,10 +28,10 @@ type IntegrationsMeta = {
   metrcSandboxProvisioningStartedAt?: string | null;
   metrcLastConnectionStatus?: MetrcLastConnectionStatus | "";
   metrcLastConnectionCheckedAt?: string | null;
-  metrcSandboxLastFacilitiesSyncAt?: string | null;
+  metrcSandboxLastRoomsSyncAt?: string | null;
   metrcSandboxLastStrainsSyncAt?: string | null;
   metrcSandboxLastPackagesSyncAt?: string | null;
-  metrcSandboxLastFacilitiesCount?: number | null;
+  metrcSandboxLastRoomsCount?: number | null;
   metrcSandboxLastStrainsCount?: number | null;
   metrcSandboxLastPackagesCount?: number | null;
   metrcSandboxLastRateLimitWarning?: string | null;
@@ -47,6 +47,7 @@ type MetrcUpstreamErrorPayload = {
 type PullResult = {
   ok: boolean;
   resource?: string;
+  status?: number;
   count?: number;
   syncedAt?: string;
   sample?: { id?: unknown; name?: unknown; label?: unknown }[];
@@ -54,9 +55,13 @@ type PullResult = {
   rateLimitWarning?: string | null;
   error?: MetrcUpstreamErrorPayload;
   endpoint?: string;
+  endpointNotAvailable?: boolean;
 };
 
 function formatMetrcPullError(json: PullResult, resource: string): string {
+  if (json.endpointNotAvailable || json.status === 404) {
+    return "METRC endpoint not available for this resource (HTTP 404).";
+  }
   if (json.error?.type === "html_runtime_error") {
     return "METRC sandbox returned a server/runtime error for this endpoint.";
   }
@@ -405,7 +410,7 @@ export default function MetrcSandboxPage() {
     }
   }
 
-  async function runPull(resource: "facilities" | "strains" | "packages") {
+  async function runPull(resource: "rooms" | "strains" | "packages") {
     setBusy(resource);
     setStatusMsg(null);
     setLastPull(null);
@@ -530,6 +535,15 @@ export default function MetrcSandboxPage() {
               </div>
             </div>
             <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>Last locations sync</div>
+              <div style={styles.metaValue}>
+                {formatCompanyTimestamp(meta?.metrcSandboxLastRoomsSyncAt || "") || "—"}
+                {meta?.metrcSandboxLastRoomsCount != null
+                  ? ` (${meta.metrcSandboxLastRoomsCount})`
+                  : ""}
+              </div>
+            </div>
+            <div style={styles.metaItem}>
               <div style={styles.metaLabel}>Last strains sync</div>
               <div style={styles.metaValue}>
                 {formatCompanyTimestamp(meta?.metrcSandboxLastStrainsSyncAt || "") || "—"}
@@ -606,9 +620,9 @@ export default function MetrcSandboxPage() {
               type="button"
               style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
               disabled={!!busy}
-              onClick={() => void runPull("facilities")}
+              onClick={() => void runPull("rooms")}
             >
-              {busy === "facilities" ? "Pulling…" : "Pull Facilities"}
+              {busy === "rooms" ? "Pulling…" : "Pull Locations/Rooms"}
             </button>
             <button
               type="button"

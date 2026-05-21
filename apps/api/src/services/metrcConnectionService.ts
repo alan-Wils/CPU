@@ -1,9 +1,13 @@
 import { ConfigService } from "./configService.js";
-import { logWarn } from "../lib/logger.js";
+import { logInfo, logWarn } from "../lib/logger.js";
 import { isMetrcPerformGetFailure, performMetrcAuthorizedGet } from "../lib/metrcPerformGet.js";
-import { resolveMetrcApiBaseUrl } from "../lib/metrcResolveBaseUrl.js";
+import { resolveMetrcApiBaseUrl, type MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 import type { MetrcAttemptFailure, MetrcAuthModeUsed } from "../lib/metrcConnectionAttempts.js";
 import { parseLocationsPayload, toSampleLocation } from "../lib/metrcConnectionHelpers.js";
+import {
+  orderMetrcEndpointCandidates,
+  shouldTryNextMetrcEndpoint,
+} from "../lib/metrcEndpoints.js";
 
 export type MetrcTestConnectionSuccess = {
   ok: true;
@@ -89,46 +93,98 @@ export class MetrcConnectionService {
       return fail;
     }
 
-    const path = `/locations/v2/active?licenseNumber=${encodeURIComponent(licenseNumber)}`;
+    const environment: MetrcEnvironment =
+      metrc.environment === "sandbox" ? "sandbox" : "production";
+    const stateCode = String(metrc.stateCode || "CO").trim() || "CO";
+    const candidates = orderMetrcEndpointCandidates(
+      { stateCode, environment },
+      "rooms",
+      licenseNumber,
+    );
 
-    const result = await performMetrcAuthorizedGet({
-      companyId: input.companyId,
-      pathnameAndQuery: path,
-    });
+    let lastResult: Awaited<ReturnType<typeof performMetrcAuthorizedGet>> | null = null;
 
-    if (!isMetrcPerformGetFailure(result)) {
-      const locations = parseLocationsPayload(result.bodyJson);
-      const sampleLocations = locations.slice(0, 5).map(toSampleLocation);
-      const success: MetrcTestConnectionSuccess = {
-        ok: true,
-        connected: true,
+    for (let i = 0; i < candidates.length; i += 1) {
+      const path = candidates[i]!;
+      const result = await performMetrcAuthorizedGet({
+        companyId: input.companyId,
+        pathnameAndQuery: path,
+      });
+      lastResult = result;
+
+      if (!isMetrcPerformGetFailure(result)) {
+        logInfo("[METRC] endpoint_success", {
+          companyId: input.companyId,
+          resource: "rooms",
+          endpoint: path.split("?")[0],
+          pathnameAndQuery: path,
+          status: 200,
+          purpose: "test_connection",
+        });
+
+        const locations = parseLocationsPayload(result.bodyJson);
+        const sampleLocations = locations.slice(0, 5).map(toSampleLocation);
+        const success: MetrcTestConnectionSuccess = {
+          ok: true,
+          connected: true,
+          checkedAt,
+          baseUrl: result.baseUrl,
+          licenseNumber: result.licenseNumber,
+          locationCount: locations.length,
+          sampleLocations,
+          authMode: result.authMode,
+        };
+        await this.persistConnectionSnapshot(input.companyId, input.actorUserId, company, metrc, success);
+        return success;
+      }
+
+      if (
+        shouldTryNextMetrcEndpoint("rooms", i, candidates.length, {
+          status: result.status,
+        })
+      ) {
+        logInfo("[METRC] connection_test_endpoint_fallback", {
+          companyId: input.companyId,
+          from: path.split("?")[0],
+          next: candidates[i + 1]?.split("?")[0] ?? null,
+        });
+        continue;
+      }
+      break;
+    }
+
+    if (!lastResult || !isMetrcPerformGetFailure(lastResult)) {
+      const fail: MetrcTestConnectionFailure = {
+        ok: false,
+        connected: false,
         checkedAt,
-        baseUrl: result.baseUrl,
-        licenseNumber: result.licenseNumber,
-        locationCount: locations.length,
-        sampleLocations,
-        authMode: result.authMode,
+        status: 502,
+        message: "METRC connection test failed.",
+        baseUrl,
+        licenseNumber,
+        attemptedModes: [],
+        failures: [],
       };
-      await this.persistConnectionSnapshot(input.companyId, input.actorUserId, company, metrc, success);
-      return success;
+      await this.persistConnectionSnapshot(input.companyId, input.actorUserId, company, metrc, fail);
+      return fail;
     }
 
     const fail: MetrcTestConnectionFailure = {
       ok: false,
       connected: false,
       checkedAt,
-      status: result.status,
-      message: result.message,
-      baseUrl: result.baseUrl,
-      licenseNumber: result.licenseNumber,
-      attemptedModes: result.attemptedModes,
-      failures: result.failures,
+      status: lastResult.status,
+      message: lastResult.message,
+      baseUrl: lastResult.baseUrl,
+      licenseNumber: lastResult.licenseNumber,
+      attemptedModes: lastResult.attemptedModes,
+      failures: lastResult.failures,
     };
-    if (result.failures.length) {
+    if (lastResult.failures.length) {
       logWarn("[METRC] connection_test_failed_all_modes", {
         companyId: input.companyId,
-        attemptCount: result.failures.length,
-        lastStatus: result.status,
+        attemptCount: lastResult.failures.length,
+        lastStatus: lastResult.status,
       });
     }
     await this.persistConnectionSnapshot(input.companyId, input.actorUserId, company, metrc, fail);

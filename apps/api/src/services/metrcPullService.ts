@@ -4,6 +4,8 @@ import { MetrcClient, isMetrcClientFailure, type MetrcUpstreamError } from "../l
 import { loadCompanyMetrcConfig } from "../lib/metrcConfigLoader.js";
 import {
   cacheMetrcEndpointPath,
+  metrcEndpointPathKey,
+  metrcPullFailureMessage,
   orderMetrcEndpointCandidates,
   shouldTryNextMetrcEndpoint,
   type MetrcEndpointResource,
@@ -77,6 +79,7 @@ export type MetrcPullFailure = {
   status: number;
   message: string;
   endpoint?: string;
+  endpointNotAvailable?: boolean;
   error?: MetrcUpstreamError;
 };
 
@@ -158,10 +161,20 @@ export class MetrcPullService {
           value: { ...loaded.company, metrc: nextMetrc },
         });
 
+        const endpointKey = metrcEndpointPathKey(pathname);
+
+        logInfo("[METRC] endpoint_success", {
+          companyId: input.companyId,
+          resource: input.resource,
+          endpoint: endpointKey,
+          pathnameAndQuery: pathname,
+          status: result.status,
+        });
+
         logInfo("[METRC] pull_ok", {
           companyId: input.companyId,
           resource: input.resource,
-          endpoint: pathname.split("?")[0],
+          endpoint: endpointKey,
           count: rows.length,
           durationMs: result.durationMs,
           retries: result.retries,
@@ -177,16 +190,18 @@ export class MetrcPullService {
           durationMs: result.durationMs,
           retries: result.retries,
           rateLimitWarning,
-          endpoint: pathname.split("?")[0] ?? pathname,
+          endpoint: endpointKey,
         };
       }
 
+      const status = result.status || 502;
       lastFailure = {
         ok: false,
         resource: input.resource,
-        status: result.status || 502,
-        message: result.message,
+        status,
+        message: metrcPullFailureMessage(status, result.message),
         endpoint: result.endpoint ?? pathname.split("?")[0],
+        endpointNotAvailable: status === 404,
         error: result.upstreamError,
       };
 
