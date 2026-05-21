@@ -37,6 +37,13 @@ type IntegrationsMeta = {
   metrcSandboxLastRateLimitWarning?: string | null;
 };
 
+type MetrcUpstreamErrorPayload = {
+  upstream?: string;
+  type?: string;
+  endpoint?: string;
+  status?: number;
+};
+
 type PullResult = {
   ok: boolean;
   resource?: string;
@@ -45,7 +52,20 @@ type PullResult = {
   sample?: { id?: unknown; name?: unknown; label?: unknown }[];
   message?: string;
   rateLimitWarning?: string | null;
+  error?: MetrcUpstreamErrorPayload;
+  endpoint?: string;
 };
+
+function formatMetrcPullError(json: PullResult, resource: string): string {
+  if (json.error?.type === "html_runtime_error") {
+    return "METRC sandbox returned a server/runtime error for this endpoint.";
+  }
+  const msg = String(json.message || "").trim();
+  if (/<html|<!doctype/i.test(msg)) {
+    return "METRC sandbox returned a server/runtime error for this endpoint.";
+  }
+  return msg || `Failed to pull ${resource}.`;
+}
 
 type TestConnectionJson =
   | { ok: true; connected: true; checkedAt: string; locationCount: number }
@@ -396,7 +416,7 @@ export default function MetrcSandboxPage() {
       if (!res.ok || !json.ok) {
         setStatusMsg({
           tone: "error",
-          text: json.message || `Failed to pull ${resource}.`,
+          text: formatMetrcPullError(json, resource),
         });
         return;
       }

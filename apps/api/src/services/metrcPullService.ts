@@ -1,41 +1,38 @@
 import { ConfigService } from "./configService.js";
 import { logInfo, logWarn } from "../lib/logger.js";
-import { MetrcClient, isMetrcClientFailure } from "../lib/metrcClient.js";
+import { MetrcClient, isMetrcClientFailure, type MetrcUpstreamError } from "../lib/metrcClient.js";
 import { loadCompanyMetrcConfig } from "../lib/metrcConfigLoader.js";
+import {
+  cacheMetrcEndpointPath,
+  orderMetrcEndpointCandidates,
+  shouldTryNextMetrcEndpoint,
+  type MetrcEndpointResource,
+} from "../lib/metrcEndpoints.js";
+import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 
-export type MetrcPullResource =
-  | "facilities"
-  | "strains"
-  | "items"
-  | "rooms"
-  | "packages";
+export type MetrcPullResource = MetrcEndpointResource;
 
-const RESOURCE_PATHS: Record<
+const RESOURCE_META: Record<
   MetrcPullResource,
-  { path: (license: string) => string; syncAtKey: string; countKey: string }
+  { syncAtKey: string; countKey: string }
 > = {
   facilities: {
-    path: () => "/facilities/v2/",
     syncAtKey: "metrcSandboxLastFacilitiesSyncAt",
     countKey: "metrcSandboxLastFacilitiesCount",
   },
   strains: {
-    path: (license) => `/strains/v2/active?licenseNumber=${encodeURIComponent(license)}`,
     syncAtKey: "metrcSandboxLastStrainsSyncAt",
     countKey: "metrcSandboxLastStrainsCount",
   },
   items: {
-    path: (license) => `/items/v2/active?licenseNumber=${encodeURIComponent(license)}`,
     syncAtKey: "metrcSandboxLastItemsSyncAt",
     countKey: "metrcSandboxLastItemsCount",
   },
   rooms: {
-    path: (license) => `/locations/v2/active?licenseNumber=${encodeURIComponent(license)}`,
     syncAtKey: "metrcSandboxLastRoomsSyncAt",
     countKey: "metrcSandboxLastRoomsCount",
   },
   packages: {
-    path: (license) => `/packages/v2/active?licenseNumber=${encodeURIComponent(license)}`,
     syncAtKey: "metrcSandboxLastPackagesSyncAt",
     countKey: "metrcSandboxLastPackagesCount",
   },
@@ -71,6 +68,7 @@ export type MetrcPullSuccess = {
   durationMs: number;
   retries: number;
   rateLimitWarning: string | null;
+  endpoint: string;
 };
 
 export type MetrcPullFailure = {
@@ -78,6 +76,8 @@ export type MetrcPullFailure = {
   resource: MetrcPullResource;
   status: number;
   message: string;
+  endpoint?: string;
+  error?: MetrcUpstreamError;
 };
 
 export type MetrcPullResponse = MetrcPullSuccess | MetrcPullFailure;
@@ -120,67 +120,117 @@ export class MetrcPullService {
     }
 
     const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
-    const spec = RESOURCE_PATHS[input.resource];
-    const pathname = spec.path(license);
+    const endpointCtx = {
+      stateCode: loaded.stateCode || "CO",
+      environment: loaded.environment as MetrcEnvironment,
+    };
+    const candidates = orderMetrcEndpointCandidates(endpointCtx, input.resource, license);
+    const spec = RESOURCE_META[input.resource];
 
-    const result = await client.get<unknown>(pathname);
+    let lastFailure: MetrcPullFailure | null = null;
 
-    if (isMetrcClientFailure(result)) {
-      logWarn("[METRC] pull_failed", {
-        companyId: input.companyId,
-        resource: input.resource,
-        status: result.status,
-        retries: result.retries,
-      });
-      return {
+    for (let i = 0; i < candidates.length; i += 1) {
+      const pathname = candidates[i]!;
+      const result = await client.get<unknown>(pathname);
+
+      if (!isMetrcClientFailure(result)) {
+        cacheMetrcEndpointPath(endpointCtx, input.resource, pathname);
+        const rows = normalizeMetrcArray(result.data);
+        const syncedAt = new Date().toISOString();
+        const rateLimitWarning =
+          result.rateLimitWaitedMs > 0
+            ? `Rate limiter delayed this request by ${result.rateLimitWaitedMs}ms.`
+            : result.retries > 0
+              ? `Completed after ${result.retries} retries.`
+              : null;
+
+        const nextMetrc: Record<string, unknown> = {
+          ...loaded.metrc,
+          [spec.syncAtKey]: syncedAt,
+          [spec.countKey]: rows.length,
+          metrcSandboxLastRateLimitWarning: rateLimitWarning ?? "",
+        };
+
+        await this.configService.upsert({
+          companyId: input.companyId,
+          actorUserId: input.actorUserId,
+          key: "company",
+          value: { ...loaded.company, metrc: nextMetrc },
+        });
+
+        logInfo("[METRC] pull_ok", {
+          companyId: input.companyId,
+          resource: input.resource,
+          endpoint: pathname.split("?")[0],
+          count: rows.length,
+          durationMs: result.durationMs,
+          retries: result.retries,
+          rateLimitWaitedMs: result.rateLimitWaitedMs,
+        });
+
+        return {
+          ok: true,
+          resource: input.resource,
+          syncedAt,
+          count: rows.length,
+          sample: rows.slice(0, 25).map(summarizeRow),
+          durationMs: result.durationMs,
+          retries: result.retries,
+          rateLimitWarning,
+          endpoint: pathname.split("?")[0] ?? pathname,
+        };
+      }
+
+      lastFailure = {
         ok: false,
         resource: input.resource,
         status: result.status || 502,
         message: result.message,
+        endpoint: result.endpoint ?? pathname.split("?")[0],
+        error: result.upstreamError,
       };
+
+      logWarn("[METRC] pull_endpoint_attempt_failed", {
+        companyId: input.companyId,
+        resource: input.resource,
+        endpoint: lastFailure.endpoint,
+        status: lastFailure.status,
+        errorType: result.upstreamError?.type ?? null,
+        attemptIndex: i,
+      });
+
+      if (
+        shouldTryNextMetrcEndpoint(input.resource, i, candidates.length, {
+          status: result.status,
+          upstreamType: result.upstreamError?.type,
+        })
+      ) {
+        logInfo("[METRC] pull_endpoint_fallback", {
+          companyId: input.companyId,
+          resource: input.resource,
+          from: pathname.split("?")[0],
+          next: candidates[i + 1]?.split("?")[0] ?? null,
+        });
+        continue;
+      }
+      break;
     }
 
-    const rows = normalizeMetrcArray(result.data);
-    const syncedAt = new Date().toISOString();
-    const rateLimitWarning =
-      result.rateLimitWaitedMs > 0
-        ? `Rate limiter delayed this request by ${result.rateLimitWaitedMs}ms.`
-        : result.retries > 0
-          ? `Completed after ${result.retries} retries.`
-          : null;
-
-    const nextMetrc: Record<string, unknown> = {
-      ...loaded.metrc,
-      [spec.syncAtKey]: syncedAt,
-      [spec.countKey]: rows.length,
-      metrcSandboxLastRateLimitWarning: rateLimitWarning ?? "",
-    };
-
-    await this.configService.upsert({
-      companyId: input.companyId,
-      actorUserId: input.actorUserId,
-      key: "company",
-      value: { ...loaded.company, metrc: nextMetrc },
-    });
-
-    logInfo("[METRC] pull_ok", {
+    logWarn("[METRC] pull_failed", {
       companyId: input.companyId,
       resource: input.resource,
-      count: rows.length,
-      durationMs: result.durationMs,
-      retries: result.retries,
-      rateLimitWaitedMs: result.rateLimitWaitedMs,
+      status: lastFailure?.status,
+      endpoint: lastFailure?.endpoint,
+      errorType: lastFailure?.error?.type ?? null,
     });
 
-    return {
-      ok: true,
-      resource: input.resource,
-      syncedAt,
-      count: rows.length,
-      sample: rows.slice(0, 25).map(summarizeRow),
-      durationMs: result.durationMs,
-      retries: result.retries,
-      rateLimitWarning,
-    };
+    return (
+      lastFailure ?? {
+        ok: false,
+        resource: input.resource,
+        status: 502,
+        message: "METRC pull failed.",
+      }
+    );
   }
 }

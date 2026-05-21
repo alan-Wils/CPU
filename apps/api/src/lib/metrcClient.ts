@@ -68,6 +68,16 @@ export type MetrcClientSuccess<T> = {
   authMode: MetrcClientAuthMode | "vendor_only";
 };
 
+export type MetrcUpstreamError = {
+  upstream: "metrc";
+  type: "html_runtime_error";
+  endpoint: string;
+  status: number;
+};
+
+export const METRC_HTML_RUNTIME_USER_MESSAGE =
+  "METRC sandbox returned a server/runtime error for this endpoint.";
+
 export type MetrcClientFailure = {
   ok: false;
   status: number;
@@ -76,6 +86,8 @@ export type MetrcClientFailure = {
   retries: number;
   rateLimitWaitedMs: number;
   attemptedAuthModes: MetrcClientAuthMode[];
+  endpoint?: string;
+  upstreamError?: MetrcUpstreamError;
 };
 
 export type MetrcClientResult<T> = MetrcClientSuccess<T> | MetrcClientFailure;
@@ -196,8 +208,75 @@ function resolveRetryAfterMs(error: AxiosError): number | null {
   return null;
 }
 
+export function isMetrcHtmlContentType(contentType: string | null | undefined): boolean {
+  return String(contentType || "").toLowerCase().includes("text/html");
+}
+
+export function looksLikeHtmlBody(data: unknown): boolean {
+  if (typeof data !== "string") return false;
+  const t = data.trim().toLowerCase();
+  return t.startsWith("<!doctype") || t.startsWith("<html") || t.includes("<html");
+}
+
+export function detectMetrcHtmlResponse(contentType: string | null, data: unknown): boolean {
+  return isMetrcHtmlContentType(contentType) || looksLikeHtmlBody(data);
+}
+
+export function metrcHtmlBodySnippet(data: unknown, maxLen = 200): string {
+  if (typeof data !== "string") return "";
+  return data.slice(0, maxLen);
+}
+
+function resolveResponseContentType(headers: unknown): string | null {
+  if (!headers || typeof headers !== "object") return null;
+  const h = headers as Record<string, unknown>;
+  const raw = h["content-type"] ?? h["Content-Type"];
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  return v != null ? String(v) : null;
+}
+
+function buildMetrcHtmlRuntimeFailure(input: {
+  pathLabel: string;
+  status: number;
+  contentType: string | null;
+  data: unknown;
+  durationMs: number;
+  retries: number;
+  rateLimitWaitedMs: number;
+  attemptedAuthModes: MetrcClientAuthMode[];
+  companyId?: string;
+}): MetrcClientFailure {
+  logWarn("[METRC] html_error_response", {
+    companyId: input.companyId ?? null,
+    endpoint: input.pathLabel,
+    status: input.status,
+    contentType: input.contentType,
+    bodySnippet: metrcHtmlBodySnippet(input.data),
+  });
+  return {
+    ok: false,
+    status: input.status || 502,
+    message: METRC_HTML_RUNTIME_USER_MESSAGE,
+    durationMs: input.durationMs,
+    retries: input.retries,
+    rateLimitWaitedMs: input.rateLimitWaitedMs,
+    attemptedAuthModes: input.attemptedAuthModes,
+    endpoint: input.pathLabel,
+    upstreamError: {
+      upstream: "metrc",
+      type: "html_runtime_error",
+      endpoint: input.pathLabel,
+      status: input.status || 502,
+    },
+  };
+}
+
 function summarizeResponseMessage(status: number, data: unknown): string {
-  if (typeof data === "string" && data.trim()) return data.trim().slice(0, 2000);
+  if (typeof data === "string") {
+    const trimmed = data.trim();
+    if (looksLikeHtmlBody(trimmed)) return METRC_HTML_RUNTIME_USER_MESSAGE;
+    if (trimmed) return trimmed.slice(0, 2000);
+  }
   if (Array.isArray(data) && data.length) {
     const first = data[0] as { message?: string };
     if (first?.message) return String(first.message).slice(0, 2000);
@@ -232,20 +311,34 @@ function summarizeAxiosError(error: AxiosError): { status: number; message: stri
 }
 
 async function axiosOnce<T>(config: AxiosRequestConfig): Promise<{
-  res: { status: number; data: T };
+  res: { status: number; data: T; contentType: string | null };
   transportError: { status: number; message: string } | null;
 }> {
   try {
     const res = await axios.request<T>(config);
-    return { res: { status: res.status, data: res.data }, transportError: null };
+    return {
+      res: {
+        status: res.status,
+        data: res.data,
+        contentType: resolveResponseContentType(res.headers),
+      },
+      transportError: null,
+    };
   } catch (error) {
     const ax = axios.isAxiosError(error) ? error : null;
     if (ax) {
       const { status, message } = summarizeAxiosError(ax);
-      return { res: { status, data: ax.response?.data as T }, transportError: { status, message } };
+      return {
+        res: {
+          status,
+          data: ax.response?.data as T,
+          contentType: resolveResponseContentType(ax.response?.headers),
+        },
+        transportError: { status, message },
+      };
     }
     return {
-      res: { status: 0, data: undefined as T },
+      res: { status: 0, data: undefined as T, contentType: null },
       transportError: {
         status: 0,
         message: error instanceof Error ? error.message : "METRC request failed.",
@@ -435,6 +528,20 @@ export class MetrcClient {
           rateLimitWaitedMs: totalRateWait,
         });
 
+        if (detectMetrcHtmlResponse(res.contentType, res.data)) {
+          return buildMetrcHtmlRuntimeFailure({
+            pathLabel,
+            status: res.status,
+            contentType: res.contentType,
+            data: res.data,
+            durationMs,
+            retries: transportRetries,
+            rateLimitWaitedMs: totalRateWait,
+            attemptedAuthModes,
+            companyId: this.companyId,
+          });
+        }
+
         if (res.status >= 200 && res.status < 300) {
           if (this.companyId) cacheMetrcAuthModeForCompany(this.companyId, mode);
           logInfo("[METRC] auth_strategy_success", {
@@ -492,6 +599,7 @@ export class MetrcClient {
           retries: transportRetries,
           rateLimitWaitedMs: totalRateWait,
           attemptedAuthModes,
+          endpoint: pathLabel,
         };
       }
     }
@@ -511,6 +619,7 @@ export class MetrcClient {
       retries: transportRetries,
       rateLimitWaitedMs: totalRateWait,
       attemptedAuthModes,
+      endpoint: pathLabel,
     };
   }
 
@@ -582,6 +691,20 @@ export class MetrcClient {
         };
       }
 
+      if (detectMetrcHtmlResponse(res.contentType, res.data)) {
+        return buildMetrcHtmlRuntimeFailure({
+          pathLabel: input.pathLabel,
+          status: res.status,
+          contentType: res.contentType,
+          data: res.data,
+          durationMs,
+          retries,
+          rateLimitWaitedMs: totalRateWait,
+          attemptedAuthModes: [],
+          companyId: this.companyId,
+        });
+      }
+
       if (res.status >= 200 && res.status < 300) {
         return {
           ok: true,
@@ -608,6 +731,7 @@ export class MetrcClient {
         retries,
         rateLimitWaitedMs: totalRateWait,
         attemptedAuthModes: [],
+        endpoint: input.pathLabel,
       };
     }
   }

@@ -6,6 +6,7 @@ import {
   isMetrcClientFailure,
   resolveSandboxIntegratorSetupUrl,
 } from "../lib/metrcClient.js";
+import { orderMetrcEndpointCandidates } from "../lib/metrcEndpoints.js";
 import { loadCompanyMetrcConfig, readUserApiKey, readVendorApiKey } from "../lib/metrcConfigLoader.js";
 import {
   buildMetrcSandboxSetupDebug,
@@ -246,13 +247,36 @@ export class MetrcSandboxService {
       if (parsed.userApiKey) return parsed;
     }
 
-    const facilitiesResult = await client.request<unknown>({
-      method: "GET",
-      pathnameAndQuery: "/facilities/v2/",
-      vendorOnly: true,
-    });
+    const facilityPaths = orderMetrcEndpointCandidates(
+      { stateCode, environment: loaded.environment },
+      "facilities",
+      "",
+    );
+    let facilitiesResult: Awaited<ReturnType<MetrcClient["request"]>> | null = null;
+    for (let i = 0; i < facilityPaths.length; i += 1) {
+      const pathname = facilityPaths[i]!;
+      const attempt = await client.request<unknown>({
+        method: "GET",
+        pathnameAndQuery: pathname,
+        vendorOnly: true,
+      });
+      if (!isMetrcClientFailure(attempt)) {
+        facilitiesResult = attempt;
+        break;
+      }
+      facilitiesResult = attempt;
+      const tryNext =
+        i < facilityPaths.length - 1
+        && (attempt.upstreamError?.type === "html_runtime_error" || attempt.status === 404);
+      if (!tryNext) break;
+      logInfo("[METRC] sandbox_facilities_endpoint_fallback", {
+        companyId,
+        from: pathname.split("?")[0],
+        next: facilityPaths[i + 1]?.split("?")[0] ?? null,
+      });
+    }
 
-    if (!isMetrcClientFailure(facilitiesResult)) {
+    if (facilitiesResult && !isMetrcClientFailure(facilitiesResult)) {
       const parsed = parseMetrcSandboxSetupResponse(facilitiesResult.data, { vendorApiKey });
       const existingUser = readUserApiKey(loaded.metrc);
       if (parsed.userApiKey) return parsed;
