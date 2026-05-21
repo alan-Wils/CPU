@@ -6,6 +6,12 @@ import {
   isMetrcClientFailure,
   resolveSandboxIntegratorSetupUrl,
 } from "../lib/metrcClient.js";
+import { maskHeadersForLog } from "../lib/metrcAuthStrategy.js";
+import {
+  resolveMetrcSandboxUiStatus,
+  sandboxStatusLabel,
+  type MetrcSandboxUiStatus,
+} from "../lib/metrcSandboxStatus.js";
 import { buildMetrcEndpointCandidates } from "../lib/metrcEndpoints.js";
 import { loadCompanyMetrcConfig, readUserApiKey, readVendorApiKey } from "../lib/metrcConfigLoader.js";
 import {
@@ -65,6 +71,8 @@ export type MetrcSandboxSetupResponse =
 export type MetrcSandboxStatusResponse = {
   ok: true;
   status: MetrcSandboxLifecycleStatus;
+  sandboxUiStatus: MetrcSandboxUiStatus;
+  sandboxUiStatusLabel: string;
   sandboxProvisioning: boolean;
   sandboxReady: boolean;
   sandboxProvisioningStartedAt: string | null;
@@ -74,9 +82,15 @@ export type MetrcSandboxStatusResponse = {
   metrcFacilityName: string;
   metrcUsernameDisplay: string;
   credentialsReady: boolean;
+  provisioningComplete: boolean;
+  userCreationPending: boolean;
+  operationalAccessGranted: boolean;
   message: string;
   elapsedMs: number | null;
   remainingMs: number | null;
+  lastConnectionHttpStatus: number | null;
+  lastMetrcResponseMessage: string;
+  lastAuthAttemptMode: string | null;
 };
 
 function readProvisioningStartedAt(metrc: Record<string, unknown>): string | null {
@@ -157,6 +171,73 @@ export class MetrcSandboxService {
       sandboxProvisioning: false,
       sandboxReady: this.buildCredentialsReady(vendorApiKey, parsed.userApiKey, licenseNumber),
       sandboxProvisioningLastError: "",
+      sandboxProvisioningMessages: parsed.provisioningMessages ?? [],
+      metrcSandboxOperationalStatus: "awaiting_user_activation",
+      metrcOperationalAccessGranted: false,
+    };
+  }
+
+  private buildStatusPayload(input: {
+    lifecycle: MetrcSandboxLifecycleStatus;
+    metrc: Record<string, unknown>;
+    vendorApiKey: string;
+    userApiKey: string;
+    licenseNumber: string;
+    facilityName: string;
+    username: string;
+    credentialsReady: boolean;
+    message: string;
+    startedAt: string | null;
+    elapsedMs: number | null;
+    remainingMs: number | null;
+  }): MetrcSandboxStatusResponse {
+    const hasUserKey = Boolean(input.userApiKey);
+    const userCreationPending = Boolean(input.metrc.sandboxProvisioning) && !hasUserKey;
+    const provisioningComplete = Boolean(input.metrc.sandboxReady) && hasUserKey;
+    const operationalAccessGranted = Boolean(input.metrc.metrcOperationalAccessGranted);
+    const sandboxUiStatus = resolveMetrcSandboxUiStatus({
+      sandboxProvisioning: Boolean(input.metrc.sandboxProvisioning),
+      sandboxReady: Boolean(input.metrc.sandboxReady),
+      credentialsReady: input.credentialsReady,
+      hasUserApiKey: hasUserKey,
+      lastConnectionStatus: String(input.metrc.metrcLastConnectionStatus || ""),
+      lastConnectionHttpStatus:
+        typeof input.metrc.metrcLastConnectionHttpStatus === "number"
+          ? input.metrc.metrcLastConnectionHttpStatus
+          : null,
+      provisioningTimedOut: input.lifecycle === "timeout",
+      provisioningError:
+        input.lifecycle === "error"
+          ? String(input.metrc.sandboxProvisioningLastError || "")
+          : undefined,
+    });
+
+    return {
+      ok: true,
+      status: input.lifecycle,
+      sandboxUiStatus,
+      sandboxUiStatusLabel: sandboxStatusLabel(sandboxUiStatus),
+      sandboxProvisioning: Boolean(input.metrc.sandboxProvisioning),
+      sandboxReady: Boolean(input.metrc.sandboxReady),
+      sandboxProvisioningStartedAt: input.startedAt,
+      hasMetrcVendorApiKey: Boolean(input.vendorApiKey),
+      hasMetrcUserApiKey: hasUserKey,
+      metrcLicenseNumberDisplay: input.licenseNumber,
+      metrcFacilityName: input.facilityName,
+      metrcUsernameDisplay: input.username,
+      credentialsReady: input.credentialsReady,
+      provisioningComplete,
+      userCreationPending,
+      operationalAccessGranted,
+      message: input.message,
+      elapsedMs: input.elapsedMs,
+      remainingMs: input.remainingMs,
+      lastConnectionHttpStatus:
+        typeof input.metrc.metrcLastConnectionHttpStatus === "number"
+          ? input.metrc.metrcLastConnectionHttpStatus
+          : null,
+      lastMetrcResponseMessage: String(input.metrc.metrcLastMetrcResponseMessage || "").slice(0, 2000),
+      lastAuthAttemptMode: String(input.metrc.metrcLastAuthAttemptMode || "").trim() || null,
     };
   }
 
@@ -182,6 +263,9 @@ export class MetrcSandboxService {
       sandboxReady: false,
       sandboxProvisioningStartedAt: startedAt,
       sandboxProvisioningLastError: "",
+      sandboxProvisioningMessages: partial?.provisioningMessages ?? [],
+      metrcSandboxOperationalStatus: "provisioning",
+      metrcOperationalAccessGranted: false,
     };
 
     if (partial?.facilityLicenseNumber) {
@@ -301,6 +385,7 @@ export class MetrcSandboxService {
           facilityName: loaded.facilityName ? "config.facilityName" : null,
         },
         fieldsFound: ["userApiKey", "facilityLicenseNumber"],
+        provisioningMessages: [],
       };
     }
 
@@ -345,6 +430,16 @@ export class MetrcSandboxService {
     logInfo("[METRC] sandbox_setup_start", {
       companyId: input.companyId,
       stateCode,
+      requestUrl: setupUrl,
+      method: "POST",
+      auth_mode: "vendor_only",
+      headers: maskHeadersForLog({
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "x-metrc-key": vendorApiKey,
+      }),
+      userCreationPending: true,
+      provisioningState: "provisioning",
     });
 
     const result = await client.request<unknown>({
@@ -359,6 +454,10 @@ export class MetrcSandboxService {
         companyId: input.companyId,
         status: result.status,
         retries: result.retries,
+        requestUrl: setupUrl,
+        auth_mode: "vendor_only",
+        metrcMessage: result.metrcMessage.slice(0, 2000),
+        responseBody: typeof result.metrcMessage === "string" ? result.metrcMessage : result.message,
       });
       return { ok: false, status: "error", httpStatus: result.status || 502, message: result.message };
     }
@@ -371,12 +470,18 @@ export class MetrcSandboxService {
     logInfo("[METRC] sandbox_setup_response_shape", {
       companyId: input.companyId,
       httpStatus: result.status,
+      requestUrl: setupUrl,
+      auth_mode: "vendor_only",
       topLevelKeys: debug.topLevelKeys,
       fieldsFound: parsed.fieldsFound,
       parserPaths: parsed.parserPaths,
       hasUserApiKey: Boolean(parsed.userApiKey),
       asyncProvisioning: isMetrcSandboxAsyncProvisioningResponse(result.status, result.data),
+      provisioningMessages: parsed.provisioningMessages,
+      userCreationPending: !parsed.userApiKey,
+      provisioningState: parsed.userApiKey ? "ready" : "awaiting_user_activation",
       redactedPayload: redactMetrcSandboxPayload(result.data),
+      metrcMessage: metrcMessage.slice(0, 2000),
     });
 
     if (
@@ -444,22 +549,20 @@ export class MetrcSandboxService {
   }): Promise<MetrcSandboxStatusResponse> {
     const loaded = await loadCompanyMetrcConfig(input.companyId);
     if (!loaded) {
-      return {
-        ok: true,
-        status: "error",
-        sandboxProvisioning: false,
-        sandboxReady: false,
-        sandboxProvisioningStartedAt: null,
-        hasMetrcVendorApiKey: false,
-        hasMetrcUserApiKey: false,
-        metrcLicenseNumberDisplay: "",
-        metrcFacilityName: "",
-        metrcUsernameDisplay: "",
+      return this.buildStatusPayload({
+        lifecycle: "error",
+        metrc: {},
+        vendorApiKey: "",
+        userApiKey: "",
+        licenseNumber: "",
+        facilityName: "",
+        username: "",
         credentialsReady: false,
         message: "Company configuration not found.",
+        startedAt: null,
         elapsedMs: null,
         remainingMs: null,
-      };
+      });
     }
 
     const metrc = loaded.metrc;
@@ -481,41 +584,37 @@ export class MetrcSandboxService {
         };
         await this.saveCompanyMetrc(input.companyId, input.actorUserId, loaded.company, cleared);
       }
-      return {
-        ok: true,
-        status: "ready",
-        sandboxProvisioning: false,
-        sandboxReady: true,
-        sandboxProvisioningStartedAt: startedAt,
-        hasMetrcVendorApiKey: Boolean(vendorApiKey),
-        hasMetrcUserApiKey: Boolean(userApiKey),
-        metrcLicenseNumberDisplay: licenseNumber,
-        metrcFacilityName: loaded.facilityName,
-        metrcUsernameDisplay: loaded.username,
+      return this.buildStatusPayload({
+        lifecycle: "ready",
+        metrc: metrc.sandboxProvisioning ? { ...metrc, sandboxProvisioning: false, sandboxReady: true } : metrc,
+        vendorApiKey,
+        userApiKey,
+        licenseNumber,
+        facilityName: loaded.facilityName,
+        username: loaded.username,
         credentialsReady: true,
         message: "Sandbox ready",
+        startedAt,
         elapsedMs,
         remainingMs,
-      };
+      });
     }
 
     if (!metrc.sandboxProvisioning) {
-      return {
-        ok: true,
-        status: "idle",
-        sandboxProvisioning: false,
-        sandboxReady: false,
-        sandboxProvisioningStartedAt: null,
-        hasMetrcVendorApiKey: Boolean(vendorApiKey),
-        hasMetrcUserApiKey: Boolean(userApiKey),
-        metrcLicenseNumberDisplay: licenseNumber,
-        metrcFacilityName: loaded.facilityName,
-        metrcUsernameDisplay: loaded.username,
+      return this.buildStatusPayload({
+        lifecycle: "idle",
+        metrc,
+        vendorApiKey,
+        userApiKey,
+        licenseNumber,
+        facilityName: loaded.facilityName,
+        username: loaded.username,
         credentialsReady: false,
         message: "Sandbox not provisioned",
+        startedAt: null,
         elapsedMs: null,
         remainingMs: null,
-      };
+      });
     }
 
     if (elapsedMs != null && elapsedMs >= SANDBOX_PROVISIONING_MAX_MS) {
@@ -530,22 +629,20 @@ export class MetrcSandboxService {
         companyId: input.companyId,
         elapsedMs,
       });
-      return {
-        ok: true,
-        status: "timeout",
-        sandboxProvisioning: false,
-        sandboxReady: false,
-        sandboxProvisioningStartedAt: startedAt,
-        hasMetrcVendorApiKey: Boolean(vendorApiKey),
-        hasMetrcUserApiKey: Boolean(userApiKey),
-        metrcLicenseNumberDisplay: licenseNumber,
-        metrcFacilityName: loaded.facilityName,
-        metrcUsernameDisplay: loaded.username,
+      return this.buildStatusPayload({
+        lifecycle: "timeout",
+        metrc: timedOut,
+        vendorApiKey,
+        userApiKey,
+        licenseNumber,
+        facilityName: loaded.facilityName,
+        username: loaded.username,
         credentialsReady: false,
         message: buildStatusMessage("timeout", timedOut),
+        startedAt,
         elapsedMs,
         remainingMs: 0,
-      };
+      });
     }
 
     logInfo("[METRC] sandbox_provisioning_poll", {
@@ -572,40 +669,36 @@ export class MetrcSandboxService {
         polled: true,
       });
 
-      return {
-        ok: true,
-        status: "ready",
-        sandboxProvisioning: false,
-        sandboxReady: true,
-        sandboxProvisioningStartedAt: startedAt,
-        hasMetrcVendorApiKey: Boolean(vendorApiKey),
-        hasMetrcUserApiKey: true,
-        metrcLicenseNumberDisplay: lic,
-        metrcFacilityName: String(nextMetrc.facilityName || "").trim(),
-        metrcUsernameDisplay: String(nextMetrc.username || "").trim(),
+      return this.buildStatusPayload({
+        lifecycle: "ready",
+        metrc: nextMetrc,
+        vendorApiKey,
+        userApiKey: discovered.userApiKey,
+        licenseNumber: lic,
+        facilityName: String(nextMetrc.facilityName || "").trim(),
+        username: String(nextMetrc.username || "").trim(),
         credentialsReady: true,
         message: "Sandbox ready",
+        startedAt,
         elapsedMs,
         remainingMs,
-      };
+      });
     }
 
-    return {
-      ok: true,
-      status: "provisioning",
-      sandboxProvisioning: true,
-      sandboxReady: false,
-      sandboxProvisioningStartedAt: startedAt,
-      hasMetrcVendorApiKey: Boolean(vendorApiKey),
-      hasMetrcUserApiKey: Boolean(userApiKey),
-      metrcLicenseNumberDisplay: licenseNumber,
-      metrcFacilityName: loaded.facilityName,
-      metrcUsernameDisplay: loaded.username,
+    return this.buildStatusPayload({
+      lifecycle: "provisioning",
+      metrc,
+      vendorApiKey,
+      userApiKey,
+      licenseNumber,
+      facilityName: loaded.facilityName,
+      username: loaded.username,
       credentialsReady: false,
       message: buildStatusMessage("provisioning", metrc),
+      startedAt,
       elapsedMs,
       remainingMs,
-    };
+    });
   }
 }
 

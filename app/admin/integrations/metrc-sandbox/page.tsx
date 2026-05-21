@@ -37,6 +37,13 @@ type IntegrationsMeta = {
   metrcSandboxLastStrainsCount?: number | null;
   metrcSandboxLastPackagesCount?: number | null;
   metrcSandboxLastRateLimitWarning?: string | null;
+  metrcSandboxUiStatus?: string | null;
+  metrcOperationalAccessGranted?: boolean;
+  metrcLastAuthAttemptMode?: string | null;
+  metrcLastMetrcResponseMessage?: string | null;
+  metrcLastConnectionHttpStatus?: number | null;
+  metrcLastConnectionMessage?: string | null;
+  metrcLastSuccessfulAuthMode?: string | null;
 };
 
 type MetrcUpstreamErrorPayload = {
@@ -78,9 +85,36 @@ function formatMetrcPullError(json: PullResult, resource: string): string {
   return msg || `Failed to pull ${resource}.`;
 }
 
+type MetrcDiagnostics = {
+  sandboxStatus: string;
+  sandboxStatusLabel: string;
+  lastAttemptedAuthMode: string | null;
+  metrcResponseCode: number;
+  metrcResponseMessage: string;
+  provisioningComplete: boolean;
+  userCreationPending: boolean;
+  operationalAccessGranted: boolean;
+  environment: string;
+};
+
 type TestConnectionJson =
-  | { ok: true; connected: true; checkedAt: string; locationCount: number }
-  | { ok: false; connected: false; checkedAt: string; message: string; status: number };
+  | {
+      ok: true;
+      connected: true;
+      checkedAt: string;
+      locationCount: number;
+      authMode?: string;
+      diagnostics: MetrcDiagnostics;
+    }
+  | {
+      ok: false;
+      connected: false;
+      checkedAt: string;
+      message: string;
+      status: number;
+      diagnostics: MetrcDiagnostics;
+      attemptedModes?: string[];
+    };
 
 type SandboxSetupDebug = {
   topLevelKeys: string[];
@@ -111,11 +145,19 @@ type SandboxSetupJson =
 type SandboxStatusJson = {
   ok: true;
   status: "idle" | "provisioning" | "ready" | "timeout" | "error";
+  sandboxUiStatus: string;
+  sandboxUiStatusLabel: string;
   sandboxProvisioning: boolean;
   sandboxReady: boolean;
   message: string;
   credentialsReady: boolean;
+  provisioningComplete: boolean;
+  userCreationPending: boolean;
+  operationalAccessGranted: boolean;
   remainingMs: number | null;
+  lastConnectionHttpStatus: number | null;
+  lastMetrcResponseMessage: string;
+  lastAuthAttemptMode: string | null;
 };
 
 const POLL_INTERVAL_MS = 10_000;
@@ -228,6 +270,7 @@ export default function MetrcSandboxPage() {
     "idle" | "provisioning" | "ready" | "timeout" | "error"
   >("idle");
   const [provisioningMessage, setProvisioningMessage] = useState<string | null>(null);
+  const [lastDiagnostics, setLastDiagnostics] = useState<MetrcDiagnostics | null>(null);
 
   const loadMeta = useCallback(async () => {
     setLoadingMeta(true);
@@ -235,12 +278,19 @@ export default function MetrcSandboxPage() {
       const res = await authFetch("/api/config/integrations");
       const json = res.ok ? ((await res.json()) as IntegrationsMeta) : null;
       setMeta(json);
-      if (json?.metrcSandboxProvisioning) {
+      const ui = String(json?.metrcSandboxUiStatus || "").trim();
+      if (ui === "awaiting_user_activation" || json?.metrcSandboxProvisioning) {
         setSandboxUiStatus("provisioning");
         setProvisioningMessage("METRC is creating your sandbox user…");
+      } else if (ui === "connected" || json?.metrcOperationalAccessGranted) {
+        setSandboxUiStatus("ready");
+        setProvisioningMessage("Operational access granted");
       } else if (json?.metrcSandboxReady || json?.metrcSandboxCredentialsReady) {
         setSandboxUiStatus("ready");
-        setProvisioningMessage("Sandbox ready");
+        setProvisioningMessage("Sandbox credentials stored — run Test Connection");
+      } else if (ui === "auth_rejected") {
+        setSandboxUiStatus("error");
+        setProvisioningMessage(json?.metrcLastMetrcResponseMessage || "Authorization rejected");
       }
     } catch {
       setMeta(null);
@@ -277,10 +327,18 @@ export default function MetrcSandboxPage() {
       if (!status) return;
 
       setProvisioningMessage(status.message);
+      if (status.sandboxUiStatus === "awaiting_user_activation") {
+        setSandboxUiStatus("provisioning");
+      }
 
       if (status.status === "ready" || status.credentialsReady) {
-        setSandboxUiStatus("ready");
-        setStatusMsg({ tone: "ok", text: "Sandbox ready" });
+        setSandboxUiStatus(status.operationalAccessGranted ? "ready" : "provisioning");
+        setStatusMsg({
+          tone: status.operationalAccessGranted ? "ok" : "warn",
+          text: status.operationalAccessGranted
+            ? "Sandbox ready — operational access granted"
+            : "Credentials stored — run Test Connection when user key is ready",
+        });
         await loadMeta();
         return;
       }
@@ -327,18 +385,26 @@ export default function MetrcSandboxPage() {
   }, [meta, sandboxUiStatus]);
 
   const connectionLabel = useMemo(() => {
+    const ui = String(meta?.metrcSandboxUiStatus || lastDiagnostics?.sandboxStatus || "").trim();
     if (busy === "test") return "Testing…";
-    if (busy === "setup" || sandboxUiStatus === "provisioning") {
-      return "Provisioning…";
-    }
-    if (sandboxUiStatus === "ready" || credentialsReady) return "Connected";
+    if (busy === "setup" || sandboxUiStatus === "provisioning") return "Provisioning…";
+    if (ui === "connected" || meta?.metrcOperationalAccessGranted) return "Connected";
+    if (ui === "awaiting_user_activation") return "Awaiting user activation";
+    if (ui === "auth_rejected") return "Auth rejected";
+    if (ui === "endpoint_unavailable") return "Endpoint unavailable";
     if (sandboxUiStatus === "timeout") return "Timed out";
     if (sandboxUiStatus === "error") return "Error";
-    const st = String(meta?.metrcLastConnectionStatus || "").trim();
-    if (st === "connected") return "Connected (API test)";
-    if (st === "not_connected") return "Not connected";
-    return "Not ready";
-  }, [meta?.metrcLastConnectionStatus, busy, credentialsReady, sandboxUiStatus]);
+    if (credentialsReady) return "Credentials ready";
+    return "Not provisioned";
+  }, [
+    meta?.metrcSandboxUiStatus,
+    meta?.metrcOperationalAccessGranted,
+    meta?.metrcLastConnectionStatus,
+    lastDiagnostics?.sandboxStatus,
+    busy,
+    credentialsReady,
+    sandboxUiStatus,
+  ]);
 
   async function runSetup() {
     setBusy("setup");
@@ -396,10 +462,13 @@ export default function MetrcSandboxPage() {
       const res = await authFetch("/api/metrc/test-connection");
       const json = (await res.json()) as TestConnectionJson;
       setTestAt(json.checkedAt || new Date().toISOString());
+      if ("diagnostics" in json && json.diagnostics) {
+        setLastDiagnostics(json.diagnostics);
+      }
       if (json.ok && "connected" in json && json.connected) {
         setStatusMsg({
           tone: "ok",
-          text: `Connection OK — ${json.locationCount} active location(s).`,
+          text: `Connection OK — ${json.locationCount} active location(s). Auth: ${json.authMode ?? json.diagnostics.lastAttemptedAuthMode ?? "—"}.`,
         });
       } else {
         const fail = json as Extract<TestConnectionJson, { ok: false }>;
@@ -542,11 +611,65 @@ export default function MetrcSandboxPage() {
         </section>
 
         <section style={styles.card}>
-          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>API status</h2>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>METRC status</h2>
           <div style={styles.metaGrid}>
             <div style={styles.metaItem}>
-              <div style={styles.metaLabel}>Connection</div>
-              <div style={styles.metaValue}>{connectionLabel}</div>
+              <div style={styles.metaLabel}>Sandbox state</div>
+              <div style={styles.metaValue}>
+                {lastDiagnostics?.sandboxStatusLabel
+                  || meta?.metrcSandboxUiStatus
+                  || connectionLabel}
+              </div>
+            </div>
+            <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>Provisioning complete</div>
+              <div style={styles.metaValue}>
+                {lastDiagnostics?.provisioningComplete ?? meta?.metrcSandboxCredentialsReady
+                  ? "Yes"
+                  : "No"}
+              </div>
+            </div>
+            <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>User creation pending</div>
+              <div style={styles.metaValue}>
+                {lastDiagnostics?.userCreationPending
+                  ? "Yes — METRC may still be creating the sandbox user"
+                  : sandboxUiStatus === "provisioning"
+                    ? "Likely"
+                    : "No"}
+              </div>
+            </div>
+            <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>Operational access</div>
+              <div style={styles.metaValue}>
+                {lastDiagnostics?.operationalAccessGranted || meta?.metrcOperationalAccessGranted
+                  ? "Granted"
+                  : "Not granted"}
+              </div>
+            </div>
+            <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>Last auth mode</div>
+              <div style={styles.metaValue}>
+                {lastDiagnostics?.lastAttemptedAuthMode
+                  || meta?.metrcLastAuthAttemptMode
+                  || "—"}
+              </div>
+            </div>
+            <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>METRC HTTP status</div>
+              <div style={styles.metaValue}>
+                {lastDiagnostics?.metrcResponseCode
+                  ?? meta?.metrcLastConnectionHttpStatus
+                  ?? "—"}
+              </div>
+            </div>
+            <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>METRC message</div>
+              <div style={styles.metaValue}>
+                {lastDiagnostics?.metrcResponseMessage
+                  || meta?.metrcLastMetrcResponseMessage
+                  || "—"}
+              </div>
             </div>
             <div style={styles.metaItem}>
               <div style={styles.metaLabel}>Last connection test</div>

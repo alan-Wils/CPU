@@ -66,7 +66,8 @@ describe("MetrcConnectionService", () => {
       durationMs: 10,
       retries: 0,
       rateLimitWaitedMs: 0,
-      authMode: "x_metrc_key_header",
+      authMode: "sandbox_x_metrc_key",
+      metrcMessage: "OK",
     });
 
     const svc = new MetrcConnectionService();
@@ -74,7 +75,8 @@ describe("MetrcConnectionService", () => {
 
     expect(out.ok && out.connected).toBe(true);
     if (!out.ok || !out.connected) return;
-    expect(out.authMode).toBe("x_metrc_key_header");
+    expect(out.authMode).toBe("sandbox_x_metrc_key");
+    expect(out.diagnostics.operationalAccessGranted).toBe(true);
     expect(out.userKeyLength).toBeGreaterThan(40);
     expect(getMock).toHaveBeenCalled();
     const path = String(getMock.mock.calls[0]?.[0] ?? "");
@@ -90,10 +92,12 @@ describe("MetrcConnectionService", () => {
       durationMs: 5,
       retries: 0,
       rateLimitWaitedMs: 0,
+      metrcMessage: "Authorization has been denied for this request.",
       attemptedAuthModes: [
-        "x_metrc_key_header",
-        "x_metrc_key_and_user_key_header",
-        "x_metrc_key_and_userkey_header",
+        "sandbox_x_metrc_key",
+        "sandbox_x_metrc_key_and_x_user_key",
+        "sandbox_basic_vendor_user",
+        "sandbox_bearer_user",
       ],
     });
 
@@ -104,6 +108,7 @@ describe("MetrcConnectionService", () => {
     if (out.ok) return;
     expect(out.credentialHint).toContain("user key");
     expect(out.userKeyLength).toBeGreaterThan(40);
-    expect(out.attemptedModes).toContain("x_metrc_key_header");
+    expect(out.attemptedModes).toContain("sandbox_x_metrc_key");
+    expect(out.diagnostics.sandboxStatus).toBeDefined();
   });
 });

@@ -18,6 +18,23 @@ import {
   buildMetrcCredentialHintFromLoaded,
   logMetrcCredentialDiagnostics,
 } from "../lib/metrcCredentialDiagnostics.js";
+import {
+  resolveMetrcSandboxUiStatus,
+  sandboxStatusLabel,
+  type MetrcSandboxUiStatus,
+} from "../lib/metrcSandboxStatus.js";
+
+export type MetrcConnectionDiagnostics = {
+  sandboxStatus: MetrcSandboxUiStatus;
+  sandboxStatusLabel: string;
+  lastAttemptedAuthMode: MetrcClientAuthMode | null;
+  metrcResponseCode: number;
+  metrcResponseMessage: string;
+  provisioningComplete: boolean;
+  userCreationPending: boolean;
+  operationalAccessGranted: boolean;
+  environment: string;
+};
 
 export type MetrcTestConnectionSuccess = {
   ok: true;
@@ -30,6 +47,7 @@ export type MetrcTestConnectionSuccess = {
   authMode: MetrcClientAuthMode;
   userKeyLength: number;
   vendorKeyLength: number;
+  diagnostics: MetrcConnectionDiagnostics;
 };
 
 export type MetrcTestConnectionFailure = {
@@ -45,9 +63,44 @@ export type MetrcTestConnectionFailure = {
   vendorKeyLength: number;
   attemptedModes: MetrcClientAuthMode[];
   failures: MetrcAttemptFailure[];
+  diagnostics: MetrcConnectionDiagnostics;
 };
 
 export type MetrcTestConnectionResponse = MetrcTestConnectionSuccess | MetrcTestConnectionFailure;
+
+function buildConnectionDiagnostics(input: {
+  loaded: NonNullable<Awaited<ReturnType<typeof loadCompanyMetrcConfig>>>;
+  status: number;
+  metrcMessage: string;
+  attemptedModes: MetrcClientAuthMode[];
+  operationalAccessGranted: boolean;
+}): MetrcConnectionDiagnostics {
+  const hasUserKey = Boolean(input.loaded.userApiKey.trim());
+  const provisioningComplete = Boolean(input.loaded.metrc.sandboxReady) && hasUserKey;
+  const userCreationPending = Boolean(input.loaded.metrc.sandboxProvisioning) && !hasUserKey;
+  const sandboxStatus = resolveMetrcSandboxUiStatus({
+    sandboxProvisioning: Boolean(input.loaded.metrc.sandboxProvisioning),
+    sandboxReady: Boolean(input.loaded.metrc.sandboxReady),
+    credentialsReady: Boolean(
+      input.loaded.vendorApiKey && input.loaded.userApiKey && input.loaded.licenseNumber,
+    ),
+    hasUserApiKey: hasUserKey,
+    lastConnectionStatus: input.operationalAccessGranted ? "connected" : "not_connected",
+    lastConnectionHttpStatus: input.status,
+  });
+
+  return {
+    sandboxStatus,
+    sandboxStatusLabel: sandboxStatusLabel(sandboxStatus),
+    lastAttemptedAuthMode: input.attemptedModes[input.attemptedModes.length - 1] ?? null,
+    metrcResponseCode: input.status,
+    metrcResponseMessage: input.metrcMessage.slice(0, 2000),
+    provisioningComplete,
+    userCreationPending,
+    operationalAccessGranted: input.operationalAccessGranted,
+    environment: input.loaded.environment,
+  };
+}
 
 function failuresFromClientAttempt(
   modes: MetrcClientAuthMode[],
@@ -88,6 +141,17 @@ export class MetrcConnectionService {
         vendorKeyLength: 0,
         attemptedModes: [],
         failures: [],
+        diagnostics: {
+          sandboxStatus: "idle",
+          sandboxStatusLabel: sandboxStatusLabel("idle"),
+          lastAttemptedAuthMode: null,
+          metrcResponseCode: 404,
+          metrcResponseMessage: "Company configuration not found.",
+          provisioningComplete: false,
+          userCreationPending: false,
+          operationalAccessGranted: false,
+          environment: "sandbox",
+        },
       };
       return fail;
     }
@@ -117,6 +181,13 @@ export class MetrcConnectionService {
         vendorKeyLength,
         attemptedModes: [],
         failures: [],
+        diagnostics: buildConnectionDiagnostics({
+          loaded,
+          status: 400,
+          metrcMessage: "Bad request. Check license number, state, and base URL.",
+          attemptedModes: [],
+          operationalAccessGranted: false,
+        }),
       };
       await this.persistConnectionSnapshot(
         input.companyId,
@@ -128,7 +199,9 @@ export class MetrcConnectionService {
       return fail;
     }
 
-    if (!userKeyLength) {
+    const isSandbox = loaded.environment === "sandbox";
+
+    if (!userKeyLength && !isSandbox) {
       const fail: MetrcTestConnectionFailure = {
         ok: false,
         connected: false,
@@ -142,6 +215,13 @@ export class MetrcConnectionService {
         vendorKeyLength,
         attemptedModes: [],
         failures: [],
+        diagnostics: buildConnectionDiagnostics({
+          loaded,
+          status: 400,
+          metrcMessage: "User API key is required.",
+          attemptedModes: [],
+          operationalAccessGranted: false,
+        }),
       };
       await this.persistConnectionSnapshot(
         input.companyId,
@@ -189,6 +269,13 @@ export class MetrcConnectionService {
           authMode: result.authMode as MetrcClientAuthMode,
           userKeyLength,
           vendorKeyLength,
+          diagnostics: buildConnectionDiagnostics({
+            loaded,
+            status: result.status,
+            metrcMessage: result.metrcMessage,
+            attemptedModes: [result.authMode],
+            operationalAccessGranted: true,
+          }),
         };
         await this.persistConnectionSnapshot(
           input.companyId,
@@ -232,6 +319,13 @@ export class MetrcConnectionService {
         vendorKeyLength,
         attemptedModes: [],
         failures: [],
+        diagnostics: buildConnectionDiagnostics({
+          loaded,
+          status: 502,
+          metrcMessage: "METRC connection test failed.",
+          attemptedModes: [],
+          operationalAccessGranted: false,
+        }),
       };
       await this.persistConnectionSnapshot(
         input.companyId,
@@ -252,12 +346,13 @@ export class MetrcConnectionService {
       attemptedAuthModes: lastFailure.attemptedAuthModes,
     });
 
+    const metrcMsg = lastFailure.metrcMessage || lastFailure.message;
     const fail: MetrcTestConnectionFailure = {
       ok: false,
       connected: false,
       checkedAt,
       status: lastFailure.status || 401,
-      message: `${lastFailure.metrcMessage || lastFailure.message} ${credentialHint}`.trim().slice(0, 4000),
+      message: `${metrcMsg} ${credentialHint}`.trim().slice(0, 4000),
       credentialHint,
       baseUrl: client.baseUrl ?? baseUrl,
       licenseNumber,
@@ -268,8 +363,15 @@ export class MetrcConnectionService {
         lastFailure.attemptedAuthModes,
         lastFailure.status,
         lastFailure.durationMs,
-        lastFailure.metrcMessage || lastFailure.message,
+        metrcMsg,
       ),
+      diagnostics: buildConnectionDiagnostics({
+        loaded,
+        status: lastFailure.status || 401,
+        metrcMessage: metrcMsg,
+        attemptedModes: lastFailure.attemptedAuthModes,
+        operationalAccessGranted: false,
+      }),
     };
 
     logWarn("[METRC] connection_test_failed_all_modes", {
@@ -306,6 +408,8 @@ export class MetrcConnectionService {
       nextMetrc.metrcLastConnectionHttpStatus = null;
       nextMetrc.metrcLastLocationCount = result.locationCount;
       nextMetrc.metrcLastSuccessfulAuthMode = result.authMode;
+      nextMetrc.metrcSandboxOperationalStatus = result.diagnostics.sandboxStatus;
+      nextMetrc.metrcOperationalAccessGranted = true;
     } else {
       const fail = result as MetrcTestConnectionFailure;
       nextMetrc.metrcLastConnectionStatus = "not_connected";
@@ -313,7 +417,11 @@ export class MetrcConnectionService {
       nextMetrc.metrcLastConnectionHttpStatus =
         typeof fail.status === "number" && Number.isFinite(fail.status) ? fail.status : null;
       nextMetrc.metrcLastLocationCount = null;
-      nextMetrc.metrcLastSuccessfulAuthMode = null;
+      nextMetrc.metrcLastSuccessfulAuthMode = fail.diagnostics.lastAttemptedAuthMode;
+      nextMetrc.metrcSandboxOperationalStatus = fail.diagnostics.sandboxStatus;
+      nextMetrc.metrcOperationalAccessGranted = fail.diagnostics.operationalAccessGranted;
+      nextMetrc.metrcLastAuthAttemptMode = fail.diagnostics.lastAttemptedAuthMode;
+      nextMetrc.metrcLastMetrcResponseMessage = fail.diagnostics.metrcResponseMessage;
     }
 
     await this.configService.upsert({

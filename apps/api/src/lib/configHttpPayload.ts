@@ -398,6 +398,14 @@ export function buildIntegrationsMetaView(merged: MergedCompanyConfig): Record<s
         metrcSandboxLastRoomsCount: metrc.metrcSandboxLastRoomsCount ?? null,
         metrcSandboxLastPackagesCount: metrc.metrcSandboxLastPackagesCount ?? null,
         metrcSandboxLastRateLimitWarning: String(metrc.metrcSandboxLastRateLimitWarning ?? "").trim() || null,
+        metrcSandboxUiStatus: String(metrc.metrcSandboxOperationalStatus ?? "").trim() || null,
+        metrcOperationalAccessGranted: Boolean(metrc.metrcOperationalAccessGranted),
+        metrcLastAuthAttemptMode: String(metrc.metrcLastAuthAttemptMode ?? "").trim() || null,
+        metrcLastMetrcResponseMessage: String(metrc.metrcLastMetrcResponseMessage ?? "").trim() || null,
+        metrcLastConnectionHttpStatus:
+            typeof metrc.metrcLastConnectionHttpStatus === "number"
+                ? metrc.metrcLastConnectionHttpStatus
+                : null,
         autogrowIntegrationEnabled: Boolean(ag.integrationEnabled),
         hasAutogrowApiKey: nonEmptyString(ag.apiKey),
     };

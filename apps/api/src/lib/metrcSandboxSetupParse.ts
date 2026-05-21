@@ -34,6 +34,8 @@ export type MetrcSandboxSetupParsed = {
     facilityName: string | null;
   };
   fieldsFound: string[];
+  /** Human-readable status lines from METRC setup response (no secrets). */
+  provisioningMessages: string[];
 };
 
 export type MetrcSandboxSetupDebugInfo = {
@@ -298,7 +300,7 @@ export function parseMetrcSandboxSetupResponse(
     username: null,
     facilityName: null,
   };
-  const out: Omit<MetrcSandboxSetupParsed, "parserPaths" | "fieldsFound"> = {
+  const out: Omit<MetrcSandboxSetupParsed, "parserPaths" | "fieldsFound" | "provisioningMessages"> = {
     userApiKey: "",
     facilityLicenseNumber: "",
     username: "",
@@ -309,7 +311,7 @@ export function parseMetrcSandboxSetupResponse(
 
   for (const root of roots) {
     for (const attempt of attempts) {
-      const field = attempt.field as keyof typeof out;
+      const field = attempt.field as keyof Omit<MetrcSandboxSetupParsed, "parserPaths" | "fieldsFound" | "provisioningMessages">;
       if (out[field]) continue;
       const raw = getAtPath(root, attempt.path);
       const s = nonEmptyString(raw);
@@ -353,7 +355,10 @@ export function parseMetrcSandboxSetupResponse(
 
   const fieldsFound = (Object.keys(out) as Array<keyof typeof out>).filter((k) => Boolean(out[k]));
 
-  return { ...out, parserPaths, fieldsFound };
+  const responseText = extractMetrcSandboxResponseText(body);
+  const provisioningMessages = responseText ? [responseText.slice(0, 2000)] : [];
+
+  return { ...out, parserPaths, fieldsFound, provisioningMessages };
 }
 
 export function buildMetrcSandboxSetupDebug(

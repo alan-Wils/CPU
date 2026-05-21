@@ -2,6 +2,14 @@
  * Labels for METRC GET /locations/v2/active connection-test attempts (no secrets).
  */
 export type MetrcAuthModeUsed =
+  | "vendor_only"
+  | "sandbox_x_metrc_key"
+  | "sandbox_x_metrc_key_and_x_user_key"
+  | "sandbox_basic_vendor_user"
+  | "sandbox_bearer_user"
+  | "production_x_metrc_key"
+  | "production_x_metrc_key_and_user_key"
+  | "production_x_metrc_key_and_userkey"
   | "dual_key_basic"
   | "bearer_user"
   | "basic_user_colon"

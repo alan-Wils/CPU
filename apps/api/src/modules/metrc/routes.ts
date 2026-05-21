@@ -8,6 +8,8 @@ import { MetrcConnectionService } from "../../services/metrcConnectionService.js
 import { MetrcAvailablePlantTagsService } from "../../services/metrcAvailablePlantTagsService.js";
 import { MetrcSandboxService } from "../../services/metrcSandboxService.js";
 import { MetrcPullService } from "../../services/metrcPullService.js";
+import { MetrcDebugAuthService } from "../../services/metrcDebugAuthService.js";
+import { env } from "../../config/env.js";
 
 const cultivationMetrcReadRoles = [
   "OWNER",
@@ -27,6 +29,7 @@ const metrcConnectionService = new MetrcConnectionService();
 const metrcAvailablePlantTagsService = new MetrcAvailablePlantTagsService();
 const metrcSandboxService = new MetrcSandboxService();
 const metrcPullService = new MetrcPullService();
+const metrcDebugAuthService = new MetrcDebugAuthService();
 
 function httpStatusForMetrcAction(result: { ok: boolean; status?: number }): number {
   if (result.ok) return 200;
@@ -48,6 +51,21 @@ function httpStatusForSandboxSetup(result: {
   if (result.status === "provisioning") return 202;
   return 200;
 }
+
+/** Developer-only: probe sandbox operational auth modes against locations endpoint. */
+metrcRouter.get(
+  "/debug-auth",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    if (env.NODE_ENV === "production") {
+      res.status(404).json({ ok: false, message: "Not found." });
+      return;
+    }
+    const companyId = getScopedCompanyId(req);
+    const result = await metrcDebugAuthService.runDebugAuth({ companyId });
+    res.status(result.ok ? 200 : 400).json(result);
+  }),
+);
 
 /** Safe read-only probe: GET METRC active locations (no writes). */
 metrcRouter.get(

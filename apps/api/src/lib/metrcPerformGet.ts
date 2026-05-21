@@ -30,7 +30,7 @@ export function isMetrcPerformGetFailure(r: MetrcPerformGetResult): r is MetrcPe
 
 /**
  * Read-only GET against METRC using company `config.company.metrc` credentials.
- * Uses the same Colorado sandbox auth as `MetrcClient` (Basic vendor:user).
+ * Uses environment-specific auth from `MetrcClient` (sandbox vs production plans).
  */
 export async function performMetrcAuthorizedGet(input: {
   companyId: string;
@@ -111,10 +111,10 @@ export async function performMetrcAuthorizedGet(input: {
       companyId: input.companyId,
       path: path.split("?")[0],
       status: result.status,
-      authMode: result.attemptedAuthModes[0] ?? "x_metrc_key_header",
+      authMode: result.attemptedAuthModes[0] ?? "sandbox_x_metrc_key",
     });
 
-    const mode = result.attemptedAuthModes[0] ?? "x_metrc_key_header";
+    const mode = result.attemptedAuthModes[0] ?? "sandbox_x_metrc_key";
     return {
       ok: false as const,
       status: result.status,
@@ -124,7 +124,7 @@ export async function performMetrcAuthorizedGet(input: {
       attemptedModes: [mode],
       failures: [
         {
-          mode: "x_metrc_key_header" as MetrcAttemptFailure["mode"],
+          mode: "sandbox_x_metrc_key" as MetrcAttemptFailure["mode"],
           status: result.status,
           durationMs: result.durationMs,
           metrcSnippet: (result.metrcMessage || result.message).slice(0, 200) || null,
