@@ -21,7 +21,7 @@ export type MetrcAvailablePlantTagsSuccess = {
   totalReturned: number;
   licenseNumber: string;
   baseUrl: string;
-  authMode: MetrcAuthModeUsed;
+  authMode: string;
 };
 
 export type MetrcAvailablePlantTagsFailure = {
@@ -30,7 +30,7 @@ export type MetrcAvailablePlantTagsFailure = {
   message: string;
   baseUrl: string | null;
   licenseNumber: string;
-  attemptedModes: MetrcAuthModeUsed[];
+  attemptedModes: string[];
   failures: MetrcAttemptFailure[];
 };
 

@@ -1,57 +1,13 @@
-import { ConfigService } from "../services/configService.js";
 import { logInfo, logWarn } from "./logger.js";
-import { resolveMetrcApiBaseUrl } from "./metrcResolveBaseUrl.js";
-import {
-  buildAuthorizationHeader,
-  buildMetrcAttemptPlan,
-  type MetrcAttemptFailure,
-  type MetrcAuthModeUsed,
-} from "./metrcConnectionAttempts.js";
-import { extractMetrcApiErrorSummary } from "./metrcConnectionHelpers.js";
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
-}
-
-async function fetchMetrcOnce(
-  url: string,
-  authorization: string,
-  vendorApiKey?: string,
-): Promise<{ res: Response; bodyText: string; bodyJson: unknown }> {
-  const headers: Record<string, string> = {
-    Authorization: authorization,
-    Accept: "application/json",
-    "User-Agent": "CPU-Platform/1.0",
-  };
-  const vendor = String(vendorApiKey || "").trim();
-  if (vendor) headers["x-metrc-key"] = vendor;
-
-  const res = await fetch(url, {
-    method: "GET",
-    headers,
-    signal: AbortSignal.timeout(25_000),
-  });
-  let bodyText = "";
-  try {
-    bodyText = await res.text();
-  } catch {
-    bodyText = "";
-  }
-  let bodyJson: unknown = null;
-  try {
-    bodyJson = bodyText ? JSON.parse(bodyText) : null;
-  } catch {
-    bodyJson = null;
-  }
-  return { res, bodyText, bodyJson };
-}
+import { MetrcClient, isMetrcClientFailure } from "./metrcClient.js";
+import { loadCompanyMetrcConfig } from "./metrcConfigLoader.js";
+import type { MetrcAttemptFailure, MetrcAuthModeUsed } from "./metrcConnectionAttempts.js";
 
 export type MetrcPerformGetSuccess = {
   ok: true;
   baseUrl: string;
   licenseNumber: string;
-  authMode: MetrcAuthModeUsed;
+  authMode: string;
   bodyJson: unknown;
 };
 
@@ -61,7 +17,7 @@ export type MetrcPerformGetFailure = {
   message: string;
   baseUrl: string | null;
   licenseNumber: string;
-  attemptedModes: MetrcAuthModeUsed[];
+  attemptedModes: string[];
   failures: MetrcAttemptFailure[];
 };
 
@@ -72,56 +28,22 @@ export function isMetrcPerformGetFailure(r: MetrcPerformGetResult): r is MetrcPe
   return r.ok === false;
 }
 
-function summarizeAllAttemptsFailed(failures: MetrcAttemptFailure[]): string {
-  if (!failures.length) return "METRC request failed.";
-  const last = failures[failures.length - 1];
-  const modes = failures.map((f) => f.mode).join(", ");
-  const snippet = last.metrcSnippet ? ` ${last.metrcSnippet}` : "";
-  return `Every auth mode failed (${modes}). Last: HTTP ${last.status}.${snippet}`.slice(0, 4000);
-}
-
 /**
  * Read-only GET against METRC using company `config.company.metrc` credentials.
- * `pathnameAndQuery` must start with `/` (e.g. `/tags/v2/plant/available?licenseNumber=…`).
+ * Uses the same Colorado sandbox auth as `MetrcClient` (Basic vendor:user).
  */
 export async function performMetrcAuthorizedGet(input: {
   companyId: string;
   pathnameAndQuery: string;
 }): Promise<MetrcPerformGetResult> {
-  const configService = new ConfigService();
-  const rows = await configService.list(input.companyId);
-  const companyRow = rows.find((r) => r.key === "company");
-  const company = asRecord(companyRow?.value);
-  const metrc = asRecord(company.metrc);
-
-  const baseUrl = resolveMetrcApiBaseUrl({
-    stateCode: String(metrc.stateCode || ""),
-    environment: metrc.environment === "sandbox" ? "sandbox" : "production",
-    apiBaseUrlOverride: String(metrc.apiBaseUrlOverride || ""),
-  });
-  const licenseNumber = String(metrc.licenseNumber || "").trim();
-  const apiKey = String(metrc.apiKey || "").trim();
-  const userKey = String(metrc.userKey || metrc.userApiKey || "").trim();
-
-  if (!baseUrl || !licenseNumber) {
+  const loaded = await loadCompanyMetrcConfig(input.companyId);
+  if (!loaded) {
     return {
       ok: false as const,
-      status: 400,
-      message: "Bad request. Check license number, state, and base URL in Admin → METRC settings.",
-      baseUrl: baseUrl || null,
-      licenseNumber: licenseNumber || "",
-      attemptedModes: [],
-      failures: [],
-    };
-  }
-
-  if (!userKey) {
-    return {
-      ok: false as const,
-      status: 400,
-      message: "User API key is required. Save a facility user key in Admin → METRC settings.",
-      baseUrl,
-      licenseNumber,
+      status: 404,
+      message: "Company configuration not found.",
+      baseUrl: null,
+      licenseNumber: "",
       attemptedModes: [],
       failures: [],
     };
@@ -133,80 +55,81 @@ export async function performMetrcAuthorizedGet(input: {
       ok: false as const,
       status: 400,
       message: "Invalid METRC path.",
-      baseUrl,
-      licenseNumber,
+      baseUrl: null,
+      licenseNumber: loaded.licenseNumber,
       attemptedModes: [],
       failures: [],
     };
   }
 
-  const url = `${baseUrl.replace(/\/+$/, "")}${path}`;
-  const hasVendorKey = Boolean(apiKey);
+  const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
+  const baseUrl = client.baseUrl;
 
-  try {
-    const plan = buildMetrcAttemptPlan(hasVendorKey);
-    const failures: MetrcAttemptFailure[] = [];
-    const attemptedModes: MetrcAuthModeUsed[] = [];
-
-    for (const mode of plan) {
-      const authorization = buildAuthorizationHeader(mode, apiKey, userKey);
-      if (!authorization) continue;
-
-      attemptedModes.push(mode);
-      const t0 = Date.now();
-      const { res, bodyText, bodyJson } = await fetchMetrcOnce(url, authorization, apiKey);
-      const durationMs = Math.max(0, Date.now() - t0);
-      const metrcSnippet = extractMetrcApiErrorSummary(bodyJson, bodyText);
-
-      logInfo("[METRC] authorized_get_attempt", {
-        companyId: input.companyId,
-        path: path.split("?")[0],
-        mode,
-        status: res.status,
-        durationMs,
-        metrcSnippetPresent: Boolean(metrcSnippet),
-      });
-
-      if (res.ok) {
-        logInfo("[METRC] authorized_get_ok", {
-          companyId: input.companyId,
-          path: path.split("?")[0],
-          authMode: mode,
-          attemptsBeforeSuccess: failures.length + 1,
-        });
-        return {
-          ok: true as const,
-          baseUrl,
-          licenseNumber,
-          authMode: mode,
-          bodyJson,
-        };
-      }
-
-      failures.push({
-        mode,
-        status: res.status,
-        durationMs,
-        metrcSnippet,
-      });
-    }
-
-    const last = failures[failures.length - 1];
-    const status = last?.status ?? 0;
-    logWarn("[METRC] authorized_get_failed_all_modes", {
-      companyId: input.companyId,
-      path: path.split("?")[0],
-      attemptCount: failures.length,
-      lastStatus: status,
-    });
+  if (!baseUrl || !loaded.licenseNumber) {
     return {
       ok: false as const,
-      status,
-      message: summarizeAllAttemptsFailed(failures),
+      status: 400,
+      message: "Bad request. Check license number, state, and base URL in Admin → METRC settings.",
+      baseUrl: baseUrl || null,
+      licenseNumber: loaded.licenseNumber || "",
+      attemptedModes: [],
+      failures: [],
+    };
+  }
+
+  if (!loaded.userApiKey || !loaded.vendorApiKey) {
+    return {
+      ok: false as const,
+      status: 400,
+      message: "Vendor and user API keys are required. Save METRC keys in Admin → Company Config.",
       baseUrl,
-      licenseNumber,
-      attemptedModes,
-      failures,
+      licenseNumber: loaded.licenseNumber,
+      attemptedModes: [],
+      failures: [],
+    };
+  }
+
+  try {
+    const result = await client.get<unknown>(path);
+
+    if (!isMetrcClientFailure(result)) {
+      logInfo("[METRC] authorized_get_ok", {
+        companyId: input.companyId,
+        path: path.split("?")[0],
+        authMode: result.authMode,
+      });
+      return {
+        ok: true as const,
+        baseUrl,
+        licenseNumber: loaded.licenseNumber,
+        authMode: result.authMode,
+        bodyJson: result.data,
+      };
+    }
+
+    logWarn("[METRC] authorized_get_failed", {
+      companyId: input.companyId,
+      path: path.split("?")[0],
+      status: result.status,
+      authMode: result.attemptedAuthModes[0] ?? "basic_vendor_user",
+    });
+
+    const mode = result.attemptedAuthModes[0] ?? "basic_vendor_user";
+    return {
+      ok: false as const,
+      status: result.status,
+      message: result.message,
+      baseUrl,
+      licenseNumber: loaded.licenseNumber,
+      attemptedModes: [mode],
+      failures: [
+        {
+          mode: "basic_vendor_user" as MetrcAttemptFailure["mode"],
+          status: result.status,
+          durationMs: result.durationMs,
+          metrcSnippet: result.message.slice(0, 200) || null,
+        },
+      ],
     };
   } catch (error) {
     logWarn("[METRC] authorized_get_transport_error", {
@@ -219,7 +142,7 @@ export async function performMetrcAuthorizedGet(input: {
       status: 0,
       message: "Unable to reach METRC from the API server.",
       baseUrl,
-      licenseNumber,
+      licenseNumber: loaded.licenseNumber,
       attemptedModes: [],
       failures: [],
     };

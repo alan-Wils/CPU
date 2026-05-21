@@ -556,9 +556,7 @@ const METRC_AUTH_MODE_LABELS: Record<string, string> = {
   bearer_user: "Bearer (user API key)",
   basic_user_colon: "Basic — username=user key, password empty",
   basic_colon_user: "Basic — empty vendor, user key as password",
-  basic_metrc_user: "Colorado sandbox — Basic user metrc + x-metrc-key",
-  basic_any_user: "Colorado sandbox — Basic user any + x-metrc-key",
-  bearer_user_vendor: "Bearer user + x-metrc-key",
+  basic_vendor_user: "Colorado sandbox — Basic vendorApiKey:userApiKey",
 };
 
 function formatMetrcAuthModeLabel(mode: string | undefined | null): string {

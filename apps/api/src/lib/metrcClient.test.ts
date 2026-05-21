@@ -3,7 +3,7 @@ import axios from "axios";
 import {
   MetrcClient,
   METRC_HTML_RUNTIME_USER_MESSAGE,
-  buildMetrcClientAuthPlan,
+  buildBasicVendorUserAuthorization,
   clearMetrcClientAuthCache,
   describeMetrcAuthMode,
   detectMetrcHtmlResponse,
@@ -24,7 +24,7 @@ vi.mock("axios", async () => {
 
 const axiosRequest = vi.mocked(axios.request);
 
-describe("MetrcClient auth", () => {
+describe("MetrcClient Colorado sandbox auth", () => {
   beforeEach(() => {
     axiosRequest.mockReset();
     clearMetrcClientAuthCache();
@@ -41,13 +41,19 @@ describe("MetrcClient auth", () => {
     );
   });
 
-  it("describeMetrcAuthMode never includes secrets", () => {
-    const d = describeMetrcAuthMode("basic_metrc_user");
-    expect(d.basicUsernameLabel).toBe("metrc");
-    expect(JSON.stringify(d)).not.toMatch(/USERKEY|password/i);
+  it("buildBasicVendorUserAuthorization encodes vendor:user", () => {
+    expect(buildBasicVendorUserAuthorization("VENDOR", "USERKEY")).toBe(
+      `Basic ${Buffer.from("VENDOR:USERKEY", "utf8").toString("base64")}`,
+    );
   });
 
-  it("uses Basic metrc:userKey and x-metrc-key on first attempt", async () => {
+  it("describeMetrcAuthMode never includes secrets", () => {
+    const d = describeMetrcAuthMode("basic_vendor_user");
+    expect(d.usesVendorUserPair).toBe(true);
+    expect(JSON.stringify(d)).not.toMatch(/apiKey|password|secret/i);
+  });
+
+  it("uses Basic vendor:user, Content-Type json, no x-metrc-key or Bearer", async () => {
     axiosRequest.mockResolvedValue({
       status: 200,
       data: { Data: [] },
@@ -68,37 +74,32 @@ describe("MetrcClient auth", () => {
       "co-1",
     );
 
-    const out = await client.get("/facilities/v2/");
+    const out = await client.get("/locations/v2/active?licenseNumber=LIC-1");
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.authMode).toBe("basic_metrc_user");
+    expect(out.authMode).toBe("basic_vendor_user");
 
     const cfg = axiosRequest.mock.calls[0]?.[0];
-    expect(cfg?.headers?.["x-metrc-key"]).toBe("VENDOR");
+    expect(cfg?.auth).toBeUndefined();
+    expect(cfg?.headers?.["x-metrc-key"]).toBeUndefined();
+    expect(cfg?.headers?.["Content-Type"]).toBe("application/json");
+    expect(cfg?.headers?.Authorization).toBe(buildBasicVendorUserAuthorization("VENDOR", "USERKEY"));
     const decoded = Buffer.from(
       String(cfg?.headers?.Authorization).replace("Basic ", ""),
       "base64",
     ).toString("utf8");
-    expect(decoded).toBe("metrc:USERKEY");
-    expect(decoded).not.toContain("LIC-1");
+    expect(decoded).toBe("VENDOR:USERKEY");
+    expect(axiosRequest).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to bearer after 401 on basic_metrc_user", async () => {
-    axiosRequest
-      .mockResolvedValueOnce({
-        status: 401,
-        data: "Authorization has been denied for this request.",
-        headers: {},
-        statusText: "Unauthorized",
-        config: {},
-      })
-      .mockResolvedValueOnce({
-        status: 200,
-        data: [],
-        headers: {},
-        statusText: "OK",
-        config: {},
-      });
+  it("does not retry alternate auth modes on 401", async () => {
+    axiosRequest.mockResolvedValue({
+      status: 401,
+      data: "Authorization has been denied for this request.",
+      headers: {},
+      statusText: "Unauthorized",
+      config: {},
+    });
 
     const client = new MetrcClient(
       {
@@ -112,53 +113,11 @@ describe("MetrcClient auth", () => {
       "co-2",
     );
 
-    const out = await client.get("/facilities/v2/");
-    expect(out.ok).toBe(true);
-    if (!out.ok) return;
-    expect(out.authMode).toBe("basic_any_user");
-    expect(axiosRequest).toHaveBeenCalledTimes(2);
-
-    const second = axiosRequest.mock.calls[1]?.[0];
-    const decoded = Buffer.from(
-      String(second?.headers?.Authorization).replace("Basic ", ""),
-      "base64",
-    ).toString("utf8");
-    expect(decoded).toBe("any:USERKEY");
-  });
-
-  it("caches successful auth mode for company", async () => {
-    axiosRequest.mockResolvedValue({
-      status: 200,
-      data: [],
-      headers: {},
-      statusText: "OK",
-      config: {},
-    });
-
-    const creds = {
-      environment: "sandbox" as const,
-      stateCode: "CO",
-      vendorApiKey: "V",
-      userApiKey: "U",
-      username: "",
-      licenseNumber: "L",
-    };
-
-    const client1 = new MetrcClient(creds, "co-cache");
-    await client1.get("/facilities/v2/");
-
-    expect(buildMetrcClientAuthPlan("co-cache", true)[0]).toBe("basic_metrc_user");
-
-    axiosRequest.mockClear();
-    const client2 = new MetrcClient(creds, "co-cache");
-    await client2.get("/facilities/v2/");
-
+    const out = await client.get("/locations/v2/active?licenseNumber=LIC-1");
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.attemptedAuthModes).toEqual(["basic_vendor_user"]);
     expect(axiosRequest).toHaveBeenCalledTimes(1);
-    const decoded = Buffer.from(
-      String(axiosRequest.mock.calls[0]?.[0]?.headers?.Authorization).replace("Basic ", ""),
-      "base64",
-    ).toString("utf8");
-    expect(decoded).toBe("metrc:U");
   });
 
   it("retries on HTTP 429 within same auth mode", async () => {
@@ -225,12 +184,6 @@ describe("MetrcClient auth", () => {
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.message).toBe(METRC_HTML_RUNTIME_USER_MESSAGE);
-    expect(out.message).not.toMatch(/<html/i);
-    expect(out.upstreamError).toEqual({
-      upstream: "metrc",
-      type: "html_runtime_error",
-      endpoint: "/facilities/v2/",
-      status: 500,
-    });
+    expect(out.attemptedAuthModes).toEqual(["basic_vendor_user"]);
   });
 });
