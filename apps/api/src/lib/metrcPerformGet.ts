@@ -111,23 +111,23 @@ export async function performMetrcAuthorizedGet(input: {
       companyId: input.companyId,
       path: path.split("?")[0],
       status: result.status,
-      authMode: result.attemptedAuthModes[0] ?? "basic_vendor_user",
+      authMode: result.attemptedAuthModes[0] ?? "x_metrc_key_header",
     });
 
-    const mode = result.attemptedAuthModes[0] ?? "basic_vendor_user";
+    const mode = result.attemptedAuthModes[0] ?? "x_metrc_key_header";
     return {
       ok: false as const,
       status: result.status,
-      message: result.message,
+      message: result.metrcMessage || result.message,
       baseUrl,
       licenseNumber: loaded.licenseNumber,
       attemptedModes: [mode],
       failures: [
         {
-          mode: "basic_vendor_user" as MetrcAttemptFailure["mode"],
+          mode: "x_metrc_key_header" as MetrcAttemptFailure["mode"],
           status: result.status,
           durationMs: result.durationMs,
-          metrcSnippet: result.message.slice(0, 200) || null,
+          metrcSnippet: (result.metrcMessage || result.message).slice(0, 200) || null,
         },
       ],
     };

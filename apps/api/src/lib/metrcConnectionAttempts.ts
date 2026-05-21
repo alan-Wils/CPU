@@ -6,7 +6,10 @@ export type MetrcAuthModeUsed =
   | "bearer_user"
   | "basic_user_colon"
   | "basic_colon_user"
-  | "basic_vendor_user";
+  | "basic_vendor_user"
+  | "x_metrc_key_header"
+  | "x_metrc_key_and_user_key_header"
+  | "x_metrc_key_and_userkey_header";
 
 export type MetrcAttemptFailure = {
   mode: MetrcAuthModeUsed;

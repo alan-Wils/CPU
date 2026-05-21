@@ -257,7 +257,7 @@ export class MetrcConnectionService {
       connected: false,
       checkedAt,
       status: lastFailure.status || 401,
-      message: `${lastFailure.message} ${credentialHint}`.trim().slice(0, 4000),
+      message: `${lastFailure.metrcMessage || lastFailure.message} ${credentialHint}`.trim().slice(0, 4000),
       credentialHint,
       baseUrl: client.baseUrl ?? baseUrl,
       licenseNumber,
@@ -268,7 +268,7 @@ export class MetrcConnectionService {
         lastFailure.attemptedAuthModes,
         lastFailure.status,
         lastFailure.durationMs,
-        lastFailure.message,
+        lastFailure.metrcMessage || lastFailure.message,
       ),
     };
 

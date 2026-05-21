@@ -204,7 +204,7 @@ export class MetrcPullService {
         ok: false,
         resource: input.resource,
         status,
-        message: metrcPullFailureMessage(status, result.message),
+        message: metrcPullFailureMessage(status, result.metrcMessage || result.message),
         endpoint: result.endpoint ?? pathname.split("?")[0],
         endpointNotAvailable: status === 404,
         error: result.upstreamError,

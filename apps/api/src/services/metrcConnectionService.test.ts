@@ -66,7 +66,7 @@ describe("MetrcConnectionService", () => {
       durationMs: 10,
       retries: 0,
       rateLimitWaitedMs: 0,
-      authMode: "basic_vendor_user",
+      authMode: "x_metrc_key_header",
     });
 
     const svc = new MetrcConnectionService();
@@ -74,7 +74,7 @@ describe("MetrcConnectionService", () => {
 
     expect(out.ok && out.connected).toBe(true);
     if (!out.ok || !out.connected) return;
-    expect(out.authMode).toBe("basic_vendor_user");
+    expect(out.authMode).toBe("x_metrc_key_header");
     expect(out.userKeyLength).toBeGreaterThan(40);
     expect(getMock).toHaveBeenCalled();
     const path = String(getMock.mock.calls[0]?.[0] ?? "");
@@ -90,7 +90,11 @@ describe("MetrcConnectionService", () => {
       durationMs: 5,
       retries: 0,
       rateLimitWaitedMs: 0,
-      attemptedAuthModes: ["basic_vendor_user"],
+      attemptedAuthModes: [
+        "x_metrc_key_header",
+        "x_metrc_key_and_user_key_header",
+        "x_metrc_key_and_userkey_header",
+      ],
     });
 
     const svc = new MetrcConnectionService();
@@ -100,6 +104,6 @@ describe("MetrcConnectionService", () => {
     if (out.ok) return;
     expect(out.credentialHint).toContain("user key");
     expect(out.userKeyLength).toBeGreaterThan(40);
-    expect(out.attemptedModes).toEqual(["basic_vendor_user"]);
+    expect(out.attemptedModes).toContain("x_metrc_key_header");
   });
 });
