@@ -3,11 +3,27 @@ import { logInfo, logWarn } from "./logger.js";
 import { resolveMetrcApiBaseUrl, type MetrcEnvironment } from "./metrcResolveBaseUrl.js";
 
 const MIN_INTERVAL_MS = 200;
-const MAX_RETRIES = 3;
+const MAX_TRANSPORT_RETRIES = 3;
 const REQUEST_TIMEOUT_MS = 25_000;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const AUTH_DENIED_STATUSES = new Set([401, 403]);
 
 let rateChain: Promise<void> = Promise.resolve();
+
+/** Per-company cache of the last successful authenticated request strategy. */
+const companyAuthModeCache = new Map<string, MetrcClientAuthMode>();
+
+export type MetrcClientAuthMode =
+  | "basic_metrc_user"
+  | "basic_any_user"
+  | "bearer_user_vendor";
+
+export type MetrcAuthModeLog = {
+  auth_mode: MetrcClientAuthMode;
+  usesVendorHeader: boolean;
+  usesBasicAuth: boolean;
+  basicUsernameLabel: string | null;
+};
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -49,6 +65,7 @@ export type MetrcClientSuccess<T> = {
   durationMs: number;
   retries: number;
   rateLimitWaitedMs: number;
+  authMode: MetrcClientAuthMode | "vendor_only";
 };
 
 export type MetrcClientFailure = {
@@ -58,6 +75,7 @@ export type MetrcClientFailure = {
   durationMs: number;
   retries: number;
   rateLimitWaitedMs: number;
+  attemptedAuthModes: MetrcClientAuthMode[];
 };
 
 export type MetrcClientResult<T> = MetrcClientSuccess<T> | MetrcClientFailure;
@@ -66,27 +84,105 @@ export function isMetrcClientFailure<T>(r: MetrcClientResult<T>): r is MetrcClie
   return r.ok === false;
 }
 
-function buildBasicAuthorization(creds: MetrcClientCredentials): string | null {
-  const userKey = creds.userApiKey.trim();
-  if (!userKey) return null;
-  const basicUser = creds.username.trim() || creds.licenseNumber.trim();
-  const token = basicUser
-    ? `${basicUser}:${userKey}`
-    : `:${userKey}`;
-  return `Basic ${Buffer.from(token, "utf8").toString("base64")}`;
+/** Safe description for logs — never includes keys or passwords. */
+export function describeMetrcAuthMode(mode: MetrcClientAuthMode): MetrcAuthModeLog {
+  switch (mode) {
+    case "basic_metrc_user":
+      return {
+        auth_mode: mode,
+        usesVendorHeader: true,
+        usesBasicAuth: true,
+        basicUsernameLabel: "metrc",
+      };
+    case "basic_any_user":
+      return {
+        auth_mode: mode,
+        usesVendorHeader: true,
+        usesBasicAuth: true,
+        basicUsernameLabel: "any",
+      };
+    case "bearer_user_vendor":
+      return {
+        auth_mode: mode,
+        usesVendorHeader: true,
+        usesBasicAuth: false,
+        basicUsernameLabel: null,
+      };
+    default:
+      return {
+        auth_mode: mode,
+        usesVendorHeader: false,
+        usesBasicAuth: false,
+        basicUsernameLabel: null,
+      };
+  }
 }
 
-function buildHeaders(creds: MetrcClientCredentials): Record<string, string> | null {
-  const authorization = buildBasicAuthorization(creds);
-  if (!authorization) return null;
+export function buildMetrcClientAuthPlan(
+  companyId: string | undefined,
+  hasVendorKey: boolean,
+): MetrcClientAuthMode[] {
+  const base: MetrcClientAuthMode[] = hasVendorKey
+    ? ["basic_metrc_user", "basic_any_user", "bearer_user_vendor"]
+    : ["bearer_user_vendor", "basic_metrc_user", "basic_any_user"];
+
+  if (!companyId) return base;
+  const cached = companyAuthModeCache.get(companyId);
+  if (cached && base.includes(cached)) {
+    return [cached, ...base.filter((m) => m !== cached)];
+  }
+  return base;
+}
+
+export function cacheMetrcAuthModeForCompany(companyId: string, mode: MetrcClientAuthMode): void {
+  companyAuthModeCache.set(companyId, mode);
+}
+
+export function getCachedMetrcAuthMode(companyId: string): MetrcClientAuthMode | null {
+  return companyAuthModeCache.get(companyId) ?? null;
+}
+
+/** @internal test helper */
+export function clearMetrcClientAuthCache(): void {
+  companyAuthModeCache.clear();
+}
+
+function buildAuthHeadersForMode(
+  mode: MetrcClientAuthMode,
+  creds: MetrcClientCredentials,
+): Record<string, string> | null {
+  const userKey = creds.userApiKey.trim();
+  if (!userKey) return null;
+
   const headers: Record<string, string> = {
-    Authorization: authorization,
     Accept: "application/json",
     "User-Agent": "CPU-NexBatch/1.0",
   };
+
   const vendor = creds.vendorApiKey.trim();
   if (vendor) headers["x-metrc-key"] = vendor;
-  return headers;
+
+  switch (mode) {
+    case "basic_metrc_user":
+      headers.Authorization = `Basic ${Buffer.from(`metrc:${userKey}`, "utf8").toString("base64")}`;
+      return headers;
+    case "basic_any_user":
+      headers.Authorization = `Basic ${Buffer.from(`any:${userKey}`, "utf8").toString("base64")}`;
+      return headers;
+    case "bearer_user_vendor":
+      headers.Authorization = `Bearer ${userKey}`;
+      return headers;
+    default:
+      return null;
+  }
+}
+
+function buildVendorOnlyHeaders(creds: MetrcClientCredentials): Record<string, string> {
+  return {
+    Accept: "application/json",
+    "User-Agent": "CPU-NexBatch/1.0",
+    ...(creds.vendorApiKey.trim() ? { "x-metrc-key": creds.vendorApiKey.trim() } : {}),
+  };
 }
 
 function resolveRetryAfterMs(error: AxiosError): number | null {
@@ -98,6 +194,20 @@ function resolveRetryAfterMs(error: AxiosError): number | null {
   const d = Date.parse(String(v));
   if (Number.isFinite(d)) return Math.max(0, Math.min(d - Date.now(), 60_000));
   return null;
+}
+
+function summarizeResponseMessage(status: number, data: unknown): string {
+  if (typeof data === "string" && data.trim()) return data.trim().slice(0, 2000);
+  if (Array.isArray(data) && data.length) {
+    const first = data[0] as { message?: string };
+    if (first?.message) return String(first.message).slice(0, 2000);
+  }
+  if (data && typeof data === "object") {
+    const msg = (data as { Message?: string; message?: string }).Message
+      ?? (data as { message?: string }).message;
+    if (msg) return String(msg).slice(0, 2000);
+  }
+  return `METRC returned HTTP ${status}.`;
 }
 
 function summarizeAxiosError(error: AxiosError): { status: number; message: string } {
@@ -121,9 +231,31 @@ function summarizeAxiosError(error: AxiosError): { status: number; message: stri
   return { status, message: error.message || "METRC request failed." };
 }
 
+async function axiosOnce<T>(config: AxiosRequestConfig): Promise<{
+  res: { status: number; data: T };
+  transportError: { status: number; message: string } | null;
+}> {
+  try {
+    const res = await axios.request<T>(config);
+    return { res: { status: res.status, data: res.data }, transportError: null };
+  } catch (error) {
+    const ax = axios.isAxiosError(error) ? error : null;
+    if (ax) {
+      const { status, message } = summarizeAxiosError(ax);
+      return { res: { status, data: ax.response?.data as T }, transportError: { status, message } };
+    }
+    return {
+      res: { status: 0, data: undefined as T },
+      transportError: {
+        status: 0,
+        message: error instanceof Error ? error.message : "METRC request failed.",
+      },
+    };
+  }
+}
+
 export class MetrcClient {
   readonly baseUrl: string | null;
-  private readonly headers: Record<string, string> | null;
 
   constructor(
     private readonly creds: MetrcClientCredentials,
@@ -134,7 +266,6 @@ export class MetrcClient {
       environment: creds.environment,
       apiBaseUrlOverride: creds.apiBaseUrlOverride,
     });
-    this.headers = buildHeaders(creds);
   }
 
   static fromLoadedConfig(
@@ -167,9 +298,7 @@ export class MetrcClient {
     method: "GET" | "POST" | "PUT" | "DELETE";
     pathnameAndQuery: string;
     body?: unknown;
-    /** Absolute URL override (e.g. sandbox integrator setup on CO host). */
     absoluteUrl?: string;
-    /** Use integrator vendor key only (no user Basic auth). */
     vendorOnly?: boolean;
   }): Promise<MetrcClientResult<T>> {
     const path = String(input.pathnameAndQuery || "").trim();
@@ -184,10 +313,28 @@ export class MetrcClient {
         durationMs: 0,
         retries: 0,
         rateLimitWaitedMs: 0,
+        attemptedAuthModes: [],
       };
     }
 
-    if (!this.headers && !input.absoluteUrl && !input.vendorOnly) {
+    const pathLabel = path.split("?")[0] || input.absoluteUrl?.split("/").slice(-3).join("/");
+    const t0 = Date.now();
+    let transportRetries = 0;
+    let totalRateWait = 0;
+
+    if (input.absoluteUrl || input.vendorOnly) {
+      return this.requestSingleStrategy<T>({
+        url,
+        method: input.method,
+        body: input.body,
+        headers: buildVendorOnlyHeaders(this.creds),
+        pathLabel,
+        t0,
+        authMode: "vendor_only",
+      });
+    }
+
+    if (!this.creds.userApiKey.trim()) {
       return {
         ok: false,
         status: 400,
@@ -195,25 +342,189 @@ export class MetrcClient {
         durationMs: 0,
         retries: 0,
         rateLimitWaitedMs: 0,
+        attemptedAuthModes: [],
       };
     }
 
-    const vendorHeaders = {
-      Accept: "application/json",
-      "User-Agent": "CPU-NexBatch/1.0",
-      ...(this.creds.vendorApiKey.trim()
-        ? { "x-metrc-key": this.creds.vendorApiKey.trim() }
-        : {}),
+    const hasVendor = Boolean(this.creds.vendorApiKey.trim());
+    const authPlan = buildMetrcClientAuthPlan(this.companyId, hasVendor);
+    const attemptedAuthModes: MetrcClientAuthMode[] = [];
+    let lastStatus = 0;
+    let lastMessage = "METRC authorization failed.";
+
+    for (const mode of authPlan) {
+      const headers = buildAuthHeadersForMode(mode, this.creds);
+      if (!headers) continue;
+
+      attemptedAuthModes.push(mode);
+      const authLog = describeMetrcAuthMode(mode);
+
+      logInfo("[METRC] auth_strategy_attempt", {
+        companyId: this.companyId ?? null,
+        path: pathLabel,
+        ...authLog,
+      });
+      logInfo("[METRC] auth_mode", {
+        companyId: this.companyId ?? null,
+        ...authLog,
+      });
+
+      let modeTransportRetries = 0;
+
+      while (modeTransportRetries <= MAX_TRANSPORT_RETRIES) {
+        const rateLimitWaitedMs = await acquireRateSlot(this.companyId);
+        totalRateWait += rateLimitWaitedMs;
+
+        const config: AxiosRequestConfig = {
+          method: input.method,
+          url,
+          headers:
+            input.body !== undefined && input.method !== "GET"
+              ? { ...headers, "Content-Type": "application/json" }
+              : headers,
+          timeout: REQUEST_TIMEOUT_MS,
+          validateStatus: () => true,
+        };
+        if (input.body !== undefined && input.method !== "GET") {
+          config.data = input.body;
+        }
+
+        logInfo("[METRC] request_start", {
+          companyId: this.companyId ?? null,
+          method: input.method,
+          path: pathLabel,
+          auth_mode: mode,
+          attempt: modeTransportRetries + 1,
+        });
+
+        const { res, transportError } = await axiosOnce<T>(config);
+        const durationMs = Math.max(0, Date.now() - t0);
+
+        if (transportError && transportError.status === 0) {
+          logWarn("[METRC] request_error", {
+            companyId: this.companyId ?? null,
+            path: pathLabel,
+            auth_mode: mode,
+            message: transportError.message.slice(0, 500),
+          });
+          if (modeTransportRetries < MAX_TRANSPORT_RETRIES) {
+            modeTransportRetries += 1;
+            transportRetries += 1;
+            await sleep(500 * modeTransportRetries);
+            continue;
+          }
+          return {
+            ok: false,
+            status: 0,
+            message: transportError.message,
+            durationMs,
+            retries: transportRetries,
+            rateLimitWaitedMs: totalRateWait,
+            attemptedAuthModes,
+          };
+        }
+
+        logInfo("[METRC] request_complete", {
+          companyId: this.companyId ?? null,
+          method: input.method,
+          path: pathLabel,
+          status: res.status,
+          auth_mode: mode,
+          durationMs,
+          transportRetries: modeTransportRetries,
+          rateLimitWaitedMs: totalRateWait,
+        });
+
+        if (res.status >= 200 && res.status < 300) {
+          if (this.companyId) cacheMetrcAuthModeForCompany(this.companyId, mode);
+          logInfo("[METRC] auth_strategy_success", {
+            companyId: this.companyId ?? null,
+            path: pathLabel,
+            ...authLog,
+            status: res.status,
+          });
+          return {
+            ok: true,
+            status: res.status,
+            data: res.data,
+            durationMs,
+            retries: transportRetries,
+            rateLimitWaitedMs: totalRateWait,
+            authMode: mode,
+          };
+        }
+
+        lastStatus = res.status;
+        lastMessage = summarizeResponseMessage(res.status, res.data);
+
+        if (AUTH_DENIED_STATUSES.has(res.status)) {
+          logWarn("[METRC] auth_strategy_denied", {
+            companyId: this.companyId ?? null,
+            path: pathLabel,
+            auth_mode: mode,
+            status: res.status,
+            message: lastMessage.slice(0, 200),
+          });
+          break;
+        }
+
+        if (RETRYABLE_STATUSES.has(res.status) && modeTransportRetries < MAX_TRANSPORT_RETRIES) {
+          modeTransportRetries += 1;
+          transportRetries += 1;
+          const backoff = res.status === 429 ? 1000 * modeTransportRetries : 500 * modeTransportRetries;
+          logWarn("[METRC] request_retry", {
+            companyId: this.companyId ?? null,
+            path: pathLabel,
+            auth_mode: mode,
+            status: res.status,
+            retry: modeTransportRetries,
+            backoffMs: backoff,
+          });
+          await sleep(backoff);
+          continue;
+        }
+
+        return {
+          ok: false,
+          status: res.status,
+          message: lastMessage,
+          durationMs,
+          retries: transportRetries,
+          rateLimitWaitedMs: totalRateWait,
+          attemptedAuthModes,
+        };
+      }
+    }
+
+    logWarn("[METRC] auth_strategy_failed_all_modes", {
+      companyId: this.companyId ?? null,
+      path: pathLabel,
+      attemptedAuthModes,
+      lastStatus,
+    });
+
+    return {
+      ok: false,
+      status: lastStatus || 401,
+      message: lastMessage,
+      durationMs: Math.max(0, Date.now() - t0),
+      retries: transportRetries,
+      rateLimitWaitedMs: totalRateWait,
+      attemptedAuthModes,
     };
+  }
 
-    const headers = input.absoluteUrl || input.vendorOnly
-      ? vendorHeaders
-      : (this.headers as Record<string, string>);
-
+  private async requestSingleStrategy<T>(input: {
+    url: string;
+    method: "GET" | "POST" | "PUT" | "DELETE";
+    body?: unknown;
+    headers: Record<string, string>;
+    pathLabel: string;
+    t0: number;
+    authMode: "vendor_only";
+  }): Promise<MetrcClientResult<T>> {
     let retries = 0;
     let totalRateWait = 0;
-    const pathLabel = path.split("?")[0] || input.absoluteUrl?.split("/").slice(-3).join("/");
-    const t0 = Date.now();
 
     while (true) {
       const rateLimitWaitedMs = await acquireRateSlot(this.companyId);
@@ -221,124 +532,83 @@ export class MetrcClient {
 
       const config: AxiosRequestConfig = {
         method: input.method,
-        url,
-        headers,
+        url: input.url,
+        headers:
+          input.body !== undefined && input.method !== "GET"
+            ? { ...input.headers, "Content-Type": "application/json" }
+            : input.headers,
         timeout: REQUEST_TIMEOUT_MS,
         validateStatus: () => true,
       };
       if (input.body !== undefined && input.method !== "GET") {
         config.data = input.body;
-        config.headers = { ...headers, "Content-Type": "application/json" };
       }
 
       logInfo("[METRC] request_start", {
         companyId: this.companyId ?? null,
         method: input.method,
-        path: pathLabel,
+        path: input.pathLabel,
+        auth_mode: input.authMode,
         attempt: retries + 1,
       });
 
-      let resStatus = 0;
-      try {
-        const res = await axios.request<T>(config);
-        resStatus = res.status;
-        const durationMs = Math.max(0, Date.now() - t0);
+      const { res, transportError } = await axiosOnce<T>(config);
+      const durationMs = Math.max(0, Date.now() - input.t0);
 
-        logInfo("[METRC] request_complete", {
-          companyId: this.companyId ?? null,
-          method: input.method,
-          path: pathLabel,
-          status: res.status,
-          durationMs,
-          retries,
-          rateLimitWaitedMs: totalRateWait,
-        });
+      logInfo("[METRC] request_complete", {
+        companyId: this.companyId ?? null,
+        method: input.method,
+        path: input.pathLabel,
+        status: transportError?.status ?? res.status,
+        auth_mode: input.authMode,
+        durationMs,
+        retries,
+      });
 
-        if (res.status >= 200 && res.status < 300) {
-          return {
-            ok: true,
-            status: res.status,
-            data: res.data,
-            durationMs,
-            retries,
-            rateLimitWaitedMs: totalRateWait,
-          };
-        }
-
-        if (RETRYABLE_STATUSES.has(res.status) && retries < MAX_RETRIES) {
+      if (transportError && transportError.status === 0) {
+        if (retries < MAX_TRANSPORT_RETRIES) {
           retries += 1;
-          const backoff = res.status === 429 ? 1000 * retries : 500 * retries;
-          logWarn("[METRC] request_retry", {
-            companyId: this.companyId ?? null,
-            path: pathLabel,
-            status: res.status,
-            retry: retries,
-            backoffMs: backoff,
-          });
-          await sleep(backoff);
+          await sleep(500 * retries);
           continue;
         }
-
-        const message =
-          typeof res.data === "string"
-            ? res.data.slice(0, 2000)
-            : JSON.stringify(res.data ?? {}).slice(0, 2000) || `METRC returned HTTP ${res.status}.`;
-
         return {
           ok: false,
-          status: res.status,
-          message,
+          status: 0,
+          message: transportError.message,
           durationMs,
           retries,
           rateLimitWaitedMs: totalRateWait,
-        };
-      } catch (error) {
-        const ax = axios.isAxiosError(error) ? error : null;
-        const durationMs = Math.max(0, Date.now() - t0);
-        const { status, message } = ax
-          ? summarizeAxiosError(ax)
-          : { status: 0, message: error instanceof Error ? error.message : "METRC request failed." };
-
-        const retryable =
-          (ax && (RETRYABLE_STATUSES.has(status) || ax.code === "ECONNABORTED")) && retries < MAX_RETRIES;
-
-        logWarn("[METRC] request_error", {
-          companyId: this.companyId ?? null,
-          path: pathLabel,
-          status: status || resStatus,
-          durationMs,
-          retries,
-          retryable,
-          message: message.slice(0, 500),
-        });
-
-        if (retryable) {
-          retries += 1;
-          let backoff = status === 429 ? 1000 * retries : 500 * retries;
-          if (ax) {
-            const retryAfter = resolveRetryAfterMs(ax);
-            if (retryAfter != null) backoff = retryAfter;
-          }
-          logWarn("[METRC] request_retry", {
-            companyId: this.companyId ?? null,
-            path: pathLabel,
-            status,
-            retry: retries,
-            backoffMs: backoff,
-          });
-          await sleep(backoff);
-          continue;
-        }
-
-        return {
-          ok: false,
-          status,
-          message,
-          durationMs,
-          retries,
-          rateLimitWaitedMs: totalRateWait,
+          attemptedAuthModes: [],
         };
       }
+
+      if (res.status >= 200 && res.status < 300) {
+        return {
+          ok: true,
+          status: res.status,
+          data: res.data,
+          durationMs,
+          retries,
+          rateLimitWaitedMs: totalRateWait,
+          authMode: input.authMode,
+        };
+      }
+
+      if (RETRYABLE_STATUSES.has(res.status) && retries < MAX_TRANSPORT_RETRIES) {
+        retries += 1;
+        await sleep(res.status === 429 ? 1000 * retries : 500 * retries);
+        continue;
+      }
+
+      return {
+        ok: false,
+        status: res.status,
+        message: summarizeResponseMessage(res.status, res.data),
+        durationMs,
+        retries,
+        rateLimitWaitedMs: totalRateWait,
+        attemptedAuthModes: [],
+      };
     }
   }
 
