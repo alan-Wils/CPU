@@ -580,7 +580,10 @@ function formatMetrcAuthModeLabel(mode: string | undefined | null): string {
 
 function userFacingMetrcTestFailureMessage(json: Extract<MetrcTestConnectionJson, { ok: false }>): string {
   const hint = String(json.credentialHint || "").trim();
-  if (hint && (json.status === 401 || json.status === 403)) return hint.slice(0, 4000);
+  const failures = json.failures ?? [];
+  const authRejected =
+    failures.length > 0 && failures.every((f) => f.status === 401 || f.status === 403);
+  if (hint && (json.status === 401 || json.status === 403 || authRejected)) return hint.slice(0, 4000);
   const fromApi = String(json.message || "").trim();
   if (fromApi) return fromApi.slice(0, 4000);
   const s = Number(json.status);

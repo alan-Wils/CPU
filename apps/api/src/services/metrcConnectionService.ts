@@ -102,18 +102,27 @@ function buildConnectionDiagnostics(input: {
   };
 }
 
-function failuresFromClientAttempt(
-  modes: MetrcClientAuthMode[],
-  status: number,
-  durationMs: number,
-  message: string,
-): MetrcAttemptFailure[] {
-  if (!modes.length) return [];
-  return modes.map((mode, i) => ({
+function failuresFromClientAttempt(input: {
+  authAttempts: { mode: MetrcClientAuthMode; status: number; durationMs: number; metrcMessage: string }[];
+  modes: MetrcClientAuthMode[];
+  status: number;
+  durationMs: number;
+  message: string;
+}): MetrcAttemptFailure[] {
+  if (input.authAttempts.length) {
+    return input.authAttempts.map((a) => ({
+      mode: a.mode as MetrcAttemptFailure["mode"],
+      status: a.status,
+      durationMs: a.durationMs,
+      metrcSnippet: a.metrcMessage.slice(0, 200) || null,
+    }));
+  }
+  if (!input.modes.length) return [];
+  return input.modes.map((mode, i) => ({
     mode: mode as MetrcAttemptFailure["mode"],
-    status: i === modes.length - 1 ? status : 401,
-    durationMs: i === modes.length - 1 ? durationMs : 0,
-    metrcSnippet: i === modes.length - 1 ? message.slice(0, 200) : null,
+    status: i === input.modes.length - 1 ? input.status : 401,
+    durationMs: i === input.modes.length - 1 ? input.durationMs : 0,
+    metrcSnippet: i === input.modes.length - 1 ? input.message.slice(0, 200) : null,
   }));
 }
 
@@ -359,12 +368,13 @@ export class MetrcConnectionService {
       userKeyLength,
       vendorKeyLength,
       attemptedModes: lastFailure.attemptedAuthModes,
-      failures: failuresFromClientAttempt(
-        lastFailure.attemptedAuthModes,
-        lastFailure.status,
-        lastFailure.durationMs,
-        metrcMsg,
-      ),
+      failures: failuresFromClientAttempt({
+        authAttempts: lastFailure.authAttempts ?? [],
+        modes: lastFailure.attemptedAuthModes,
+        status: lastFailure.status,
+        durationMs: lastFailure.durationMs,
+        message: metrcMsg,
+      }),
       diagnostics: buildConnectionDiagnostics({
         loaded,
         status: lastFailure.status || 401,

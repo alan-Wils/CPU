@@ -162,5 +162,40 @@ describe("MetrcClient sandbox auth", () => {
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.message).toBe(METRC_HTML_RUNTIME_USER_MESSAGE);
+    expect(out.authAttempts.length).toBeGreaterThan(0);
+    expect(axiosRequest.mock.calls.length).toBe(
+      buildMetrcClientAuthPlan({ vendorOnly: false, environment: "sandbox" }).length,
+    );
+  });
+
+  it("skips html 500 on one mode and continues rotation", async () => {
+    let call = 0;
+    axiosRequest.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) {
+        return {
+          status: 500,
+          data: "<!DOCTYPE html><html><body>Runtime Error</body></html>",
+          headers: { "content-type": "text/html; charset=utf-8" },
+          statusText: "Internal Server Error",
+          config: {},
+        };
+      }
+      return {
+        status: 401,
+        data: "Authorization has been denied for this request.",
+        headers: {},
+        statusText: "Unauthorized",
+        config: {},
+      };
+    });
+
+    const planLen = buildMetrcClientAuthPlan({ vendorOnly: false, environment: "sandbox" }).length;
+    const out = await new MetrcClient(creds).get("/locations/v2/active?licenseNumber=SBX-CO");
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.status).toBe(401);
+    expect(out.authAttempts[0]?.status).toBe(500);
+    expect(axiosRequest).toHaveBeenCalledTimes(planLen);
   });
 });

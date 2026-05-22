@@ -22,7 +22,6 @@ describe("metrcAuthStrategy", () => {
       "sandbox_x_metrc_key_and_x_user_key",
       "sandbox_basic_license_user",
       "sandbox_basic_vendor_user",
-      "sandbox_bearer_user",
     ]);
   });
 

@@ -90,6 +90,13 @@ export type MetrcUpstreamError = {
 export const METRC_HTML_RUNTIME_USER_MESSAGE =
   "METRC sandbox returned a server/runtime error for this endpoint.";
 
+export type MetrcAuthAttemptRecord = {
+  mode: MetrcClientAuthMode;
+  status: number;
+  durationMs: number;
+  metrcMessage: string;
+};
+
 export type MetrcClientFailure = {
   ok: false;
   status: number;
@@ -98,10 +105,25 @@ export type MetrcClientFailure = {
   retries: number;
   rateLimitWaitedMs: number;
   attemptedAuthModes: MetrcClientAuthMode[];
+  authAttempts: MetrcAuthAttemptRecord[];
   endpoint?: string;
   upstreamError?: MetrcUpstreamError;
   metrcMessage: string;
 };
+
+function pickAuthFailureSummary(attempts: MetrcAuthAttemptRecord[]): {
+  status: number;
+  message: string;
+} {
+  const denied = attempts.filter((a) => a.status === 401 || a.status === 403);
+  const lastDenied = denied[denied.length - 1];
+  if (lastDenied) {
+    return { status: lastDenied.status, message: lastDenied.metrcMessage };
+  }
+  const last = attempts[attempts.length - 1];
+  if (last) return { status: last.status, message: last.metrcMessage };
+  return { status: 401, message: "METRC authorization failed." };
+}
 
 export type MetrcClientResult<T> = MetrcClientSuccess<T> | MetrcClientFailure;
 
@@ -280,6 +302,7 @@ function buildMetrcHtmlRuntimeFailure(input: {
   retries: number;
   rateLimitWaitedMs: number;
   attemptedAuthModes: MetrcClientAuthMode[];
+  authAttempts?: MetrcAuthAttemptRecord[];
   companyId?: string;
 }): MetrcClientFailure {
   const metrcMessage = METRC_HTML_RUNTIME_USER_MESSAGE;
@@ -305,6 +328,7 @@ function buildMetrcHtmlRuntimeFailure(input: {
     retries: input.retries,
     rateLimitWaitedMs: input.rateLimitWaitedMs,
     attemptedAuthModes: input.attemptedAuthModes,
+    authAttempts: input.authAttempts ?? [],
     endpoint: input.pathLabel,
     upstreamError: {
       upstream: "metrc",
@@ -376,6 +400,7 @@ export class MetrcClient {
         retries: 0,
         rateLimitWaitedMs: 0,
         attemptedAuthModes: [],
+        authAttempts: [],
       };
     }
 
@@ -396,6 +421,7 @@ export class MetrcClient {
         retries: 0,
         rateLimitWaitedMs: 0,
         attemptedAuthModes: [],
+        authAttempts: [],
       };
     }
 
@@ -405,13 +431,16 @@ export class MetrcClient {
       environment: this.creds.environment,
     });
     const attemptedAuthModes: MetrcClientAuthMode[] = [];
+    const authAttempts: MetrcAuthAttemptRecord[] = [];
     let lastStatus = 0;
     let lastMessage = "METRC authorization failed.";
     let transportRetries = 0;
     let totalRateWait = 0;
     const isSandbox = this.creds.environment === "sandbox";
+    const rotateAuthModes = !vendorOnly && authPlan.length > 1;
 
     for (const mode of authPlan) {
+      const modeStartedAt = Date.now();
       const auth = buildMetrcRequestAuth(this.creds, mode);
       if (!auth) continue;
 
@@ -499,6 +528,7 @@ export class MetrcClient {
             retries: transportRetries,
             rateLimitWaitedMs: totalRateWait,
             attemptedAuthModes,
+            authAttempts,
             endpoint: pathLabel,
           };
         }
@@ -534,7 +564,27 @@ export class MetrcClient {
           });
         }
 
+        const modeDurationMs = Math.max(0, Date.now() - modeStartedAt);
+
         if (detectMetrcHtmlResponse(res.contentType, res.data)) {
+          const htmlMessage = METRC_HTML_RUNTIME_USER_MESSAGE;
+          authAttempts.push({
+            mode,
+            status: res.status || 502,
+            durationMs: modeDurationMs,
+            metrcMessage: htmlMessage,
+          });
+          lastStatus = res.status || 502;
+          lastMessage = htmlMessage;
+          if (rotateAuthModes) {
+            logWarn("[METRC] auth_strategy_html_skip", {
+              companyId: this.companyId ?? null,
+              path: pathLabel,
+              auth_mode: mode,
+              status: res.status,
+            });
+            break;
+          }
           return buildMetrcHtmlRuntimeFailure({
             pathLabel,
             status: res.status,
@@ -544,6 +594,7 @@ export class MetrcClient {
             retries: transportRetries,
             rateLimitWaitedMs: totalRateWait,
             attemptedAuthModes,
+            authAttempts,
             companyId: this.companyId,
           });
         }
@@ -565,6 +616,12 @@ export class MetrcClient {
 
         lastStatus = res.status;
         lastMessage = metrcMessage;
+        authAttempts.push({
+          mode,
+          status: res.status,
+          durationMs: modeDurationMs,
+          metrcMessage,
+        });
 
         if (shouldTryNextMetrcAuthMode(res.status)) {
           logWarn("[METRC] auth_strategy_denied", {
@@ -593,37 +650,42 @@ export class MetrcClient {
           continue;
         }
 
+        const summary = pickAuthFailureSummary(authAttempts);
         return {
           ok: false,
-          status: res.status,
-          message: lastMessage,
-          metrcMessage: lastMessage,
+          status: summary.status,
+          message: summary.message,
+          metrcMessage: summary.message,
           durationMs,
           retries: transportRetries,
           rateLimitWaitedMs: totalRateWait,
           attemptedAuthModes,
+          authAttempts,
           endpoint: pathLabel,
         };
       }
     }
 
+    const summary = pickAuthFailureSummary(authAttempts);
+
     logWarn("[METRC] auth_strategy_failed_all_modes", {
       companyId: this.companyId ?? null,
       path: pathLabel,
       attemptedAuthModes,
-      lastStatus,
-      metrcMessage: lastMessage.slice(0, 500),
+      lastStatus: summary.status,
+      metrcMessage: summary.message.slice(0, 500),
     });
 
     return {
       ok: false,
-      status: lastStatus || 401,
-      message: lastMessage,
-      metrcMessage: lastMessage,
+      status: summary.status || lastStatus || 401,
+      message: summary.message || lastMessage,
+      metrcMessage: summary.message || lastMessage,
       durationMs: Math.max(0, Date.now() - t0),
       retries: transportRetries,
       rateLimitWaitedMs: totalRateWait,
       attemptedAuthModes,
+      authAttempts,
       endpoint: pathLabel,
     };
   }
