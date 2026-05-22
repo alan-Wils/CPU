@@ -16,6 +16,7 @@ import {
 } from "../lib/metrcEndpoints.js";
 import {
   buildMetrcCredentialHintFromLoaded,
+  buildMetrcOperationalAccessDeniedHint,
   logMetrcCredentialDiagnostics,
 } from "../lib/metrcCredentialDiagnostics.js";
 import { remediateSwappedMetrcSlots } from "../lib/metrcCredentialSlots.js";
@@ -443,6 +444,9 @@ export class MetrcConnectionService {
           companyId: input.companyId,
           message: err instanceof Error ? err.message : String(err),
         });
+      }
+      if (!keysPossiblySwapped && loaded.userApiKey && loaded.vendorApiKey) {
+        finalHint = buildMetrcOperationalAccessDeniedHint(licenseNumber);
       }
     }
 

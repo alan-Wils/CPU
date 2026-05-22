@@ -66,7 +66,7 @@ describe("MetrcConnectionService", () => {
       durationMs: 10,
       retries: 0,
       rateLimitWaitedMs: 0,
-      authMode: "sandbox_x_metrc_key",
+      authMode: "sandbox_basic_vendor_user",
       metrcMessage: "OK",
     });
 
@@ -75,7 +75,7 @@ describe("MetrcConnectionService", () => {
 
     expect(out.ok && out.connected).toBe(true);
     if (!out.ok || !out.connected) return;
-    expect(out.authMode).toBe("sandbox_x_metrc_key");
+    expect(out.authMode).toBe("sandbox_basic_vendor_user");
     expect(out.diagnostics.operationalAccessGranted).toBe(true);
     expect(out.userKeyLength).toBeGreaterThan(40);
     expect(getMock).toHaveBeenCalled();
@@ -93,17 +93,9 @@ describe("MetrcConnectionService", () => {
       retries: 0,
       rateLimitWaitedMs: 0,
       metrcMessage: "Authorization has been denied for this request.",
-      attemptedAuthModes: [
-        "sandbox_x_metrc_key",
-        "sandbox_x_metrc_key_and_user_key_header",
-        "sandbox_x_metrc_key_and_userkey_header",
-        "sandbox_x_metrc_key_and_x_user_key",
-        "sandbox_basic_license_user",
-        "sandbox_basic_vendor_user",
-      ],
+      attemptedAuthModes: ["sandbox_basic_vendor_user"],
       authAttempts: [
-        { mode: "sandbox_x_metrc_key", status: 401, durationMs: 12, metrcMessage: "denied" },
-        { mode: "sandbox_x_metrc_key_and_user_key_header", status: 401, durationMs: 11, metrcMessage: "denied" },
+        { mode: "sandbox_basic_vendor_user", status: 401, durationMs: 12, metrcMessage: "denied" },
       ],
     });
 
@@ -112,9 +104,9 @@ describe("MetrcConnectionService", () => {
 
     expect(out.ok).toBe(false);
     if (out.ok) return;
-    expect(out.credentialHint).toContain("user key");
+    expect(out.credentialHint).toContain("METRC denied operational access");
     expect(out.userKeyLength).toBeGreaterThan(40);
-    expect(out.attemptedModes).toContain("sandbox_x_metrc_key");
+    expect(out.attemptedModes).toContain("sandbox_basic_vendor_user");
     expect(out.diagnostics.sandboxStatus).toBeDefined();
   });
 });

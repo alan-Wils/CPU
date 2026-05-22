@@ -34,7 +34,7 @@ export async function probeMetrcKeysPossiblySwapped(input: {
 
   const probe = await swappedClient.probeAuthMode(
     pathnameAndQuery,
-    "sandbox_x_metrc_key_and_user_key_header",
+    "sandbox_basic_vendor_user",
   );
   return probe.status >= 200 && probe.status < 300;
 }

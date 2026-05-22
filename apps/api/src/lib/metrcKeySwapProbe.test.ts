@@ -56,8 +56,10 @@ describe("probeMetrcKeysPossiblySwapped", () => {
 
     expect(swapped).toBe(true);
     const cfg = axiosRequest.mock.calls[0]?.[0];
-    expect(cfg?.headers?.["x-metrc-key"]).toBe(loaded.userApiKey);
-    expect(cfg?.headers?.["x-metrc-user-key"]).toBe(loaded.vendorApiKey);
+    expect(cfg?.auth).toEqual({
+      username: loaded.userApiKey,
+      password: loaded.vendorApiKey,
+    });
   });
 
   it("returns false when swapped probe still returns 401", async () => {

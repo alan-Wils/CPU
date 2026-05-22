@@ -14,13 +14,14 @@ const creds = {
 };
 
 describe("metrcAuthStrategy", () => {
-  it("sandbox operational plan order", () => {
+  it("sandbox operational plan uses Basic integrator:user only", () => {
     expect(buildMetrcClientAuthPlan({ vendorOnly: false, environment: "sandbox" })).toEqual([
-      "sandbox_x_metrc_key",
-      "sandbox_x_metrc_key_and_user_key_header",
-      "sandbox_x_metrc_key_and_userkey_header",
-      "sandbox_x_metrc_key_and_x_user_key",
-      "sandbox_basic_license_user",
+      "sandbox_basic_vendor_user",
+    ]);
+  });
+
+  it("production operational plan uses Basic integrator:user", () => {
+    expect(buildMetrcClientAuthPlan({ vendorOnly: false, environment: "production" })).toEqual([
       "sandbox_basic_vendor_user",
     ]);
   });
@@ -31,16 +32,12 @@ describe("metrcAuthStrategy", () => {
     ]);
   });
 
-  it("builds x-user-key header for sandbox mode B", () => {
-    const auth = buildMetrcRequestAuth(creds, "sandbox_x_metrc_key_and_x_user_key");
-    expect(auth?.headers["x-metrc-key"]).toBe("VENDOR-KEY");
-    expect(auth?.headers["x-user-key"]).toBe("USER-KEY-LONG");
-    expect(auth?.headers["x-metrc-user-key"]).toBeUndefined();
-  });
-
-  it("builds basic vendor:user for sandbox mode C", () => {
+  it("builds Basic integrator:user without x-metrc-key for operational mode", () => {
     const auth = buildMetrcRequestAuth(creds, "sandbox_basic_vendor_user");
     expect(auth?.axiosBasic).toEqual({ username: "VENDOR-KEY", password: "USER-KEY-LONG" });
+    expect(auth?.headers["x-metrc-key"]).toBeUndefined();
+    expect(auth?.headers["x-metrc-user-key"]).toBeUndefined();
+    expect(auth?.headers["x-user-key"]).toBeUndefined();
   });
 
   it("masks secrets in header logs", () => {

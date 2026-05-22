@@ -75,33 +75,27 @@ describe("MetrcClient sandbox auth", () => {
     expect(cfg?.headers?.["x-user-key"]).toBeUndefined();
   });
 
-  it("sandbox operational: tries x-metrc-user-key before basic on 401", async () => {
-    axiosRequest
-      .mockResolvedValueOnce({
-        status: 401,
-        data: "Authorization has been denied for this request.",
-        headers: {},
-        statusText: "Unauthorized",
-        config: {},
-      })
-      .mockResolvedValueOnce({
-        status: 200,
-        data: [],
-        headers: {},
-        statusText: "OK",
-        config: {},
-      });
+  it("sandbox operational uses Basic integrator:user", async () => {
+    axiosRequest.mockResolvedValue({
+      status: 200,
+      data: [],
+      headers: {},
+      statusText: "OK",
+      config: {},
+    });
 
     const client = new MetrcClient(creds, "co-op");
     const out = await client.get("/locations/v2/active?licenseNumber=SBX-CO");
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.authMode).toBe("sandbox_x_metrc_key_and_user_key_header");
-    expect(axiosRequest).toHaveBeenCalledTimes(2);
+    expect(out.authMode).toBe("sandbox_basic_vendor_user");
+    expect(axiosRequest).toHaveBeenCalledTimes(1);
 
-    expect(axiosRequest.mock.calls[0]?.[0]?.headers?.["x-metrc-key"]).toBe("VENDOR");
-    expect(axiosRequest.mock.calls[1]?.[0]?.headers?.["x-metrc-user-key"]).toBe("USERKEY");
+    const cfg = axiosRequest.mock.calls[0]?.[0];
+    expect(cfg?.auth).toEqual({ username: "VENDOR", password: "USERKEY" });
+    expect(cfg?.headers?.["x-metrc-key"]).toBeUndefined();
+    expect(cfg?.headers?.["x-metrc-user-key"]).toBeUndefined();
   });
 
   it("stops auth rotation on non-401 (403 does not try next mode)", async () => {
@@ -116,7 +110,7 @@ describe("MetrcClient sandbox auth", () => {
     const out = await new MetrcClient(creds).get("/locations/v2/active?licenseNumber=SBX-CO");
     expect(out.ok).toBe(false);
     if (out.ok) return;
-    expect(out.attemptedAuthModes).toEqual(["sandbox_x_metrc_key"]);
+    expect(out.attemptedAuthModes).toEqual(["sandbox_basic_vendor_user"]);
     expect(axiosRequest).toHaveBeenCalledTimes(1);
   });
 
@@ -139,7 +133,7 @@ describe("MetrcClient sandbox auth", () => {
 
     await new MetrcClient(creds, "co-cache").get("/locations/v2/active?licenseNumber=SBX-CO");
     expect(buildMetrcClientAuthPlan({ companyId: "co-cache", vendorOnly: false, environment: "sandbox" })[0]).toBe(
-      "sandbox_x_metrc_key",
+      "sandbox_basic_vendor_user",
     );
   });
 
@@ -168,34 +162,19 @@ describe("MetrcClient sandbox auth", () => {
     );
   });
 
-  it("skips html 500 on one mode and continues rotation", async () => {
-    let call = 0;
-    axiosRequest.mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
-        return {
-          status: 500,
-          data: "<!DOCTYPE html><html><body>Runtime Error</body></html>",
-          headers: { "content-type": "text/html; charset=utf-8" },
-          statusText: "Internal Server Error",
-          config: {},
-        };
-      }
-      return {
-        status: 401,
-        data: "Authorization has been denied for this request.",
-        headers: {},
-        statusText: "Unauthorized",
-        config: {},
-      };
+  it("returns html runtime failure for operational Basic mode", async () => {
+    axiosRequest.mockResolvedValue({
+      status: 500,
+      data: "<!DOCTYPE html><html><body>Runtime Error</body></html>",
+      headers: { "content-type": "text/html; charset=utf-8" },
+      statusText: "Internal Server Error",
+      config: {},
     });
 
-    const planLen = buildMetrcClientAuthPlan({ vendorOnly: false, environment: "sandbox" }).length;
     const out = await new MetrcClient(creds).get("/locations/v2/active?licenseNumber=SBX-CO");
     expect(out.ok).toBe(false);
     if (out.ok) return;
-    expect(out.status).toBe(401);
-    expect(out.authAttempts[0]?.status).toBe(500);
-    expect(axiosRequest).toHaveBeenCalledTimes(planLen);
+    expect(out.message).toBe(METRC_HTML_RUNTIME_USER_MESSAGE);
+    expect(axiosRequest).toHaveBeenCalledTimes(1);
   });
 });

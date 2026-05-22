@@ -28,6 +28,8 @@ export type MetrcAttemptFailure = {
   durationMs: number;
   /** Short safe excerpt from METRC JSON/text when available */
   metrcSnippet: string | null;
+  /** Header names used for this attempt (no secret values). */
+  authHeaderNames?: string[];
 };
 
 export function buildAuthorizationHeader(

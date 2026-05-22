@@ -21,20 +21,13 @@ export type MetrcClientAuthMode =
   | "production_x_metrc_key_and_user_key"
   | "production_x_metrc_key_and_userkey";
 
-const SANDBOX_OPERATIONAL_PLAN: MetrcClientAuthMode[] = [
-  "sandbox_x_metrc_key",
-  "sandbox_x_metrc_key_and_user_key_header",
-  "sandbox_x_metrc_key_and_userkey_header",
-  "sandbox_x_metrc_key_and_x_user_key",
-  "sandbox_basic_license_user",
-  "sandbox_basic_vendor_user",
-];
+/**
+ * Sandbox/production operational calls: Basic base64(integratorKey:userKey).
+ * x-metrc-key is reserved for vendor-only provisioning (POST /sandbox/v2/integrator/setup).
+ */
+const SANDBOX_OPERATIONAL_PLAN: MetrcClientAuthMode[] = ["sandbox_basic_vendor_user"];
 
-const PRODUCTION_OPERATIONAL_PLAN: MetrcClientAuthMode[] = [
-  "production_x_metrc_key",
-  "production_x_metrc_key_and_user_key",
-  "production_x_metrc_key_and_userkey",
-];
+const PRODUCTION_OPERATIONAL_PLAN: MetrcClientAuthMode[] = ["sandbox_basic_vendor_user"];
 
 const companyAuthModeCache = new Map<string, MetrcClientAuthMode>();
 
@@ -157,7 +150,7 @@ export function buildMetrcRequestAuth(
     case "sandbox_basic_vendor_user":
       if (!vendor || !user) return null;
       return {
-        headers: { ...headers, "x-metrc-key": vendor },
+        headers,
         axiosBasic: { username: vendor, password: user },
       };
 
@@ -169,6 +162,32 @@ export function buildMetrcRequestAuth(
 
     default:
       return null;
+  }
+}
+
+/** Safe header names sent for a mode (no values). */
+export function listMetrcAuthHeaderNames(mode: MetrcClientAuthMode): string[] {
+  switch (mode) {
+    case "vendor_only":
+    case "sandbox_x_metrc_key":
+    case "production_x_metrc_key":
+      return ["x-metrc-key"];
+    case "sandbox_x_metrc_key_and_user_key_header":
+    case "production_x_metrc_key_and_user_key":
+      return ["x-metrc-key", "x-metrc-user-key"];
+    case "sandbox_x_metrc_key_and_userkey_header":
+    case "production_x_metrc_key_and_userkey":
+      return ["x-metrc-key", "x-metrc-userkey"];
+    case "sandbox_x_metrc_key_and_x_user_key":
+      return ["x-metrc-key", "x-user-key"];
+    case "sandbox_basic_license_user":
+      return ["x-metrc-key", "Authorization (Basic license:user)"];
+    case "sandbox_basic_vendor_user":
+      return ["Authorization (Basic integrator:user)"];
+    case "sandbox_bearer_user":
+      return ["x-metrc-key", "Authorization (Bearer)"];
+    default:
+      return [];
   }
 }
 

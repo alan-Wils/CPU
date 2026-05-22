@@ -563,7 +563,7 @@ const METRC_AUTH_MODE_LABELS: Record<string, string> = {
   sandbox_x_metrc_key_and_userkey_header: "Sandbox — x-metrc-key + x-metrc-userkey",
   sandbox_x_metrc_key_and_x_user_key: "Sandbox — x-metrc-key + x-user-key",
   sandbox_basic_license_user: "Sandbox — Basic license:user",
-  sandbox_basic_vendor_user: "Sandbox — Basic vendor:user",
+  sandbox_basic_vendor_user: "Operational — Basic integrator:user (Authorization header)",
   sandbox_bearer_user: "Sandbox — Bearer user key",
   production_x_metrc_key: "Production — x-metrc-key",
   production_x_metrc_key_and_user_key: "Production — x-metrc-key + x-metrc-user-key",

@@ -6,6 +6,7 @@ import {
   cacheMetrcAuthModeForCompany,
   clearMetrcAuthStrategyCache,
   describeMetrcAuthMode,
+  listMetrcAuthHeaderNames,
   maskHeadersForLog,
   shouldTryNextMetrcAuthMode,
   type MetrcAuthModeLog,
@@ -154,19 +155,22 @@ function logMetrcKeyDispatchDiagnostics(input: {
   authMode: MetrcClientAuthMode;
   creds: MetrcClientCredentials;
   headers: Record<string, string>;
+  axiosBasic?: { username: string; password: string };
 }): void {
   logInfo("[METRC] key_dispatch", {
     companyId: input.companyId ?? null,
     auth_mode: input.authMode,
     vendorKeyLoaded: formatMetrcKeyFingerprint(input.creds.vendorApiKey),
     userKeyLoaded: formatMetrcKeyFingerprint(input.creds.userApiKey),
+    authHeaderNames: listMetrcAuthHeaderNames(input.authMode),
+    usesBasicAuth: Boolean(input.axiosBasic),
+    basicUsernameFingerprint: input.axiosBasic
+      ? formatMetrcKeyFingerprint(input.axiosBasic.username)
+      : "(none)",
+    basicPasswordFingerprint: input.axiosBasic
+      ? formatMetrcKeyFingerprint(input.axiosBasic.password)
+      : "(none)",
     outgoingXMetrcKey: formatMetrcKeyFingerprint(input.headers["x-metrc-key"] ?? ""),
-    outgoingXMetrcUserKey: formatMetrcKeyFingerprint(
-      input.headers["x-metrc-user-key"]
-        ?? input.headers["x-metrc-userkey"]
-        ?? input.headers["x-user-key"]
-        ?? "",
-    ),
   });
 }
 
@@ -505,6 +509,7 @@ export class MetrcClient {
             authMode: mode,
             creds: this.creds,
             headers: auth.headers,
+            axiosBasic: auth.axiosBasic,
           });
         }
 
