@@ -75,18 +75,11 @@ describe("MetrcClient sandbox auth", () => {
     expect(cfg?.headers?.["x-user-key"]).toBeUndefined();
   });
 
-  it("sandbox operational: vendor key only, then x-user-key, then basic on 401", async () => {
+  it("sandbox operational: tries x-metrc-user-key before basic on 401", async () => {
     axiosRequest
       .mockResolvedValueOnce({
         status: 401,
         data: "Authorization has been denied for this request.",
-        headers: {},
-        statusText: "Unauthorized",
-        config: {},
-      })
-      .mockResolvedValueOnce({
-        status: 401,
-        data: "denied",
         headers: {},
         statusText: "Unauthorized",
         config: {},
@@ -104,18 +97,11 @@ describe("MetrcClient sandbox auth", () => {
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.authMode).toBe("sandbox_basic_vendor_user");
-    expect(axiosRequest).toHaveBeenCalledTimes(3);
+    expect(out.authMode).toBe("sandbox_x_metrc_key_and_user_key_header");
+    expect(axiosRequest).toHaveBeenCalledTimes(2);
 
     expect(axiosRequest.mock.calls[0]?.[0]?.headers?.["x-metrc-key"]).toBe("VENDOR");
-    expect(axiosRequest.mock.calls[0]?.[0]?.headers?.Authorization).toBeUndefined();
-
-    expect(axiosRequest.mock.calls[1]?.[0]?.headers?.["x-user-key"]).toBe("USERKEY");
-
-    expect(axiosRequest.mock.calls[2]?.[0]?.auth).toEqual({
-      username: "VENDOR",
-      password: "USERKEY",
-    });
+    expect(axiosRequest.mock.calls[1]?.[0]?.headers?.["x-metrc-user-key"]).toBe("USERKEY");
   });
 
   it("stops auth rotation on non-401 (403 does not try next mode)", async () => {

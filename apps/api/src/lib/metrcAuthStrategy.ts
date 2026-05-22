@@ -11,7 +11,10 @@ export type MetrcAuthCredentials = {
 export type MetrcClientAuthMode =
   | "vendor_only"
   | "sandbox_x_metrc_key"
+  | "sandbox_x_metrc_key_and_user_key_header"
+  | "sandbox_x_metrc_key_and_userkey_header"
   | "sandbox_x_metrc_key_and_x_user_key"
+  | "sandbox_basic_license_user"
   | "sandbox_basic_vendor_user"
   | "sandbox_bearer_user"
   | "production_x_metrc_key"
@@ -20,7 +23,10 @@ export type MetrcClientAuthMode =
 
 const SANDBOX_OPERATIONAL_PLAN: MetrcClientAuthMode[] = [
   "sandbox_x_metrc_key",
+  "sandbox_x_metrc_key_and_user_key_header",
+  "sandbox_x_metrc_key_and_userkey_header",
   "sandbox_x_metrc_key_and_x_user_key",
+  "sandbox_basic_license_user",
   "sandbox_basic_vendor_user",
   "sandbox_bearer_user",
 ];
@@ -112,11 +118,30 @@ export function buildMetrcRequestAuth(
       headers["x-metrc-key"] = vendor;
       return { headers };
 
+    case "sandbox_x_metrc_key_and_user_key_header":
+      if (!vendor || !user) return null;
+      headers["x-metrc-key"] = vendor;
+      headers["x-metrc-user-key"] = user;
+      return { headers };
+
+    case "sandbox_x_metrc_key_and_userkey_header":
+      if (!vendor || !user) return null;
+      headers["x-metrc-key"] = vendor;
+      headers["x-metrc-userkey"] = user;
+      return { headers };
+
     case "sandbox_x_metrc_key_and_x_user_key":
       if (!vendor || !user) return null;
       headers["x-metrc-key"] = vendor;
       headers["x-user-key"] = user;
       return { headers };
+
+    case "sandbox_basic_license_user":
+      if (!user || !creds.licenseNumber.trim()) return null;
+      return {
+        headers: vendor ? { ...headers, "x-metrc-key": vendor } : headers,
+        axiosBasic: { username: creds.licenseNumber.trim(), password: user },
+      };
 
     case "production_x_metrc_key_and_user_key":
       if (!vendor || !user) return null;
