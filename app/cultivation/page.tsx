@@ -69,6 +69,10 @@ import { filterSourceBatchesForExtractionAvailability } from "@/lib/extractionSo
 import { applyFfTrimSourceListToStore } from "@/lib/syncSourceBatchesToStore";
 import { normalizeSourceBatchList } from "@/lib/repairMisclassifiedSourceBatch";
 import {
+  getUndoDryFlowerHarvestBlockReason,
+  undoDryFlowerHarvestInStore,
+} from "@/lib/undoDryFlowerHarvest";
+import {
   createLog,
   deleteLog as deleteTaskLogRemote,
   getLogsForBatchPurge,
@@ -2750,6 +2754,108 @@ export default function Cultivation() {
     setShowCreateBatch(false);
     createRealCultivationBatch(newBatch);
     forceRefresh();
+  }
+
+  function confirmUndoDryFlowerHarvest(batchId: string) {
+    if (!canWriteRecords) {
+      showReadOnlyNotice();
+      return;
+    }
+    const dry = (s.dryFlowerBatches || []).find((b: any) => b.id === batchId);
+    if (!dry) {
+      showNotice("Batch not found", "Refresh the page — this dry flower batch may already have been removed.");
+      return;
+    }
+    const block = getUndoDryFlowerHarvestBlockReason(dry);
+    if (block) {
+      showNotice("Cannot undo harvest", block);
+      return;
+    }
+    const parentId = String(dry.source || "").trim() || "—";
+    const plants = Math.max(0, num(dry.plantsHarvested));
+    showConfirm(
+      "Undo harvest?",
+      `Send ${batchId} back to cultivation batch ${parentId}?`,
+      () => void runUndoDryFlowerHarvest(batchId),
+      `Restores ${plants} plant${plants === 1 ? "" : "s"} on ${parentId}, removes this dry flower batch from production, and clears dry-only task logs. Use this when the wrong batch was harvested before bucking.`,
+    );
+  }
+
+  async function runUndoDryFlowerHarvest(batchId: string) {
+    if (!canWriteRecords) {
+      showReadOnlyNotice();
+      return;
+    }
+
+    const result = undoDryFlowerHarvestInStore(s, batchId);
+    if (!result.ok) {
+      showNotice("Cannot undo harvest", result.message);
+      return;
+    }
+
+    const parent =
+      s.cultivationBatches.find((b: any) => b.id === result.parentBatchId) ||
+      (s.completedCultivationBatches || []).find((b: any) => b.id === result.parentBatchId);
+    if (parent) {
+      recomputeDryCanopyForCultivationBatch(parent, cultivationRooms);
+    }
+
+    markDryFlowerBatchDeleted(batchId);
+
+    s.logs.unshift(
+      withLoggedBy({
+        area: "Cultivation",
+        batch: result.parentBatchId,
+        task: "Harvest Undone",
+        people: "",
+        minutes: "",
+        output: `Undid A Grade Flower harvest ${result.dryBatchId}: restored ${result.plantsRestored} plant(s) on ${result.parentBatchId} (${result.parentStage})${
+          result.reactivatedFromCompleted ? " — batch re-opened from completed" : ""
+        }.`,
+        linkedBatch: result.dryBatchId,
+        data: {
+          undoneDryBatchId: result.dryBatchId,
+          plantsRestored: result.plantsRestored,
+          parentStage: result.parentStage,
+        },
+        time: nowIsoForLog(),
+      }),
+    );
+
+    if (selectedDryFlowerBatch?.id === batchId) setSelectedDryFlowerBatch(null);
+    if (viewBatch?.id === batchId) setViewBatch(null);
+
+    forceRefresh();
+
+    try {
+      await createLog({
+        area: "Cultivation",
+        batch: result.parentBatchId,
+        task: "Harvest Undone",
+        output: `Undid dry harvest ${result.dryBatchId}`,
+        data: { undoneDryBatchId: result.dryBatchId, plantsRestored: result.plantsRestored },
+      });
+    } catch (error) {
+      console.error("Could not persist harvest-undo log:", error);
+    }
+
+    await purgeBackendLogsForBatch(batchId);
+
+    if (parent) {
+      try {
+        showSyncMessageNotice("Saving cultivation batch…");
+        const ok = await saveRealCultivationBatch(parent);
+        showSyncMessageNotice(ok ? "Harvest undone and saved." : "Undone locally — server sync failed.");
+        if (ok && result.reactivatedFromCompleted) {
+          selectBatch(parent);
+          const taskList = getTasksForStage(parent.stage || "Flower");
+          if (taskList.length) setSelectedTask(taskList[0]);
+        }
+      } catch (error) {
+        console.error("Could not sync parent after harvest undo:", error);
+        showNotice("Sync warning", "Harvest was undone locally but the cultivation batch may not have saved.");
+      }
+    }
   }
 
   async function runDeleteBatch(batchId: string) {
@@ -8268,6 +8374,21 @@ export default function Cultivation() {
                   <button style={buttonStyle} onClick={() => setViewBatch(b)}>
                     View
                   </button>
+                  {canWriteRecords && !getUndoDryFlowerHarvestBlockReason(b) ? (
+                    <button
+                      type="button"
+                      style={{
+                        ...buttonStyle,
+                        background: "#0c4a6e",
+                        border: "1px solid #38bdf8",
+                        color: "#e0f2fe",
+                      }}
+                      onClick={() => confirmUndoDryFlowerHarvest(b.id)}
+                      title="Restore harvested plants on the parent cultivation batch and remove this dry batch"
+                    >
+                      Undo harvest
+                    </button>
+                  ) : null}
                   {canDeleteRecords && (
 
                     <button style={dangerButtonStyle} onClick={() => deleteBatch(b.id)}>
@@ -8286,6 +8407,22 @@ export default function Cultivation() {
               <p>
                 Selected Dry Batch: <b>{selectedDryFlowerBatch.id}</b>
               </p>
+              {canWriteRecords && !getUndoDryFlowerHarvestBlockReason(selectedDryFlowerBatch) ? (
+                <p style={{ marginTop: 8, marginBottom: 0 }}>
+                  <button
+                    type="button"
+                    style={{
+                      ...buttonStyle,
+                      background: "#0c4a6e",
+                      border: "1px solid #38bdf8",
+                      color: "#e0f2fe",
+                    }}
+                    onClick={() => confirmUndoDryFlowerHarvest(selectedDryFlowerBatch.id)}
+                  >
+                    Undo harvest → send back to cultivation
+                  </button>
+                </p>
+              ) : null}
 
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
                 {dryFlowerTasks.map((task) => (
