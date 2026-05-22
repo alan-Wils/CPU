@@ -14,6 +14,7 @@ import {
 
 export { shouldTryNextMetrcAuthMode } from "./metrcAuthStrategy.js";
 import { logInfo, logWarn } from "./logger.js";
+import { formatMetrcKeyFingerprint } from "./metrcKeyFingerprint.js";
 import { resolveMetrcApiBaseUrl, type MetrcEnvironment } from "./metrcResolveBaseUrl.js";
 
 export type { MetrcAuthModeLog, MetrcClientAuthMode };
@@ -145,6 +146,27 @@ function logMetrcAuthMode(
     hasUserKey: ctx.hasUserKey,
     licenseNumber: ctx.licenseNumber,
     environment: ctx.environment,
+  });
+}
+
+function logMetrcKeyDispatchDiagnostics(input: {
+  companyId?: string;
+  authMode: MetrcClientAuthMode;
+  creds: MetrcClientCredentials;
+  headers: Record<string, string>;
+}): void {
+  logInfo("[METRC] key_dispatch", {
+    companyId: input.companyId ?? null,
+    auth_mode: input.authMode,
+    vendorKeyLoaded: formatMetrcKeyFingerprint(input.creds.vendorApiKey),
+    userKeyLoaded: formatMetrcKeyFingerprint(input.creds.userApiKey),
+    outgoingXMetrcKey: formatMetrcKeyFingerprint(input.headers["x-metrc-key"] ?? ""),
+    outgoingXMetrcUserKey: formatMetrcKeyFingerprint(
+      input.headers["x-metrc-user-key"]
+        ?? input.headers["x-metrc-userkey"]
+        ?? input.headers["x-user-key"]
+        ?? "",
+    ),
   });
 }
 
@@ -476,6 +498,15 @@ export class MetrcClient {
           attempt: modeTransportRetries + 1,
           environment: this.creds.environment,
         });
+
+        if (!vendorOnly) {
+          logMetrcKeyDispatchDiagnostics({
+            companyId: this.companyId,
+            authMode: mode,
+            creds: this.creds,
+            headers: auth.headers,
+          });
+        }
 
         if (isSandbox || vendorOnly) {
           logMetrcSandboxVerbose({

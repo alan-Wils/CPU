@@ -18,6 +18,12 @@ import {
   buildMetrcCredentialHintFromLoaded,
   logMetrcCredentialDiagnostics,
 } from "../lib/metrcCredentialDiagnostics.js";
+import { remediateSwappedMetrcSlots } from "../lib/metrcCredentialSlots.js";
+import { formatMetrcKeyFingerprint } from "../lib/metrcKeyFingerprint.js";
+import {
+  METRC_KEYS_SWAPPED_HINT,
+  probeMetrcKeysPossiblySwapped,
+} from "../lib/metrcKeySwapProbe.js";
 import {
   resolveMetrcSandboxUiStatus,
   sandboxStatusLabel,
@@ -64,6 +70,7 @@ export type MetrcTestConnectionFailure = {
   attemptedModes: MetrcClientAuthMode[];
   failures: MetrcAttemptFailure[];
   diagnostics: MetrcConnectionDiagnostics;
+  keysPossiblySwapped?: boolean;
 };
 
 export type MetrcTestConnectionResponse = MetrcTestConnectionSuccess | MetrcTestConnectionFailure;
@@ -242,6 +249,14 @@ export class MetrcConnectionService {
       return fail;
     }
 
+    logInfo("[METRC] config_keys_loaded", {
+      companyId: input.companyId,
+      vendorKeyLoaded: formatMetrcKeyFingerprint(loaded.vendorApiKey),
+      userKeyLoaded: formatMetrcKeyFingerprint(loaded.userApiKey),
+      vendorSlot: "apiKey",
+      userSlot: "userKey",
+    });
+
     const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
     const candidates = orderMetrcEndpointCandidates(
       { stateCode: loaded.stateCode || "CO", environment: loaded.environment },
@@ -356,13 +371,89 @@ export class MetrcConnectionService {
     });
 
     const metrcMsg = lastFailure.metrcMessage || lastFailure.message;
+    const testPath = candidates[0] ?? `/locations/v2/active?licenseNumber=${encodeURIComponent(licenseNumber)}`;
+    let keysPossiblySwapped = false;
+    let finalHint = credentialHint;
+    if ((lastFailure.status || 401) === 401 && loaded.userApiKey && loaded.vendorApiKey) {
+      try {
+        keysPossiblySwapped = await probeMetrcKeysPossiblySwapped({
+          loaded,
+          companyId: input.companyId,
+          pathnameAndQuery: testPath,
+        });
+        if (keysPossiblySwapped) {
+          finalHint = METRC_KEYS_SWAPPED_HINT;
+          logWarn("[METRC] keys_possibly_swapped", {
+            companyId: input.companyId,
+            licenseNumber,
+          });
+
+          const remediatedMetrc = remediateSwappedMetrcSlots(loaded.metrc);
+          await this.configService.upsert({
+            companyId: input.companyId,
+            actorUserId: input.actorUserId,
+            key: "company",
+            value: { ...loaded.company, metrc: remediatedMetrc },
+          });
+
+          const reloaded = await loadCompanyMetrcConfig(input.companyId);
+          if (reloaded) {
+            logInfo("[METRC] config_keys_remediated", {
+              companyId: input.companyId,
+              vendorKeyLoaded: formatMetrcKeyFingerprint(reloaded.vendorApiKey),
+              userKeyLoaded: formatMetrcKeyFingerprint(reloaded.userApiKey),
+            });
+
+            const retryClient = MetrcClient.fromLoadedConfig(reloaded, input.companyId);
+            const retryResult = await retryClient.get<unknown>(testPath);
+            if (!isMetrcClientFailure(retryResult)) {
+              const locations = parseLocationsPayload(retryResult.data);
+              const success: MetrcTestConnectionSuccess = {
+                ok: true,
+                connected: true,
+                checkedAt,
+                baseUrl: retryClient.baseUrl ?? baseUrl,
+                licenseNumber,
+                locationCount: locations.length,
+                sampleLocations: locations.slice(0, 5).map(toSampleLocation),
+                authMode: retryResult.authMode as MetrcClientAuthMode,
+                userKeyLength: reloaded.userApiKey.length,
+                vendorKeyLength: reloaded.vendorApiKey.length,
+                diagnostics: buildConnectionDiagnostics({
+                  loaded: reloaded,
+                  status: retryResult.status,
+                  metrcMessage: retryResult.metrcMessage,
+                  attemptedModes: [retryResult.authMode],
+                  operationalAccessGranted: true,
+                }),
+              };
+              await this.persistConnectionSnapshot(
+                input.companyId,
+                input.actorUserId,
+                reloaded.company,
+                reloaded.metrc,
+                success,
+              );
+              return success;
+            }
+          }
+        }
+      } catch (err) {
+        logWarn("[METRC] swap_probe_failed", {
+          companyId: input.companyId,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     const fail: MetrcTestConnectionFailure = {
       ok: false,
       connected: false,
       checkedAt,
       status: lastFailure.status || 401,
-      message: `${metrcMsg} ${credentialHint}`.trim().slice(0, 4000),
-      credentialHint,
+      message: `${metrcMsg} ${finalHint}`.trim().slice(0, 4000),
+      credentialHint: finalHint,
+      keysPossiblySwapped: keysPossiblySwapped || undefined,
       baseUrl: client.baseUrl ?? baseUrl,
       licenseNumber,
       userKeyLength,

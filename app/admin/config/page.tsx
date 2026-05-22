@@ -540,6 +540,7 @@ type MetrcTestConnectionJson =
       baseUrl: string | null;
       licenseNumber: string;
       credentialHint?: string;
+      keysPossiblySwapped?: boolean;
       userKeyLength?: number;
       vendorKeyLength?: number;
       attemptedModes?: string[];
@@ -579,6 +580,11 @@ function formatMetrcAuthModeLabel(mode: string | undefined | null): string {
 }
 
 function userFacingMetrcTestFailureMessage(json: Extract<MetrcTestConnectionJson, { ok: false }>): string {
+  if (json.keysPossiblySwapped) {
+    const hint = String(json.credentialHint || "").trim();
+    if (hint) return hint.slice(0, 4000);
+    return "Vendor and user API keys appear to be swapped in Company Config. Put the Connect integrator key in Vendor API key and the facility user key in User API key, then Save configuration.";
+  }
   const hint = String(json.credentialHint || "").trim();
   const failures = json.failures ?? [];
   const authRejected =
@@ -907,6 +913,7 @@ export default function ConfigPage() {
   /** Last connection-test diagnostics (from API; keys never included). */
   const [metrcTestDiagnostics, setMetrcTestDiagnostics] = useState<{
     authMode?: string;
+    keysPossiblySwapped?: boolean;
     attemptedModes?: string[];
     failures?: Array<{
       mode: string;
@@ -1422,6 +1429,7 @@ export default function ConfigPage() {
         setMetrcTestDiagnostics({
           attemptedModes: json.attemptedModes,
           failures: json.failures,
+          keysPossiblySwapped: json.keysPossiblySwapped,
         });
         setConfig((prev) => ({
           ...prev,
@@ -2449,6 +2457,24 @@ export default function ConfigPage() {
                 {String(config.company.metrc.metrcLastConnectionMessage || "").trim() ||
                   "METRC connection failed."}
               </p>
+              {metrcTestDiagnostics?.keysPossiblySwapped ? (
+                <div
+                  style={{
+                    marginBottom: 12,
+                    padding: "12px 14px",
+                    borderRadius: 10,
+                    border: "1px solid #b45309",
+                    background: "rgba(120, 53, 15, 0.45)",
+                    color: "#fde68a",
+                    fontSize: 13,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <strong>Keys appear swapped.</strong> Put the METRC Connect integrator key in{" "}
+                  <strong>Vendor API key</strong> and the facility user key from METRC email in{" "}
+                  <strong>User API key</strong>, then click Save configuration and test again.
+                </div>
+              ) : null}
               {metrcTestDiagnostics?.failures && metrcTestDiagnostics.failures.length > 0 && (
                 <div
                   style={{
@@ -2762,7 +2788,7 @@ export default function ConfigPage() {
                 autoCorrect="off"
                 data-lpignore="true"
                 data-1p-ignore="true"
-                placeholder="Paste METRC integrator (vendor) API key"
+                placeholder="METRC Connect integrator key (from Connect registration — not the facility user key)"
                 value={config.company.metrc.apiKey}
                 onChange={(e) => {
                   setMetrcVendorKeyTouched(true);
@@ -2787,7 +2813,7 @@ export default function ConfigPage() {
                 autoCorrect="off"
                 data-lpignore="true"
                 data-1p-ignore="true"
-                placeholder="Paste METRC integrator (vendor) API key"
+                placeholder="METRC Connect integrator key (from Connect registration — not the facility user key)"
                 value={config.company.metrc.apiKey}
                 onChange={(e) => {
                   setMetrcVendorKeyTouched(true);
@@ -2862,7 +2888,7 @@ export default function ConfigPage() {
                 autoCorrect="off"
                 data-lpignore="true"
                 data-1p-ignore="true"
-                placeholder="Paste METRC facility user API key"
+                placeholder="Facility user API key (from METRC sandbox email — not the Connect integrator key)"
                 value={config.company.metrc.userKey}
                 onChange={(e) => {
                   setMetrcUserKeyTouched(true);
@@ -2887,7 +2913,7 @@ export default function ConfigPage() {
                 autoCorrect="off"
                 data-lpignore="true"
                 data-1p-ignore="true"
-                placeholder="Paste METRC facility user API key"
+                placeholder="Facility user API key (from METRC sandbox email — not the Connect integrator key)"
                 value={config.company.metrc.userKey}
                 onChange={(e) => {
                   setMetrcUserKeyTouched(true);
