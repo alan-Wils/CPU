@@ -28,6 +28,7 @@ import {
   type MetrcEvaluationTaskStatus,
   type MetrcRequestHistoryEntry,
 } from "@/lib/metrcEvaluation";
+import { downloadEvaluationSpreadsheet } from "@/lib/metrcEvaluationExport";
 
 const RUNNABLE_SYNC_TASKS: MetrcEvaluationTaskId[] = [
   "facilities_sync",
@@ -412,6 +413,31 @@ export default function MetrcEvaluationPage() {
     setToast({ tone: "ok", text: "Evaluation JSON downloaded." });
   }
 
+  async function handleExportSpreadsheet() {
+    if (!state) return;
+    try {
+      let environment: string | null = null;
+      let activeFacilityLicense: string | null = null;
+      try {
+        const res = await authFetch("/api/config/integrations");
+        if (res.ok) {
+          const json = (await res.json()) as {
+            metrcEnvironment?: string;
+            metrcLicenseNumberDisplay?: string;
+          };
+          environment = json.metrcEnvironment ?? null;
+          activeFacilityLicense = json.metrcLicenseNumberDisplay ?? null;
+        }
+      } catch {
+        // Metadata is optional; export still succeeds without config.
+      }
+      downloadEvaluationSpreadsheet(state, { environment, activeFacilityLicense });
+      setToast({ tone: "ok", text: "Evaluation spreadsheet downloaded." });
+    } catch {
+      setToast({ tone: "error", text: "Failed to export evaluation spreadsheet" });
+    }
+  }
+
   if (!companyId) {
     return (
       <PageAccessGate allowedRoles={["OWNER", "ADMIN", "OPERATIONS_MANAGER"]}>
@@ -442,8 +468,8 @@ export default function MetrcEvaluationPage() {
             <h1 style={styles.title}>METRC Evaluation Mode</h1>
             <p style={styles.subtitle}>
               Track certification and testing progress inside NexBatch. Results are stored in this browser per
-              company (request payloads, responses, and METRC HTTP status). Use Export JSON for auditors;
-              spreadsheet export is planned.
+              company (request payloads, responses, and METRC HTTP status). Export JSON or spreadsheet for
+              auditors.
             </p>
           </div>
           <div style={{ ...styles.row, alignItems: "flex-start" }}>
@@ -506,8 +532,13 @@ export default function MetrcEvaluationPage() {
             <button type="button" style={styles.btn} disabled={!state} onClick={handleExport}>
               Export JSON
             </button>
-            <button type="button" style={{ ...styles.btn, opacity: 0.65 }} disabled title="Coming soon">
-              Export spreadsheet (soon)
+            <button
+              type="button"
+              style={styles.btn}
+              disabled={!state}
+              onClick={() => void handleExportSpreadsheet()}
+            >
+              Export spreadsheet
             </button>
             <button type="button" style={{ ...styles.btn, ...styles.btnDanger }} onClick={handleResetChecklist}>
               Reset all
