@@ -394,7 +394,14 @@ export function buildIntegrationsMetaView(merged: MergedCompanyConfig): Record<s
         metrcLastLocationsSyncAt:
             String(metrc.metrcLastLocationsSyncAt ?? metrc.metrcSandboxLastRoomsSyncAt ?? "").trim() ||
             null,
+        lastLocationsSync:
+            String(metrc.metrcLastLocationsSyncAt ?? metrc.metrcSandboxLastRoomsSyncAt ?? "").trim() ||
+            null,
         metrcTotalLocationsSynced:
+            typeof metrc.metrcTotalLocationsSynced === "number"
+                ? metrc.metrcTotalLocationsSynced
+                : metrc.metrcSandboxLastRoomsCount ?? null,
+        totalLocationsSynced:
             typeof metrc.metrcTotalLocationsSynced === "number"
                 ? metrc.metrcTotalLocationsSynced
                 : metrc.metrcSandboxLastRoomsCount ?? null,

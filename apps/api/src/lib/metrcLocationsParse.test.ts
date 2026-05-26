@@ -22,4 +22,16 @@ describe("metrcLocationsParse", () => {
     expect(rows[0]?.locationTypeId).toBe(3);
     expect(rows[0]?.forPackages).toBe(true);
   });
+
+  it("dedupes rows by METRC location id (last row wins)", () => {
+    const rows = parseMetrcLocationsPayload({
+      Data: [
+        { Id: 7, Name: "First", ForPlants: false },
+        { Id: 7, Name: "Second", ForPlants: true },
+      ],
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.name).toBe("Second");
+    expect(rows[0]?.forPlants).toBe(true);
+  });
 });

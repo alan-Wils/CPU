@@ -39,11 +39,11 @@ function readLocationTypeId(row: Record<string, unknown>): number | null {
 }
 
 export function parseMetrcLocationsPayload(body: unknown): ParsedMetrcLocation[] {
-  const out: ParsedMetrcLocation[] = [];
+  const byId = new Map<string, ParsedMetrcLocation>();
   for (const row of parseMetrcDataRecords(body)) {
     const metrcLocationId = readMetrcLocationId(row);
     if (!metrcLocationId) continue;
-    out.push({
+    byId.set(metrcLocationId, {
       metrcLocationId,
       name: String(row.Name ?? row.name ?? "").trim(),
       locationTypeId: readLocationTypeId(row),
@@ -63,5 +63,5 @@ export function parseMetrcLocationsPayload(body: unknown): ParsedMetrcLocation[]
       raw: row,
     });
   }
-  return out;
+  return [...byId.values()];
 }
