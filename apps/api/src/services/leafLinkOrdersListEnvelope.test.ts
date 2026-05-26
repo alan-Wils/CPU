@@ -84,6 +84,19 @@ describe("normalizeOrder (analytics prerequisites)", () => {
     expect(normalizeOrder(raw).id.trim().length > 0).toBe(true);
   });
 
+  it("reads headline total from LeafLink money object (total.amount)", () => {
+    const raw = {
+      id: "ord-money-obj-1",
+      number: "MO-1",
+      status: "accepted",
+      total: { amount: 210.4, currency: "USD" },
+      created_on: "2026-03-10T12:00:00Z",
+      customer: { display_name: "Good Vibrations" },
+      line_items: [],
+    };
+    expect(normalizeOrder(raw).total).toBeCloseTo(210.4, 5);
+  });
+
   it("reads headline total from alternate keys when top-level total is zero", () => {
     const raw = {
       id: "ord-alt-total-1",

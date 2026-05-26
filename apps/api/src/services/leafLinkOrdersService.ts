@@ -86,6 +86,9 @@ const LEAFLINK_ORDER_TOTAL_FIELDS = [
   "final_total",
   "order_total",
   "total_amount",
+  /** LeafLink orders-received: outstanding balance, often mirrors order total when unpaid. */
+  "payment_balance",
+  "paymentBalance",
   "invoice_total",
   "amount_due",
   "order_amount",
@@ -1394,6 +1397,28 @@ function collectedPairFromStoredPayload(payload: unknown): { raw: Record<string,
   return null;
 }
 
+/**
+ * Resolve wholesale order total for live toasts / reads from stored `leafLinkStoredOrder.payload`.
+ * Handles CPU detail wrappers (`{ _cpu_v, summary }`) and LeafLink money objects (`total.amount`).
+ */
+export function resolveLeafLinkOrderTotalUsdFromStoredPayload(
+  payload: unknown,
+  storedTotalUsd?: number | null,
+): number | null {
+  const stored =
+    typeof storedTotalUsd === "number" && Number.isFinite(storedTotalUsd) && storedTotalUsd > 0
+      ? Math.round(storedTotalUsd * 100) / 100
+      : null;
+  if (stored != null) return stored;
+
+  const pair = collectedPairFromStoredPayload(payload);
+  if (!pair) return null;
+
+  const money = effectiveOrderTotalUsd(pair.raw, pair.summary);
+  if (!Number.isFinite(money) || money <= 0) return null;
+  return Math.round(money * 100) / 100;
+}
+
 function toUpsertInputFromLeafLinkPayload(
   raw: Record<string, unknown>,
   summary: LeafLinkOrderSummaryDto,
@@ -1910,13 +1935,7 @@ export class LeafLinkOrdersService {
     const row = await findLatestLeafLinkStoredOrderLiveWithPayload(companyId);
     if (!row) return null;
 
-    const summary = normalizeOrder(row.payload);
-    const computed = orderTotalMoney(summary);
-    const stored = typeof row.totalUsd === "number" && Number.isFinite(row.totalUsd) ? row.totalUsd : null;
-    const totalUsd =
-      stored != null && stored > 0
-        ? stored
-        : (Number.isFinite(computed) && computed > 0 ? Math.round(computed * 100) / 100 : null);
+    const totalUsd = resolveLeafLinkOrderTotalUsdFromStoredPayload(row.payload, row.totalUsd);
 
     return {
       id: row.id,
