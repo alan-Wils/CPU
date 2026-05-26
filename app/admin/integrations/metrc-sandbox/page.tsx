@@ -43,6 +43,8 @@ type IntegrationsMeta = {
   metrcLastStrainsSyncAt?: string | null;
   lastStrainsSync?: string | null;
   metrcSandboxLastPackagesSyncAt?: string | null;
+  metrcLastPackagesSyncAt?: string | null;
+  lastPackagesSync?: string | null;
   metrcSandboxLastRoomsCount?: number | null;
   metrcSandboxLastStrainsCount?: number | null;
   totalStrainsSynced?: number | null;
@@ -170,6 +172,39 @@ type StrainsSyncResult = {
   rateLimitWarning?: string | null;
   credentialHint?: string;
   endpoint?: string;
+};
+
+type MetrcPackageRow = {
+  packageLabel: string;
+  itemName: string;
+  quantity: number;
+  unitOfMeasure: string;
+  location: string;
+  strainName: string;
+  lastSyncedAt: string;
+};
+
+type PackagesSyncResult = {
+  ok: boolean;
+  status?: number;
+  count?: number;
+  totalPackagesSynced?: number;
+  lastPackagesSync?: string;
+  syncedAt?: string;
+  packages?: MetrcPackageRow[];
+  message?: string;
+  rateLimitWarning?: string | null;
+  credentialHint?: string;
+  endpoint?: string;
+};
+
+type PackageReconciliationSummary = {
+  metrcCount: number;
+  nexbatchCount: number;
+  matched: number;
+  metrcOnly: number;
+  nexbatchOnly: number;
+  quantityMismatch: number;
 };
 
 function nexbatchRoomTypeLabel(suite: NexbatchRoomSuite): string {
@@ -479,6 +514,11 @@ export default function MetrcSandboxPage() {
   const [lastStrainsSync, setLastStrainsSync] = useState<StrainsSyncResult | null>(null);
   const [strainsRows, setStrainsRows] = useState<MetrcStrainRow[] | null>(null);
   const [strainsLoaded, setStrainsLoaded] = useState(false);
+  const [lastPackagesSync, setLastPackagesSync] = useState<PackagesSyncResult | null>(null);
+  const [packagesRows, setPackagesRows] = useState<MetrcPackageRow[] | null>(null);
+  const [packagesLoaded, setPackagesLoaded] = useState(false);
+  const [packageReconciliation, setPackageReconciliation] =
+    useState<PackageReconciliationSummary | null>(null);
   const [nexbatchRooms, setNexbatchRooms] = useState<NexbatchRoomOption[]>([]);
   const [mappingBusy, setMappingBusy] = useState<string | null>(null);
   const [locationCapabilityFilter, setLocationCapabilityFilter] =
@@ -551,6 +591,33 @@ export default function MetrcSandboxPage() {
     }
   }, []);
 
+  const loadSyncedPackages = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/metrc/packages/persisted");
+      if (!res.ok) return;
+      const json = (await res.json()) as { ok?: boolean; packages?: MetrcPackageRow[] };
+      setPackagesRows(json.packages ?? []);
+    } catch {
+      setPackagesRows([]);
+    } finally {
+      setPackagesLoaded(true);
+    }
+  }, []);
+
+  const loadPackageReconciliation = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/metrc/packages/reconciliation");
+      if (!res.ok) return;
+      const json = (await res.json()) as {
+        ok?: boolean;
+        summary?: PackageReconciliationSummary;
+      };
+      setPackageReconciliation(json.summary ?? null);
+    } catch {
+      setPackageReconciliation(null);
+    }
+  }, []);
+
   const loadMeta = useCallback(async () => {
     setLoadingMeta(true);
     try {
@@ -593,7 +660,16 @@ export default function MetrcSandboxPage() {
     void loadNexbatchRooms();
     void loadSyncedLocations();
     void loadSyncedStrains();
-  }, [loadMeta, loadNexbatchRooms, loadSyncedLocations, loadSyncedStrains]);
+    void loadSyncedPackages();
+    void loadPackageReconciliation();
+  }, [
+    loadMeta,
+    loadNexbatchRooms,
+    loadSyncedLocations,
+    loadSyncedStrains,
+    loadSyncedPackages,
+    loadPackageReconciliation,
+  ]);
 
   useEffect(() => {
     if (sandboxUiStatus !== "provisioning") return;
@@ -933,29 +1009,33 @@ export default function MetrcSandboxPage() {
     }
   }
 
-  async function runPull(resource: "packages") {
-    setBusy(resource);
+  async function runPackagesSync() {
+    setBusy("packages");
     setStatusMsg(null);
-    setLastPull(null);
+    setLastPackagesSync(null);
     try {
-      const res = await authFetch(`/api/metrc/${resource}`);
-      const json = (await res.json()) as PullResult;
-      setLastPull(json);
+      const res = await authFetch("/api/metrc/packages");
+      const json = (await res.json()) as PackagesSyncResult;
+      setLastPackagesSync(json);
       if (!res.ok || !json.ok) {
         setStatusMsg({
           tone: "error",
-          text: formatMetrcPullError(json, resource),
+          text: String(json.message || "Packages sync failed."),
         });
         return;
       }
+      const count = json.count ?? json.totalPackagesSynced ?? 0;
+      setPackagesRows(json.packages ?? []);
+      setPackagesLoaded(true);
       const warn = json.rateLimitWarning ? ` ${json.rateLimitWarning}` : "";
       setStatusMsg({
         tone: json.rateLimitWarning ? "warn" : "ok",
-        text: `Pulled ${json.count ?? 0} ${resource}.${warn}`,
+        text: `Synced ${count} package${count === 1 ? "" : "s"} (0 is valid when METRC returns no active packages).${warn}`,
       });
       await loadMeta();
+      await loadPackageReconciliation();
     } catch {
-      setStatusMsg({ tone: "error", text: `Pull ${resource} failed — network error.` });
+      setStatusMsg({ tone: "error", text: "Packages sync failed — network error." });
     } finally {
       setBusy(null);
     }
@@ -1171,7 +1251,12 @@ export default function MetrcSandboxPage() {
             <div style={styles.metaItem}>
               <div style={styles.metaLabel}>Last packages sync</div>
               <div style={styles.metaValue}>
-                {formatCompanyTimestamp(meta?.metrcSandboxLastPackagesSyncAt || "") || "—"}
+                {formatCompanyTimestamp(
+                  meta?.metrcLastPackagesSyncAt ||
+                    meta?.lastPackagesSync ||
+                    meta?.metrcSandboxLastPackagesSyncAt ||
+                    "",
+                ) || "—"}
                 {meta?.totalPackagesSynced != null
                   ? ` (${meta.totalPackagesSynced})`
                   : meta?.metrcSandboxLastPackagesCount != null
@@ -1262,9 +1347,9 @@ export default function MetrcSandboxPage() {
               type="button"
               style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
               disabled={!!busy}
-              onClick={() => void runPull("packages")}
+              onClick={() => void runPackagesSync()}
             >
-              {busy === "packages" ? "Pulling…" : "Pull Packages"}
+              {busy === "packages" ? "Syncing…" : "Sync Packages"}
             </button>
           </div>
 
@@ -1383,6 +1468,67 @@ export default function MetrcSandboxPage() {
             </p>
           ) : (
             <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>Loading saved strains…</p>
+          )}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>METRC packages</h2>
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8" }}>
+            Synced from <code style={{ color: "#cbd5e1" }}>GET /packages/v2/active</code>. Package
+            labels are the upsert key. Reconciliation compares METRC inventory to NexBatch LeafLink
+            SKUs and cultivation METRC tags.
+          </p>
+          {packageReconciliation ? (
+            <p style={{ marginTop: 12, fontSize: 13, color: "#94a3b8" }}>
+              Reconciliation: {packageReconciliation.matched} matched · {packageReconciliation.metrcOnly}{" "}
+              METRC-only · {packageReconciliation.nexbatchOnly} NexBatch-only ·{" "}
+              {packageReconciliation.quantityMismatch} quantity mismatch
+              {packageReconciliation.metrcCount > 0 || packageReconciliation.nexbatchCount > 0
+                ? ` (METRC ${packageReconciliation.metrcCount}, NexBatch ${packageReconciliation.nexbatchCount})`
+                : ""}
+            </p>
+          ) : null}
+          {packagesLoaded && packagesRows && packagesRows.length > 0 ? (
+            <table style={styles.sampleTable}>
+              <thead>
+                <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+                  <th style={{ padding: "6px 8px" }}>Label</th>
+                  <th style={{ padding: "6px 8px" }}>Item</th>
+                  <th style={{ padding: "6px 8px" }}>Quantity</th>
+                  <th style={{ padding: "6px 8px" }}>Location</th>
+                  <th style={{ padding: "6px 8px" }}>Strain</th>
+                  <th style={{ padding: "6px 8px" }}>Last synced</th>
+                </tr>
+              </thead>
+              <tbody>
+                {packagesRows.map((row) => (
+                  <tr key={row.packageLabel} style={{ borderTop: "1px solid #334155" }}>
+                    <td style={{ padding: "6px 8px", fontFamily: "ui-monospace, monospace" }}>
+                      {row.packageLabel}
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>{row.itemName || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>
+                      {row.quantity} {row.unitOfMeasure || ""}
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>{row.location || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>{row.strainName || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>
+                      {formatCompanyTimestamp(row.lastSyncedAt) || row.lastSyncedAt}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : lastPackagesSync?.ok && packagesRows?.length === 0 ? (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+              Packages sync completed successfully with 0 active packages in METRC.
+            </p>
+          ) : packagesLoaded ? (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+              No packages stored yet. Use Sync Packages above to pull from METRC.
+            </p>
+          ) : (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>Loading saved packages…</p>
           )}
         </section>
 

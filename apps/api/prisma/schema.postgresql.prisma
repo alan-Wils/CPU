@@ -225,6 +225,7 @@ model Company {
   metrcFacilities        MetrcFacility[]
   metrcLocations         MetrcLocation[]
   metrcStrains           MetrcStrain[]
+  metrcPackages          MetrcPackage[]
 
   serviceSettings CompanyServiceSettings?
 
@@ -1378,6 +1379,33 @@ model MetrcStrain {
   @@unique([companyId, metrcStrainId])
   @@index([companyId, licenseNumber])
   @@index([companyId, nexbatchStrainId])
+}
+
+/// METRC GET /packages/v2/active rows synced per company (upsert by package label).
+model MetrcPackage {
+  id                    String    @id @default(cuid())
+  companyId             String
+  company               Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  packageLabel          String
+  licenseNumber         String    @default("")
+  itemName              String    @default("")
+  quantity              Float     @default(0)
+  unitOfMeasure         String    @default("")
+  location              String    @default("")
+  productionBatchNumber String    @default("")
+  sourceHarvestNames    String    @default("")
+  packagedDate          DateTime?
+  expirationDate        DateTime?
+  strainName            String    @default("")
+  rawPayloadJson        String
+  lastSyncedAt          DateTime
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([companyId, packageLabel])
+  @@index([companyId, licenseNumber])
+  @@index([companyId, strainName])
+  @@index([companyId, location])
 }
 
 model CheckCapture {

@@ -12,6 +12,7 @@ import { MetrcFacilitiesSyncService } from "../../services/metrcFacilitiesSyncSe
 import { MetrcLocationsSyncService } from "../../services/metrcLocationsSyncService.js";
 import { MetrcLocationMappingService } from "../../services/metrcLocationMappingService.js";
 import { MetrcStrainsSyncService } from "../../services/metrcStrainsSyncService.js";
+import { MetrcPackagesSyncService } from "../../services/metrcPackagesSyncService.js";
 import { MetrcDebugAuthService } from "../../services/metrcDebugAuthService.js";
 import { env } from "../../config/env.js";
 import { logInfo } from "../../lib/logger.js";
@@ -39,6 +40,7 @@ const metrcFacilitiesSyncService = new MetrcFacilitiesSyncService();
 const metrcLocationsSyncService = new MetrcLocationsSyncService();
 const metrcLocationMappingService = new MetrcLocationMappingService();
 const metrcStrainsSyncService = new MetrcStrainsSyncService();
+const metrcPackagesSyncService = new MetrcPackagesSyncService();
 
 const metrcLocationMappingBody = z.object({
   metrcLocationId: z.string().min(1),
@@ -268,14 +270,33 @@ metrcRouter.get(
 );
 
 metrcRouter.get(
+  "/packages/persisted",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const packages = await metrcPackagesSyncService.listSyncedPackages(companyId);
+    res.status(200).json({ ok: true, packages });
+  }),
+);
+
+metrcRouter.get(
+  "/packages/reconciliation",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const result = await metrcPackagesSyncService.buildInventoryReconciliation(companyId);
+    res.status(200).json({ ok: true, ...result });
+  }),
+);
+
+metrcRouter.get(
   "/packages",
   requireRole([...metrcAdminRoles]),
   asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
-    const result = await metrcPullService.pull({
+    const result = await metrcPackagesSyncService.syncMetrcPackages({
       companyId,
       actorUserId: req.auth.userId,
-      resource: "packages",
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),
