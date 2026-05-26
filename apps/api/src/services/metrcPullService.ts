@@ -56,6 +56,10 @@ const RESOURCE_META: Record<
     syncAtKey: "metrcSandboxLastPlantBatchesSyncAt",
     countKey: "metrcSandboxLastPlantBatchesCount",
   },
+  harvests: {
+    syncAtKey: "metrcSandboxLastHarvestsSyncAt",
+    countKey: "metrcSandboxLastHarvestsCount",
+  },
 };
 
 function normalizeMetrcArray(payload: unknown): unknown[] {

@@ -35,6 +35,7 @@ const RUNNABLE_SYNC_TASKS: MetrcEvaluationTaskId[] = [
   "strains_sync",
   "packages_sync",
   "plant_batches_sync",
+  "harvests_sync",
 ];
 
 const styles = {

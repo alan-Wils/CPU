@@ -4,6 +4,10 @@ import {
   type MetrcLocationsActiveQueryParams,
 } from "./metrcLocationsActiveQuery.js";
 import {
+  buildMetrcHarvestsActivePathCandidates,
+  type MetrcHarvestsActiveQueryParams,
+} from "./metrcHarvestsActiveQuery.js";
+import {
   buildMetrcPlantBatchesActivePathCandidates,
   type MetrcPlantBatchesActiveQueryParams,
 } from "./metrcPlantBatchesActiveQuery.js";
@@ -16,7 +20,8 @@ export type MetrcEndpointResource =
   | "items"
   | "rooms"
   | "packages"
-  | "plant_batches";
+  | "plant_batches"
+  | "harvests";
 
 export type MetrcEndpointContext = {
   stateCode: string;
@@ -102,6 +107,13 @@ export function buildMetrcEndpointCandidates(
       }
       const q = licenseQuery(String(licenseNumberOrLocationsParams));
       return [`/plantbatches/v2/active${q}`, `/plantbatches/v1/active${q}`];
+    }
+    case "harvests": {
+      if (typeof licenseNumberOrLocationsParams !== "string") {
+        return buildMetrcHarvestsActivePathCandidates(licenseNumberOrLocationsParams);
+      }
+      const q = licenseQuery(String(licenseNumberOrLocationsParams));
+      return [`/harvests/v2/active${q}`, `/harvests/v1/active${q}`];
     }
     default:
       return [];

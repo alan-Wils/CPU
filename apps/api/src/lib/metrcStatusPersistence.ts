@@ -4,7 +4,8 @@ export type MetrcSuccessMessageContext =
   | { kind: "locations_sync"; count: number }
   | { kind: "strains_sync"; count: number }
   | { kind: "packages_sync"; count: number }
-  | { kind: "plant_batches_sync"; count: number };
+  | { kind: "plant_batches_sync"; count: number }
+  | { kind: "harvests_sync"; count: number };
 
 export function formatMetrcSuccessMessage(context: MetrcSuccessMessageContext): string {
   switch (context.kind) {
@@ -30,6 +31,10 @@ export function formatMetrcSuccessMessage(context: MetrcSuccessMessageContext): 
       const n = context.count;
       return `Synced ${n} plant batch${n === 1 ? "" : "es"}.`;
     }
+    case "harvests_sync": {
+      const n = context.count;
+      return `Synced ${n} harvest${n === 1 ? "" : "es"}.`;
+    }
     default:
       return "Connection successful.";
   }
@@ -53,6 +58,7 @@ export type MetrcSuccessStatusPatch = {
   totalStrainsSynced?: number;
   totalPackagesSynced?: number;
   totalPlantBatchesSynced?: number;
+  totalHarvestsSynced?: number;
 };
 
 /** Clear stale failure fields and persist latest successful METRC call status. */
@@ -98,6 +104,13 @@ export function applyMetrcSuccessStatus(
     next.metrcLastPlantBatchesSyncAt = checkedAt;
     next.metrcSandboxLastPlantBatchesSyncAt = checkedAt;
     next.lastPlantBatchesSync = checkedAt;
+  }
+  if (typeof patch.totalHarvestsSynced === "number") {
+    next.metrcSandboxLastHarvestsCount = patch.totalHarvestsSynced;
+    next.totalHarvestsSynced = patch.totalHarvestsSynced;
+    next.metrcLastHarvestsSyncAt = checkedAt;
+    next.metrcSandboxLastHarvestsSyncAt = checkedAt;
+    next.lastHarvestsSync = checkedAt;
   }
 
   return next;

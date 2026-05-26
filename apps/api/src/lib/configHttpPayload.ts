@@ -448,6 +448,19 @@ export function buildIntegrationsMetaView(merged: MergedCompanyConfig): Record<s
             typeof metrc.totalPlantBatchesSynced === "number"
                 ? metrc.totalPlantBatchesSynced
                 : metrc.metrcSandboxLastPlantBatchesCount ?? null,
+        metrcSandboxLastHarvestsSyncAt:
+            String(metrc.metrcSandboxLastHarvestsSyncAt ?? "").trim() || null,
+        metrcLastHarvestsSyncAt:
+            String(metrc.metrcLastHarvestsSyncAt ?? metrc.metrcSandboxLastHarvestsSyncAt ?? "").trim() ||
+            null,
+        lastHarvestsSync:
+            String(metrc.metrcLastHarvestsSyncAt ?? metrc.metrcSandboxLastHarvestsSyncAt ?? "").trim() ||
+            null,
+        metrcSandboxLastHarvestsCount: metrc.metrcSandboxLastHarvestsCount ?? null,
+        totalHarvestsSynced:
+            typeof metrc.totalHarvestsSynced === "number"
+                ? metrc.totalHarvestsSynced
+                : metrc.metrcSandboxLastHarvestsCount ?? null,
         metrcSandboxLastRateLimitWarning: String(metrc.metrcSandboxLastRateLimitWarning ?? "").trim() || null,
         metrcSandboxUiStatus: String(metrc.metrcSandboxOperationalStatus ?? "").trim() || null,
         metrcOperationalAccessGranted: Boolean(metrc.metrcOperationalAccessGranted),

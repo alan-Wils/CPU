@@ -229,6 +229,8 @@ model Company {
   metrcPackages          MetrcPackage[]
   metrcPlantBatches      MetrcPlantBatch[]
   metrcPlantBatchRequestLogs MetrcPlantBatchRequestLog[]
+  metrcHarvests          MetrcHarvest[]
+  metrcHarvestRequestLogs MetrcHarvestRequestLog[]
 
   serviceSettings CompanyServiceSettings?
 
@@ -1460,6 +1462,58 @@ model MetrcPlantBatch {
 
 /// Admin/sandbox METRC plant batch API request audit (sync + create-test).
 model MetrcPlantBatchRequestLog {
+  id                  String   @id @default(cuid())
+  companyId           String
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  action              String
+  method              String
+  endpoint            String
+  httpStatus          Int?
+  requestPayloadJson  String   @default("{}")
+  responsePayloadJson String   @default("{}")
+  durationMs          Int?
+  actorUserId         String?
+  createdAt           DateTime @default(now())
+
+  @@index([companyId, createdAt])
+}
+
+/// METRC GET /harvests/v2/active rows synced per company (upsert by METRC harvest id).
+model MetrcHarvest {
+  id                    String    @id @default(cuid())
+  companyId             String
+  company               Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  metrcHarvestId        String
+  licenseNumber         String    @default("")
+  harvestName           String    @default("")
+  sourcePlantBatchId    String    @default("")
+  sourcePlantBatchName  String    @default("")
+  strainName            String    @default("")
+  metrcLocationId       String    @default("")
+  locationName          String    @default("")
+  harvestType           String    @default("")
+  wetWeight             Float     @default(0)
+  totalWeight           Float     @default(0)
+  unitOfWeight          String    @default("")
+  patientLicenseNumber  String    @default("")
+  plantedDate           DateTime?
+  finishedDate          DateTime?
+  active                Boolean   @default(true)
+  createdViaTest        Boolean   @default(false)
+  rawPayloadJson        String
+  lastModified          DateTime?
+  lastSyncedAt          DateTime
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([companyId, metrcHarvestId])
+  @@index([companyId, licenseNumber])
+  @@index([companyId, harvestName])
+  @@index([companyId, sourcePlantBatchId])
+}
+
+/// Admin/sandbox METRC harvest API request audit (sync + create-test).
+model MetrcHarvestRequestLog {
   id                  String   @id @default(cuid())
   companyId           String
   company             Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)

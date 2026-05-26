@@ -11,6 +11,7 @@ export type MetrcEvaluationTaskId =
   | "packages_sync"
   | "plant_batches_sync"
   | "create_plant_batch"
+  | "harvests_sync"
   | "create_harvest"
   | "create_package"
   | "transfers";
@@ -133,14 +134,21 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
     runnable: true,
   },
   {
+    id: "harvests_sync",
+    label: "Harvest Sync",
+    description: "Pull active METRC harvests for Plant Batch → Harvest workflows.",
+    nexbatchPath: "/api/metrc/harvests",
+    method: "GET",
+    runnable: true,
+  },
+  {
     id: "create_harvest",
     label: "Create Harvest",
-    description: "POST harvest to METRC.",
-    nexbatchPath: null,
+    description:
+      "POST test harvest to METRC sandbox from an existing plant batch (sandbox-only). Runnable here or from METRC Sandbox.",
+    nexbatchPath: "/api/metrc/harvests/create-test",
     method: "POST",
-    runnable: false,
-    notAvailableReason:
-      "METRC harvest creation is not implemented in NexBatch API. Planned for a future evaluation write endpoint.",
+    runnable: true,
   },
   {
     id: "create_package",
@@ -166,7 +174,11 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
 
 const STORAGE_PREFIX = "metrc_evaluation_v1";
 
-export const METRC_SANDBOX_CREATE_TASK_IDS = ["create_strain", "create_plant_batch"] as const;
+export const METRC_SANDBOX_CREATE_TASK_IDS = [
+  "create_strain",
+  "create_plant_batch",
+  "create_harvest",
+] as const;
 export type MetrcSandboxCreateTaskId = (typeof METRC_SANDBOX_CREATE_TASK_IDS)[number];
 
 export const METRC_EVALUATION_DEFAULT_CREATE_STRAIN_REQUEST = {
@@ -273,12 +285,23 @@ export function buildEvaluationCreateRequestBody(
     return { ...METRC_EVALUATION_DEFAULT_CREATE_STRAIN_REQUEST };
   }
 
+  if (taskId === "create_plant_batch") {
+    return {
+      name: "NexBatch Test Batch",
+      strain: METRC_EVALUATION_DEFAULT_CREATE_STRAIN_REQUEST.name,
+      count: 25,
+      plantingDate: new Date().toISOString().slice(0, 10),
+      batchType: "Clone",
+    };
+  }
+
   return {
-    name: "NexBatch Test Batch",
-    strain: METRC_EVALUATION_DEFAULT_CREATE_STRAIN_REQUEST.name,
-    count: 25,
-    plantingDate: new Date().toISOString().slice(0, 10),
-    batchType: "Clone",
+    metrcPlantBatchId: "",
+    harvestName: "NexBatch Test Harvest",
+    harvestType: "Product",
+    wetWeight: 100,
+    unitOfWeight: "Grams",
+    actualDate: new Date().toISOString().slice(0, 10),
   };
 }
 

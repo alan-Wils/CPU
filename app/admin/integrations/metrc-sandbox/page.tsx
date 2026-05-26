@@ -56,6 +56,11 @@ type IntegrationsMeta = {
   lastPlantBatchesSync?: string | null;
   metrcSandboxLastPlantBatchesCount?: number | null;
   totalPlantBatchesSynced?: number | null;
+  metrcSandboxLastHarvestsSyncAt?: string | null;
+  metrcLastHarvestsSyncAt?: string | null;
+  lastHarvestsSync?: string | null;
+  metrcSandboxLastHarvestsCount?: number | null;
+  totalHarvestsSynced?: number | null;
   metrcSandboxLastRateLimitWarning?: string | null;
   metrcSandboxUiStatus?: string | null;
   metrcOperationalAccessGranted?: boolean;
@@ -181,6 +186,8 @@ type StrainsSyncResult = {
 };
 
 const DEFAULT_TEST_STRAIN_NAME = "NexBatch Test Strain";
+const DEFAULT_TEST_HARVEST_NAME = "NexBatch Test Harvest";
+const METRC_HARVEST_TYPE_OPTIONS = ["Product", "WholePlant"] as const;
 const DEFAULT_STRAIN_INDICA_PCT = "50";
 const DEFAULT_STRAIN_SATIVA_PCT = "50";
 
@@ -290,6 +297,55 @@ type CreateTestPlantBatchResult = {
     count: number;
     syncedAt: string;
   };
+  metrcMessage?: string;
+};
+
+type MetrcHarvestRow = {
+  metrcHarvestId: string;
+  harvestName: string;
+  sourcePlantBatchId: string;
+  sourcePlantBatchName: string;
+  strainName: string;
+  metrcLocationId: string;
+  locationName: string;
+  harvestType: string;
+  wetWeight: number;
+  totalWeight: number;
+  unitOfWeight: string;
+  plantedDate: string | null;
+  finishedDate: string | null;
+  active: boolean;
+  createdViaTest: boolean;
+  lastSyncedAt: string;
+};
+
+type HarvestsSyncResult = {
+  ok: boolean;
+  status?: number;
+  count?: number;
+  totalHarvestsSynced?: number;
+  lastHarvestsSync?: string;
+  syncedAt?: string;
+  harvests?: MetrcHarvestRow[];
+  message?: string;
+  rateLimitWarning?: string | null;
+  credentialHint?: string;
+  endpoint?: string;
+  pagesFetched?: number;
+};
+
+type CreateTestHarvestResult = {
+  ok: boolean;
+  status?: number;
+  message?: string;
+  alreadyExists?: boolean;
+  credentialHint?: string;
+  endpoint?: string;
+  requestPayload?: unknown;
+  responsePayload?: unknown;
+  durationMs?: number;
+  metrcHarvestId?: string;
+  harvest?: MetrcHarvestRow;
   metrcMessage?: string;
 };
 
@@ -639,6 +695,14 @@ export default function MetrcSandboxPage() {
   const [lastCreatePlantBatch, setLastCreatePlantBatch] = useState<CreateTestPlantBatchResult | null>(
     null,
   );
+  const [lastHarvestsSync, setLastHarvestsSync] = useState<HarvestsSyncResult | null>(null);
+  const [harvestsRows, setHarvestsRows] = useState<MetrcHarvestRow[] | null>(null);
+  const [harvestsLoaded, setHarvestsLoaded] = useState(false);
+  const [createHarvestPlantBatchId, setCreateHarvestPlantBatchId] = useState("");
+  const [createHarvestName, setCreateHarvestName] = useState(DEFAULT_TEST_HARVEST_NAME);
+  const [createHarvestType, setCreateHarvestType] = useState<string>("Product");
+  const [createHarvestConfirmOpen, setCreateHarvestConfirmOpen] = useState(false);
+  const [lastCreateHarvest, setLastCreateHarvest] = useState<CreateTestHarvestResult | null>(null);
   const [nexbatchRooms, setNexbatchRooms] = useState<NexbatchRoomOption[]>([]);
   const [mappingBusy, setMappingBusy] = useState<string | null>(null);
   const [locationCapabilityFilter, setLocationCapabilityFilter] =
@@ -751,6 +815,19 @@ export default function MetrcSandboxPage() {
     }
   }, []);
 
+  const loadSyncedHarvests = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/metrc/harvests/persisted");
+      if (!res.ok) return;
+      const json = (await res.json()) as { ok?: boolean; harvests?: MetrcHarvestRow[] };
+      setHarvestsRows(json.harvests ?? []);
+    } catch {
+      setHarvestsRows([]);
+    } finally {
+      setHarvestsLoaded(true);
+    }
+  }, []);
+
   const loadMeta = useCallback(async () => {
     setLoadingMeta(true);
     try {
@@ -796,6 +873,7 @@ export default function MetrcSandboxPage() {
     void loadSyncedPackages();
     void loadPackageReconciliation();
     void loadSyncedPlantBatches();
+    void loadSyncedHarvests();
   }, [
     loadMeta,
     loadNexbatchRooms,
@@ -804,7 +882,15 @@ export default function MetrcSandboxPage() {
     loadSyncedPackages,
     loadPackageReconciliation,
     loadSyncedPlantBatches,
+    loadSyncedHarvests,
   ]);
+
+  const selectedHarvestPlantBatch = useMemo(() => {
+    if (!createHarvestPlantBatchId.trim()) return null;
+    return (plantBatchesRows ?? []).find(
+      (b) => b.metrcPlantBatchId === createHarvestPlantBatchId,
+    ) ?? null;
+  }, [createHarvestPlantBatchId, plantBatchesRows]);
 
   useEffect(() => {
     if (sandboxUiStatus !== "provisioning") return;
@@ -1309,6 +1395,41 @@ export default function MetrcSandboxPage() {
     }
   }
 
+  async function runHarvestsSync() {
+    setBusy("harvests");
+    setStatusMsg(null);
+    setLastHarvestsSync(null);
+    try {
+      const res = await authFetch("/api/metrc/harvests");
+      const json = (await res.json()) as HarvestsSyncResult;
+      setLastHarvestsSync(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text: json.credentialHint || String(json.message || "Harvests sync failed."),
+        });
+        return;
+      }
+      const count = json.count ?? json.totalHarvestsSynced ?? 0;
+      setHarvestsRows(json.harvests ?? []);
+      setHarvestsLoaded(true);
+      const pages =
+        typeof json.pagesFetched === "number" && json.pagesFetched > 1
+          ? ` (${json.pagesFetched} pages)`
+          : "";
+      const warn = json.rateLimitWarning ? ` ${json.rateLimitWarning}` : "";
+      setStatusMsg({
+        tone: json.rateLimitWarning ? "warn" : "ok",
+        text: `Synced ${count} harvest${count === 1 ? "" : "es"} (0 is valid when METRC returns none).${pages}${warn}`,
+      });
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Harvests sync failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function runCreateTestPlantBatch() {
     setCreateBatchConfirmOpen(false);
     setBusy("createPlantBatch");
@@ -1404,6 +1525,88 @@ export default function MetrcSandboxPage() {
       await loadMeta();
     } catch {
       setStatusMsg({ tone: "error", text: "Create test plant batch failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runCreateTestHarvest() {
+    setCreateHarvestConfirmOpen(false);
+    setBusy("createHarvest");
+    setLastCreateHarvest(null);
+    const harvestRequestBody = {
+      metrcPlantBatchId: createHarvestPlantBatchId.trim(),
+      harvestName: createHarvestName.trim() || DEFAULT_TEST_HARVEST_NAME,
+      harvestType: createHarvestType,
+      wetWeight: 100,
+      unitOfWeight: "Grams",
+      actualDate: new Date().toISOString().slice(0, 10),
+    };
+    const harvestCreateStarted = performance.now();
+    try {
+      const res = await authFetch("/api/metrc/harvests/create-test", {
+        method: "POST",
+        body: JSON.stringify(harvestRequestBody),
+      });
+      const json = (await res.json()) as CreateTestHarvestResult;
+      setLastCreateHarvest(json);
+      const companyId = getSelectedCompanyId() || "";
+      const durationMs =
+        typeof json.durationMs === "number"
+          ? json.durationMs
+          : Math.round(performance.now() - harvestCreateStarted);
+      if (!res.ok || !json.ok) {
+        recordSandboxCreateEvaluation({
+          companyId,
+          taskId: "create_harvest",
+          endpoint: "/api/metrc/harvests/create-test",
+          httpStatus: res.status,
+          durationMs,
+          requestPayload: harvestRequestBody,
+          responsePayload: json,
+          user: sandboxEvaluationUser(),
+          passed: false,
+          errorMessage:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Create test harvest failed."),
+        });
+        setStatusMsg({
+          tone: "error",
+          text:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Create test harvest failed."),
+        });
+        return;
+      }
+      recordSandboxCreateEvaluation({
+        companyId,
+        taskId: "create_harvest",
+        endpoint: "/api/metrc/harvests/create-test",
+        httpStatus: res.status,
+        durationMs,
+        requestPayload: harvestRequestBody,
+        responsePayload: json,
+        user: sandboxEvaluationUser(),
+        passed: true,
+      });
+      setStatusMsg({
+        tone: "ok",
+        text: String(json.message || "Test harvest created in METRC sandbox."),
+      });
+      if (json.harvest) {
+        setHarvestsRows((prev) => {
+          const row = json.harvest!;
+          const rest = (prev ?? []).filter((h) => h.metrcHarvestId !== row.metrcHarvestId);
+          return [...rest, row].sort((a, b) => a.harvestName.localeCompare(b.harvestName));
+        });
+        setHarvestsLoaded(true);
+      }
+      await loadSyncedHarvests();
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Create test harvest failed — network error." });
     } finally {
       setBusy(null);
     }
@@ -1676,6 +1879,22 @@ export default function MetrcSandboxPage() {
                     : ""}
               </div>
             </div>
+            <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>Last harvests sync</div>
+              <div style={styles.metaValue}>
+                {formatCompanyTimestamp(
+                  meta?.metrcLastHarvestsSyncAt ||
+                    meta?.lastHarvestsSync ||
+                    meta?.metrcSandboxLastHarvestsSyncAt ||
+                    "",
+                ) || "—"}
+                {meta?.totalHarvestsSynced != null
+                  ? ` (${meta.totalHarvestsSynced})`
+                  : meta?.metrcSandboxLastHarvestsCount != null
+                    ? ` (${meta.metrcSandboxLastHarvestsCount})`
+                    : ""}
+              </div>
+            </div>
           </div>
           {rateWarn ? (
             <div style={styles.warn}>
@@ -1770,6 +1989,14 @@ export default function MetrcSandboxPage() {
               onClick={() => void runPlantBatchesSync()}
             >
               {busy === "plantBatches" ? "Syncing…" : "Sync Plant Batches"}
+            </button>
+            <button
+              type="button"
+              style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+              disabled={!!busy}
+              onClick={() => void runHarvestsSync()}
+            >
+              {busy === "harvests" ? "Syncing…" : "Sync Harvests"}
             </button>
           </div>
 
@@ -2381,6 +2608,301 @@ export default function MetrcSandboxPage() {
               </pre>
             </div>
           ) : null}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>METRC harvests</h2>
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8" }}>
+            Synced from <code style={{ color: "#cbd5e1" }}>GET /harvests/v2/active</code> using the
+            selected facility license and modified-date pagination.
+          </p>
+          {harvestsLoaded && harvestsRows && harvestsRows.length > 0 ? (
+            <table style={styles.sampleTable}>
+              <thead>
+                <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+                  <th style={{ padding: "6px 8px" }}>METRC ID</th>
+                  <th style={{ padding: "6px 8px" }}>Harvest name</th>
+                  <th style={{ padding: "6px 8px" }}>Source batch</th>
+                  <th style={{ padding: "6px 8px" }}>Strain</th>
+                  <th style={{ padding: "6px 8px" }}>Room / location</th>
+                  <th style={{ padding: "6px 8px" }}>Type</th>
+                  <th style={{ padding: "6px 8px" }}>Status</th>
+                  <th style={{ padding: "6px 8px" }}>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {harvestsRows.map((row) => (
+                  <tr key={row.metrcHarvestId} style={{ borderTop: "1px solid #334155" }}>
+                    <td style={{ padding: "6px 8px", fontFamily: "ui-monospace, monospace" }}>
+                      {row.metrcHarvestId}
+                      {row.createdViaTest ? (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            fontSize: 10,
+                            color: "#fbbf24",
+                            fontWeight: 700,
+                          }}
+                        >
+                          TEST
+                        </span>
+                      ) : null}
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>{row.harvestName || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>
+                      {row.sourcePlantBatchName || row.sourcePlantBatchId || "—"}
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>{row.strainName || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>
+                      {row.locationName || row.metrcLocationId || "—"}
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>{row.harvestType || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>{row.active ? "Active" : "Finished"}</td>
+                    <td style={{ padding: "6px 8px" }}>
+                      {row.plantedDate
+                        ? formatCompanyTimestamp(row.plantedDate) || row.plantedDate.slice(0, 10)
+                        : formatCompanyTimestamp(row.lastSyncedAt) || row.lastSyncedAt.slice(0, 10)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : lastHarvestsSync?.ok && harvestsRows?.length === 0 ? (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+              Harvests sync completed successfully with 0 active harvests in METRC.
+            </p>
+          ) : harvestsLoaded ? (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+              No harvests stored yet. Use Sync Harvests above, or create a test harvest below.
+            </p>
+          ) : (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>Loading saved harvests…</p>
+          )}
+
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid #334155" }}>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Create test harvest</h3>
+            <div style={styles.warn}>
+              <strong>Sandbox only.</strong> Creates a harvest from an existing METRC plant batch via{" "}
+              <code style={{ color: "#cbd5e1" }}>POST /harvests/v2/create</code> (falls back to plant
+              manicure endpoints when sandbox differs). Duplicate harvest names reuse the existing
+              NexBatch record.
+            </div>
+            {!isSandboxEnvironment && !loadingMeta ? (
+              <p style={{ marginTop: 12, color: "#f87171", fontSize: 13 }}>
+                METRC environment is not sandbox. Switch to sandbox in Company Config to enable creation.
+              </p>
+            ) : null}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+                gap: 12,
+                marginTop: 14,
+              }}
+            >
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Plant batch</span>
+                <select
+                  value={createHarvestPlantBatchId}
+                  onChange={(e) => setCreateHarvestPlantBatchId(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                >
+                  <option value="">Select plant batch…</option>
+                  {(plantBatchesRows ?? []).map((batch) => (
+                    <option key={batch.metrcPlantBatchId} value={batch.metrcPlantBatchId}>
+                      {batch.name || batch.metrcPlantBatchId}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Strain (from batch)</span>
+                <input
+                  type="text"
+                  readOnly
+                  value={selectedHarvestPlantBatch?.strainName ?? ""}
+                  placeholder="Select a plant batch"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#1e293b",
+                    color: "#94a3b8",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Room / location (from batch)</span>
+                <input
+                  type="text"
+                  readOnly
+                  value={
+                    selectedHarvestPlantBatch
+                      ? selectedHarvestPlantBatch.locationName ||
+                        selectedHarvestPlantBatch.metrcLocationId
+                      : ""
+                  }
+                  placeholder="Select a plant batch"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#1e293b",
+                    color: "#94a3b8",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Harvest name</span>
+                <input
+                  type="text"
+                  value={createHarvestName}
+                  onChange={(e) => setCreateHarvestName(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Harvest type</span>
+                <select
+                  value={createHarvestType}
+                  onChange={(e) => setCreateHarvestType(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                >
+                  {METRC_HARVEST_TYPE_OPTIONS.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div style={{ ...styles.row, marginTop: 12 }}>
+              <button
+                type="button"
+                style={{
+                  ...styles.btn,
+                  ...styles.btnPrimary,
+                  opacity: busy || !isSandboxEnvironment ? 0.6 : 1,
+                }}
+                disabled={
+                  !!busy ||
+                  !isSandboxEnvironment ||
+                  !createHarvestPlantBatchId.trim() ||
+                  !createHarvestName.trim()
+                }
+                onClick={() => setCreateHarvestConfirmOpen(true)}
+              >
+                {busy === "createHarvest" ? "Creating…" : "Create Test Harvest"}
+              </button>
+            </div>
+            {createHarvestConfirmOpen ? (
+              <div
+                style={{
+                  marginTop: 14,
+                  padding: 14,
+                  borderRadius: 10,
+                  border: "1px solid rgba(248, 113, 113, 0.45)",
+                  background: "rgba(69, 10, 10, 0.35)",
+                }}
+              >
+                <p style={{ margin: "0 0 10px", fontWeight: 700, color: "#fecaca" }}>
+                  Confirm METRC sandbox write
+                </p>
+                <p style={{ margin: "0 0 12px", fontSize: 13, color: "#fca5a5" }}>
+                  Create harvest &quot;{createHarvestName.trim()}&quot; ({createHarvestType}) from plant
+                  batch &quot;{selectedHarvestPlantBatch?.name || createHarvestPlantBatchId}&quot; in METRC
+                  sandbox? Harvests will be re-synced on success.
+                </p>
+                <div style={styles.row}>
+                  <button
+                    type="button"
+                    style={{ ...styles.btn, ...styles.btnPrimary }}
+                    onClick={() => void runCreateTestHarvest()}
+                  >
+                    Yes, create in METRC
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.btn}
+                    onClick={() => setCreateHarvestConfirmOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {lastCreateHarvest ? (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: 12,
+                  borderRadius: 10,
+                  border: "1px solid #334155",
+                  background: "rgba(2, 6, 23, 0.8)",
+                  fontSize: 12,
+                  color: "#94a3b8",
+                }}
+              >
+                <strong style={{ color: lastCreateHarvest.ok ? "#4ade80" : "#f87171" }}>
+                  Last create attempt ({lastCreateHarvest.status ?? "—"})
+                  {lastCreateHarvest.alreadyExists ? " · existing harvest reused" : ""}
+                </strong>
+                <pre
+                  style={{
+                    marginTop: 8,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    fontFamily: "ui-monospace, monospace",
+                    color: "#cbd5e1",
+                  }}
+                >
+                  {JSON.stringify(
+                    {
+                      message: lastCreateHarvest.message,
+                      endpoint: lastCreateHarvest.endpoint,
+                      request: lastCreateHarvest.requestPayload,
+                      response: lastCreateHarvest.responsePayload,
+                    },
+                    null,
+                    2,
+                  )}
+                </pre>
+              </div>
+            ) : null}
+          </div>
         </section>
 
         <section style={styles.card}>
