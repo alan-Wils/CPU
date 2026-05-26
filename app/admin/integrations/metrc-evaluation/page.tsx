@@ -288,12 +288,16 @@ export default function MetrcEvaluationPage() {
         }
         const ok = isSuccessResponse(httpStatus, responsePayload);
         if (!ok) {
-          errorMessage =
-            (responsePayload &&
-              typeof responsePayload === "object" &&
-              "message" in responsePayload &&
-              String((responsePayload as { message?: unknown }).message)) ||
-            `Request failed (HTTP ${httpStatus})`;
+          let messageFromPayload: string | undefined;
+          if (
+            responsePayload &&
+            typeof responsePayload === "object" &&
+            "message" in responsePayload
+          ) {
+            const raw = (responsePayload as { message?: unknown }).message;
+            if (raw != null) messageFromPayload = String(raw);
+          }
+          errorMessage = messageFromPayload ?? `Request failed (HTTP ${httpStatus})`;
         }
       } catch (err) {
         httpStatus = 0;
