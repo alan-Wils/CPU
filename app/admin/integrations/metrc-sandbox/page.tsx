@@ -172,16 +172,23 @@ type StrainsSyncResult = {
   endpoint?: string;
 };
 
+function nexbatchRoomTypeLabel(suite: NexbatchRoomSuite): string {
+  switch (suite) {
+    case "vegRooms":
+      return "Veg";
+    case "flowerRooms":
+      return "Flower";
+    case "dryRooms":
+      return "Dry";
+    case "freezers":
+      return "Freezer";
+    default:
+      return suite;
+  }
+}
+
 function formatNexbatchRoomOptionLabel(option: NexbatchRoomOption): string {
-  const prefix =
-    option.suite === "vegRooms"
-      ? "Veg"
-      : option.suite === "flowerRooms"
-        ? "Flower"
-        : option.suite === "dryRooms"
-          ? "Dry"
-          : "Freezer";
-  return `${prefix}: ${option.name}`;
+  return `${option.name} (${nexbatchRoomTypeLabel(option.suite)})`;
 }
 
 function mappingSelectValue(row: MetrcLocationRow): string {
@@ -492,8 +499,26 @@ export default function MetrcSandboxPage() {
     try {
       const res = await authFetch("/api/metrc/locations/nexbatch-rooms");
       if (res.ok) {
-        const json = (await res.json()) as { ok?: boolean; rooms?: NexbatchRoomOption[] };
-        setNexbatchRooms(json.rooms ?? []);
+        const json = (await res.json()) as {
+          ok?: boolean;
+          rooms?: NexbatchRoomOption[];
+          total?: number;
+        };
+        const rooms = json.rooms ?? [];
+        setNexbatchRooms(rooms);
+        if (process.env.NODE_ENV === "development") {
+          console.debug("[METRC] nexbatch rooms loaded", {
+            total: json.total ?? rooms.length,
+            rooms: rooms.map((r) => ({
+              roomId: r.roomId,
+              name: r.name,
+              suite: r.suite,
+              type: nexbatchRoomTypeLabel(r.suite),
+            })),
+          });
+        }
+      } else {
+        setNexbatchRooms([]);
       }
     } catch {
       setNexbatchRooms([]);
@@ -850,6 +875,11 @@ export default function MetrcSandboxPage() {
       }
       const count = json.count ?? json.totalLocationsSynced ?? 0;
       setLocationsRows(json.locations ?? []);
+      if (json.nexbatchRooms?.length) {
+        setNexbatchRooms(json.nexbatchRooms);
+      } else {
+        await loadNexbatchRooms();
+      }
       setLocationsLoaded(true);
       const autoMapped =
         typeof json.autoMappedCount === "number" && json.autoMappedCount > 0
@@ -1365,6 +1395,11 @@ export default function MetrcSandboxPage() {
           </p>
           {mappingToast ? (
             <div style={mappingToast.tone === "error" ? styles.error : styles.ok}>{mappingToast.text}</div>
+          ) : null}
+          {locationsLoaded && nexbatchRooms.length === 0 ? (
+            <p style={{ marginTop: 12, color: "#fbbf24", fontSize: 13 }}>
+              No NexBatch rooms found. Create cultivation rooms first.
+            </p>
           ) : null}
           {locationsLoaded && locationsRows && locationsRows.length > 0 ? (
             <>

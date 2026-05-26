@@ -14,6 +14,8 @@ import { MetrcLocationMappingService } from "../../services/metrcLocationMapping
 import { MetrcStrainsSyncService } from "../../services/metrcStrainsSyncService.js";
 import { MetrcDebugAuthService } from "../../services/metrcDebugAuthService.js";
 import { env } from "../../config/env.js";
+import { logInfo } from "../../lib/logger.js";
+import { nexbatchRoomTypeLabel } from "../../lib/metrcNexbatchRooms.js";
 
 const cultivationMetrcReadRoles = [
   "OWNER",
@@ -196,7 +198,17 @@ metrcRouter.get(
   asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const rooms = await metrcLocationsSyncService.loadNexbatchRoomOptions(companyId);
-    res.status(200).json({ ok: true, rooms });
+    logInfo("[METRC] nexbatch_rooms_loaded", {
+      companyId,
+      total: rooms.length,
+      rooms: rooms.map((r) => ({
+        roomId: r.roomId,
+        name: r.name,
+        suite: r.suite,
+        type: nexbatchRoomTypeLabel(r.suite),
+      })),
+    });
+    res.status(200).json({ ok: true, rooms, total: rooms.length });
   }),
 );
 

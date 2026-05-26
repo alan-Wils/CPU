@@ -1,7 +1,7 @@
 import {
   findNexbatchRoomOption,
   formatNexbatchRoomLabel,
-  parseNexbatchRoomOptionsFromCompanyValue,
+  parseNexbatchRoomOptionsFromConfigRows,
   type NexbatchRoomOption,
   type NexbatchRoomSuite,
 } from "../lib/metrcNexbatchRooms.js";
@@ -62,9 +62,9 @@ export class MetrcLocationMappingService {
 
   async loadNexbatchRoomOptions(companyId: string): Promise<NexbatchRoomOption[]> {
     const rows = await this.configService.list(companyId);
-    const companyRow = rows.find((r) => r.key === "company");
-    if (!companyRow?.value || typeof companyRow.value !== "object") return [];
-    return parseNexbatchRoomOptionsFromCompanyValue(companyRow.value as Record<string, unknown>);
+    return parseNexbatchRoomOptionsFromConfigRows(
+      rows.map((r) => ({ key: r.key, value: r.value })),
+    );
   }
 
   async listLocationRoomMappings(companyId: string): Promise<MetrcLocationRoomMapping[]> {

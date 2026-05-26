@@ -9,6 +9,13 @@ export type NexbatchRoomOption = {
 const CULTIVATION_ROOM_SUITES = ["vegRooms", "flowerRooms"] as const;
 const STORAGE_ROOM_SUITES = ["dryRooms", "freezers"] as const;
 
+const SUITE_SORT_ORDER: Record<NexbatchRoomSuite, number> = {
+  flowerRooms: 0,
+  vegRooms: 1,
+  dryRooms: 2,
+  freezers: 3,
+};
+
 function isNexbatchRoomSuite(value: string): value is NexbatchRoomSuite {
   return (
     value === "vegRooms" ||
@@ -27,24 +34,68 @@ function appendRoomList(
   for (const item of list) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const row = item as Record<string, unknown>;
-    const roomId = String(row.id ?? "").trim();
-    const name = String(row.name ?? "").trim();
+    const roomId = String(row.id ?? row.roomId ?? "").trim();
+    const name = String(row.name ?? row.label ?? "").trim();
     if (!roomId || !name) continue;
     out.push({ suite, roomId, name });
   }
 }
 
-export function parseNexbatchRoomOptionsFromCompanyValue(
-  companyValue: Record<string, unknown>,
-): NexbatchRoomOption[] {
-  const cultivation = companyValue.cultivation;
-  if (!cultivation || typeof cultivation !== "object" || Array.isArray(cultivation)) {
-    return [];
+/** Human label for dropdowns: `Flower Room 1 (Flower)`. */
+export function nexbatchRoomTypeLabel(suite: NexbatchRoomSuite): string {
+  switch (suite) {
+    case "vegRooms":
+      return "Veg";
+    case "flowerRooms":
+      return "Flower";
+    case "dryRooms":
+      return "Dry";
+    case "freezers":
+      return "Freezer";
+    default:
+      return suite;
   }
-  const cult = cultivation as Record<string, unknown>;
+}
+
+export function formatNexbatchRoomLabel(option: NexbatchRoomOption): string {
+  return `${option.name} (${nexbatchRoomTypeLabel(option.suite)})`;
+}
+
+function sortNexbatchRoomOptions(options: NexbatchRoomOption[]): NexbatchRoomOption[] {
+  return [...options].sort((a, b) => {
+    const typeOrder = SUITE_SORT_ORDER[a.suite] - SUITE_SORT_ORDER[b.suite];
+    if (typeOrder !== 0) return typeOrder;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
+}
+
+/**
+ * Cultivation rooms live on the top-level `cultivation` CompanyConfig row.
+ * `company.cultivation` is supported as a legacy fallback only.
+ */
+export function resolveCultivationConfigFromMerged(
+  merged: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const top = merged.cultivation;
+  if (top && typeof top === "object" && !Array.isArray(top)) {
+    return top as Record<string, unknown>;
+  }
+  const company = merged.company;
+  if (company && typeof company === "object" && !Array.isArray(company)) {
+    const nested = (company as Record<string, unknown>).cultivation;
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      return nested as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+export function parseNexbatchRoomOptionsFromCultivationValue(
+  cultivation: Record<string, unknown>,
+): NexbatchRoomOption[] {
   const out: NexbatchRoomOption[] = [];
 
-  const rooms = cult.rooms;
+  const rooms = cultivation.rooms;
   if (rooms && typeof rooms === "object" && !Array.isArray(rooms)) {
     const r = rooms as Record<string, unknown>;
     for (const suite of CULTIVATION_ROOM_SUITES) {
@@ -52,7 +103,7 @@ export function parseNexbatchRoomOptionsFromCompanyValue(
     }
   }
 
-  const storageLocations = cult.storageLocations;
+  const storageLocations = cultivation.storageLocations;
   if (storageLocations && typeof storageLocations === "object" && !Array.isArray(storageLocations)) {
     const s = storageLocations as Record<string, unknown>;
     for (const suite of STORAGE_ROOM_SUITES) {
@@ -60,19 +111,36 @@ export function parseNexbatchRoomOptionsFromCompanyValue(
     }
   }
 
-  return out;
+  return sortNexbatchRoomOptions(out);
 }
 
-export function formatNexbatchRoomLabel(option: NexbatchRoomOption): string {
-  const prefix =
-    option.suite === "vegRooms"
-      ? "Veg"
-      : option.suite === "flowerRooms"
-        ? "Flower"
-        : option.suite === "dryRooms"
-          ? "Dry"
-          : "Freezer";
-  return `${prefix}: ${option.name}`;
+export function parseNexbatchRoomOptionsFromMergedConfig(
+  merged: Record<string, unknown>,
+): NexbatchRoomOption[] {
+  const cult = resolveCultivationConfigFromMerged(merged);
+  if (!cult) return [];
+  return parseNexbatchRoomOptionsFromCultivationValue(cult);
+}
+
+export function parseNexbatchRoomOptionsFromConfigRows(
+  rows: Array<{ key: string; value: unknown }>,
+): NexbatchRoomOption[] {
+  const merged: Record<string, unknown> = {};
+  for (const row of rows) {
+    merged[row.key] = row.value;
+  }
+  return parseNexbatchRoomOptionsFromMergedConfig(merged);
+}
+
+/** @deprecated Prefer `parseNexbatchRoomOptionsFromConfigRows` — rooms are not stored on `company`. */
+export function parseNexbatchRoomOptionsFromCompanyValue(
+  companyValue: Record<string, unknown>,
+): NexbatchRoomOption[] {
+  const nested = companyValue.cultivation;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return parseNexbatchRoomOptionsFromCultivationValue(nested as Record<string, unknown>);
+  }
+  return [];
 }
 
 export function findNexbatchRoomOption(
