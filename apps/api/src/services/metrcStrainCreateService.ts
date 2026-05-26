@@ -18,12 +18,16 @@ import type { MetrcStrainDto } from "./metrcStrainsSyncService.js";
 import { MetrcStrainsSyncService } from "./metrcStrainsSyncService.js";
 
 export const METRC_DEFAULT_TEST_STRAIN_NAME = "NexBatch Test Strain";
+export const METRC_DEFAULT_INDICA_PERCENTAGE = 50;
+export const METRC_DEFAULT_SATIVA_PERCENTAGE = 50;
 
 export type MetrcCreateTestStrainInput = {
   companyId: string;
   actorUserId: string;
   name: string;
   testingStatus?: string | null;
+  indicaPercentage?: number | null;
+  sativaPercentage?: number | null;
 };
 
 export type MetrcCreateTestStrainSuccess = {
@@ -69,15 +73,69 @@ function normalizeTestingStatus(raw: string | null | undefined): string {
   return trimmed || "None";
 }
 
-function buildMetrcCreateStrainBody(input: { name: string; testingStatus: string }): unknown[] {
+export function resolveIndicaSativaPercentages(input: {
+  indicaPercentage?: number | null;
+  sativaPercentage?: number | null;
+}): { ok: true; indicaPercentage: number; sativaPercentage: number } | { ok: false; message: string } {
+  const hasIndica = input.indicaPercentage !== undefined && input.indicaPercentage !== null;
+  const hasSativa = input.sativaPercentage !== undefined && input.sativaPercentage !== null;
+
+  if (!hasIndica && !hasSativa) {
+    return {
+      ok: true,
+      indicaPercentage: METRC_DEFAULT_INDICA_PERCENTAGE,
+      sativaPercentage: METRC_DEFAULT_SATIVA_PERCENTAGE,
+    };
+  }
+
+  if (!hasIndica || !hasSativa) {
+    return {
+      ok: false,
+      message:
+        "Both Indica % and Sativa % are required when either is specified, and they must sum to 100.",
+    };
+  }
+
+  const indica = Number(input.indicaPercentage);
+  const sativa = Number(input.sativaPercentage);
+  if (
+    !Number.isFinite(indica) ||
+    !Number.isFinite(sativa) ||
+    indica < 0 ||
+    sativa < 0 ||
+    indica > 100 ||
+    sativa > 100
+  ) {
+    return {
+      ok: false,
+      message: "Indica % and Sativa % must be numbers between 0 and 100.",
+    };
+  }
+
+  if (Math.round(indica + sativa) !== 100) {
+    return {
+      ok: false,
+      message: `Indica and Sativa percentages combined must equal 100 (got ${indica} + ${sativa} = ${indica + sativa}).`,
+    };
+  }
+
+  return { ok: true, indicaPercentage: indica, sativaPercentage: sativa };
+}
+
+function buildMetrcCreateStrainBody(input: {
+  name: string;
+  testingStatus: string;
+  indicaPercentage: number;
+  sativaPercentage: number;
+}): unknown[] {
   return [
     {
       Name: input.name,
       TestingStatus: input.testingStatus,
       ThcLevel: null,
       CbdLevel: null,
-      IndicaPercentage: null,
-      SativaPercentage: null,
+      IndicaPercentage: input.indicaPercentage,
+      SativaPercentage: input.sativaPercentage,
     },
   ];
 }
@@ -127,6 +185,14 @@ export class MetrcStrainCreateService {
       return { ok: false, status: 400, message: "Strain name is required." };
     }
 
+    const percentages = resolveIndicaSativaPercentages({
+      indicaPercentage: input.indicaPercentage,
+      sativaPercentage: input.sativaPercentage,
+    });
+    if (percentages.ok === false) {
+      return { ok: false, status: 400, message: percentages.message };
+    }
+
     const loaded = await loadCompanyMetrcConfig(input.companyId);
     if (!loaded) {
       return { ok: false, status: 404, message: "Company configuration not found." };
@@ -172,7 +238,13 @@ export class MetrcStrainCreateService {
         method: "POST",
         endpoint: "strains/create",
         httpStatus: 200,
-        requestPayload: { name: strainName, testingStatus, skipped: true },
+        requestPayload: {
+          name: strainName,
+          testingStatus,
+          indicaPercentage: percentages.indicaPercentage,
+          sativaPercentage: percentages.sativaPercentage,
+          skipped: true,
+        },
         responsePayload: { alreadyExists: true, metrcStrainId: existing.metrcStrainId },
         durationMs: 0,
         actorUserId: input.actorUserId,
@@ -205,7 +277,12 @@ export class MetrcStrainCreateService {
       license = locationsRequest.params.licenseNumber;
     }
 
-    const requestBody = buildMetrcCreateStrainBody({ name: strainName, testingStatus });
+    const requestBody = buildMetrcCreateStrainBody({
+      name: strainName,
+      testingStatus,
+      indicaPercentage: percentages.indicaPercentage,
+      sativaPercentage: percentages.sativaPercentage,
+    });
     const candidates = buildCreatePathCandidates(license);
     const startedAt = Date.now();
     let lastStatus = 502;

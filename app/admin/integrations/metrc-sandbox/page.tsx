@@ -180,8 +180,27 @@ type StrainsSyncResult = {
 };
 
 const DEFAULT_TEST_STRAIN_NAME = "NexBatch Test Strain";
+const DEFAULT_STRAIN_INDICA_PCT = "50";
+const DEFAULT_STRAIN_SATIVA_PCT = "50";
 
 const METRC_STRAIN_TESTING_STATUSES = ["None", "InHouse", "ThirdParty"] as const;
+
+function parseStrainPercentagePair(indicaRaw: string, sativaRaw: string): {
+  valid: boolean;
+  indica: number;
+  sativa: number;
+  total: number | null;
+} {
+  const indica = Number.parseFloat(indicaRaw);
+  const sativa = Number.parseFloat(sativaRaw);
+  if (!Number.isFinite(indica) || !Number.isFinite(sativa)) {
+    return { valid: false, indica: 0, sativa: 0, total: null };
+  }
+  const total = indica + sativa;
+  const valid =
+    indica >= 0 && sativa >= 0 && indica <= 100 && sativa <= 100 && Math.round(total) === 100;
+  return { valid, indica, sativa, total };
+}
 
 type CreateTestStrainResult = {
   ok: boolean;
@@ -591,6 +610,8 @@ export default function MetrcSandboxPage() {
   const [strainsLoaded, setStrainsLoaded] = useState(false);
   const [createStrainName, setCreateStrainName] = useState(DEFAULT_TEST_STRAIN_NAME);
   const [createStrainTestingStatus, setCreateStrainTestingStatus] = useState<string>("None");
+  const [createStrainIndicaPct, setCreateStrainIndicaPct] = useState(DEFAULT_STRAIN_INDICA_PCT);
+  const [createStrainSativaPct, setCreateStrainSativaPct] = useState(DEFAULT_STRAIN_SATIVA_PCT);
   const [createStrainConfirmOpen, setCreateStrainConfirmOpen] = useState(false);
   const [lastCreateStrain, setLastCreateStrain] = useState<CreateTestStrainResult | null>(null);
   const [lastPackagesSync, setLastPackagesSync] = useState<PackagesSyncResult | null>(null);
@@ -1132,12 +1153,21 @@ export default function MetrcSandboxPage() {
     setBusy("createStrain");
     setLastCreateStrain(null);
     const name = createStrainName.trim();
+    if (!createStrainPct.valid) {
+      setStatusMsg({
+        tone: "error",
+        text: "Indica % and Sativa % must sum to 100 before creating a strain.",
+      });
+      return;
+    }
     try {
       const res = await authFetch("/api/metrc/strains/create-test", {
         method: "POST",
         body: JSON.stringify({
           name,
           testingStatus: createStrainTestingStatus.trim() || "None",
+          indicaPercentage: createStrainPct.indica,
+          sativaPercentage: createStrainPct.sativa,
         }),
       });
       const json = (await res.json()) as CreateTestStrainResult;
@@ -1313,6 +1343,11 @@ export default function MetrcSandboxPage() {
   const vegRoomOptions = useMemo(
     () => nexbatchRooms.filter((r) => r.suite === "vegRooms"),
     [nexbatchRooms],
+  );
+
+  const createStrainPct = useMemo(
+    () => parseStrainPercentagePair(createStrainIndicaPct, createStrainSativaPct),
+    [createStrainIndicaPct, createStrainSativaPct],
   );
 
   const rateWarn =
@@ -1845,16 +1880,68 @@ export default function MetrcSandboxPage() {
                   ))}
                 </select>
               </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Indica %</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={createStrainIndicaPct}
+                  onChange={(e) => setCreateStrainIndicaPct(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Sativa %</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={createStrainSativaPct}
+                  onChange={(e) => setCreateStrainSativaPct(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                />
+              </label>
             </div>
+            {createStrainPct.total !== null && !createStrainPct.valid ? (
+              <p style={{ marginTop: 10, fontSize: 13, color: "#f87171" }}>
+                Indica % and Sativa % must sum to 100 (currently {createStrainPct.total}).
+              </p>
+            ) : null}
             <div style={{ ...styles.row, marginTop: 12 }}>
               <button
                 type="button"
                 style={{
                   ...styles.btn,
                   ...styles.btnPrimary,
-                  opacity: busy || !isSandboxEnvironment ? 0.6 : 1,
+                  opacity: busy || !isSandboxEnvironment || !createStrainPct.valid ? 0.6 : 1,
                 }}
-                disabled={!!busy || !isSandboxEnvironment || !createStrainName.trim()}
+                disabled={
+                  !!busy ||
+                  !isSandboxEnvironment ||
+                  !createStrainName.trim() ||
+                  !createStrainPct.valid
+                }
                 onClick={() => setCreateStrainConfirmOpen(true)}
               >
                 {busy === "createStrain" ? "Creating…" : "Create Test Strain"}
@@ -1875,7 +1962,8 @@ export default function MetrcSandboxPage() {
                 </p>
                 <p style={{ margin: "0 0 12px", fontSize: 13, color: "#fca5a5" }}>
                   Create strain &quot;{createStrainName.trim()}&quot; (testing status:{" "}
-                  {createStrainTestingStatus || "None"}) in METRC sandbox?
+                  {createStrainTestingStatus || "None"}, Indica {createStrainPct.indica}% / Sativa{" "}
+                  {createStrainPct.sativa}%) in METRC sandbox?
                 </p>
                 <div style={styles.row}>
                   <button

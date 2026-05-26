@@ -57,6 +57,8 @@ const metrcLocationMappingBody = z.object({
 const metrcCreateTestStrainBody = z.object({
   name: z.string().min(1),
   testingStatus: z.string().optional().nullable(),
+  indicaPercentage: z.coerce.number().min(0).max(100).optional(),
+  sativaPercentage: z.coerce.number().min(0).max(100).optional(),
 });
 
 const metrcCreateTestPlantBatchBody = z.object({
@@ -227,6 +229,8 @@ metrcRouter.post(
       actorUserId: req.auth.userId,
       name: body.name,
       testingStatus: body.testingStatus ?? null,
+      indicaPercentage: body.indicaPercentage ?? null,
+      sativaPercentage: body.sativaPercentage ?? null,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),
