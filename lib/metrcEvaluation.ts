@@ -101,12 +101,11 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
   {
     id: "create_strain",
     label: "Create Strain",
-    description: "POST test strain to METRC sandbox (admin test action).",
-    nexbatchPath: null,
+    description:
+      "POST test strain to METRC sandbox (sandbox-only). Runnable here or from METRC Sandbox — default NexBatch Test Strain at 50/50 Indica/Sativa.",
+    nexbatchPath: "/api/metrc/strains/create-test",
     method: "POST",
-    runnable: false,
-    notAvailableReason:
-      "Use METRC Sandbox → Create Test Strain (sandbox-only, confirmation required). Default name: NexBatch Test Strain.",
+    runnable: true,
   },
   {
     id: "packages_sync",
@@ -127,12 +126,11 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
   {
     id: "create_plant_batch",
     label: "Create Plant Batch",
-    description: "POST immature clone plant batch to METRC sandbox (admin test action).",
-    nexbatchPath: null,
+    description:
+      "POST immature clone plant batch to METRC sandbox (sandbox-only). Runnable here after a mapped veg room exists, or from METRC Sandbox.",
+    nexbatchPath: "/api/metrc/plant-batches/create-test",
     method: "POST",
-    runnable: false,
-    notAvailableReason:
-      "Use METRC Sandbox → Create Test Plant Batch (sandbox-only, confirmation required). Not runnable from this checklist without a POST body.",
+    runnable: true,
   },
   {
     id: "create_harvest",
@@ -168,8 +166,192 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
 
 const STORAGE_PREFIX = "metrc_evaluation_v1";
 
+export const METRC_SANDBOX_CREATE_TASK_IDS = ["create_strain", "create_plant_batch"] as const;
+export type MetrcSandboxCreateTaskId = (typeof METRC_SANDBOX_CREATE_TASK_IDS)[number];
+
+export const METRC_EVALUATION_DEFAULT_CREATE_STRAIN_REQUEST = {
+  name: "NexBatch Test Strain",
+  testingStatus: "None",
+  indicaPercentage: 50,
+  sativaPercentage: 50,
+};
+
 function storageKey(companyId: string) {
   return `${STORAGE_PREFIX}:${companyId}`;
+}
+
+function extractMetrcEndpointFromPayload(responsePayload: unknown): string | null {
+  if (responsePayload && typeof responsePayload === "object" && "endpoint" in responsePayload) {
+    const ep = (responsePayload as { endpoint?: unknown }).endpoint;
+    return typeof ep === "string" ? ep : null;
+  }
+  return null;
+}
+
+function extractMetrcStatusFromPayload(responsePayload: unknown, httpStatus: number): number | null {
+  if (responsePayload && typeof responsePayload === "object" && "status" in responsePayload) {
+    const s = (responsePayload as { status?: unknown }).status;
+    if (typeof s === "number") return s;
+  }
+  return httpStatus >= 400 ? httpStatus : null;
+}
+
+function isEvaluationSuccessResponse(httpStatus: number, responsePayload: unknown): boolean {
+  if (httpStatus < 200 || httpStatus >= 300) return false;
+  if (responsePayload && typeof responsePayload === "object" && "ok" in responsePayload) {
+    return Boolean((responsePayload as { ok?: boolean }).ok);
+  }
+  return true;
+}
+
+function migrateTaskRecord(
+  def: MetrcEvaluationTaskDefinition,
+  existing: MetrcEvaluationTaskRecord,
+): MetrcEvaluationTaskRecord {
+  if (!def.runnable || existing.status !== "not_available") {
+    return existing;
+  }
+  return {
+    ...emptyTaskRecord(def),
+    id: def.id,
+    label: def.label,
+    nexbatchPath: def.nexbatchPath,
+  };
+}
+
+export function reconcileEvaluationState(state: MetrcEvaluationState): MetrcEvaluationState {
+  const tasks = { ...state.tasks };
+
+  for (const def of METRC_EVALUATION_TASKS) {
+    tasks[def.id] = migrateTaskRecord(def, tasks[def.id]);
+  }
+
+  for (const taskId of METRC_SANDBOX_CREATE_TASK_IDS) {
+    const latestSuccess = state.requestHistory.find(
+      (entry) => entry.taskId === taskId && entry.status === "success",
+    );
+    if (!latestSuccess) continue;
+
+    const def = METRC_EVALUATION_TASKS.find((t) => t.id === taskId);
+    if (!def) continue;
+
+    tasks[taskId] = {
+      ...tasks[taskId],
+      id: taskId,
+      label: def.label,
+      status: "passed",
+      updatedAt: latestSuccess.timestamp,
+      requestPayload: latestSuccess.requestPayload,
+      responsePayload: latestSuccess.responsePayload,
+      metrcStatusCode: latestSuccess.metrcStatusCode,
+      httpStatus: latestSuccess.httpStatus,
+      durationMs: latestSuccess.durationMs,
+      errorMessage: null,
+      nexbatchPath: def.nexbatchPath,
+      metrcEndpoint:
+        extractMetrcEndpointFromPayload(latestSuccess.responsePayload) ??
+        tasks[taskId].metrcEndpoint,
+    };
+  }
+
+  return { ...state, tasks };
+}
+
+export function buildEvaluationCreateRequestBody(
+  taskId: MetrcSandboxCreateTaskId,
+  task: MetrcEvaluationTaskRecord,
+): Record<string, unknown> {
+  const stored = task.requestPayload;
+  if (stored && typeof stored === "object") {
+    const body = (stored as { body?: unknown }).body ?? stored;
+    if (body && typeof body === "object" && !Array.isArray(body)) {
+      return { ...(body as Record<string, unknown>) };
+    }
+  }
+
+  if (taskId === "create_strain") {
+    return { ...METRC_EVALUATION_DEFAULT_CREATE_STRAIN_REQUEST };
+  }
+
+  return {
+    name: "NexBatch Test Batch",
+    strain: METRC_EVALUATION_DEFAULT_CREATE_STRAIN_REQUEST.name,
+    count: 25,
+    plantingDate: new Date().toISOString().slice(0, 10),
+    batchType: "Clone",
+  };
+}
+
+export type RecordSandboxCreateEvaluationInput = {
+  companyId: string;
+  taskId: MetrcSandboxCreateTaskId;
+  endpoint: string;
+  httpStatus: number;
+  durationMs: number;
+  requestPayload: Record<string, unknown>;
+  responsePayload: unknown;
+  user: string;
+  passed: boolean;
+  errorMessage?: string | null;
+};
+
+/** Persist a sandbox create-test run into evaluation checklist + history. */
+export function recordSandboxCreateEvaluation(input: RecordSandboxCreateEvaluationInput): void {
+  if (!input.companyId) return;
+
+  const current = reconcileEvaluationState(loadEvaluationState(input.companyId));
+  const def = METRC_EVALUATION_TASKS.find((t) => t.id === input.taskId);
+  if (!def) return;
+
+  const updatedAt = new Date().toISOString();
+  const metrcStatusCode = extractMetrcStatusFromPayload(input.responsePayload, input.httpStatus);
+  const metrcEndpoint = extractMetrcEndpointFromPayload(input.responsePayload);
+  const requestPayload: Record<string, unknown> = {
+    method: "POST",
+    path: input.endpoint,
+    source: "metrc_sandbox",
+    body: input.requestPayload,
+    companyId: input.companyId,
+    recordedAt: updatedAt,
+  };
+
+  const taskRecord: MetrcEvaluationTaskRecord = {
+    ...current.tasks[input.taskId],
+    id: input.taskId,
+    label: def.label,
+    status: input.passed ? "passed" : "failed",
+    updatedAt,
+    requestPayload,
+    responsePayload: input.responsePayload,
+    metrcStatusCode,
+    httpStatus: input.httpStatus || null,
+    durationMs: input.durationMs,
+    errorMessage: input.passed ? null : input.errorMessage ?? "Create failed",
+    nexbatchPath: def.nexbatchPath,
+    metrcEndpoint,
+  };
+
+  const historyEntry: MetrcRequestHistoryEntry = {
+    id: newHistoryId(),
+    taskId: input.taskId,
+    endpoint: input.endpoint,
+    method: "POST",
+    status: input.passed ? "success" : input.httpStatus ? "failed" : "error",
+    durationMs: input.durationMs,
+    user: input.user,
+    timestamp: updatedAt,
+    httpStatus: input.httpStatus || null,
+    metrcStatusCode,
+    requestPayload,
+    responsePayload: input.responsePayload,
+    errorMessage: input.passed ? null : input.errorMessage ?? "Create failed",
+  };
+
+  saveEvaluationState({
+    ...current,
+    tasks: { ...current.tasks, [input.taskId]: taskRecord },
+    requestHistory: [historyEntry, ...current.requestHistory].slice(0, 200),
+  });
 }
 
 function emptyTaskRecord(def: MetrcEvaluationTaskDefinition): MetrcEvaluationTaskRecord {
@@ -215,12 +397,13 @@ export function loadEvaluationState(companyId: string): MetrcEvaluationState {
       return createEmptyEvaluationState(companyId);
     }
     const base = createEmptyEvaluationState(companyId);
-    return {
+    const merged: MetrcEvaluationState = {
       ...base,
       ...parsed,
       tasks: { ...base.tasks, ...parsed.tasks },
       requestHistory: Array.isArray(parsed.requestHistory) ? parsed.requestHistory : [],
     };
+    return reconcileEvaluationState(merged);
   } catch {
     return createEmptyEvaluationState(companyId);
   }

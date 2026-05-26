@@ -9,7 +9,8 @@ import {
   appendCompanyIdQuery,
   getSelectedCompanyId,
 } from "@/lib/api";
-import { getAuthToken } from "@/lib/auth";
+import { getAuthToken, getAuthUser } from "@/lib/auth";
+import { recordSandboxCreateEvaluation } from "@/lib/metrcEvaluation";
 import { formatCompanyTimestamp } from "@/lib/companyTimezone";
 import type { MetrcLastConnectionStatus } from "@/lib/metrcCompanyConfig";
 import { formatMetrcFacilityTypeLabel } from "@/lib/metrcDisplayLabel";
@@ -579,6 +580,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   sampleTable: { width: "100%", marginTop: 10, borderCollapse: "collapse", fontSize: 13 },
 };
+
+function sandboxEvaluationUser(): string {
+  const user = getAuthUser();
+  return user?.email || user?.username || user?.id || "Unknown user";
+}
 
 async function authFetch(path: string, init?: RequestInit) {
   const token = getAuthToken();
@@ -1160,19 +1166,41 @@ export default function MetrcSandboxPage() {
       });
       return;
     }
+    const strainRequestBody = {
+      name,
+      testingStatus: createStrainTestingStatus.trim() || "None",
+      indicaPercentage: createStrainPct.indica,
+      sativaPercentage: createStrainPct.sativa,
+    };
+    const strainCreateStarted = performance.now();
     try {
       const res = await authFetch("/api/metrc/strains/create-test", {
         method: "POST",
-        body: JSON.stringify({
-          name,
-          testingStatus: createStrainTestingStatus.trim() || "None",
-          indicaPercentage: createStrainPct.indica,
-          sativaPercentage: createStrainPct.sativa,
-        }),
+        body: JSON.stringify(strainRequestBody),
       });
       const json = (await res.json()) as CreateTestStrainResult;
       setLastCreateStrain(json);
+      const companyId = getSelectedCompanyId() || "";
+      const durationMs =
+        typeof json.durationMs === "number"
+          ? json.durationMs
+          : Math.round(performance.now() - strainCreateStarted);
       if (!res.ok || !json.ok) {
+        recordSandboxCreateEvaluation({
+          companyId,
+          taskId: "create_strain",
+          endpoint: "/api/metrc/strains/create-test",
+          httpStatus: res.status,
+          durationMs,
+          requestPayload: strainRequestBody,
+          responsePayload: json,
+          user: sandboxEvaluationUser(),
+          passed: false,
+          errorMessage:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Create test strain failed."),
+        });
         setStatusMsg({
           tone: "error",
           text:
@@ -1182,6 +1210,17 @@ export default function MetrcSandboxPage() {
         });
         return;
       }
+      recordSandboxCreateEvaluation({
+        companyId,
+        taskId: "create_strain",
+        endpoint: "/api/metrc/strains/create-test",
+        httpStatus: res.status,
+        durationMs,
+        requestPayload: strainRequestBody,
+        responsePayload: json,
+        user: sandboxEvaluationUser(),
+        passed: true,
+      });
       const strainName = json.strain?.name || name;
       setCreateBatchStrain(strainName);
       setStatusMsg({
@@ -1276,22 +1315,44 @@ export default function MetrcSandboxPage() {
     setLastCreatePlantBatch(null);
     const { suite, roomId } = parseMappingSelectValue(createBatchRoomValue);
     const count = Number.parseInt(createBatchCount, 10);
+    const plantBatchRequestBody = {
+      name: createBatchName.trim(),
+      strain: createBatchStrain.trim(),
+      count: Number.isFinite(count) && count > 0 ? count : 1,
+      plantingDate: createBatchPlantingDate,
+      batchType: "Clone" as const,
+      nexbatchRoomSuite: suite,
+      nexbatchRoomId: roomId,
+    };
+    const plantBatchCreateStarted = performance.now();
     try {
       const res = await authFetch("/api/metrc/plant-batches/create-test", {
         method: "POST",
-        body: JSON.stringify({
-          name: createBatchName.trim(),
-          strain: createBatchStrain.trim(),
-          count: Number.isFinite(count) && count > 0 ? count : 1,
-          plantingDate: createBatchPlantingDate,
-          batchType: "Clone",
-          nexbatchRoomSuite: suite,
-          nexbatchRoomId: roomId,
-        }),
+        body: JSON.stringify(plantBatchRequestBody),
       });
       const json = (await res.json()) as CreateTestPlantBatchResult;
       setLastCreatePlantBatch(json);
+      const companyId = getSelectedCompanyId() || "";
+      const durationMs =
+        typeof json.durationMs === "number"
+          ? json.durationMs
+          : Math.round(performance.now() - plantBatchCreateStarted);
       if (!res.ok || !json.ok) {
+        recordSandboxCreateEvaluation({
+          companyId,
+          taskId: "create_plant_batch",
+          endpoint: "/api/metrc/plant-batches/create-test",
+          httpStatus: res.status,
+          durationMs,
+          requestPayload: plantBatchRequestBody,
+          responsePayload: json,
+          user: sandboxEvaluationUser(),
+          passed: false,
+          errorMessage:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Create test plant batch failed."),
+        });
         setStatusMsg({
           tone: "error",
           text:
@@ -1301,6 +1362,17 @@ export default function MetrcSandboxPage() {
         });
         return;
       }
+      recordSandboxCreateEvaluation({
+        companyId,
+        taskId: "create_plant_batch",
+        endpoint: "/api/metrc/plant-batches/create-test",
+        httpStatus: res.status,
+        durationMs,
+        requestPayload: plantBatchRequestBody,
+        responsePayload: json,
+        user: sandboxEvaluationUser(),
+        passed: true,
+      });
       setStatusMsg({
         tone: "ok",
         text: String(json.message || "Test plant batch created in METRC sandbox."),

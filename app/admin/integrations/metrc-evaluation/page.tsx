@@ -13,10 +13,12 @@ import { getAuthToken, getAuthUser } from "@/lib/auth";
 import { formatCompanyTimestamp } from "@/lib/companyTimezone";
 import {
   METRC_EVALUATION_TASKS,
+  buildEvaluationCreateRequestBody,
   clearEvaluationState,
   downloadEvaluationJson,
   loadEvaluationState,
   newHistoryId,
+  reconcileEvaluationState,
   saveEvaluationState,
   taskStatusColor,
   taskStatusLabel,
@@ -193,7 +195,17 @@ export default function MetrcEvaluationPage() {
 
   useEffect(() => {
     if (!companyId) return;
-    setState(loadEvaluationState(companyId));
+    setState(reconcileEvaluationState(loadEvaluationState(companyId)));
+  }, [companyId]);
+
+  useEffect(() => {
+    if (!companyId) return;
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== `metrc_evaluation_v1:${companyId}`) return;
+      setState(reconcileEvaluationState(loadEvaluationState(companyId)));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, [companyId]);
 
   const summary = useMemo(() => {
@@ -217,7 +229,7 @@ export default function MetrcEvaluationPage() {
       setRunningTask(taskId);
       setToast(null);
 
-      const requestPayload: Record<string, unknown> = {
+      let requestPayload: Record<string, unknown> = {
         method: def.method,
         path: def.nexbatchPath,
         companyId,
@@ -278,8 +290,22 @@ export default function MetrcEvaluationPage() {
       let responsePayload: unknown = null;
       let errorMessage: string | null = null;
 
+      let fetchInit: RequestInit = { method: def.method };
+      if (def.method === "POST") {
+        const body =
+          taskId === "create_strain" || taskId === "create_plant_batch"
+            ? buildEvaluationCreateRequestBody(taskId, current.tasks[taskId])
+            : {};
+        requestPayload = {
+          ...requestPayload,
+          body,
+          source: "metrc_evaluation",
+        };
+        fetchInit = { method: "POST", body: JSON.stringify(body) };
+      }
+
       try {
-        const res = await authFetch(def.nexbatchPath, { method: def.method });
+        const res = await authFetch(def.nexbatchPath, fetchInit);
         httpStatus = res.status;
         try {
           responsePayload = await res.json();
@@ -583,8 +609,8 @@ export default function MetrcEvaluationPage() {
         <section style={styles.card}>
           <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>METRC request history</h2>
           <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 8 }}>
-            Chronological log of evaluation runs from this page (newest first). Retry failed sync operations
-            from the checklist above.
+            Chronological log of evaluation and METRC Sandbox create-test runs (newest first). Retry failed
+            operations from the checklist above.
           </p>
 
           {!state || state.requestHistory.length === 0 ? (
