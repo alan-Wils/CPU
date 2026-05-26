@@ -6,6 +6,9 @@ import { requireRole } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
 import { MetrcConnectionService } from "../../services/metrcConnectionService.js";
 import { MetrcAvailablePlantTagsService } from "../../services/metrcAvailablePlantTagsService.js";
+import { MetrcAvailablePackageTagsService } from "../../services/metrcAvailablePackageTagsService.js";
+import { MetrcItemsSyncService } from "../../services/metrcItemsSyncService.js";
+import { MetrcPackageCreateService } from "../../services/metrcPackageCreateService.js";
 import { MetrcSandboxService } from "../../services/metrcSandboxService.js";
 import { MetrcPullService } from "../../services/metrcPullService.js";
 import { MetrcFacilitiesSyncService } from "../../services/metrcFacilitiesSyncService.js";
@@ -41,9 +44,29 @@ const availablePlantTagsQuery = z.object({
   limit: z.coerce.number().int().positive().max(500).optional(),
 });
 
+const availablePackageTagsQuery = z.object({
+  limit: z.coerce.number().int().positive().max(500).optional(),
+});
+
+const metrcCreateTestPackageBody = z.object({
+  metrcHarvestId: z.string().min(1),
+  metrcItemId: z.string().optional().nullable(),
+  itemName: z.string().optional().nullable(),
+  packageTag: z.string().min(1),
+  quantity: z.coerce.number().positive(),
+  unitOfMeasure: z.string().min(1),
+  metrcLocationId: z.string().optional().nullable(),
+  locationName: z.string().optional().nullable(),
+  packagedDate: z.string().min(1),
+  note: z.string().optional().nullable(),
+});
+
 export const metrcRouter = Router();
 const metrcConnectionService = new MetrcConnectionService();
 const metrcAvailablePlantTagsService = new MetrcAvailablePlantTagsService();
+const metrcAvailablePackageTagsService = new MetrcAvailablePackageTagsService();
+const metrcItemsSyncService = new MetrcItemsSyncService();
+const metrcPackageCreateService = new MetrcPackageCreateService();
 const metrcSandboxService = new MetrcSandboxService();
 const metrcPullService = new MetrcPullService();
 const metrcFacilitiesSyncService = new MetrcFacilitiesSyncService();
@@ -188,6 +211,23 @@ metrcRouter.get(
     const q = req.query as { limit?: number };
     const lim = typeof q.limit === "number" && Number.isFinite(q.limit) ? q.limit : 120;
     const result = await metrcAvailablePlantTagsService.fetchLabels({
+      companyId,
+      limit: lim,
+    });
+    res.status(200).json(result);
+  }),
+);
+
+/** Safe read-only: GET METRC available package tags (optional sandbox helper). */
+metrcRouter.get(
+  "/available-package-tags",
+  requireRole(cultivationMetrcReadRoles),
+  validate({ query: availablePackageTagsQuery }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const q = req.query as { limit?: number };
+    const lim = typeof q.limit === "number" && Number.isFinite(q.limit) ? q.limit : 120;
+    const result = await metrcAvailablePackageTagsService.fetchLabels({
       companyId,
       limit: lim,
     });
@@ -353,12 +393,73 @@ metrcRouter.get(
 );
 
 metrcRouter.get(
+  "/items/persisted",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const items = await metrcItemsSyncService.listSyncedItems(companyId);
+    res.status(200).json({ ok: true, items });
+  }),
+);
+
+metrcRouter.get(
+  "/items",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const result = await metrcItemsSyncService.syncMetrcItems({
+      companyId,
+      actorUserId: req.auth.userId,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.get(
   "/packages/persisted",
   requireRole([...metrcAdminRoles]),
   asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const packages = await metrcPackagesSyncService.listSyncedPackages(companyId);
     res.status(200).json({ ok: true, packages });
+  }),
+);
+
+metrcRouter.get(
+  "/packages/request-logs",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const { listMetrcPackageRequestLogs } = await import(
+      "../../repositories/metrcPackageRepository.js"
+    );
+    const logs = await listMetrcPackageRequestLogs(companyId, 50);
+    res.status(200).json({ ok: true, logs });
+  }),
+);
+
+metrcRouter.post(
+  "/packages/create-test",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcCreateTestPackageBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcCreateTestPackageBody>;
+    const result = await metrcPackageCreateService.createTestPackage({
+      companyId,
+      actorUserId: req.auth.userId,
+      metrcHarvestId: body.metrcHarvestId,
+      metrcItemId: body.metrcItemId ?? null,
+      itemName: body.itemName ?? null,
+      packageTag: body.packageTag.trim(),
+      quantity: body.quantity,
+      unitOfMeasure: body.unitOfMeasure.trim(),
+      metrcLocationId: body.metrcLocationId ?? null,
+      locationName: body.locationName ?? null,
+      packagedDate: body.packagedDate,
+      note: body.note ?? null,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
   }),
 );
 

@@ -3,6 +3,7 @@ export type MetrcSuccessMessageContext =
   | { kind: "facilities_sync"; count: number }
   | { kind: "locations_sync"; count: number }
   | { kind: "strains_sync"; count: number }
+  | { kind: "items_sync"; count: number }
   | { kind: "packages_sync"; count: number }
   | { kind: "plant_batches_sync"; count: number }
   | { kind: "harvests_sync"; count: number };
@@ -22,6 +23,10 @@ export function formatMetrcSuccessMessage(context: MetrcSuccessMessageContext): 
     case "strains_sync": {
       const n = context.count;
       return `Synced ${n} strain${n === 1 ? "" : "s"}.`;
+    }
+    case "items_sync": {
+      const n = context.count;
+      return `Synced ${n} item${n === 1 ? "" : "s"}.`;
     }
     case "packages_sync": {
       const n = context.count;

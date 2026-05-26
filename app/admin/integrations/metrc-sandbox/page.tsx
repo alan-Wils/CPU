@@ -363,6 +363,45 @@ type CreateTestHarvestResult = {
   promotedBatch?: boolean;
 };
 
+type MetrcItemRow = {
+  metrcItemId: string;
+  itemName: string;
+  categoryName: string;
+  unitOfMeasureName: string;
+  quantityType: string;
+  licenseNumber: string;
+  lastSyncedAt: string;
+};
+
+type ItemsSyncResult = {
+  ok: boolean;
+  status?: number;
+  count?: number;
+  totalItemsSynced?: number;
+  lastItemsSync?: string;
+  syncedAt?: string;
+  items?: MetrcItemRow[];
+  message?: string;
+  rateLimitWarning?: string | null;
+  credentialHint?: string;
+  endpoint?: string;
+};
+
+type CreateTestPackageResult = {
+  ok: boolean;
+  status?: number;
+  message?: string;
+  alreadyExists?: boolean;
+  credentialHint?: string;
+  endpoint?: string;
+  requestPayload?: unknown;
+  responsePayload?: unknown;
+  durationMs?: number;
+  packageLabel?: string;
+  packagesSynced?: number;
+  metrcMessage?: string;
+};
+
 type PackageReconciliationSummary = {
   metrcCount: number;
   nexbatchCount: number;
@@ -722,6 +761,22 @@ export default function MetrcSandboxPage() {
   const [createHarvestPlantLabels, setCreateHarvestPlantLabels] = useState<string[]>([]);
   const [createHarvestGrowthLocationId, setCreateHarvestGrowthLocationId] = useState("");
   const [createHarvestDryingLocationId, setCreateHarvestDryingLocationId] = useState("");
+  const [lastItemsSync, setLastItemsSync] = useState<ItemsSyncResult | null>(null);
+  const [itemsRows, setItemsRows] = useState<MetrcItemRow[] | null>(null);
+  const [itemsLoaded, setItemsLoaded] = useState(false);
+  const [createPackageHarvestId, setCreatePackageHarvestId] = useState("");
+  const [createPackageItemId, setCreatePackageItemId] = useState("");
+  const [createPackageTag, setCreatePackageTag] = useState("");
+  const [createPackageQuantity, setCreatePackageQuantity] = useState("10");
+  const [createPackageUnit, setCreatePackageUnit] = useState("Grams");
+  const [createPackageLocationId, setCreatePackageLocationId] = useState("");
+  const [createPackageDate, setCreatePackageDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [createPackageNote, setCreatePackageNote] = useState("");
+  const [createPackageConfirmOpen, setCreatePackageConfirmOpen] = useState(false);
+  const [lastCreatePackage, setLastCreatePackage] = useState<CreateTestPackageResult | null>(null);
+  const [packageTagsHint, setPackageTagsHint] = useState<string | null>(null);
   const [nexbatchRooms, setNexbatchRooms] = useState<NexbatchRoomOption[]>([]);
   const [mappingBusy, setMappingBusy] = useState<string | null>(null);
   const [locationCapabilityFilter, setLocationCapabilityFilter] =
@@ -847,6 +902,19 @@ export default function MetrcSandboxPage() {
     }
   }, []);
 
+  const loadSyncedItems = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/metrc/items/persisted");
+      if (!res.ok) return;
+      const json = (await res.json()) as { ok?: boolean; items?: MetrcItemRow[] };
+      setItemsRows(json.items ?? []);
+    } catch {
+      setItemsRows([]);
+    } finally {
+      setItemsLoaded(true);
+    }
+  }, []);
+
   const loadBatchPlants = useCallback(async (metrcPlantBatchId: string) => {
     const batchId = metrcPlantBatchId.trim();
     if (!batchId) {
@@ -920,6 +988,7 @@ export default function MetrcSandboxPage() {
     void loadPackageReconciliation();
     void loadSyncedPlantBatches();
     void loadSyncedHarvests();
+    void loadSyncedItems();
   }, [
     loadMeta,
     loadNexbatchRooms,
@@ -929,6 +998,7 @@ export default function MetrcSandboxPage() {
     loadPackageReconciliation,
     loadSyncedPlantBatches,
     loadSyncedHarvests,
+    loadSyncedItems,
   ]);
 
   const selectedHarvestPlantBatch = useMemo(() => {
@@ -957,6 +1027,27 @@ export default function MetrcSandboxPage() {
   const harvestCapableLocations = useMemo(
     () => (locationsRows ?? []).filter((r) => r.forHarvests),
     [locationsRows],
+  );
+
+  const packageCapableLocations = useMemo(
+    () => (locationsRows ?? []).filter((r) => r.forPackages),
+    [locationsRows],
+  );
+
+  const activeHarvestsForPackage = useMemo(
+    () => (harvestsRows ?? []).filter((h) => h.active),
+    [harvestsRows],
+  );
+
+  const selectedPackageItem = useMemo(
+    () => (itemsRows ?? []).find((i) => i.metrcItemId === createPackageItemId) ?? null,
+    [itemsRows, createPackageItemId],
+  );
+
+  const selectedPackageLocation = useMemo(
+    () =>
+      packageCapableLocations.find((l) => l.metrcLocationId === createPackageLocationId) ?? null,
+    [packageCapableLocations, createPackageLocationId],
   );
 
   const canCreateTestHarvest =
@@ -1760,6 +1851,148 @@ export default function MetrcSandboxPage() {
     }
   }
 
+  async function runItemsSync() {
+    setBusy("items");
+    setLastItemsSync(null);
+    try {
+      const res = await authFetch("/api/metrc/items");
+      const json = (await res.json()) as ItemsSyncResult;
+      setLastItemsSync(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text: String(json.message || json.credentialHint || "Items sync failed."),
+        });
+        return;
+      }
+      setItemsRows(json.items ?? []);
+      setItemsLoaded(true);
+      setStatusMsg({
+        tone: "ok",
+        text: `Synced ${json.count ?? json.totalItemsSynced ?? 0} METRC item(s).`,
+      });
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Items sync failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function fetchAvailablePackageTags() {
+    setBusy("packageTags");
+    setPackageTagsHint(null);
+    try {
+      const res = await authFetch("/api/metrc/available-package-tags?limit=20");
+      const json = (await res.json()) as {
+        ok?: boolean;
+        labels?: string[];
+        message?: string;
+      };
+      if (!res.ok || !json.ok) {
+        setPackageTagsHint(String(json.message || "Could not fetch package tags from METRC."));
+        return;
+      }
+      const first = json.labels?.[0];
+      if (first) {
+        setCreatePackageTag(first);
+        setPackageTagsHint(
+          json.labels && json.labels.length > 1
+            ? `Filled first tag (${json.labels.length} available). Edit before submit.`
+            : "Filled first available package tag. Edit before submit.",
+        );
+      } else {
+        setPackageTagsHint("No package tags returned — enter a tag manually.");
+      }
+    } catch {
+      setPackageTagsHint("Package tag fetch failed — enter a tag manually.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runCreateTestPackage() {
+    setCreatePackageConfirmOpen(false);
+    setBusy("createPackage");
+    setLastCreatePackage(null);
+    const qty = Number(createPackageQuantity);
+    const packageRequestBody = {
+      metrcHarvestId: createPackageHarvestId.trim(),
+      metrcItemId: createPackageItemId.trim() || null,
+      packageTag: createPackageTag.trim(),
+      quantity: qty,
+      unitOfMeasure: createPackageUnit.trim() || "Grams",
+      metrcLocationId: createPackageLocationId.trim() || null,
+      locationName: selectedPackageLocation?.name ?? null,
+      packagedDate: createPackageDate,
+      note: createPackageNote.trim() || null,
+    };
+    const packageCreateStarted = performance.now();
+    try {
+      const res = await authFetch("/api/metrc/packages/create-test", {
+        method: "POST",
+        body: JSON.stringify(packageRequestBody),
+      });
+      const json = (await res.json()) as CreateTestPackageResult;
+      setLastCreatePackage(json);
+      const companyId = getSelectedCompanyId() || "";
+      const durationMs =
+        typeof json.durationMs === "number"
+          ? json.durationMs
+          : Math.round(performance.now() - packageCreateStarted);
+      if (!res.ok || !json.ok) {
+        recordSandboxCreateEvaluation({
+          companyId,
+          taskId: "create_package",
+          endpoint: "/api/metrc/packages/create-test",
+          httpStatus: res.status,
+          durationMs,
+          requestPayload: packageRequestBody,
+          responsePayload: json,
+          user: sandboxEvaluationUser(),
+          passed: false,
+          errorMessage:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Create test package failed."),
+        });
+        setStatusMsg({
+          tone: "error",
+          text:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Create test package failed."),
+        });
+        return;
+      }
+      recordSandboxCreateEvaluation({
+        companyId,
+        taskId: "create_package",
+        endpoint: "/api/metrc/packages/create-test",
+        httpStatus: res.status,
+        durationMs,
+        requestPayload: packageRequestBody,
+        responsePayload: json,
+        user: sandboxEvaluationUser(),
+        passed: true,
+      });
+      setStatusMsg({
+        tone: "ok",
+        text: String(
+          json.message ||
+            `Test package created (${json.packageLabel || createPackageTag.trim()}).`,
+        ),
+      });
+      await runPackagesSync();
+      await loadSyncedPackages();
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Create test package failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const isSandboxEnvironment =
     String(meta?.metrcEnvironment || "").trim().toLowerCase() === "sandbox";
 
@@ -2121,6 +2354,14 @@ export default function MetrcSandboxPage() {
               onClick={() => void runStrainsSync()}
             >
               {busy === "strains" ? "Syncing…" : "Sync Strains"}
+            </button>
+            <button
+              type="button"
+              style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+              disabled={!!busy}
+              onClick={() => void runItemsSync()}
+            >
+              {busy === "items" ? "Syncing…" : "Sync Items"}
             </button>
             <button
               type="button"
@@ -3187,6 +3428,337 @@ export default function MetrcSandboxPage() {
                 : ""}
             </p>
           ) : null}
+
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid #334155" }}>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Create test package</h3>
+            <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8" }}>
+              Creates a package from a harvest via{" "}
+              <code style={{ color: "#cbd5e1" }}>POST /harvests/v2/packages</code> (sandbox-only).
+              Packages are re-synced after success; NexBatch inventory is not updated until METRC
+              confirms the package.
+            </p>
+            <div style={styles.warn}>
+              <strong>Sandbox only.</strong> This will create a package in METRC.
+            </div>
+            {!isSandboxEnvironment && !loadingMeta ? (
+              <p style={{ marginTop: 12, color: "#f87171", fontSize: 13 }}>
+                METRC environment is not sandbox. Switch to sandbox in Company Config to enable
+                creation.
+              </p>
+            ) : null}
+            {itemsLoaded && (itemsRows?.length ?? 0) === 0 ? (
+              <p style={{ marginTop: 12, color: "#fbbf24", fontSize: 13 }}>
+                Create or sync a METRC item before creating a package.
+              </p>
+            ) : null}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+                gap: 12,
+                marginTop: 14,
+              }}
+            >
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Source harvest</span>
+                <select
+                  value={createPackageHarvestId}
+                  onChange={(e) => setCreatePackageHarvestId(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                >
+                  <option value="">Select harvest…</option>
+                  {activeHarvestsForPackage.map((h) => (
+                    <option key={h.metrcHarvestId} value={h.metrcHarvestId}>
+                      {h.harvestName || h.metrcHarvestId}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Item</span>
+                <select
+                  value={createPackageItemId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setCreatePackageItemId(id);
+                    const item = (itemsRows ?? []).find((i) => i.metrcItemId === id);
+                    if (item?.unitOfMeasureName) {
+                      setCreatePackageUnit(item.unitOfMeasureName);
+                    }
+                  }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                >
+                  <option value="">Select item…</option>
+                  {(itemsRows ?? []).map((item) => (
+                    <option key={item.metrcItemId} value={item.metrcItemId}>
+                      {item.itemName}
+                      {item.categoryName ? ` (${item.categoryName})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Package tag / label</span>
+                <input
+                  value={createPackageTag}
+                  onChange={(e) => setCreatePackageTag(e.target.value)}
+                  placeholder="Required METRC package tag"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                    fontFamily: "ui-monospace, monospace",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Quantity</span>
+                <input
+                  type="number"
+                  min={0.01}
+                  step="any"
+                  value={createPackageQuantity}
+                  onChange={(e) => setCreatePackageQuantity(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Unit of measure</span>
+                <input
+                  value={createPackageUnit}
+                  onChange={(e) => setCreatePackageUnit(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Location (optional)</span>
+                <select
+                  value={createPackageLocationId}
+                  onChange={(e) => setCreatePackageLocationId(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                >
+                  <option value="">METRC default</option>
+                  {packageCapableLocations.map((loc) => (
+                    <option key={loc.metrcLocationId} value={loc.metrcLocationId}>
+                      {loc.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Packaged date</span>
+                <input
+                  type="date"
+                  value={createPackageDate}
+                  onChange={(e) => setCreatePackageDate(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: 13, gridColumn: "1 / -1" }}>
+                <span style={{ color: "#94a3b8" }}>Note</span>
+                <input
+                  value={createPackageNote}
+                  onChange={(e) => setCreatePackageNote(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                />
+              </label>
+            </div>
+            <div style={{ ...styles.row, marginTop: 12 }}>
+              <button
+                type="button"
+                style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+                disabled={!!busy}
+                onClick={() => void runItemsSync()}
+              >
+                {busy === "items" ? "Syncing…" : "Sync Items"}
+              </button>
+              <button
+                type="button"
+                style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+                disabled={!!busy}
+                onClick={() => void fetchAvailablePackageTags()}
+              >
+                {busy === "packageTags" ? "Fetching…" : "Fetch available package tags"}
+              </button>
+              <button
+                type="button"
+                style={{
+                  ...styles.btn,
+                  ...styles.btnPrimary,
+                  opacity: busy || !isSandboxEnvironment ? 0.6 : 1,
+                }}
+                disabled={
+                  !!busy ||
+                  !isSandboxEnvironment ||
+                  !createPackageHarvestId.trim() ||
+                  !createPackageItemId.trim() ||
+                  !createPackageTag.trim() ||
+                  !createPackageQuantity.trim() ||
+                  Number(createPackageQuantity) <= 0 ||
+                  (itemsRows?.length ?? 0) === 0
+                }
+                onClick={() => setCreatePackageConfirmOpen(true)}
+              >
+                {busy === "createPackage" ? "Creating…" : "Create Test Package"}
+              </button>
+            </div>
+            {packageTagsHint ? (
+              <p style={{ marginTop: 8, fontSize: 12, color: "#94a3b8" }}>{packageTagsHint}</p>
+            ) : null}
+            {selectedPackageItem ? (
+              <p style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
+                Item UOM: {selectedPackageItem.unitOfMeasureName || "—"} ·{" "}
+                {selectedPackageItem.quantityType || "—"}
+              </p>
+            ) : null}
+            {createPackageConfirmOpen ? (
+              <div
+                style={{
+                  marginTop: 14,
+                  padding: 14,
+                  borderRadius: 10,
+                  border: "1px solid rgba(248, 113, 113, 0.45)",
+                  background: "rgba(69, 10, 10, 0.35)",
+                }}
+              >
+                <p style={{ margin: "0 0 10px", fontWeight: 700, color: "#fecaca" }}>
+                  Confirm METRC sandbox write
+                </p>
+                <p style={{ margin: "0 0 12px", fontSize: 13, color: "#fca5a5" }}>
+                  Sandbox only. This will create package tag &quot;{createPackageTag.trim()}&quot; (
+                  {createPackageQuantity} {createPackageUnit.trim()}) from harvest &quot;
+                  {activeHarvestsForPackage.find((h) => h.metrcHarvestId === createPackageHarvestId)
+                    ?.harvestName || createPackageHarvestId}
+                  &quot; using item &quot;{selectedPackageItem?.itemName || createPackageItemId}
+                  &quot;.
+                </p>
+                <div style={styles.row}>
+                  <button
+                    type="button"
+                    style={{ ...styles.btn, ...styles.btnPrimary }}
+                    onClick={() => void runCreateTestPackage()}
+                  >
+                    Yes, create in METRC
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.btn}
+                    onClick={() => setCreatePackageConfirmOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {lastCreatePackage ? (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: 12,
+                  borderRadius: 10,
+                  border: "1px solid #334155",
+                  background: "rgba(2, 6, 23, 0.8)",
+                  fontSize: 12,
+                  color: "#94a3b8",
+                }}
+              >
+                <strong style={{ color: lastCreatePackage.ok ? "#4ade80" : "#f87171" }}>
+                  Last create attempt ({lastCreatePackage.status ?? "—"})
+                </strong>
+                <pre
+                  style={{
+                    marginTop: 8,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    fontFamily: "ui-monospace, monospace",
+                    color: "#cbd5e1",
+                  }}
+                >
+                  {JSON.stringify(
+                    {
+                      message: lastCreatePackage.message,
+                      endpoint: lastCreatePackage.endpoint,
+                      packageLabel: lastCreatePackage.packageLabel,
+                      packagesSynced: lastCreatePackage.packagesSynced,
+                      request: lastCreatePackage.requestPayload,
+                      response: lastCreatePackage.responsePayload,
+                    },
+                    null,
+                    2,
+                  )}
+                </pre>
+              </div>
+            ) : null}
+          </div>
+
           {packagesLoaded && packagesRows && packagesRows.length > 0 ? (
             <table style={styles.sampleTable}>
               <thead>

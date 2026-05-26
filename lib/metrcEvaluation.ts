@@ -153,12 +153,11 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
   {
     id: "create_package",
     label: "Create Package",
-    description: "POST package to METRC.",
-    nexbatchPath: null,
+    description:
+      "POST package from harvest to METRC sandbox via POST /harvests/v2/packages (sandbox-only). Runnable here after harvest + item sync, or from METRC Sandbox.",
+    nexbatchPath: "/api/metrc/packages/create-test",
     method: "POST",
-    runnable: false,
-    notAvailableReason:
-      "METRC package creation is not implemented in NexBatch API. Inbound package sync is available above.",
+    runnable: true,
   },
   {
     id: "transfers",
@@ -178,7 +177,11 @@ export const METRC_SANDBOX_CREATE_TASK_IDS = [
   "create_strain",
   "create_plant_batch",
   "create_harvest",
+  "create_package",
 ] as const;
+
+export const METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_QUANTITY = 10;
+export const METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT = "Grams";
 export type MetrcSandboxCreateTaskId = (typeof METRC_SANDBOX_CREATE_TASK_IDS)[number];
 
 export const METRC_EVALUATION_DEFAULT_CREATE_STRAIN_REQUEST = {
@@ -295,13 +298,24 @@ export function buildEvaluationCreateRequestBody(
     };
   }
 
+  if (taskId === "create_harvest") {
+    return {
+      metrcPlantBatchId: "",
+      harvestName: "NexBatch Test Harvest",
+      harvestType: "Product",
+      wetWeight: 100,
+      unitOfWeight: "Grams",
+      actualDate: new Date().toISOString().slice(0, 10),
+    };
+  }
+
   return {
-    metrcPlantBatchId: "",
-    harvestName: "NexBatch Test Harvest",
-    harvestType: "Product",
-    wetWeight: 100,
-    unitOfWeight: "Grams",
-    actualDate: new Date().toISOString().slice(0, 10),
+    metrcHarvestId: "",
+    metrcItemId: "",
+    packageTag: "",
+    quantity: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_QUANTITY,
+    unitOfMeasure: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT,
+    packagedDate: new Date().toISOString().slice(0, 10),
   };
 }
 

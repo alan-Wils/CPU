@@ -294,7 +294,10 @@ export default function MetrcEvaluationPage() {
       let fetchInit: RequestInit = { method: def.method };
       if (def.method === "POST") {
         const body =
-          taskId === "create_strain" || taskId === "create_plant_batch"
+          taskId === "create_strain" ||
+          taskId === "create_plant_batch" ||
+          taskId === "create_harvest" ||
+          taskId === "create_package"
             ? buildEvaluationCreateRequestBody(taskId, current.tasks[taskId])
             : {};
         requestPayload = {

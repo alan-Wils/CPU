@@ -72,3 +72,47 @@ export async function listMetrcPackagesForCompany(companyId: string) {
     orderBy: [{ packageLabel: "asc" }],
   });
 }
+
+export async function findMetrcPackageByLabel(companyId: string, packageLabel: string) {
+  const label = String(packageLabel || "").trim();
+  if (!label) return null;
+  return prisma.metrcPackage.findUnique({
+    where: {
+      companyId_packageLabel: { companyId, packageLabel: label },
+    },
+  });
+}
+
+export async function appendMetrcPackageRequestLog(input: {
+  companyId: string;
+  action: string;
+  method: string;
+  endpoint: string;
+  httpStatus: number | null;
+  requestPayload: unknown;
+  responsePayload: unknown;
+  durationMs: number | null;
+  actorUserId: string | null;
+}): Promise<void> {
+  await prisma.metrcPackageRequestLog.create({
+    data: {
+      companyId: input.companyId,
+      action: input.action,
+      method: input.method,
+      endpoint: input.endpoint,
+      httpStatus: input.httpStatus,
+      requestPayloadJson: JSON.stringify(input.requestPayload ?? {}),
+      responsePayloadJson: JSON.stringify(input.responsePayload ?? {}),
+      durationMs: input.durationMs,
+      actorUserId: input.actorUserId,
+    },
+  });
+}
+
+export async function listMetrcPackageRequestLogs(companyId: string, limit = 50) {
+  return prisma.metrcPackageRequestLog.findMany({
+    where: { companyId },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+}

@@ -227,6 +227,8 @@ model Company {
   metrcStrains           MetrcStrain[]
   metrcStrainRequestLogs MetrcStrainRequestLog[]
   metrcPackages          MetrcPackage[]
+  metrcItems             MetrcItem[]
+  metrcPackageRequestLogs MetrcPackageRequestLog[]
   metrcPlantBatches      MetrcPlantBatch[]
   metrcPlantBatchRequestLogs MetrcPlantBatchRequestLog[]
   metrcHarvests          MetrcHarvest[]
@@ -1431,6 +1433,45 @@ model MetrcPackage {
   @@index([companyId, licenseNumber])
   @@index([companyId, strainName])
   @@index([companyId, location])
+}
+
+/// METRC GET /items/v2/active rows synced per company (upsert by METRC item id).
+model MetrcItem {
+  id                String   @id @default(cuid())
+  companyId         String
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  metrcItemId       String
+  licenseNumber     String   @default("")
+  itemName          String   @default("")
+  categoryName      String   @default("")
+  unitOfMeasureName String   @default("")
+  quantityType      String   @default("")
+  rawPayloadJson    String
+  lastSyncedAt      DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([companyId, metrcItemId])
+  @@index([companyId, itemName])
+  @@index([companyId, licenseNumber])
+}
+
+/// Admin/sandbox METRC package API request audit (sync + create-test).
+model MetrcPackageRequestLog {
+  id                  String   @id @default(cuid())
+  companyId           String
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  action              String
+  method              String
+  endpoint            String
+  httpStatus          Int?
+  requestPayloadJson  String   @default("{}")
+  responsePayloadJson String   @default("{}")
+  durationMs          Int?
+  actorUserId         String?
+  createdAt           DateTime @default(now())
+
+  @@index([companyId, createdAt])
 }
 
 /// METRC GET /plantbatches/v2/active rows synced per company (upsert by METRC plant batch id).
