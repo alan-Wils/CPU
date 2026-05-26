@@ -50,6 +50,11 @@ type IntegrationsMeta = {
   totalStrainsSynced?: number | null;
   metrcSandboxLastPackagesCount?: number | null;
   totalPackagesSynced?: number | null;
+  metrcSandboxLastPlantBatchesSyncAt?: string | null;
+  metrcLastPlantBatchesSyncAt?: string | null;
+  lastPlantBatchesSync?: string | null;
+  metrcSandboxLastPlantBatchesCount?: number | null;
+  totalPlantBatchesSynced?: number | null;
   metrcSandboxLastRateLimitWarning?: string | null;
   metrcSandboxUiStatus?: string | null;
   metrcOperationalAccessGranted?: boolean;
@@ -196,6 +201,57 @@ type PackagesSyncResult = {
   rateLimitWarning?: string | null;
   credentialHint?: string;
   endpoint?: string;
+};
+
+type MetrcPlantBatchRow = {
+  metrcPlantBatchId: string;
+  name: string;
+  strainName: string;
+  metrcStrainId: string | null;
+  count: number;
+  metrcLocationId: string;
+  locationName: string;
+  plantedDate: string | null;
+  lastModified: string | null;
+  active: boolean;
+  createdViaTest: boolean;
+  lastSyncedAt: string;
+};
+
+type PlantBatchesSyncResult = {
+  ok: boolean;
+  status?: number;
+  count?: number;
+  totalPlantBatchesSynced?: number;
+  lastPlantBatchesSync?: string;
+  syncedAt?: string;
+  plantBatches?: MetrcPlantBatchRow[];
+  message?: string;
+  rateLimitWarning?: string | null;
+  credentialHint?: string;
+  endpoint?: string;
+  pagesFetched?: number;
+};
+
+type CreateTestPlantBatchResult = {
+  ok: boolean;
+  status?: number;
+  message?: string;
+  credentialHint?: string;
+  endpoint?: string;
+  requestPayload?: unknown;
+  responsePayload?: unknown;
+  durationMs?: number;
+  metrcPlantBatchId?: string | null;
+  plantBatch?: {
+    metrcPlantBatchId: string;
+    metrcPlantBatchName: string;
+    metrcLocationId: string;
+    metrcStrainName: string;
+    count: number;
+    syncedAt: string;
+  };
+  metrcMessage?: string;
 };
 
 type PackageReconciliationSummary = {
@@ -519,6 +575,20 @@ export default function MetrcSandboxPage() {
   const [packagesLoaded, setPackagesLoaded] = useState(false);
   const [packageReconciliation, setPackageReconciliation] =
     useState<PackageReconciliationSummary | null>(null);
+  const [lastPlantBatchesSync, setLastPlantBatchesSync] = useState<PlantBatchesSyncResult | null>(null);
+  const [plantBatchesRows, setPlantBatchesRows] = useState<MetrcPlantBatchRow[] | null>(null);
+  const [plantBatchesLoaded, setPlantBatchesLoaded] = useState(false);
+  const [createBatchName, setCreateBatchName] = useState("");
+  const [createBatchStrain, setCreateBatchStrain] = useState("");
+  const [createBatchCount, setCreateBatchCount] = useState("25");
+  const [createBatchPlantingDate, setCreateBatchPlantingDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [createBatchRoomValue, setCreateBatchRoomValue] = useState("");
+  const [createBatchConfirmOpen, setCreateBatchConfirmOpen] = useState(false);
+  const [lastCreatePlantBatch, setLastCreatePlantBatch] = useState<CreateTestPlantBatchResult | null>(
+    null,
+  );
   const [nexbatchRooms, setNexbatchRooms] = useState<NexbatchRoomOption[]>([]);
   const [mappingBusy, setMappingBusy] = useState<string | null>(null);
   const [locationCapabilityFilter, setLocationCapabilityFilter] =
@@ -618,6 +688,19 @@ export default function MetrcSandboxPage() {
     }
   }, []);
 
+  const loadSyncedPlantBatches = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/metrc/plant-batches/persisted");
+      if (!res.ok) return;
+      const json = (await res.json()) as { ok?: boolean; plantBatches?: MetrcPlantBatchRow[] };
+      setPlantBatchesRows(json.plantBatches ?? []);
+    } catch {
+      setPlantBatchesRows([]);
+    } finally {
+      setPlantBatchesLoaded(true);
+    }
+  }, []);
+
   const loadMeta = useCallback(async () => {
     setLoadingMeta(true);
     try {
@@ -662,6 +745,7 @@ export default function MetrcSandboxPage() {
     void loadSyncedStrains();
     void loadSyncedPackages();
     void loadPackageReconciliation();
+    void loadSyncedPlantBatches();
   }, [
     loadMeta,
     loadNexbatchRooms,
@@ -669,6 +753,7 @@ export default function MetrcSandboxPage() {
     loadSyncedStrains,
     loadSyncedPackages,
     loadPackageReconciliation,
+    loadSyncedPlantBatches,
   ]);
 
   useEffect(() => {
@@ -1041,6 +1126,116 @@ export default function MetrcSandboxPage() {
     }
   }
 
+  async function runPlantBatchesSync() {
+    setBusy("plantBatches");
+    setStatusMsg(null);
+    setLastPlantBatchesSync(null);
+    try {
+      const res = await authFetch("/api/metrc/plant-batches");
+      const json = (await res.json()) as PlantBatchesSyncResult;
+      setLastPlantBatchesSync(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text: json.credentialHint || String(json.message || "Plant batches sync failed."),
+        });
+        return;
+      }
+      const count = json.count ?? json.totalPlantBatchesSynced ?? 0;
+      setPlantBatchesRows(json.plantBatches ?? []);
+      setPlantBatchesLoaded(true);
+      const pages =
+        typeof json.pagesFetched === "number" && json.pagesFetched > 1
+          ? ` (${json.pagesFetched} pages)`
+          : "";
+      const warn = json.rateLimitWarning ? ` ${json.rateLimitWarning}` : "";
+      setStatusMsg({
+        tone: json.rateLimitWarning ? "warn" : "ok",
+        text: `Synced ${count} plant batch${count === 1 ? "" : "es"} (0 is valid when METRC returns none).${pages}${warn}`,
+      });
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Plant batches sync failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runCreateTestPlantBatch() {
+    setCreateBatchConfirmOpen(false);
+    setBusy("createPlantBatch");
+    setLastCreatePlantBatch(null);
+    const { suite, roomId } = parseMappingSelectValue(createBatchRoomValue);
+    const count = Number.parseInt(createBatchCount, 10);
+    try {
+      const res = await authFetch("/api/metrc/plant-batches/create-test", {
+        method: "POST",
+        body: JSON.stringify({
+          name: createBatchName.trim(),
+          strain: createBatchStrain.trim(),
+          count: Number.isFinite(count) && count > 0 ? count : 1,
+          plantingDate: createBatchPlantingDate,
+          batchType: "Clone",
+          nexbatchRoomSuite: suite,
+          nexbatchRoomId: roomId,
+        }),
+      });
+      const json = (await res.json()) as CreateTestPlantBatchResult;
+      setLastCreatePlantBatch(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Create test plant batch failed."),
+        });
+        return;
+      }
+      setStatusMsg({
+        tone: "ok",
+        text: String(json.message || "Test plant batch created in METRC sandbox."),
+      });
+      if (json.plantBatch) {
+        setPlantBatchesRows((prev) => {
+          const row: MetrcPlantBatchRow = {
+            metrcPlantBatchId: json.plantBatch!.metrcPlantBatchId,
+            name: json.plantBatch!.metrcPlantBatchName,
+            strainName: json.plantBatch!.metrcStrainName,
+            metrcStrainId: null,
+            count: json.plantBatch!.count,
+            metrcLocationId: json.plantBatch!.metrcLocationId,
+            locationName: "",
+            plantedDate: createBatchPlantingDate ? `${createBatchPlantingDate}T12:00:00.000Z` : null,
+            lastModified: json.plantBatch!.syncedAt,
+            active: true,
+            createdViaTest: true,
+            lastSyncedAt: json.plantBatch!.syncedAt,
+          };
+          const rest = (prev ?? []).filter(
+            (p) => p.metrcPlantBatchId !== row.metrcPlantBatchId,
+          );
+          return [...rest, row].sort((a, b) => a.name.localeCompare(b.name));
+        });
+        setPlantBatchesLoaded(true);
+      }
+      await loadSyncedPlantBatches();
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Create test plant batch failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const isSandboxEnvironment =
+    String(meta?.metrcEnvironment || "").trim().toLowerCase() === "sandbox";
+
+  const vegRoomOptions = useMemo(
+    () => nexbatchRooms.filter((r) => r.suite === "vegRooms"),
+    [nexbatchRooms],
+  );
+
   const rateWarn =
     String(meta?.metrcSandboxLastRateLimitWarning || "").trim() ||
     (lastPull?.rateLimitWarning ?? "");
@@ -1279,6 +1474,22 @@ export default function MetrcSandboxPage() {
                     : ""}
               </div>
             </div>
+            <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>Last plant batches sync</div>
+              <div style={styles.metaValue}>
+                {formatCompanyTimestamp(
+                  meta?.metrcLastPlantBatchesSyncAt ||
+                    meta?.lastPlantBatchesSync ||
+                    meta?.metrcSandboxLastPlantBatchesSyncAt ||
+                    "",
+                ) || "—"}
+                {meta?.totalPlantBatchesSynced != null
+                  ? ` (${meta.totalPlantBatchesSynced})`
+                  : meta?.metrcSandboxLastPlantBatchesCount != null
+                    ? ` (${meta.metrcSandboxLastPlantBatchesCount})`
+                    : ""}
+              </div>
+            </div>
           </div>
           {rateWarn ? (
             <div style={styles.warn}>
@@ -1365,6 +1576,14 @@ export default function MetrcSandboxPage() {
               onClick={() => void runPackagesSync()}
             >
               {busy === "packages" ? "Syncing…" : "Sync Packages"}
+            </button>
+            <button
+              type="button"
+              style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+              disabled={!!busy}
+              onClick={() => void runPlantBatchesSync()}
+            >
+              {busy === "plantBatches" ? "Syncing…" : "Sync Plant Batches"}
             </button>
           </div>
 
@@ -1484,6 +1703,293 @@ export default function MetrcSandboxPage() {
           ) : (
             <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>Loading saved strains…</p>
           )}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>METRC plant batches</h2>
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8" }}>
+            Synced from <code style={{ color: "#cbd5e1" }}>GET /plantbatches/v2/active</code> using
+            the selected facility license and modified-date pagination. Supports Clone → Veg
+            workflows in sandbox.
+          </p>
+          {plantBatchesLoaded && plantBatchesRows && plantBatchesRows.length > 0 ? (
+            <table style={styles.sampleTable}>
+              <thead>
+                <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+                  <th style={{ padding: "6px 8px" }}>METRC ID</th>
+                  <th style={{ padding: "6px 8px" }}>Batch name</th>
+                  <th style={{ padding: "6px 8px" }}>Strain</th>
+                  <th style={{ padding: "6px 8px" }}>Count</th>
+                  <th style={{ padding: "6px 8px" }}>Location</th>
+                  <th style={{ padding: "6px 8px" }}>Planted date</th>
+                  <th style={{ padding: "6px 8px" }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plantBatchesRows.map((row) => (
+                  <tr key={row.metrcPlantBatchId} style={{ borderTop: "1px solid #334155" }}>
+                    <td style={{ padding: "6px 8px", fontFamily: "ui-monospace, monospace" }}>
+                      {row.metrcPlantBatchId}
+                      {row.createdViaTest ? (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            fontSize: 10,
+                            color: "#fbbf24",
+                            fontWeight: 700,
+                          }}
+                        >
+                          TEST
+                        </span>
+                      ) : null}
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>{row.name || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>{row.strainName || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>{row.count}</td>
+                    <td style={{ padding: "6px 8px" }}>
+                      {row.locationName || row.metrcLocationId || "—"}
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>
+                      {row.plantedDate
+                        ? formatCompanyTimestamp(row.plantedDate) || row.plantedDate.slice(0, 10)
+                        : "—"}
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>{row.active ? "Active" : "Inactive"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : lastPlantBatchesSync?.ok && plantBatchesRows?.length === 0 ? (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+              Plant batches sync completed successfully with 0 active batches in METRC.
+            </p>
+          ) : plantBatchesLoaded ? (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+              No plant batches stored yet. Use Sync Plant Batches above to pull from METRC.
+            </p>
+          ) : (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>Loading saved plant batches…</p>
+          )}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Create test plant batch</h2>
+          <div style={styles.warn}>
+            <strong>Sandbox only.</strong> This POSTs an immature clone planting to METRC sandbox. It
+            is not wired into production Clone → Veg workflows. Confirm before submitting.
+          </div>
+          {!isSandboxEnvironment && !loadingMeta ? (
+            <p style={{ marginTop: 12, color: "#f87171", fontSize: 13 }}>
+              METRC environment is not sandbox. Switch to sandbox in Company Config to enable creation.
+            </p>
+          ) : null}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+              gap: 12,
+              marginTop: 14,
+            }}
+          >
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Batch name</span>
+              <input
+                type="text"
+                value={createBatchName}
+                onChange={(e) => setCreateBatchName(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Strain</span>
+              <input
+                type="text"
+                list="metrc-strain-options"
+                value={createBatchStrain}
+                onChange={(e) => setCreateBatchStrain(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+              <datalist id="metrc-strain-options">
+                {(strainsRows ?? []).map((s) => (
+                  <option key={s.metrcStrainId} value={s.name} />
+                ))}
+              </datalist>
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Count</span>
+              <input
+                type="number"
+                min={1}
+                value={createBatchCount}
+                onChange={(e) => setCreateBatchCount(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Planting date</span>
+              <input
+                type="date"
+                value={createBatchPlantingDate}
+                onChange={(e) => setCreateBatchPlantingDate(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>NexBatch veg room (METRC location)</span>
+              <select
+                value={createBatchRoomValue}
+                onChange={(e) => setCreateBatchRoomValue(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                <option value="">Select mapped veg room…</option>
+                {vegRoomOptions.map((room) => (
+                  <option
+                    key={`${room.suite}:${room.roomId}`}
+                    value={`${room.suite}:${room.roomId}`}
+                  >
+                    {formatNexbatchRoomOptionLabel(room)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div style={{ ...styles.row, marginTop: 12 }}>
+            <button
+              type="button"
+              style={{
+                ...styles.btn,
+                ...styles.btnPrimary,
+                opacity: busy || !isSandboxEnvironment ? 0.6 : 1,
+              }}
+              disabled={
+                !!busy ||
+                !isSandboxEnvironment ||
+                !createBatchName.trim() ||
+                !createBatchStrain.trim() ||
+                !createBatchRoomValue
+              }
+              onClick={() => setCreateBatchConfirmOpen(true)}
+            >
+              {busy === "createPlantBatch" ? "Creating…" : "Create Test Plant Batch"}
+            </button>
+          </div>
+          {createBatchConfirmOpen ? (
+            <div
+              style={{
+                marginTop: 14,
+                padding: 14,
+                borderRadius: 10,
+                border: "1px solid rgba(248, 113, 113, 0.45)",
+                background: "rgba(69, 10, 10, 0.35)",
+              }}
+            >
+              <p style={{ margin: "0 0 10px", fontWeight: 700, color: "#fecaca" }}>
+                Confirm METRC sandbox write
+              </p>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: "#fca5a5" }}>
+                Create immature clone batch &quot;{createBatchName.trim()}&quot; ({createBatchCount}{" "}
+                × {createBatchStrain.trim()}) at mapped room? This cannot be undone from NexBatch.
+              </p>
+              <div style={styles.row}>
+                <button
+                  type="button"
+                  style={{ ...styles.btn, ...styles.btnPrimary }}
+                  onClick={() => void runCreateTestPlantBatch()}
+                >
+                  Yes, create in METRC
+                </button>
+                <button
+                  type="button"
+                  style={styles.btn}
+                  onClick={() => setCreateBatchConfirmOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {lastCreatePlantBatch ? (
+            <div
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid #334155",
+                background: "rgba(2, 6, 23, 0.8)",
+                fontSize: 12,
+                color: "#94a3b8",
+              }}
+            >
+              <strong style={{ color: lastCreatePlantBatch.ok ? "#4ade80" : "#f87171" }}>
+                Last create attempt ({lastCreatePlantBatch.status ?? "—"})
+              </strong>
+              <pre
+                style={{
+                  marginTop: 8,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "ui-monospace, monospace",
+                  color: "#cbd5e1",
+                }}
+              >
+                {JSON.stringify(
+                  {
+                    message: lastCreatePlantBatch.message,
+                    endpoint: lastCreatePlantBatch.endpoint,
+                    request: lastCreatePlantBatch.requestPayload,
+                    response: lastCreatePlantBatch.responsePayload,
+                  },
+                  null,
+                  2,
+                )}
+              </pre>
+            </div>
+          ) : null}
         </section>
 
         <section style={styles.card}>

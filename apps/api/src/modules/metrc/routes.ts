@@ -13,6 +13,8 @@ import { MetrcLocationsSyncService } from "../../services/metrcLocationsSyncServ
 import { MetrcLocationMappingService } from "../../services/metrcLocationMappingService.js";
 import { MetrcStrainsSyncService } from "../../services/metrcStrainsSyncService.js";
 import { MetrcPackagesSyncService } from "../../services/metrcPackagesSyncService.js";
+import { MetrcPlantBatchesSyncService } from "../../services/metrcPlantBatchesSyncService.js";
+import { MetrcPlantBatchCreateService } from "../../services/metrcPlantBatchCreateService.js";
 import { MetrcDebugAuthService } from "../../services/metrcDebugAuthService.js";
 import { env } from "../../config/env.js";
 import { logInfo } from "../../lib/logger.js";
@@ -41,11 +43,24 @@ const metrcLocationsSyncService = new MetrcLocationsSyncService();
 const metrcLocationMappingService = new MetrcLocationMappingService();
 const metrcStrainsSyncService = new MetrcStrainsSyncService();
 const metrcPackagesSyncService = new MetrcPackagesSyncService();
+const metrcPlantBatchesSyncService = new MetrcPlantBatchesSyncService();
+const metrcPlantBatchCreateService = new MetrcPlantBatchCreateService();
 
 const metrcLocationMappingBody = z.object({
   metrcLocationId: z.string().min(1),
   nexbatchRoomSuite: z.enum(["vegRooms", "flowerRooms", "dryRooms", "freezers"]).nullable(),
   nexbatchRoomId: z.string().nullable(),
+});
+
+const metrcCreateTestPlantBatchBody = z.object({
+  name: z.string().min(1),
+  strain: z.string().min(1),
+  count: z.coerce.number().int().positive(),
+  plantingDate: z.string().min(1),
+  batchType: z.enum(["Clone", "Seed"]).optional(),
+  metrcLocationId: z.string().optional().nullable(),
+  nexbatchRoomSuite: z.enum(["vegRooms", "flowerRooms", "dryRooms", "freezers"]).optional().nullable(),
+  nexbatchRoomId: z.string().optional().nullable(),
 });
 const metrcDebugAuthService = new MetrcDebugAuthService();
 
@@ -297,6 +312,65 @@ metrcRouter.get(
     const result = await metrcPackagesSyncService.syncMetrcPackages({
       companyId,
       actorUserId: req.auth.userId,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.get(
+  "/plant-batches/persisted",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const plantBatches = await metrcPlantBatchesSyncService.listSyncedPlantBatches(companyId);
+    res.status(200).json({ ok: true, plantBatches });
+  }),
+);
+
+metrcRouter.get(
+  "/plant-batches/request-logs",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const { listMetrcPlantBatchRequestLogs } = await import(
+      "../../repositories/metrcPlantBatchRepository.js"
+    );
+    const logs = await listMetrcPlantBatchRequestLogs(companyId, 50);
+    res.status(200).json({ ok: true, logs });
+  }),
+);
+
+metrcRouter.get(
+  "/plant-batches",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const result = await metrcPlantBatchesSyncService.syncMetrcPlantBatches({
+      companyId,
+      actorUserId: req.auth.userId,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.post(
+  "/plant-batches/create-test",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcCreateTestPlantBatchBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcCreateTestPlantBatchBody>;
+    const result = await metrcPlantBatchCreateService.createTestPlantBatch({
+      companyId,
+      actorUserId: req.auth.userId,
+      name: body.name,
+      strain: body.strain,
+      count: body.count,
+      plantingDate: body.plantingDate,
+      batchType: body.batchType,
+      metrcLocationId: body.metrcLocationId ?? null,
+      nexbatchRoomSuite: body.nexbatchRoomSuite ?? null,
+      nexbatchRoomId: body.nexbatchRoomId ?? null,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),

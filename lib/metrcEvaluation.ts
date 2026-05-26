@@ -8,6 +8,7 @@ export type MetrcEvaluationTaskId =
   | "locations_sync"
   | "strains_sync"
   | "packages_sync"
+  | "plant_batches_sync"
   | "create_plant_batch"
   | "create_harvest"
   | "create_package"
@@ -105,14 +106,22 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
     runnable: true,
   },
   {
+    id: "plant_batches_sync",
+    label: "Plant Batch Sync",
+    description: "Pull active METRC plant batches for Clone → Veg workflows.",
+    nexbatchPath: "/api/metrc/plant-batches",
+    method: "GET",
+    runnable: true,
+  },
+  {
     id: "create_plant_batch",
     label: "Create Plant Batch",
-    description: "POST immature plant batch to METRC (certification write path).",
+    description: "POST immature clone plant batch to METRC sandbox (admin test action).",
     nexbatchPath: null,
     method: "POST",
     runnable: false,
     notAvailableReason:
-      "METRC plant batch creation is not wired in the API yet. Use cultivation workflow locally until a preview/write endpoint is added.",
+      "Use METRC Sandbox → Create Test Plant Batch (sandbox-only, confirmation required). Not runnable from this checklist without a POST body.",
   },
   {
     id: "create_harvest",

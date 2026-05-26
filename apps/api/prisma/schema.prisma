@@ -225,6 +225,8 @@ model Company {
   metrcLocations         MetrcLocation[]
   metrcStrains           MetrcStrain[]
   metrcPackages          MetrcPackage[]
+  metrcPlantBatches      MetrcPlantBatch[]
+  metrcPlantBatchRequestLogs MetrcPlantBatchRequestLog[]
 
   serviceSettings CompanyServiceSettings?
 
@@ -1405,6 +1407,52 @@ model MetrcPackage {
   @@index([companyId, licenseNumber])
   @@index([companyId, strainName])
   @@index([companyId, location])
+}
+
+/// METRC GET /plantbatches/v2/active rows synced per company (upsert by METRC plant batch id).
+model MetrcPlantBatch {
+  id                String    @id @default(cuid())
+  companyId         String
+  company           Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  metrcPlantBatchId String
+  licenseNumber     String    @default("")
+  name              String    @default("")
+  strainName        String    @default("")
+  metrcStrainId     String?
+  count             Float     @default(0)
+  metrcLocationId   String    @default("")
+  locationName      String    @default("")
+  plantedDate       DateTime?
+  lastModified      DateTime?
+  active            Boolean   @default(true)
+  createdViaTest    Boolean   @default(false)
+  rawPayloadJson    String
+  lastSyncedAt      DateTime
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([companyId, metrcPlantBatchId])
+  @@index([companyId, licenseNumber])
+  @@index([companyId, strainName])
+  @@index([companyId, name])
+}
+
+/// Admin/sandbox METRC plant batch API request audit (sync + create-test).
+model MetrcPlantBatchRequestLog {
+  id                  String   @id @default(cuid())
+  companyId           String
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  action              String
+  method              String
+  endpoint            String
+  httpStatus          Int?
+  requestPayloadJson  String   @default("{}")
+  responsePayloadJson String   @default("{}")
+  durationMs          Int?
+  actorUserId         String?
+  createdAt           DateTime @default(now())
+
+  @@index([companyId, createdAt])
 }
 
 model CheckCapture {

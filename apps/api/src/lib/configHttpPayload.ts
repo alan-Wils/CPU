@@ -435,6 +435,19 @@ export function buildIntegrationsMetaView(merged: MergedCompanyConfig): Record<s
             typeof metrc.totalPackagesSynced === "number"
                 ? metrc.totalPackagesSynced
                 : metrc.metrcSandboxLastPackagesCount ?? null,
+        metrcSandboxLastPlantBatchesSyncAt:
+            String(metrc.metrcSandboxLastPlantBatchesSyncAt ?? "").trim() || null,
+        metrcLastPlantBatchesSyncAt:
+            String(metrc.metrcLastPlantBatchesSyncAt ?? metrc.metrcSandboxLastPlantBatchesSyncAt ?? "").trim() ||
+            null,
+        lastPlantBatchesSync:
+            String(metrc.metrcLastPlantBatchesSyncAt ?? metrc.metrcSandboxLastPlantBatchesSyncAt ?? "").trim() ||
+            null,
+        metrcSandboxLastPlantBatchesCount: metrc.metrcSandboxLastPlantBatchesCount ?? null,
+        totalPlantBatchesSynced:
+            typeof metrc.totalPlantBatchesSynced === "number"
+                ? metrc.totalPlantBatchesSynced
+                : metrc.metrcSandboxLastPlantBatchesCount ?? null,
         metrcSandboxLastRateLimitWarning: String(metrc.metrcSandboxLastRateLimitWarning ?? "").trim() || null,
         metrcSandboxUiStatus: String(metrc.metrcSandboxOperationalStatus ?? "").trim() || null,
         metrcOperationalAccessGranted: Boolean(metrc.metrcOperationalAccessGranted),

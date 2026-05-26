@@ -3,6 +3,10 @@ import {
   buildMetrcLocationsActivePathCandidates,
   type MetrcLocationsActiveQueryParams,
 } from "./metrcLocationsActiveQuery.js";
+import {
+  buildMetrcPlantBatchesActivePathCandidates,
+  type MetrcPlantBatchesActiveQueryParams,
+} from "./metrcPlantBatchesActiveQuery.js";
 
 export type { MetrcLocationsActiveQueryParams };
 
@@ -11,7 +15,8 @@ export type MetrcEndpointResource =
   | "strains"
   | "items"
   | "rooms"
-  | "packages";
+  | "packages"
+  | "plant_batches";
 
 export type MetrcEndpointContext = {
   stateCode: string;
@@ -90,6 +95,13 @@ export function buildMetrcEndpointCandidates(
     case "packages": {
       const q = licenseQuery(String(licenseNumberOrLocationsParams));
       return [`/packages/v2/active${q}`, `/packages/v1/active${q}`];
+    }
+    case "plant_batches": {
+      if (typeof licenseNumberOrLocationsParams !== "string") {
+        return buildMetrcPlantBatchesActivePathCandidates(licenseNumberOrLocationsParams);
+      }
+      const q = licenseQuery(String(licenseNumberOrLocationsParams));
+      return [`/plantbatches/v2/active${q}`, `/plantbatches/v1/active${q}`];
     }
     default:
       return [];
