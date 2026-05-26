@@ -93,6 +93,10 @@ const metrcCreateTestHarvestBody = z.object({
   plantCount: z.coerce.number().int().positive().optional(),
   notes: z.string().optional().nullable(),
   autoPromoteBatch: z.boolean().optional(),
+  growthLocationName: z.string().min(1).optional(),
+  metrcGrowthLocationId: z.string().optional().nullable(),
+  dryingLocationName: z.string().min(1).optional(),
+  metrcDryingLocationId: z.string().optional().nullable(),
 });
 const metrcDebugAuthService = new MetrcDebugAuthService();
 
@@ -520,6 +524,10 @@ metrcRouter.post(
       plantCount: body.plantCount ?? null,
       notes: body.notes ?? null,
       autoPromoteBatch: body.autoPromoteBatch ?? null,
+      growthLocationName: body.growthLocationName ?? null,
+      metrcGrowthLocationId: body.metrcGrowthLocationId ?? null,
+      dryingLocationName: body.dryingLocationName ?? null,
+      metrcDryingLocationId: body.metrcDryingLocationId ?? null,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),

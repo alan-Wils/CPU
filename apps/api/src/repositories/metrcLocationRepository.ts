@@ -70,6 +70,38 @@ export async function listMetrcLocationsForCompany(companyId: string) {
   });
 }
 
+export async function listMetrcPlantCapableLocations(companyId: string) {
+  return prisma.metrcLocation.findMany({
+    where: { companyId, forPlants: true },
+    orderBy: [{ name: "asc" }, { metrcLocationId: "asc" }],
+  });
+}
+
+export async function listMetrcHarvestCapableLocations(companyId: string) {
+  return prisma.metrcLocation.findMany({
+    where: { companyId, forHarvests: true },
+    orderBy: [{ name: "asc" }, { metrcLocationId: "asc" }],
+  });
+}
+
+export async function findMetrcLocationById(companyId: string, metrcLocationId: string) {
+  const id = String(metrcLocationId || "").trim();
+  if (!id) return null;
+  return prisma.metrcLocation.findUnique({
+    where: {
+      companyId_metrcLocationId: { companyId, metrcLocationId: id },
+    },
+  });
+}
+
+export async function findMetrcLocationByName(companyId: string, name: string) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return null;
+  const rows = await prisma.metrcLocation.findMany({ where: { companyId } });
+  const lower = trimmed.toLowerCase();
+  return rows.find((r) => r.name.trim().toLowerCase() === lower) ?? null;
+}
+
 export async function applyAutoMetrcLocationMappings(
   companyId: string,
   rows: MetrcLocationAutoMappingRow[],

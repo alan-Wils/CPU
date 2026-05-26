@@ -187,6 +187,7 @@ type StrainsSyncResult = {
 
 const DEFAULT_TEST_STRAIN_NAME = "NexBatch Test Strain";
 const DEFAULT_TEST_HARVEST_NAME = "NexBatch Test Harvest";
+const DEFAULT_PLANT_GROWTH_LOCATION_NAME = "SBX Default Location Type Location 1";
 const METRC_HARVEST_TYPE_OPTIONS = ["Product", "WholePlant"] as const;
 const DEFAULT_STRAIN_INDICA_PCT = "50";
 const DEFAULT_STRAIN_SATIVA_PCT = "50";
@@ -719,6 +720,8 @@ export default function MetrcSandboxPage() {
   const [batchPlantsRows, setBatchPlantsRows] = useState<MetrcPlantRow[] | null>(null);
   const [batchPlantsLoaded, setBatchPlantsLoaded] = useState(false);
   const [createHarvestPlantLabels, setCreateHarvestPlantLabels] = useState<string[]>([]);
+  const [createHarvestGrowthLocationId, setCreateHarvestGrowthLocationId] = useState("");
+  const [createHarvestDryingLocationId, setCreateHarvestDryingLocationId] = useState("");
   const [nexbatchRooms, setNexbatchRooms] = useState<NexbatchRoomOption[]>([]);
   const [mappingBusy, setMappingBusy] = useState<string | null>(null);
   const [locationCapabilityFilter, setLocationCapabilityFilter] =
@@ -944,6 +947,54 @@ export default function MetrcSandboxPage() {
     batchPlantsLoaded,
     batchPlantsRows,
     createHarvestPlantLabels.length,
+  ]);
+
+  const plantCapableLocations = useMemo(
+    () => (locationsRows ?? []).filter((r) => r.forPlants),
+    [locationsRows],
+  );
+
+  const harvestCapableLocations = useMemo(
+    () => (locationsRows ?? []).filter((r) => r.forHarvests),
+    [locationsRows],
+  );
+
+  const canCreateTestHarvest =
+    plantCapableLocations.length > 0 && harvestCapableLocations.length > 0;
+
+  const selectedGrowthLocation = useMemo(
+    () =>
+      plantCapableLocations.find((l) => l.metrcLocationId === createHarvestGrowthLocationId) ??
+      null,
+    [plantCapableLocations, createHarvestGrowthLocationId],
+  );
+
+  const selectedDryingLocation = useMemo(
+    () =>
+      harvestCapableLocations.find((l) => l.metrcLocationId === createHarvestDryingLocationId) ??
+      null,
+    [harvestCapableLocations, createHarvestDryingLocationId],
+  );
+
+  useEffect(() => {
+    if (!locationsLoaded) return;
+    if (plantCapableLocations.length > 0 && !createHarvestGrowthLocationId) {
+      const preferred =
+        plantCapableLocations.find(
+          (l) =>
+            l.name.trim().toLowerCase() === DEFAULT_PLANT_GROWTH_LOCATION_NAME.toLowerCase(),
+        ) ?? plantCapableLocations[0];
+      if (preferred) setCreateHarvestGrowthLocationId(preferred.metrcLocationId);
+    }
+    if (harvestCapableLocations.length > 0 && !createHarvestDryingLocationId) {
+      setCreateHarvestDryingLocationId(harvestCapableLocations[0]!.metrcLocationId);
+    }
+  }, [
+    locationsLoaded,
+    plantCapableLocations,
+    harvestCapableLocations,
+    createHarvestGrowthLocationId,
+    createHarvestDryingLocationId,
   ]);
 
   useEffect(() => {
@@ -1634,6 +1685,10 @@ export default function MetrcSandboxPage() {
       unitOfWeight: "Grams",
       actualDate: new Date().toISOString().slice(0, 10),
       autoPromoteBatch: true,
+      growthLocationName: selectedGrowthLocation?.name ?? "",
+      metrcGrowthLocationId: createHarvestGrowthLocationId || null,
+      dryingLocationName: selectedDryingLocation?.name ?? "",
+      metrcDryingLocationId: createHarvestDryingLocationId || null,
     };
     const harvestCreateStarted = performance.now();
     try {
@@ -2777,9 +2832,19 @@ export default function MetrcSandboxPage() {
             <div style={styles.warn}>
               <strong>Sandbox only.</strong> METRC harvest uses{" "}
               <code style={{ color: "#cbd5e1" }}>PUT /plants/v2/harvest</code> with individual plant
-              tags — not plant batch names. If the batch has no tagged plants yet, NexBatch promotes it
-              via <code style={{ color: "#cbd5e1" }}>POST /plantbatches/v2/growthphase</code> first.
+              tags — not plant batch names. Growth phase uses a <strong>plant-capable</strong> location
+              (ForPlants); harvest drying uses a separate <strong>harvest-capable</strong> location
+              (ForHarvests).
             </div>
+            {!canCreateTestHarvest && locationsLoaded ? (
+              <p style={{ marginTop: 12, color: "#f87171", fontSize: 13 }}>
+                No plant-capable METRC location is mapped. Sync locations and map a plant-capable
+                location first.
+                {harvestCapableLocations.length === 0
+                  ? " Also requires at least one harvest-capable location (ForHarvests)."
+                  : ""}
+              </p>
+            ) : null}
             {!isSandboxEnvironment && !loadingMeta ? (
               <p style={{ marginTop: 12, color: "#f87171", fontSize: 13 }}>
                 METRC environment is not sandbox. Switch to sandbox in Company Config to enable creation.
@@ -2840,17 +2905,11 @@ export default function MetrcSandboxPage() {
                 />
               </label>
               <label style={{ fontSize: 13 }}>
-                <span style={{ color: "#94a3b8" }}>Room / location (from batch)</span>
-                <input
-                  type="text"
-                  readOnly
-                  value={
-                    selectedHarvestPlantBatch
-                      ? selectedHarvestPlantBatch.locationName ||
-                        selectedHarvestPlantBatch.metrcLocationId
-                      : ""
-                  }
-                  placeholder="Select a plant batch"
+                <span style={{ color: "#94a3b8" }}>Plant growth location (required)</span>
+                <select
+                  value={createHarvestGrowthLocationId}
+                  onChange={(e) => setCreateHarvestGrowthLocationId(e.target.value)}
+                  disabled={!canCreateTestHarvest}
                   style={{
                     display: "block",
                     width: "100%",
@@ -2858,10 +2917,42 @@ export default function MetrcSandboxPage() {
                     padding: "8px 10px",
                     borderRadius: 8,
                     border: "1px solid #475569",
-                    background: "#1e293b",
-                    color: "#94a3b8",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
                   }}
-                />
+                >
+                  <option value="">Select plant-capable location…</option>
+                  {plantCapableLocations.map((loc) => (
+                    <option key={loc.metrcLocationId} value={loc.metrcLocationId}>
+                      {loc.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Harvest drying location (required)</span>
+                <select
+                  value={createHarvestDryingLocationId}
+                  onChange={(e) => setCreateHarvestDryingLocationId(e.target.value)}
+                  disabled={!canCreateTestHarvest}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                >
+                  <option value="">Select harvest-capable location…</option>
+                  {harvestCapableLocations.map((loc) => (
+                    <option key={loc.metrcLocationId} value={loc.metrcLocationId}>
+                      {loc.name}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label style={{ fontSize: 13 }}>
                 <span style={{ color: "#94a3b8" }}>Harvest name</span>
@@ -2984,7 +3075,10 @@ export default function MetrcSandboxPage() {
                 disabled={
                   !!busy ||
                   !isSandboxEnvironment ||
+                  !canCreateTestHarvest ||
                   !createHarvestPlantBatchId.trim() ||
+                  !createHarvestGrowthLocationId ||
+                  !createHarvestDryingLocationId ||
                   !createHarvestName.trim()
                 }
                 onClick={() => setCreateHarvestConfirmOpen(true)}
@@ -3011,7 +3105,9 @@ export default function MetrcSandboxPage() {
                     ? `${createHarvestPlantLabels.length} plant tag(s)`
                     : "auto-promoted plant tag(s)"}{" "}
                   from batch &quot;{selectedHarvestPlantBatch?.name || createHarvestPlantBatchId}&quot;?
-                  METRC will receive <code>Plant</code> = tag labels only (never the batch name).
+                  Growth: <strong>{selectedGrowthLocation?.name || "—"}</strong> · Drying:{" "}
+                  <strong>{selectedDryingLocation?.name || "—"}</strong>. Plant tags only in{" "}
+                  <code>Plant</code> — never the batch name.
                 </p>
                 <div style={styles.row}>
                   <button

@@ -4,6 +4,7 @@ import { loadCompanyMetrcConfig } from "../lib/metrcConfigLoader.js";
 import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
 import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
 import { isMetrcSandboxPlaceholderLicense } from "../lib/metrcOperationalStatus.js";
+import { resolvePlantGrowthLocation } from "../lib/metrcLocationCapabilities.js";
 import { appendMetrcPlantBatchRequestLog } from "../repositories/metrcPlantBatchRepository.js";
 import { MetrcAvailablePlantTagsService } from "./metrcAvailablePlantTagsService.js";
 
@@ -12,7 +13,9 @@ export type MetrcPromotePlantBatchInput = {
   actorUserId: string;
   plantBatchName: string;
   count: number;
-  locationName: string;
+  /** METRC location name for NewLocation — must have ForPlants=true. */
+  growthLocationName: string;
+  metrcGrowthLocationId?: string | null;
   growthPhase?: "Vegetative" | "Flowering";
   growthDate?: string | null;
   startingTag?: string | null;
@@ -77,7 +80,6 @@ export class MetrcPlantBatchGrowthPhaseService {
   ): Promise<MetrcPromotePlantBatchResponse> {
     const plantBatchName = String(input.plantBatchName || "").trim();
     const count = Math.max(1, Math.floor(input.count));
-    const locationName = String(input.locationName || "").trim();
     const growthPhase = input.growthPhase === "Vegetative" ? "Vegetative" : "Flowering";
     const growthDate =
       String(input.growthDate || "").trim() || new Date().toISOString().slice(0, 10);
@@ -92,6 +94,20 @@ export class MetrcPlantBatchGrowthPhaseService {
     if (!plantBatchName) {
       return { ok: false, status: 400, message: "Plant batch name is required." };
     }
+
+    const growthLocation = await resolvePlantGrowthLocation({
+      companyId: input.companyId,
+      metrcLocationId: input.metrcGrowthLocationId,
+      locationName: input.growthLocationName,
+    });
+    if (growthLocation.ok === false) {
+      return {
+        ok: false,
+        status: growthLocation.status,
+        message: growthLocation.message,
+      };
+    }
+    const locationName = growthLocation.location.name;
 
     const loaded = await loadCompanyMetrcConfig(input.companyId);
     if (!loaded) {
@@ -176,6 +192,9 @@ export class MetrcPlantBatchGrowthPhaseService {
       sourceName: plantBatchName,
       endpoint,
       payload: requestBody,
+      growthLocationName: locationName,
+      metrcGrowthLocationId: growthLocation.location.metrcLocationId,
+      forPlants: true,
     };
 
     if (isMetrcClientFailure(result)) {

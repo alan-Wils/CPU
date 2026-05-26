@@ -7,6 +7,11 @@ import {
   logMetrcCredentialDiagnostics,
 } from "../lib/metrcCredentialDiagnostics.js";
 import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
+import {
+  listPlantCapableMetrcLocations,
+  resolveHarvestDryingLocation,
+  resolvePlantGrowthLocation,
+} from "../lib/metrcLocationCapabilities.js";
 import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
 import { isMetrcSandboxPlaceholderLicense } from "../lib/metrcOperationalStatus.js";
 import {
@@ -40,6 +45,12 @@ export type MetrcCreateTestHarvestInput = {
   plantCount?: number | null;
   notes?: string | null;
   autoPromoteBatch?: boolean | null;
+  /** For POST /plantbatches/v2/growthphase NewLocation (ForPlants=true). */
+  growthLocationName?: string | null;
+  metrcGrowthLocationId?: string | null;
+  /** For PUT /plants/v2/harvest DryingLocation (ForHarvests=true). */
+  dryingLocationName?: string | null;
+  metrcDryingLocationId?: string | null;
 };
 
 export type MetrcCreateTestHarvestSuccess = {
@@ -117,6 +128,8 @@ function buildHarvestDiagnostics(input: {
   payload: unknown;
   plantLabels: string[];
   promotedBatch: boolean;
+  growthLocationName: string;
+  dryingLocationName: string;
 }): Record<string, unknown> {
   return {
     sourceType: input.sourceType,
@@ -125,6 +138,8 @@ function buildHarvestDiagnostics(input: {
     payload: input.payload,
     plantLabels: input.plantLabels,
     promotedBatch: input.promotedBatch,
+    growthLocationName: input.growthLocationName,
+    dryingLocationName: input.dryingLocationName,
   };
 }
 
@@ -321,11 +336,52 @@ export class MetrcHarvestCreateService {
       };
     }
 
+    const plantCapableLocations = await listPlantCapableMetrcLocations(input.companyId);
+    if (!plantCapableLocations.length) {
+      return {
+        ok: false,
+        status: 400,
+        message:
+          "No plant-capable METRC location is mapped. Sync locations and ensure at least one location has ForPlants=true.",
+      };
+    }
+
+    const growthLocation = await resolvePlantGrowthLocation({
+      companyId: input.companyId,
+      metrcLocationId: input.metrcGrowthLocationId,
+      locationName: input.growthLocationName,
+    });
+    if (growthLocation.ok === false) {
+      return {
+        ok: false,
+        status: growthLocation.status,
+        message: growthLocation.message,
+        sourceType: "plantBatch",
+        sourceName: plantBatch?.name ?? metrcPlantBatchId,
+      };
+    }
+
+    const dryingLocation = await resolveHarvestDryingLocation({
+      companyId: input.companyId,
+      metrcLocationId: input.metrcDryingLocationId,
+      locationName: input.dryingLocationName,
+    });
+    if (dryingLocation.ok === false) {
+      return {
+        ok: false,
+        status: dryingLocation.status,
+        message: dryingLocation.message,
+        sourceType: "plantBatch",
+        sourceName: plantBatch?.name ?? metrcPlantBatchId,
+      };
+    }
+
+    const growthLocationName = growthLocation.location.name;
+    const dryingLocationName = dryingLocation.location.name;
+
     let plantLabels = explicitLabelCheck.labels;
     let promotedBatch = false;
     const plantBatchName = plantBatch?.name.trim() ?? "";
-    const locationName =
-      plantBatch?.locationName.trim() || plantBatch?.metrcLocationId || "";
     const maxPlants =
       typeof input.plantCount === "number" && input.plantCount > 0
         ? Math.floor(input.plantCount)
@@ -345,7 +401,8 @@ export class MetrcHarvestCreateService {
           actorUserId: input.actorUserId,
           plantBatchName: plantBatch.name,
           count: maxPlants,
-          locationName,
+          growthLocationName,
+          metrcGrowthLocationId: growthLocation.location.metrcLocationId,
           growthPhase: "Flowering",
           growthDate: actualDate,
         });
@@ -427,7 +484,7 @@ export class MetrcHarvestCreateService {
     const requestBody = buildHarvestPlantsBody({
       plantLabels,
       harvestName,
-      locationName,
+      locationName: dryingLocationName,
       wetWeight,
       unitOfWeight,
       actualDate,
@@ -448,6 +505,8 @@ export class MetrcHarvestCreateService {
       payload: requestBody,
       plantLabels,
       promotedBatch,
+      growthLocationName,
+      dryingLocationName,
     });
 
     for (const pathname of [harvestPath, fallbackPath]) {
@@ -470,8 +529,8 @@ export class MetrcHarvestCreateService {
             sourcePlantBatchId: plantBatch?.metrcPlantBatchId ?? "",
             sourcePlantBatchName: plantBatchName,
             strainName: plantBatch?.strainName ?? "",
-            metrcLocationId: plantBatch?.metrcLocationId ?? "",
-            locationName,
+            metrcLocationId: dryingLocation.location.metrcLocationId,
+            locationName: dryingLocationName,
             harvestType,
             wetWeight,
             totalWeight: wetWeight,
@@ -511,8 +570,8 @@ export class MetrcHarvestCreateService {
           sourcePlantBatchId: plantBatch?.metrcPlantBatchId ?? "",
           sourcePlantBatchName: plantBatchName,
           strainName: plantBatch?.strainName ?? "",
-          metrcLocationId: plantBatch?.metrcLocationId ?? "",
-          locationName,
+          metrcLocationId: dryingLocation.location.metrcLocationId,
+          locationName: dryingLocationName,
           harvestType,
           wetWeight,
           totalWeight: wetWeight,
