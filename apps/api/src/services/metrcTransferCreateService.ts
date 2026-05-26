@@ -7,6 +7,7 @@ import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
 import { findMetrcPackageByLabel } from "../repositories/metrcPackageRepository.js";
 import {
   appendMetrcTransferRequestLog,
+  upsertMetrcTransfersForCompany,
 } from "../repositories/metrcTransferRepository.js";
 import { MetrcTransfersSyncService } from "./metrcTransfersSyncService.js";
 import {
@@ -470,8 +471,37 @@ export class MetrcTransferCreateService {
             companyId: input.companyId,
             actorUserId: input.actorUserId,
           });
-          const transfersSynced =
+          let transfersSynced =
             syncResult.ok === true ? syncResult.totalTransfersSynced ?? syncResult.count : 0;
+
+          if (metrcTransferId && transfersSynced === 0) {
+            const syncedAt = new Date();
+            await upsertMetrcTransfersForCompany(input.companyId, [
+              {
+                metrcTransferId,
+                direction: "template",
+                manifestNumber: templateName,
+                transferType: attemptTypeName,
+                status: "template",
+                licenseNumber: sourceLicense,
+                transporter:
+                  String(input.transporterFacilityLicense ?? "").trim() || sourceLicense,
+                destinationFacility: destinationLicense,
+                packageLabelsJson: JSON.stringify([packageLabel]),
+                plannedRoute,
+                plannedDate: new Date(`${transferDate}T12:00:00.000Z`),
+                createdViaTest: true,
+                rawPayloadJson: JSON.stringify(result.data ?? {}),
+                lastSyncedAt: syncedAt,
+              },
+            ]);
+            transfersSynced = 1;
+            logWarn("[METRC] transfer_create_test_sync_empty_upserted_created_id", {
+              companyId: input.companyId,
+              metrcTransferId,
+              endpoint: lastEndpoint,
+            });
+          }
 
           logInfo("[METRC] transfer_create_test_success", {
             companyId: input.companyId,

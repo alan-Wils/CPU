@@ -34,6 +34,7 @@ import {
   resolveTransferTypesSource,
 } from "../../services/metrcTransferTypesSyncService.js";
 import { MetrcDebugAuthService } from "../../services/metrcDebugAuthService.js";
+import { MetrcTransfersRawDebugService } from "../../services/metrcTransfersRawDebugService.js";
 import { env } from "../../config/env.js";
 import { logInfo } from "../../lib/logger.js";
 import { nexbatchRoomTypeLabel } from "../../lib/metrcNexbatchRooms.js";
@@ -119,6 +120,7 @@ const metrcStrainCreateService = new MetrcStrainCreateService();
 const metrcTransfersSyncService = new MetrcTransfersSyncService();
 const metrcTransferCreateService = new MetrcTransferCreateService();
 const metrcTransferTypesSyncService = new MetrcTransferTypesSyncService();
+const metrcTransfersRawDebugService = new MetrcTransfersRawDebugService();
 
 const metrcLocationMappingBody = z.object({
   metrcLocationId: z.string().min(1),
@@ -195,6 +197,21 @@ metrcRouter.get(
     const companyId = getScopedCompanyId(req);
     const result = await metrcDebugAuthService.runDebugAuth({ companyId });
     res.status(result.ok ? 200 : 400).json(result);
+  }),
+);
+
+/** Developer-only: raw METRC transfer list payloads (incoming, outgoing, templates). */
+metrcRouter.get(
+  "/debug/transfers/raw",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    if (env.NODE_ENV === "production") {
+      res.status(404).json({ ok: false, message: "Not found." });
+      return;
+    }
+    const companyId = getScopedCompanyId(req);
+    const result = await metrcTransfersRawDebugService.fetchRawTransfers({ companyId });
+    res.status(result.ok ? 200 : 404).json(result);
   }),
 );
 

@@ -10,6 +10,29 @@ export function parseMetrcDataRecords(bodyJson: unknown): Record<string, unknown
   return [];
 }
 
+export function metrcDataRecordCount(bodyJson: unknown): number {
+  return parseMetrcDataRecords(bodyJson).length;
+}
+
+export function extractMetrcListPagination(bodyJson: unknown): Record<string, unknown> | null {
+  if (!bodyJson || typeof bodyJson !== "object" || Array.isArray(bodyJson)) return null;
+  const body = bodyJson as Record<string, unknown>;
+  const keys = [
+    "Total",
+    "TotalRecords",
+    "TotalPages",
+    "PageSize",
+    "PageNumber",
+    "CurrentPage",
+    "RecordsOnPage",
+  ];
+  const out: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (body[key] !== undefined) out[key] = body[key];
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 /** Parse METRC JSON body: either a bare array or `{ Data: [...] }`. */
 export function parseLocationsPayload(bodyJson: unknown): Record<string, unknown>[] {
   return parseMetrcDataRecords(bodyJson);

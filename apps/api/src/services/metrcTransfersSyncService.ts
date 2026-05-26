@@ -8,18 +8,30 @@ import {
 } from "../lib/metrcCredentialDiagnostics.js";
 import {
   cacheMetrcEndpointPath,
+  getCachedMetrcEndpointPath,
   metrcEndpointPathKey,
   metrcPullFailureMessage,
-  orderMetrcEndpointCandidates,
   shouldTryNextMetrcEndpoint,
   type MetrcEndpointResource,
 } from "../lib/metrcEndpoints.js";
-import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
+import {
+  parseMetrcFacilityLicenseRows,
+  resolveMetrcLocationsActiveRequest,
+} from "../lib/metrcLocationsActiveQuery.js";
+import {
+  extractMetrcListPagination,
+  metrcDataRecordCount,
+} from "../lib/metrcConnectionHelpers.js";
 import {
   parseMetrcTransfersPayload,
   type ParsedMetrcTransfer,
 } from "../lib/metrcTransfersParse.js";
-import type { MetrcTransfersListDirection } from "../lib/metrcTransfersActiveQuery.js";
+import {
+  buildMetrcTransfersListPathCandidates,
+  buildMetrcTransfersSyncQueryParamVariants,
+  type MetrcTransfersListDirection,
+  type MetrcTransfersListQueryParams,
+} from "../lib/metrcTransfersActiveQuery.js";
 import {
   applyMetrcOperationalSuccess,
   isMetrcSandboxPlaceholderLicense,
@@ -70,8 +82,12 @@ export type MetrcTransfersSyncDiagnostics = {
     url: string;
     params: Record<string, unknown>;
     httpStatus: number | null;
-    totalReturned: number;
+    rawRecordCount: number;
+    parsedCount: number;
+    pagination: Record<string, unknown> | null;
     firstRawItem: Record<string, unknown> | null;
+    dateFiltersOmitted: boolean;
+    paramVariantIndex: number;
   }>;
 };
 
@@ -194,13 +210,22 @@ export class MetrcTransfersSyncService {
       license = operationalLicense;
     }
 
-    const locationsRequest = await resolveMetrcLocationsActiveRequest({
+    await resolveMetrcLocationsActiveRequest({
       client,
       loaded: { ...loaded, licenseNumber: license },
       companyId: input.companyId,
       purpose: "transfers_sync",
     });
 
+    let facilityStartDate: string | null = null;
+    const facilitiesResult = await client.get<unknown>("/facilities/v2/");
+    if (!isMetrcClientFailure(facilitiesResult)) {
+      const facilityRows = parseMetrcFacilityLicenseRows(facilitiesResult.data);
+      facilityStartDate =
+        facilityRows.find((row) => row.licenseNumber === operationalLicense)?.startDate ?? null;
+    }
+
+    const pageSize = 20;
     const startedAt = Date.now();
     let totalRetries = 0;
     let totalRateLimitWaitedMs = 0;
@@ -214,73 +239,174 @@ export class MetrcTransfersSyncService {
     for (const direction of TRANSFER_DIRECTIONS) {
       const resource = DIRECTION_ENDPOINT_RESOURCE[direction];
       const directionPages: ParsedMetrcTransfer[][] = [];
-      let directionLastStatus: number | null = null;
-      let directionFirstRaw: Record<string, unknown> | null = null;
-      let directionEndpointKey = "";
+      const paramVariants = buildMetrcTransfersSyncQueryParamVariants({
+        direction,
+        licenseNumber: operationalLicense,
+        environment: loaded.environment as MetrcEnvironment,
+        facilityStartDate,
+        pageSize,
+      });
 
-      for (let pageNumber = 1; pageNumber <= MAX_TRANSFER_PAGES; pageNumber += 1) {
-        const pageParams = { ...locationsRequest.params, pageNumber };
-        const candidates = orderMetrcEndpointCandidates(endpointCtx, resource, pageParams);
-        let pageParsed: ParsedMetrcTransfer[] | null = null;
+      let directionSynced = false;
 
-        for (let i = 0; i < candidates.length; i += 1) {
-          const candidatePath = candidates[i]!;
-          const result = await client.get<unknown>(candidatePath);
+      for (let variantIndex = 0; variantIndex < paramVariants.length; variantIndex += 1) {
+        if (directionSynced) break;
 
-          if (!isMetrcClientFailure(result)) {
-            cacheMetrcEndpointPath(endpointCtx, resource, candidatePath);
-            directionEndpointKey = metrcEndpointPathKey(candidatePath);
-            pageParsed = parseMetrcTransfersPayload(result.data, direction);
-            totalRetries += result.retries;
-            totalRateLimitWaitedMs += result.rateLimitWaitedMs;
-            directionLastStatus = result.status;
-            if (!directionFirstRaw && pageParsed[0]?.raw) {
-              directionFirstRaw = pageParsed[0].raw;
+        const baseParams = paramVariants[variantIndex]!;
+        const variantPages: ParsedMetrcTransfer[][] = [];
+        let variantRawTotal = 0;
+        let directionLastStatus: number | null = null;
+        let directionEndpointKey = "";
+        let directionFirstRaw: Record<string, unknown> | null = null;
+        let lastPagination: Record<string, unknown> | null = null;
+
+        for (let pageNumber = 1; pageNumber <= MAX_TRANSFER_PAGES; pageNumber += 1) {
+          const pageParams: MetrcTransfersListQueryParams = { ...baseParams, pageNumber };
+          const built = buildMetrcTransfersListPathCandidates(direction, pageParams);
+          const cached = getCachedMetrcEndpointPath(endpointCtx, resource);
+          const candidates = cached
+            ? [
+                built.find((p) => metrcEndpointPathKey(p) === cached) ?? built[0]!,
+                ...built.filter((p) => metrcEndpointPathKey(p) !== cached),
+              ]
+            : built;
+          let pageParsed: ParsedMetrcTransfer[] | null = null;
+          let pageRawCount = 0;
+          let pagePagination: Record<string, unknown> | null = null;
+
+          for (let i = 0; i < candidates.length; i += 1) {
+            const candidatePath = candidates[i]!;
+            const result = await client.get<unknown>(candidatePath);
+
+            if (!isMetrcClientFailure(result)) {
+              cacheMetrcEndpointPath(endpointCtx, resource, candidatePath);
+              directionEndpointKey = metrcEndpointPathKey(candidatePath);
+              pageRawCount = metrcDataRecordCount(result.data);
+              pagePagination = extractMetrcListPagination(result.data);
+              pageParsed = parseMetrcTransfersPayload(result.data, direction);
+              totalRetries += result.retries;
+              totalRateLimitWaitedMs += result.rateLimitWaitedMs;
+              directionLastStatus = result.status;
+              if (!directionFirstRaw) {
+                const rawRows = parseMetrcTransfersPayload(result.data, direction);
+                directionFirstRaw = rawRows[0]?.raw ?? null;
+                if (!directionFirstRaw) {
+                  const records =
+                    result.data &&
+                    typeof result.data === "object" &&
+                    Array.isArray((result.data as { Data?: unknown[] }).Data)
+                      ? (result.data as { Data: unknown[] }).Data
+                      : [];
+                  const first = records[0];
+                  directionFirstRaw =
+                    first && typeof first === "object" ? (first as Record<string, unknown>) : null;
+                }
+              }
+              break;
+            }
+
+            directionLastStatus = result.status || 502;
+            if (
+              shouldTryNextMetrcEndpoint(resource, i, candidates.length, {
+                status: result.status,
+                upstreamType: result.upstreamError?.type,
+              })
+            ) {
+              continue;
             }
             break;
           }
 
-          directionLastStatus = result.status || 502;
-          if (
-            shouldTryNextMetrcEndpoint(resource, i, candidates.length, {
-              status: result.status,
-              upstreamType: result.upstreamError?.type,
-            })
-          ) {
-            continue;
+          if (!pageParsed) {
+            logWarn("[METRC] transfers_sync_page_failed", {
+              companyId: input.companyId,
+              direction,
+              variantIndex,
+              pageNumber,
+              status: directionLastStatus,
+              params: pageParams,
+            });
+            diagnostics.endpoints.push({
+              direction,
+              url: directionEndpointKey || resource,
+              params: {
+                ...pageParams,
+                licenseNumber: operationalLicense,
+                dateFiltersOmitted: !pageParams.lastModifiedStart,
+              },
+              httpStatus: directionLastStatus,
+              rawRecordCount: 0,
+              parsedCount: 0,
+              pagination: null,
+              firstRawItem: null,
+              dateFiltersOmitted: !pageParams.lastModifiedStart,
+              paramVariantIndex: variantIndex,
+            });
+            break;
           }
-          break;
-        }
 
-        if (!pageParsed) {
-          logWarn("[METRC] transfers_sync_direction_failed", {
+          pagesFetched += 1;
+          variantPages.push(pageParsed);
+          variantRawTotal += pageRawCount;
+          lastPagination = pagePagination;
+
+          const parsedOnPage = pageParsed.length;
+          logInfo("[METRC] transfers_sync_page", {
             companyId: input.companyId,
             direction,
-            status: directionLastStatus,
+            variantIndex,
+            pageNumber,
+            licenseNumber: operationalLicense,
+            params: pageParams,
+            httpStatus: directionLastStatus,
+            rawRecordCount: pageRawCount,
+            parsedCount: parsedOnPage,
+            pagination: pagePagination,
+            firstRawItem: directionFirstRaw,
+            endpoint: directionEndpointKey,
           });
+
           diagnostics.endpoints.push({
             direction,
-            url: directionEndpointKey || resource,
-            params: { ...pageParams, licenseNumber: operationalLicense },
+            url: directionEndpointKey,
+            params: {
+              ...pageParams,
+              licenseNumber: operationalLicense,
+              dateFiltersOmitted: !pageParams.lastModifiedStart,
+            },
             httpStatus: directionLastStatus,
-            totalReturned: 0,
-            firstRawItem: null,
+            rawRecordCount: pageRawCount,
+            parsedCount: parsedOnPage,
+            pagination: pagePagination,
+            firstRawItem: directionFirstRaw,
+            dateFiltersOmitted: !pageParams.lastModifiedStart,
+            paramVariantIndex: variantIndex,
           });
-          break;
+
+          if (pageRawCount < pageParams.pageSize) break;
         }
 
-        pagesFetched += 1;
-        directionPages.push(pageParsed);
-        diagnostics.endpoints.push({
-          direction,
-          url: directionEndpointKey,
-          params: { ...pageParams, licenseNumber: operationalLicense },
-          httpStatus: directionLastStatus,
-          totalReturned: pageParsed.length,
-          firstRawItem: pageParsed[0]?.raw ?? null,
-        });
-
-        if (pageParsed.length < pageParams.pageSize) break;
+        const mergedVariant = mergeParsedTransfers(variantPages);
+        if (mergedVariant.length > 0) {
+          directionPages.push(...variantPages);
+          directionSynced = true;
+          logInfo("[METRC] transfers_sync_direction_complete", {
+            companyId: input.companyId,
+            direction,
+            variantIndex,
+            licenseNumber: operationalLicense,
+            rawRecordCount: variantRawTotal,
+            parsedCount: mergedVariant.length,
+            pagination: lastPagination,
+          });
+        } else if (variantIndex < paramVariants.length - 1) {
+          logWarn("[METRC] transfers_sync_direction_retry_wider_query", {
+            companyId: input.companyId,
+            direction,
+            variantIndex,
+            licenseNumber: operationalLicense,
+          });
+        }
       }
 
       allParsed.push(...mergeParsedTransfers(directionPages));
@@ -365,7 +491,7 @@ export class MetrcTransfersSyncService {
         licenseNumber: operationalLicense,
         pagesFetched,
         directions: TRANSFER_DIRECTIONS,
-        query: locationsRequest.params,
+        facilityStartDate,
       },
       responsePayload: {
         ok: true,
