@@ -2,10 +2,7 @@ import { prisma } from "../config/prisma.js";
 import { logInfo, logWarn } from "../lib/logger.js";
 import { MetrcClient, isMetrcClientFailure } from "../lib/metrcClient.js";
 import { loadCompanyMetrcConfig } from "../lib/metrcConfigLoader.js";
-import {
-  buildMetrcCredentialHintFromLoaded,
-  logMetrcCredentialDiagnostics,
-} from "../lib/metrcCredentialDiagnostics.js";
+import { buildMetrcCredentialHintFromLoaded } from "../lib/metrcCredentialDiagnostics.js";
 import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
 import {
   appendMetrcPackageRequestLog,
@@ -296,8 +293,6 @@ export class MetrcPackageCreateService {
       harvestName: harvest.harvestName.trim(),
     });
 
-    logMetrcCredentialDiagnostics(input.companyId, loaded);
-
     const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
     const candidates = buildHarvestPackageCreatePathCandidates(license);
     const startedAt = Date.now();
@@ -386,7 +381,10 @@ export class MetrcPackageCreateService {
       actorUserId: input.actorUserId,
     });
 
-    const credentialHint = buildMetrcCredentialHintFromLoaded(loaded, lastStatus);
+    const credentialHint =
+      lastStatus === 401 || lastStatus === 403
+        ? buildMetrcCredentialHintFromLoaded(loaded)
+        : undefined;
     return {
       ok: false,
       status: lastStatus,

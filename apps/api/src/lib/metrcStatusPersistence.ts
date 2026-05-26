@@ -64,6 +64,7 @@ export type MetrcSuccessStatusPatch = {
   totalPackagesSynced?: number;
   totalPlantBatchesSynced?: number;
   totalHarvestsSynced?: number;
+  totalItemsSynced?: number;
 };
 
 /** Clear stale failure fields and persist latest successful METRC call status. */
@@ -116,6 +117,13 @@ export function applyMetrcSuccessStatus(
     next.metrcLastHarvestsSyncAt = checkedAt;
     next.metrcSandboxLastHarvestsSyncAt = checkedAt;
     next.lastHarvestsSync = checkedAt;
+  }
+  if (typeof patch.totalItemsSynced === "number") {
+    next.metrcSandboxLastItemsCount = patch.totalItemsSynced;
+    next.totalItemsSynced = patch.totalItemsSynced;
+    next.metrcLastItemsSyncAt = checkedAt;
+    next.metrcSandboxLastItemsSyncAt = checkedAt;
+    next.lastItemsSync = checkedAt;
   }
 
   return next;

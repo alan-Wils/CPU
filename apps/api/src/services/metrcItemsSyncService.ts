@@ -100,7 +100,7 @@ export class MetrcItemsSyncService {
       };
     }
 
-    const license = String(loaded.licenseNumber || "").trim();
+    let license = String(loaded.licenseNumber || "").trim();
     if (!license) {
       return {
         ok: false,
@@ -108,8 +108,6 @@ export class MetrcItemsSyncService {
         message: "Facility license number is required for METRC items sync.",
       };
     }
-
-    logMetrcCredentialDiagnostics(input.companyId, loaded);
 
     const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
     const endpointCtx = {
@@ -241,7 +239,17 @@ export class MetrcItemsSyncService {
       break;
     }
 
-    const credentialHint = buildMetrcCredentialHintFromLoaded(loaded, lastStatus);
+    if (lastStatus === 401 || lastStatus === 403) {
+      logMetrcCredentialDiagnostics({
+        companyId: input.companyId,
+        purpose: "items_sync",
+        userKeyLength: loaded.userApiKey.length,
+        vendorKeyLength: loaded.vendorApiKey.length,
+        licensePresent: Boolean(loaded.licenseNumber),
+      });
+    }
+
+    const credentialHint = buildMetrcCredentialHintFromLoaded(loaded);
     return {
       ok: false,
       status: lastStatus,
