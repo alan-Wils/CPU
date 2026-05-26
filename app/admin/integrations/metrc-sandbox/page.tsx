@@ -1067,19 +1067,34 @@ export default function MetrcSandboxPage() {
               status and counts are shown here.
             </p>
           </div>
-          <Link
-            href="/admin/config"
-            style={{
-              textDecoration: "none",
-              border: "1px solid #475569",
-              color: "#cbd5e1",
-              borderRadius: 10,
-              padding: "10px 14px",
-              fontWeight: 700,
-            }}
-          >
-            Company Config
-          </Link>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+            <Link
+              href="/admin/integrations/metrc-evaluation"
+              style={{
+                textDecoration: "none",
+                border: "1px solid rgba(167, 139, 250, 0.45)",
+                color: "#c4b5fd",
+                borderRadius: 10,
+                padding: "10px 14px",
+                fontWeight: 700,
+              }}
+            >
+              Evaluation Mode
+            </Link>
+            <Link
+              href="/admin/config"
+              style={{
+                textDecoration: "none",
+                border: "1px solid #475569",
+                color: "#cbd5e1",
+                borderRadius: 10,
+                padding: "10px 14px",
+                fontWeight: 700,
+              }}
+            >
+              Company Config
+            </Link>
+          </div>
         </header>
 
         <section style={styles.card}>

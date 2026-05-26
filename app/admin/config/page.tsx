@@ -2318,6 +2318,21 @@ export default function ConfigPage() {
           >
             Sandbox tools →
           </Link>
+          <Link
+            href="/admin/integrations/metrc-evaluation"
+            style={{
+              textDecoration: "none",
+              fontSize: 12,
+              fontWeight: 800,
+              border: "1px solid rgba(167, 139, 250, 0.45)",
+              background: "rgba(46, 16, 101, 0.45)",
+              color: "#c4b5fd",
+              borderRadius: "999px",
+              padding: "5px 12px",
+            }}
+          >
+            Evaluation mode →
+          </Link>
           <span
             title="METRC connection status (last test)"
             style={{
