@@ -20,6 +20,10 @@ import {
   isMetrcSandboxPlaceholderLicense,
   pickMetrcFacilityNameFromLocations,
 } from "../lib/metrcOperationalStatus.js";
+import {
+  applyMetrcSuccessStatus,
+  formatMetrcSuccessMessage,
+} from "../lib/metrcStatusPersistence.js";
 import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 
 export type MetrcPullResource = MetrcEndpointResource;
@@ -191,7 +195,7 @@ export class MetrcPullService {
           facilityNameFromLocations = pickMetrcFacilityNameFromLocations(rows);
         }
 
-        const nextMetrc = applyMetrcOperationalSuccess(
+        let nextMetrc = applyMetrcOperationalSuccess(
           {
             ...loaded.metrc,
             [spec.syncAtKey]: syncedAt,
@@ -203,6 +207,22 @@ export class MetrcPullService {
             facilityName: facilityNameFromLocations,
           },
         );
+
+        if (input.resource === "strains" || input.resource === "packages") {
+          const isStrains = input.resource === "strains";
+          nextMetrc = applyMetrcSuccessStatus(nextMetrc, {
+            httpStatus: result.status,
+            message: formatMetrcSuccessMessage(
+              isStrains
+                ? { kind: "strains_sync", count: rows.length }
+                : { kind: "packages_sync", count: rows.length },
+            ),
+            checkedAt: syncedAt,
+            ...(isStrains
+              ? { totalStrainsSynced: rows.length }
+              : { totalPackagesSynced: rows.length }),
+          });
+        }
 
         await this.configService.upsert({
           companyId: input.companyId,

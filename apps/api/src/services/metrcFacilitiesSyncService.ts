@@ -20,6 +20,10 @@ import {
   type ParsedMetrcFacility,
 } from "../lib/metrcFacilitiesParse.js";
 import { applyMetrcOperationalSuccess } from "../lib/metrcOperationalStatus.js";
+import {
+  applyMetrcSuccessStatus,
+  formatMetrcSuccessMessage,
+} from "../lib/metrcStatusPersistence.js";
 import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 import {
   listMetrcFacilitiesForCompany,
@@ -158,12 +162,12 @@ export class MetrcFacilitiesSyncService {
           },
           { operationalLicense, facilityName },
         );
-        nextMetrc = {
-          ...nextMetrc,
-          metrcLastConnectionHttpStatus: result.status,
-          metrcLastConnectionCheckedAt: syncedAtIso,
-          metrcLastConnectionMessage: "",
-        };
+        nextMetrc = applyMetrcSuccessStatus(nextMetrc, {
+          httpStatus: result.status,
+          message: formatMetrcSuccessMessage({ kind: "facilities_sync", count: parsed.length }),
+          checkedAt: syncedAtIso,
+          totalFacilitiesSynced: parsed.length,
+        });
 
         await this.configService.upsert({
           companyId: input.companyId,

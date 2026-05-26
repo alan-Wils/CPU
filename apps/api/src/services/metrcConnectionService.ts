@@ -27,6 +27,12 @@ import {
   probeMetrcKeysPossiblySwapped,
 } from "../lib/metrcKeySwapProbe.js";
 import {
+  applyMetrcFailureStatus,
+  applyMetrcSuccessStatus,
+  formatMetrcFailureMessage,
+  formatMetrcSuccessMessage,
+} from "../lib/metrcStatusPersistence.js";
+import {
   applyMetrcOperationalSuccess,
   isMetrcProvisioningComplete,
   pickMetrcFacilityNameFromLocations,
@@ -114,7 +120,10 @@ function buildConnectionDiagnostics(input: {
     sandboxStatusLabel: sandboxStatusLabel(sandboxStatus),
     lastAttemptedAuthMode: input.attemptedModes[input.attemptedModes.length - 1] ?? null,
     metrcResponseCode: input.status,
-    metrcResponseMessage: input.metrcMessage.slice(0, 2000),
+    metrcResponseMessage:
+      input.status === 200
+        ? formatMetrcSuccessMessage({ kind: "connection_test" })
+        : formatMetrcFailureMessage(input.status, input.metrcMessage).slice(0, 2000),
     provisioningComplete,
     userCreationPending,
     operationalAccessGranted,
@@ -532,27 +541,33 @@ export class MetrcConnectionService {
     nextMetrc.metrcLastConnectionCheckedAt = result.checkedAt;
 
     if (result.ok && result.connected) {
+      const success = result as MetrcTestConnectionSuccess;
       nextMetrc = applyMetrcOperationalSuccess(nextMetrc, {
-        operationalLicense: operationalPatch?.operationalLicense ?? result.licenseNumber,
+        operationalLicense: operationalPatch?.operationalLicense ?? success.licenseNumber,
         facilityName: operationalPatch?.facilityName ?? null,
       });
-      nextMetrc.metrcLastConnectionMessage = "";
-      nextMetrc.metrcLastConnectionHttpStatus = null;
-      nextMetrc.metrcLastLocationCount = result.locationCount;
-      nextMetrc.metrcLastSuccessfulAuthMode = result.authMode;
+      nextMetrc = applyMetrcSuccessStatus(nextMetrc, {
+        httpStatus: success.diagnostics.metrcResponseCode ?? 200,
+        message: formatMetrcSuccessMessage({ kind: "connection_test" }),
+        checkedAt: result.checkedAt,
+      });
+      nextMetrc.metrcLastLocationCount = success.locationCount;
+      nextMetrc.metrcLastSuccessfulAuthMode = success.authMode;
       nextMetrc.metrcSandboxOperationalStatus = "connected";
     } else {
       const fail = result as MetrcTestConnectionFailure;
-      nextMetrc.metrcLastConnectionStatus = "not_connected";
-      nextMetrc.metrcLastConnectionMessage = String(fail.message || "").slice(0, 4000);
-      nextMetrc.metrcLastConnectionHttpStatus =
-        typeof fail.status === "number" && Number.isFinite(fail.status) ? fail.status : null;
+      const httpStatus =
+        typeof fail.status === "number" && Number.isFinite(fail.status) ? fail.status : 502;
+      nextMetrc = applyMetrcFailureStatus(nextMetrc, {
+        httpStatus,
+        message: formatMetrcFailureMessage(httpStatus, fail.diagnostics.metrcResponseMessage),
+        checkedAt: result.checkedAt,
+      });
       nextMetrc.metrcLastLocationCount = null;
       nextMetrc.metrcLastSuccessfulAuthMode = fail.diagnostics.lastAttemptedAuthMode;
       nextMetrc.metrcSandboxOperationalStatus = fail.diagnostics.sandboxStatus;
       nextMetrc.metrcOperationalAccessGranted = fail.diagnostics.operationalAccessGranted;
       nextMetrc.metrcLastAuthAttemptMode = fail.diagnostics.lastAttemptedAuthMode;
-      nextMetrc.metrcLastMetrcResponseMessage = fail.diagnostics.metrcResponseMessage;
     }
 
     await this.configService.upsert({

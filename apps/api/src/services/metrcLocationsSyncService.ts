@@ -26,6 +26,10 @@ import {
   applyMetrcOperationalSuccess,
   pickMetrcFacilityNameFromLocations,
 } from "../lib/metrcOperationalStatus.js";
+import {
+  applyMetrcSuccessStatus,
+  formatMetrcSuccessMessage,
+} from "../lib/metrcStatusPersistence.js";
 import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 import {
   listMetrcLocationsForCompany,
@@ -221,6 +225,7 @@ export class MetrcLocationsSyncService {
           {
             ...loaded.metrc,
             metrcLastLocationsSyncAt: syncedAtIso,
+            lastLocationsSync: syncedAtIso,
             metrcTotalLocationsSynced: totalLocationsSynced,
             metrcSandboxLastRoomsSyncAt: syncedAtIso,
             metrcSandboxLastRoomsCount: totalLocationsSynced,
@@ -228,12 +233,15 @@ export class MetrcLocationsSyncService {
           },
           { operationalLicense, facilityName },
         );
-        nextMetrc = {
-          ...nextMetrc,
-          metrcLastConnectionHttpStatus: result.status,
-          metrcLastConnectionCheckedAt: syncedAtIso,
-          metrcLastConnectionMessage: "",
-        };
+        nextMetrc = applyMetrcSuccessStatus(nextMetrc, {
+          httpStatus: result.status,
+          message: formatMetrcSuccessMessage({
+            kind: "locations_sync",
+            count: totalLocationsSynced,
+          }),
+          checkedAt: syncedAtIso,
+          totalLocationsSynced,
+        });
 
         await this.configService.upsert({
           companyId: input.companyId,

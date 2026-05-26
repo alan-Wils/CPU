@@ -407,19 +407,44 @@ export function buildIntegrationsMetaView(merged: MergedCompanyConfig): Record<s
                 : metrc.metrcSandboxLastRoomsCount ?? null,
         metrcSandboxLastPackagesSyncAt: String(metrc.metrcSandboxLastPackagesSyncAt ?? "").trim() || null,
         metrcSandboxLastFacilitiesCount: metrc.metrcSandboxLastFacilitiesCount ?? null,
+        totalFacilitiesSynced:
+            typeof metrc.totalFacilitiesSynced === "number"
+                ? metrc.totalFacilitiesSynced
+                : metrc.metrcSandboxLastFacilitiesCount ?? null,
         metrcSandboxLastStrainsCount: metrc.metrcSandboxLastStrainsCount ?? null,
+        totalStrainsSynced:
+            typeof metrc.totalStrainsSynced === "number"
+                ? metrc.totalStrainsSynced
+                : metrc.metrcSandboxLastStrainsCount ?? null,
         metrcSandboxLastItemsCount: metrc.metrcSandboxLastItemsCount ?? null,
         metrcSandboxLastRoomsCount: metrc.metrcSandboxLastRoomsCount ?? null,
         metrcSandboxLastPackagesCount: metrc.metrcSandboxLastPackagesCount ?? null,
+        totalPackagesSynced:
+            typeof metrc.totalPackagesSynced === "number"
+                ? metrc.totalPackagesSynced
+                : metrc.metrcSandboxLastPackagesCount ?? null,
         metrcSandboxLastRateLimitWarning: String(metrc.metrcSandboxLastRateLimitWarning ?? "").trim() || null,
         metrcSandboxUiStatus: String(metrc.metrcSandboxOperationalStatus ?? "").trim() || null,
         metrcOperationalAccessGranted: Boolean(metrc.metrcOperationalAccessGranted),
         metrcLastAuthAttemptMode: String(metrc.metrcLastAuthAttemptMode ?? "").trim() || null,
         metrcLastMetrcResponseMessage: String(metrc.metrcLastMetrcResponseMessage ?? "").trim() || null,
+        metrcMessage:
+            String(metrc.metrcMessage ?? metrc.metrcLastMetrcResponseMessage ?? "").trim() || null,
         metrcLastConnectionHttpStatus:
             typeof metrc.metrcLastConnectionHttpStatus === "number"
                 ? metrc.metrcLastConnectionHttpStatus
                 : null,
+        metrcHttpStatus:
+            typeof metrc.metrcHttpStatus === "number"
+                ? metrc.metrcHttpStatus
+                : typeof metrc.metrcLastConnectionHttpStatus === "number"
+                  ? metrc.metrcLastConnectionHttpStatus
+                  : null,
+        lastError: metrc.lastError == null ? null : String(metrc.lastError).trim() || null,
+        lastFailureReason:
+            metrc.lastFailureReason == null
+                ? null
+                : String(metrc.lastFailureReason).trim() || null,
         autogrowIntegrationEnabled: Boolean(ag.integrationEnabled),
         hasAutogrowApiKey: nonEmptyString(ag.apiKey),
     };

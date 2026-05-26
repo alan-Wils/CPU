@@ -32,6 +32,7 @@ type IntegrationsMeta = {
   metrcLastConnectionCheckedAt?: string | null;
   metrcSandboxLastFacilitiesSyncAt?: string | null;
   metrcSandboxLastFacilitiesCount?: number | null;
+  totalFacilitiesSynced?: number | null;
   metrcSandboxLastRoomsSyncAt?: string | null;
   metrcLastLocationsSyncAt?: string | null;
   lastLocationsSync?: string | null;
@@ -41,13 +42,17 @@ type IntegrationsMeta = {
   metrcSandboxLastPackagesSyncAt?: string | null;
   metrcSandboxLastRoomsCount?: number | null;
   metrcSandboxLastStrainsCount?: number | null;
+  totalStrainsSynced?: number | null;
   metrcSandboxLastPackagesCount?: number | null;
+  totalPackagesSynced?: number | null;
   metrcSandboxLastRateLimitWarning?: string | null;
   metrcSandboxUiStatus?: string | null;
   metrcOperationalAccessGranted?: boolean;
   metrcLastAuthAttemptMode?: string | null;
   metrcLastMetrcResponseMessage?: string | null;
+  metrcMessage?: string | null;
   metrcLastConnectionHttpStatus?: number | null;
+  metrcHttpStatus?: number | null;
   metrcLastConnectionMessage?: string | null;
   metrcLastSuccessfulAuthMode?: string | null;
 };
@@ -166,6 +171,45 @@ type MetrcDiagnostics = {
   operationalAccessGranted: boolean;
   environment: string;
 };
+
+function resolveMetrcHttpStatus(
+  meta: IntegrationsMeta | null,
+  diagnostics: MetrcDiagnostics | null,
+): number | string {
+  const persisted = meta?.metrcLastConnectionHttpStatus ?? meta?.metrcHttpStatus;
+  if (typeof persisted === "number") return persisted;
+  return diagnostics?.metrcResponseCode ?? "—";
+}
+
+function resolveMetrcDisplayMessage(
+  meta: IntegrationsMeta | null,
+  diagnostics: MetrcDiagnostics | null,
+): string {
+  const http =
+    meta?.metrcLastConnectionHttpStatus ?? meta?.metrcHttpStatus ?? diagnostics?.metrcResponseCode;
+  if (http === 200) {
+    return (
+      meta?.metrcLastMetrcResponseMessage ||
+      meta?.metrcMessage ||
+      diagnostics?.metrcResponseMessage ||
+      "Connection successful."
+    );
+  }
+  if (typeof http === "number" && http !== 200) {
+    return (
+      meta?.metrcLastMetrcResponseMessage ||
+      meta?.metrcMessage ||
+      diagnostics?.metrcResponseMessage ||
+      "—"
+    );
+  }
+  return (
+    meta?.metrcLastMetrcResponseMessage ||
+    meta?.metrcMessage ||
+    diagnostics?.metrcResponseMessage ||
+    "—"
+  );
+}
 
 type TestConnectionJson =
   | {
@@ -855,17 +899,13 @@ export default function MetrcSandboxPage() {
             <div style={styles.metaItem}>
               <div style={styles.metaLabel}>METRC HTTP status</div>
               <div style={styles.metaValue}>
-                {lastDiagnostics?.metrcResponseCode
-                  ?? meta?.metrcLastConnectionHttpStatus
-                  ?? "—"}
+                {resolveMetrcHttpStatus(meta, lastDiagnostics)}
               </div>
             </div>
             <div style={styles.metaItem}>
               <div style={styles.metaLabel}>METRC message</div>
               <div style={styles.metaValue}>
-                {lastDiagnostics?.metrcResponseMessage
-                  || meta?.metrcLastMetrcResponseMessage
-                  || "—"}
+                {resolveMetrcDisplayMessage(meta, lastDiagnostics)}
               </div>
             </div>
             <div style={styles.metaItem}>
@@ -878,9 +918,11 @@ export default function MetrcSandboxPage() {
               <div style={styles.metaLabel}>Last facilities sync</div>
               <div style={styles.metaValue}>
                 {formatCompanyTimestamp(meta?.metrcSandboxLastFacilitiesSyncAt || "") || "—"}
-                {meta?.metrcSandboxLastFacilitiesCount != null
-                  ? ` (${meta.metrcSandboxLastFacilitiesCount})`
-                  : ""}
+                {meta?.totalFacilitiesSynced != null
+                  ? ` (${meta.totalFacilitiesSynced})`
+                  : meta?.metrcSandboxLastFacilitiesCount != null
+                    ? ` (${meta.metrcSandboxLastFacilitiesCount})`
+                    : ""}
               </div>
             </div>
             <div style={styles.metaItem}>
@@ -905,18 +947,22 @@ export default function MetrcSandboxPage() {
               <div style={styles.metaLabel}>Last strains sync</div>
               <div style={styles.metaValue}>
                 {formatCompanyTimestamp(meta?.metrcSandboxLastStrainsSyncAt || "") || "—"}
-                {meta?.metrcSandboxLastStrainsCount != null
-                  ? ` (${meta.metrcSandboxLastStrainsCount})`
-                  : ""}
+                {meta?.totalStrainsSynced != null
+                  ? ` (${meta.totalStrainsSynced})`
+                  : meta?.metrcSandboxLastStrainsCount != null
+                    ? ` (${meta.metrcSandboxLastStrainsCount})`
+                    : ""}
               </div>
             </div>
             <div style={styles.metaItem}>
               <div style={styles.metaLabel}>Last packages sync</div>
               <div style={styles.metaValue}>
                 {formatCompanyTimestamp(meta?.metrcSandboxLastPackagesSyncAt || "") || "—"}
-                {meta?.metrcSandboxLastPackagesCount != null
-                  ? ` (${meta.metrcSandboxLastPackagesCount})`
-                  : ""}
+                {meta?.totalPackagesSynced != null
+                  ? ` (${meta.totalPackagesSynced})`
+                  : meta?.metrcSandboxLastPackagesCount != null
+                    ? ` (${meta.metrcSandboxLastPackagesCount})`
+                    : ""}
               </div>
             </div>
           </div>
