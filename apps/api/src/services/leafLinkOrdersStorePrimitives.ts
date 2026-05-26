@@ -67,6 +67,50 @@ export async function findLatestLeafLinkStoredOrderLive(
   };
 }
 
+export async function findLatestLeafLinkStoredOrderLiveWithPayload(
+  companyId: string,
+): Promise<{
+  id: string;
+  leafLinkKey: string;
+  customerName: string;
+  totalUsd: number | null;
+  createdOn: Date | null;
+  payload: unknown;
+} | null> {
+  const cid = String(companyId ?? "").trim();
+  if (!cid) return null;
+  const select = {
+    id: true,
+    leafLinkKey: true,
+    customerName: true,
+    totalUsd: true,
+    createdOn: true,
+    payload: true,
+  } as const;
+
+  const withDate = await prisma.leafLinkStoredOrder.findFirst({
+    where: { companyId: cid, createdOn: { not: null } },
+    orderBy: [{ createdOn: "desc" }, { updatedAt: "desc" }],
+    select,
+  });
+  const row =
+    withDate
+    ?? (await prisma.leafLinkStoredOrder.findFirst({
+      where: { companyId: cid },
+      orderBy: { updatedAt: "desc" },
+      select,
+    }));
+  if (!row) return null;
+  return {
+    id: row.id,
+    leafLinkKey: row.leafLinkKey,
+    customerName: row.customerName,
+    totalUsd: row.totalUsd,
+    createdOn: row.createdOn,
+    payload: row.payload,
+  };
+}
+
 export type LeafLinkStoredOrderUpsertStats = {
   created: number;
   updated: number;

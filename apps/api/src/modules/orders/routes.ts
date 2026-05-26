@@ -5,7 +5,6 @@ import { asyncHandler } from "../../middleware/asyncHandler.js";
 import { getScopedCompanyId } from "../../middleware/companyScope.js";
 import { requireRoleOrAppPermission } from "../../middleware/rbac.js";
 import { validate } from "../../middleware/validate.js";
-import { findLatestLeafLinkStoredOrderLive } from "../../services/leafLinkOrdersStorePrimitives.js";
 import { LeafLinkOrdersService } from "../../services/leafLinkOrdersService.js";
 
 export const ordersRouter = Router();
@@ -51,7 +50,7 @@ ordersRouter.get(
   ordersPermissionGuard,
   asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
-    const row = await findLatestLeafLinkStoredOrderLive(companyId);
+    const row = await ordersService.latestOrderLive(companyId);
     res.json(row);
   }),
 );

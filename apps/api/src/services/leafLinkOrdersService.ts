@@ -18,6 +18,7 @@ import {
   findLeafLinkStoredOrdersForCompanyInRange,
   findRecentLeafLinkStoredOrdersForCompany,
   findRecentLeafLinkStoredOrdersWithNullCreatedOn,
+  findLatestLeafLinkStoredOrderLiveWithPayload,
   STORED_ORDER_FETCH_HARD_CAP,
   type LeafLinkStoredOrderUpsertInput,
   type LeafLinkStoredOrderUpsertStats,
@@ -186,6 +187,14 @@ export type LeafLinkOrdersSyncDto = {
   stoppedReason?: string;
   durationMs?: number;
   cutoffIso?: string | null;
+};
+
+export type LeafLinkLatestOrderLiveDto = {
+  id: string;
+  leafLinkKey: string;
+  customerName: string;
+  totalUsd: number | null;
+  createdOn: string | null;
 };
 
 /** Optional LeafLink list filters when paginating orders-received into `leafLinkStoredOrder`. */
@@ -1890,6 +1899,33 @@ function clearTenantOrderCachePrefix(companyId: string): void {
 
 export class LeafLinkOrdersService {
   leafLinkService = new LeafLinkService();
+
+  /**
+   * Newest stored order used by realtime toasts (`GET /api/orders/latest-live`).
+   *
+   * Older / partial list payloads can store `totalUsd: 0` until a detail fetch occurs. When the stored
+   * value is missing or non-positive, recompute from the stored payload so the toast does not show `$0.00`.
+   */
+  async latestOrderLive(companyId: string): Promise<LeafLinkLatestOrderLiveDto | null> {
+    const row = await findLatestLeafLinkStoredOrderLiveWithPayload(companyId);
+    if (!row) return null;
+
+    const summary = normalizeOrder(row.payload);
+    const computed = orderTotalMoney(summary);
+    const stored = typeof row.totalUsd === "number" && Number.isFinite(row.totalUsd) ? row.totalUsd : null;
+    const totalUsd =
+      stored != null && stored > 0
+        ? stored
+        : (Number.isFinite(computed) && computed > 0 ? Math.round(computed * 100) / 100 : null);
+
+    return {
+      id: row.id,
+      leafLinkKey: row.leafLinkKey,
+      customerName: row.customerName,
+      totalUsd,
+      createdOn: row.createdOn ? row.createdOn.toISOString() : null,
+    };
+  }
 
   async assertOrdersCapableOrThrow(creds: LeafLinkRuntimeCredentials): Promise<void> {
     if (!creds.apiKey || (!creds.companyId && !creds.companySlug)) {
