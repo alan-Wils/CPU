@@ -2487,7 +2487,7 @@ export default function ConfigPage() {
                   }}
                 >
                   <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 8, fontWeight: 600 }}>
-                    Diagnostic attempts (GET /locations/v2/active — read-only)
+                    Diagnostic attempts (GET /locations/v2/active with license + date range — read-only)
                   </div>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, color: "#cbd5e1" }}>
                     <thead>

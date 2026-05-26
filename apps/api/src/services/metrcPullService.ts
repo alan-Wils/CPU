@@ -14,6 +14,7 @@ import {
   shouldTryNextMetrcEndpoint,
   type MetrcEndpointResource,
 } from "../lib/metrcEndpoints.js";
+import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
 import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 
 export type MetrcPullResource = MetrcEndpointResource;
@@ -132,7 +133,21 @@ export class MetrcPullService {
       stateCode: loaded.stateCode || "CO",
       environment: loaded.environment as MetrcEnvironment,
     };
-    const candidates = orderMetrcEndpointCandidates(endpointCtx, input.resource, license);
+
+    let candidates = orderMetrcEndpointCandidates(endpointCtx, input.resource, license);
+    if (input.resource === "rooms") {
+      const locationsRequest = await resolveMetrcLocationsActiveRequest({
+        client,
+        loaded,
+        companyId: input.companyId,
+        purpose: `pull_${input.resource}`,
+      });
+      candidates = orderMetrcEndpointCandidates(
+        endpointCtx,
+        "rooms",
+        locationsRequest.params,
+      );
+    }
     const spec = RESOURCE_META[input.resource];
 
     let lastFailure: MetrcPullFailure | null = null;

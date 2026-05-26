@@ -59,15 +59,29 @@ describe("MetrcConnectionService", () => {
   });
 
   it("succeeds via MetrcClient (same auth as pull)", async () => {
-    getMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      data: { Data: [{ Id: 1, Name: "Room A" }] },
-      durationMs: 10,
-      retries: 0,
-      rateLimitWaitedMs: 0,
-      authMode: "sandbox_basic_vendor_user",
-      metrcMessage: "OK",
+    getMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/facilities/")) {
+        return {
+          ok: true,
+          status: 200,
+          data: { Data: [{ LicenseNumber: "SF-SBX-CO-1-13402", StartDate: "2026-01-01" }] },
+          durationMs: 5,
+          retries: 0,
+          rateLimitWaitedMs: 0,
+          authMode: "sandbox_basic_vendor_user",
+          metrcMessage: "OK",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        data: { Data: [{ Id: 1, Name: "Room A" }] },
+        durationMs: 10,
+        retries: 0,
+        rateLimitWaitedMs: 0,
+        authMode: "sandbox_basic_vendor_user",
+        metrcMessage: "OK",
+      };
     });
 
     const svc = new MetrcConnectionService();
@@ -76,27 +90,47 @@ describe("MetrcConnectionService", () => {
     expect(out.ok && out.connected).toBe(true);
     if (!out.ok || !out.connected) return;
     expect(out.authMode).toBe("sandbox_basic_vendor_user");
+    expect(out.licenseNumber).toBe("SF-SBX-CO-1-13402");
     expect(out.diagnostics.operationalAccessGranted).toBe(true);
     expect(out.userKeyLength).toBeGreaterThan(40);
     expect(getMock).toHaveBeenCalled();
-    const path = String(getMock.mock.calls[0]?.[0] ?? "");
+    const locationsCall = getMock.mock.calls.find((c) =>
+      String(c[0] ?? "").includes("/locations/v2/active"),
+    );
+    const path = String(locationsCall?.[0] ?? "");
     expect(path).toContain("/locations/v2/active");
-    expect(path).toContain("licenseNumber=LIC-1");
+    expect(path).toContain("licenseNumber=SF-SBX-CO-1-13402");
+    expect(path).toContain("lastModifiedStart=");
+    expect(path).toContain("pageSize=20");
   });
 
   it("returns credential hint when all auth modes fail", async () => {
-    getMock.mockResolvedValue({
-      ok: false,
-      status: 401,
-      message: "Authorization has been denied for this request.",
-      durationMs: 5,
-      retries: 0,
-      rateLimitWaitedMs: 0,
-      metrcMessage: "Authorization has been denied for this request.",
-      attemptedAuthModes: ["sandbox_basic_vendor_user"],
-      authAttempts: [
-        { mode: "sandbox_basic_vendor_user", status: 401, durationMs: 12, metrcMessage: "denied" },
-      ],
+    getMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/facilities/")) {
+        return {
+          ok: true,
+          status: 200,
+          data: { Data: [{ LicenseNumber: "SF-SBX-CO-1-13402" }] },
+          durationMs: 5,
+          retries: 0,
+          rateLimitWaitedMs: 0,
+          authMode: "sandbox_basic_vendor_user",
+          metrcMessage: "OK",
+        };
+      }
+      return {
+        ok: false,
+        status: 401,
+        message: "Authorization has been denied for this request.",
+        durationMs: 5,
+        retries: 0,
+        rateLimitWaitedMs: 0,
+        metrcMessage: "Authorization has been denied for this request.",
+        attemptedAuthModes: ["sandbox_basic_vendor_user"],
+        authAttempts: [
+          { mode: "sandbox_basic_vendor_user", status: 401, durationMs: 12, metrcMessage: "denied" },
+        ],
+      };
     });
 
     const svc = new MetrcConnectionService();

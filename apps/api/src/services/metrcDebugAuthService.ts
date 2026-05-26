@@ -10,6 +10,7 @@ import {
   type MetrcSandboxUiStatus,
 } from "../lib/metrcSandboxStatus.js";
 import type { MetrcClientAuthMode } from "../lib/metrcAuthStrategy.js";
+import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
 
 export type MetrcDebugAuthAttempt = {
   authMode: MetrcClientAuthMode;
@@ -59,14 +60,20 @@ export class MetrcDebugAuthService {
         apiBaseUrlOverride: loaded.apiBaseUrlOverride,
       }) ?? null;
 
-    const licenseNumber = loaded.licenseNumber || "SBX-CO";
-    const endpointTested = `/locations/v2/active?licenseNumber=${encodeURIComponent(licenseNumber)}`;
     const sandboxMode = loaded.environment === "sandbox";
     const hasUserKey = Boolean(loaded.userApiKey.trim());
     const provisioningComplete = Boolean(loaded.metrc.sandboxReady) && hasUserKey;
     const userCreationPending = Boolean(loaded.metrc.sandboxProvisioning) && !hasUserKey;
 
     const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
+    const locationsRequest = await resolveMetrcLocationsActiveRequest({
+      client,
+      loaded,
+      companyId: input.companyId,
+      purpose: "debug_auth",
+    });
+    const licenseNumber = locationsRequest.params.licenseNumber;
+    const endpointTested = locationsRequest.pathnameAndQuery;
     const plan = buildMetrcClientAuthPlan({
       companyId: input.companyId,
       vendorOnly: false,

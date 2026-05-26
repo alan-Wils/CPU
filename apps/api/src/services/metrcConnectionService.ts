@@ -14,6 +14,7 @@ import {
   orderMetrcEndpointCandidates,
   shouldTryNextMetrcEndpoint,
 } from "../lib/metrcEndpoints.js";
+import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
 import {
   buildMetrcCredentialHintFromLoaded,
   buildMetrcOperationalAccessDeniedHint,
@@ -259,10 +260,17 @@ export class MetrcConnectionService {
     });
 
     const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
+    const locationsRequest = await resolveMetrcLocationsActiveRequest({
+      client,
+      loaded,
+      companyId: input.companyId,
+      purpose: "test_connection",
+    });
+    const operationalLicense = locationsRequest.params.licenseNumber;
     const candidates = orderMetrcEndpointCandidates(
       { stateCode: loaded.stateCode || "CO", environment: loaded.environment },
       "rooms",
-      licenseNumber,
+      locationsRequest.params,
     );
 
     let lastFailure: MetrcClientFailure | null = null;
@@ -288,7 +296,7 @@ export class MetrcConnectionService {
           connected: true,
           checkedAt,
           baseUrl: client.baseUrl ?? baseUrl,
-          licenseNumber,
+          licenseNumber: operationalLicense,
           locationCount: locations.length,
           sampleLocations: locations.slice(0, 5).map(toSampleLocation),
           authMode: result.authMode as MetrcClientAuthMode,
@@ -372,7 +380,7 @@ export class MetrcConnectionService {
     });
 
     const metrcMsg = lastFailure.metrcMessage || lastFailure.message;
-    const testPath = candidates[0] ?? `/locations/v2/active?licenseNumber=${encodeURIComponent(licenseNumber)}`;
+    const testPath = candidates[0] ?? locationsRequest.pathnameAndQuery;
     let keysPossiblySwapped = false;
     let finalHint = credentialHint;
     if ((lastFailure.status || 401) === 401 && loaded.userApiKey && loaded.vendorApiKey) {
@@ -459,7 +467,7 @@ export class MetrcConnectionService {
       credentialHint: finalHint,
       keysPossiblySwapped: keysPossiblySwapped || undefined,
       baseUrl: client.baseUrl ?? baseUrl,
-      licenseNumber,
+      licenseNumber: operationalLicense,
       userKeyLength,
       vendorKeyLength,
       attemptedModes: lastFailure.attemptedAuthModes,

@@ -1,4 +1,10 @@
 import type { MetrcEnvironment } from "./metrcResolveBaseUrl.js";
+import {
+  buildMetrcLocationsActivePathCandidates,
+  type MetrcLocationsActiveQueryParams,
+} from "./metrcLocationsActiveQuery.js";
+
+export type { MetrcLocationsActiveQueryParams };
 
 export type MetrcEndpointResource =
   | "facilities"
@@ -61,21 +67,30 @@ function licenseQuery(licenseNumber: string): string {
  */
 export function buildMetrcEndpointCandidates(
   resource: MetrcEndpointResource,
-  licenseNumber: string,
+  licenseNumberOrLocationsParams: string | MetrcLocationsActiveQueryParams,
 ): string[] {
-  const q = licenseQuery(licenseNumber);
-
   switch (resource) {
     case "facilities":
       return ["/facilities/v2/"];
-    case "rooms":
+    case "rooms": {
+      if (typeof licenseNumberOrLocationsParams !== "string") {
+        return buildMetrcLocationsActivePathCandidates(licenseNumberOrLocationsParams);
+      }
+      const q = licenseQuery(licenseNumberOrLocationsParams);
       return [`/locations/v2/active${q}`, `/locations/v1/active${q}`];
-    case "strains":
+    }
+    case "strains": {
+      const q = licenseQuery(String(licenseNumberOrLocationsParams));
       return [`/strains/v2/active${q}`, `/strains/v1/active${q}`];
-    case "items":
+    }
+    case "items": {
+      const q = licenseQuery(String(licenseNumberOrLocationsParams));
       return [`/items/v2/active${q}`, `/items/v1/active${q}`];
-    case "packages":
+    }
+    case "packages": {
+      const q = licenseQuery(String(licenseNumberOrLocationsParams));
       return [`/packages/v2/active${q}`, `/packages/v1/active${q}`];
+    }
     default:
       return [];
   }
@@ -85,9 +100,9 @@ export function buildMetrcEndpointCandidates(
 export function orderMetrcEndpointCandidates(
   ctx: MetrcEndpointContext,
   resource: MetrcEndpointResource,
-  licenseNumber: string,
+  licenseNumberOrLocationsParams: string | MetrcLocationsActiveQueryParams,
 ): string[] {
-  const base = buildMetrcEndpointCandidates(resource, licenseNumber);
+  const base = buildMetrcEndpointCandidates(resource, licenseNumberOrLocationsParams);
   const cached = getCachedMetrcEndpointPath(ctx, resource);
   if (!cached) return base;
   const preferred = base.find((p) => metrcEndpointPathKey(p) === cached);
