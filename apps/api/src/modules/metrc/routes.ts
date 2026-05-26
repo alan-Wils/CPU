@@ -27,6 +27,8 @@ import {
   MetrcHarvestCreateService,
 } from "../../services/metrcHarvestCreateService.js";
 import { MetrcStrainCreateService } from "../../services/metrcStrainCreateService.js";
+import { MetrcTransfersSyncService } from "../../services/metrcTransfersSyncService.js";
+import { MetrcTransferCreateService } from "../../services/metrcTransferCreateService.js";
 import { MetrcDebugAuthService } from "../../services/metrcDebugAuthService.js";
 import { env } from "../../config/env.js";
 import { logInfo } from "../../lib/logger.js";
@@ -78,6 +80,18 @@ const metrcCreateTestPackageBody = z.object({
   note: z.string().optional().nullable(),
 });
 
+const metrcCreateTestTransferBody = z.object({
+  packageLabel: z.string().min(1),
+  destinationFacilityLicense: z.string().min(1),
+  transferDate: z.string().min(1),
+  plannedRoute: z.string().min(1),
+  notes: z.string().optional().nullable(),
+  transporterFacilityLicense: z.string().optional().nullable(),
+  transferTypeName: z.string().optional().nullable(),
+  grossWeight: z.coerce.number().positive().optional().nullable(),
+  grossUnitOfWeightName: z.string().optional().nullable(),
+});
+
 export const metrcRouter = Router();
 const metrcConnectionService = new MetrcConnectionService();
 const metrcAvailablePlantTagsService = new MetrcAvailablePlantTagsService();
@@ -98,6 +112,8 @@ const metrcHarvestsSyncService = new MetrcHarvestsSyncService();
 const metrcPlantsSyncService = new MetrcPlantsSyncService();
 const metrcHarvestCreateService = new MetrcHarvestCreateService();
 const metrcStrainCreateService = new MetrcStrainCreateService();
+const metrcTransfersSyncService = new MetrcTransfersSyncService();
+const metrcTransferCreateService = new MetrcTransferCreateService();
 
 const metrcLocationMappingBody = z.object({
   metrcLocationId: z.string().min(1),
@@ -657,6 +673,66 @@ metrcRouter.post(
       metrcGrowthLocationId: body.metrcGrowthLocationId ?? null,
       dryingLocationName: body.dryingLocationName ?? null,
       metrcDryingLocationId: body.metrcDryingLocationId ?? null,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.get(
+  "/transfers/persisted",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const transfers = await metrcTransfersSyncService.listSyncedTransfers(companyId);
+    res.status(200).json({ ok: true, transfers });
+  }),
+);
+
+metrcRouter.get(
+  "/transfers/request-logs",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const { listMetrcTransferRequestLogs } = await import(
+      "../../repositories/metrcTransferRepository.js"
+    );
+    const logs = await listMetrcTransferRequestLogs(companyId, 50);
+    res.status(200).json({ ok: true, logs });
+  }),
+);
+
+metrcRouter.post(
+  "/transfers/create-test",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcCreateTestTransferBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcCreateTestTransferBody>;
+    const result = await metrcTransferCreateService.createTestTransfer({
+      companyId,
+      actorUserId: req.auth.userId,
+      packageLabel: body.packageLabel.trim(),
+      destinationFacilityLicense: body.destinationFacilityLicense.trim(),
+      transferDate: body.transferDate,
+      plannedRoute: body.plannedRoute.trim(),
+      notes: body.notes ?? null,
+      transporterFacilityLicense: body.transporterFacilityLicense ?? null,
+      transferTypeName: body.transferTypeName ?? null,
+      grossWeight: body.grossWeight ?? null,
+      grossUnitOfWeightName: body.grossUnitOfWeightName ?? null,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.get(
+  "/transfers",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const result = await metrcTransfersSyncService.syncMetrcTransfers({
+      companyId,
+      actorUserId: req.auth.userId,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),

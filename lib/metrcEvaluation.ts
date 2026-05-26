@@ -14,6 +14,7 @@ export type MetrcEvaluationTaskId =
   | "harvests_sync"
   | "create_harvest"
   | "create_package"
+  | "transfers_sync"
   | "transfers";
 
 export type MetrcEvaluationTaskStatus =
@@ -160,14 +161,22 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
     runnable: true,
   },
   {
+    id: "transfers_sync",
+    label: "Transfers Sync",
+    description:
+      "Pull incoming, outgoing, and template transfers from METRC (GET /transfers/v2/incoming, /outgoing, /templates/outgoing).",
+    nexbatchPath: "/api/metrc/transfers",
+    method: "GET",
+    runnable: true,
+  },
+  {
     id: "transfers",
     label: "Transfers",
-    description: "METRC transfer outbound/inbound.",
-    nexbatchPath: null,
+    description:
+      "POST sandbox outgoing transfer template using a synced package (POST /transfers/v2/templates/outgoing). Runnable here or from METRC Sandbox after packages exist.",
+    nexbatchPath: "/api/metrc/transfers/create-test",
     method: "POST",
-    runnable: false,
-    notAvailableReason:
-      "METRC transfers are not implemented in NexBatch API. Cultivation extraction transfers are internal only.",
+    runnable: true,
   },
 ];
 
@@ -178,6 +187,7 @@ export const METRC_SANDBOX_CREATE_TASK_IDS = [
   "create_plant_batch",
   "create_harvest",
   "create_package",
+  "transfers",
 ] as const;
 
 export const METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_QUANTITY = 10;
@@ -309,13 +319,23 @@ export function buildEvaluationCreateRequestBody(
     };
   }
 
+  if (taskId === "create_package") {
+    return {
+      metrcHarvestId: "",
+      metrcItemId: "",
+      packageTag: "",
+      quantity: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_QUANTITY,
+      unitOfMeasure: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT,
+      packagedDate: new Date().toISOString().slice(0, 10),
+    };
+  }
+
   return {
-    metrcHarvestId: "",
-    metrcItemId: "",
-    packageTag: "",
-    quantity: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_QUANTITY,
-    unitOfMeasure: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT,
-    packagedDate: new Date().toISOString().slice(0, 10),
+    packageLabel: "",
+    destinationFacilityLicense: "",
+    transferDate: new Date().toISOString().slice(0, 10),
+    plannedRoute: "NexBatch sandbox evaluation — direct facility transfer.",
+    notes: "NexBatch Test Transfer",
   };
 }
 

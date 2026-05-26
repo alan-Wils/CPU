@@ -61,6 +61,11 @@ type IntegrationsMeta = {
   lastHarvestsSync?: string | null;
   metrcSandboxLastHarvestsCount?: number | null;
   totalHarvestsSynced?: number | null;
+  metrcSandboxLastTransfersSyncAt?: string | null;
+  metrcLastTransfersSyncAt?: string | null;
+  lastTransfersSync?: string | null;
+  metrcSandboxLastTransfersCount?: number | null;
+  totalTransfersSynced?: number | null;
   metrcSandboxLastRateLimitWarning?: string | null;
   metrcSandboxUiStatus?: string | null;
   metrcOperationalAccessGranted?: boolean;
@@ -441,6 +446,69 @@ type CreateTestPackageResult = {
   packagesSynced?: number;
   metrcMessage?: string;
 };
+
+type MetrcTransferRow = {
+  metrcTransferId: string;
+  direction: string;
+  manifestNumber: string;
+  transferType: string;
+  status: string;
+  licenseNumber: string;
+  transporter: string;
+  destinationFacility: string;
+  packageLabels: string[];
+  plannedRoute: string;
+  plannedDate: string | null;
+  createdViaTest: boolean;
+  lastSyncedAt: string;
+};
+
+type TransfersSyncDiagnostics = {
+  licenseNumber: string;
+  endpoints: Array<{
+    direction: string;
+    url: string;
+    params: Record<string, unknown>;
+    httpStatus: number | null;
+    totalReturned: number;
+    firstRawItem: Record<string, unknown> | null;
+  }>;
+};
+
+type TransfersSyncResult = {
+  ok: boolean;
+  status?: number;
+  count?: number;
+  totalTransfersSynced?: number;
+  lastTransfersSync?: string;
+  syncedAt?: string;
+  transfers?: MetrcTransferRow[];
+  message?: string;
+  rateLimitWarning?: string | null;
+  credentialHint?: string;
+  endpoint?: string;
+  diagnostics?: TransfersSyncDiagnostics;
+};
+
+type CreateTestTransferResult = {
+  ok: boolean;
+  status?: number;
+  message?: string;
+  credentialHint?: string;
+  endpoint?: string;
+  requestPayload?: unknown;
+  responsePayload?: unknown;
+  durationMs?: number;
+  metrcTransferId?: string | null;
+  transfersSynced?: number;
+  metrcMessage?: string;
+  validationErrors?: string[];
+};
+
+const DEFAULT_TRANSFER_PLANNED_ROUTE =
+  "NexBatch sandbox evaluation — direct facility transfer.";
+const TRANSFER_PACKAGE_REQUIRED_MSG =
+  "Sync or create a package before creating a transfer.";
 
 type PackageReconciliationSummary = {
   metrcCount: number;
@@ -825,6 +893,18 @@ export default function MetrcSandboxPage() {
   const [createPackageConfirmOpen, setCreatePackageConfirmOpen] = useState(false);
   const [lastCreatePackage, setLastCreatePackage] = useState<CreateTestPackageResult | null>(null);
   const [packageTagsHint, setPackageTagsHint] = useState<string | null>(null);
+  const [lastTransfersSync, setLastTransfersSync] = useState<TransfersSyncResult | null>(null);
+  const [transfersRows, setTransfersRows] = useState<MetrcTransferRow[] | null>(null);
+  const [transfersLoaded, setTransfersLoaded] = useState(false);
+  const [createTransferPackageLabel, setCreateTransferPackageLabel] = useState("");
+  const [createTransferDestinationLicense, setCreateTransferDestinationLicense] = useState("");
+  const [createTransferDate, setCreateTransferDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [createTransferRoute, setCreateTransferRoute] = useState(DEFAULT_TRANSFER_PLANNED_ROUTE);
+  const [createTransferNotes, setCreateTransferNotes] = useState("NexBatch Test Transfer");
+  const [createTransferConfirmOpen, setCreateTransferConfirmOpen] = useState(false);
+  const [lastCreateTransfer, setLastCreateTransfer] = useState<CreateTestTransferResult | null>(null);
   const [nexbatchRooms, setNexbatchRooms] = useState<NexbatchRoomOption[]>([]);
   const [mappingBusy, setMappingBusy] = useState<string | null>(null);
   const [locationCapabilityFilter, setLocationCapabilityFilter] =
@@ -963,6 +1043,19 @@ export default function MetrcSandboxPage() {
     }
   }, []);
 
+  const loadSyncedTransfers = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/metrc/transfers/persisted");
+      if (!res.ok) return;
+      const json = (await res.json()) as { ok?: boolean; transfers?: MetrcTransferRow[] };
+      setTransfersRows(json.transfers ?? []);
+    } catch {
+      setTransfersRows([]);
+    } finally {
+      setTransfersLoaded(true);
+    }
+  }, []);
+
   const loadBatchPlants = useCallback(async (metrcPlantBatchId: string) => {
     const batchId = metrcPlantBatchId.trim();
     if (!batchId) {
@@ -1037,6 +1130,7 @@ export default function MetrcSandboxPage() {
     void loadSyncedPlantBatches();
     void loadSyncedHarvests();
     void loadSyncedItems();
+    void loadSyncedTransfers();
   }, [
     loadMeta,
     loadNexbatchRooms,
@@ -1047,6 +1141,7 @@ export default function MetrcSandboxPage() {
     loadSyncedPlantBatches,
     loadSyncedHarvests,
     loadSyncedItems,
+    loadSyncedTransfers,
   ]);
 
   const selectedHarvestPlantBatch = useMemo(() => {
@@ -2116,8 +2211,148 @@ export default function MetrcSandboxPage() {
     }
   }
 
+  async function runTransfersSync() {
+    setBusy("transfers");
+    setLastTransfersSync(null);
+    try {
+      const res = await authFetch("/api/metrc/transfers");
+      const json = (await res.json()) as TransfersSyncResult;
+      setLastTransfersSync(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text: String(json.message || json.credentialHint || "Transfers sync failed."),
+        });
+        return;
+      }
+      setTransfersRows(json.transfers ?? []);
+      setTransfersLoaded(true);
+      const count = json.count ?? json.totalTransfersSynced ?? 0;
+      const warn = json.rateLimitWarning ? ` ${json.rateLimitWarning}` : "";
+      setStatusMsg({
+        tone: "ok",
+        text: `Synced ${count} transfer${count === 1 ? "" : "s"} (incoming, outgoing, templates).${warn}`,
+      });
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Transfers sync failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function openCreateTransferConfirm() {
+    if (!(packagesRows?.length ?? 0) || !createTransferPackageLabel.trim()) {
+      setStatusMsg({ tone: "error", text: TRANSFER_PACKAGE_REQUIRED_MSG });
+      return;
+    }
+    if (!createTransferDestinationLicense.trim()) {
+      setStatusMsg({
+        tone: "error",
+        text: "Select a destination facility that differs from the active source license.",
+      });
+      return;
+    }
+    if (createTransferDestinationLicense.trim() === activeFacilityLicense) {
+      setStatusMsg({
+        tone: "error",
+        text: "Destination facility must differ from the active source facility license.",
+      });
+      return;
+    }
+    setCreateTransferConfirmOpen(true);
+  }
+
+  async function runCreateTestTransfer() {
+    setCreateTransferConfirmOpen(false);
+    setBusy("createTransfer");
+    setLastCreateTransfer(null);
+    const transferRequestBody = {
+      packageLabel: createTransferPackageLabel.trim(),
+      destinationFacilityLicense: createTransferDestinationLicense.trim(),
+      transferDate: createTransferDate,
+      plannedRoute: createTransferRoute.trim(),
+      notes: createTransferNotes.trim() || null,
+    };
+    const transferCreateStarted = performance.now();
+    try {
+      const res = await authFetch("/api/metrc/transfers/create-test", {
+        method: "POST",
+        body: JSON.stringify(transferRequestBody),
+      });
+      const json = (await res.json()) as CreateTestTransferResult;
+      setLastCreateTransfer(json);
+      const companyId = getSelectedCompanyId() || "";
+      const durationMs =
+        typeof json.durationMs === "number"
+          ? json.durationMs
+          : Math.round(performance.now() - transferCreateStarted);
+      if (!res.ok || !json.ok) {
+        const validation =
+          json.validationErrors?.length ? ` ${json.validationErrors.join(" ")}` : "";
+        recordSandboxCreateEvaluation({
+          companyId,
+          taskId: "transfers",
+          endpoint: "/api/metrc/transfers/create-test",
+          httpStatus: res.status,
+          durationMs,
+          requestPayload: transferRequestBody,
+          responsePayload: json,
+          user: sandboxEvaluationUser(),
+          passed: false,
+          errorMessage:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Create test transfer failed.") + validation,
+        });
+        setStatusMsg({
+          tone: "error",
+          text:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Create test transfer failed.") + validation,
+        });
+        return;
+      }
+      recordSandboxCreateEvaluation({
+        companyId,
+        taskId: "transfers",
+        endpoint: "/api/metrc/transfers/create-test",
+        httpStatus: res.status,
+        durationMs,
+        requestPayload: transferRequestBody,
+        responsePayload: json,
+        user: sandboxEvaluationUser(),
+        passed: true,
+      });
+      setStatusMsg({
+        tone: "ok",
+        text: String(
+          json.message ||
+            `Test transfer template created${json.metrcTransferId ? ` (id ${json.metrcTransferId})` : ""}.`,
+        ),
+      });
+      await runTransfersSync();
+      await loadSyncedTransfers();
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Create test transfer failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const isSandboxEnvironment =
     String(meta?.metrcEnvironment || "").trim().toLowerCase() === "sandbox";
+
+  const activeFacilityLicense = String(meta?.metrcLicenseNumberDisplay || "").trim();
+
+  const transferDestinationFacilities = useMemo(() => {
+    const rows = lastFacilities?.facilities ?? [];
+    return rows.filter(
+      (f) => f.licenseNumber.trim() && f.licenseNumber.trim() !== activeFacilityLicense,
+    );
+  }, [lastFacilities, activeFacilityLicense]);
 
   const vegRoomOptions = useMemo(
     () => nexbatchRooms.filter((r) => r.suite === "vegRooms"),
@@ -2396,6 +2631,22 @@ export default function MetrcSandboxPage() {
                   ? ` (${meta.totalHarvestsSynced})`
                   : meta?.metrcSandboxLastHarvestsCount != null
                     ? ` (${meta.metrcSandboxLastHarvestsCount})`
+                    : ""}
+              </div>
+            </div>
+            <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>Last transfers sync</div>
+              <div style={styles.metaValue}>
+                {formatCompanyTimestamp(
+                  meta?.metrcLastTransfersSyncAt ||
+                    meta?.lastTransfersSync ||
+                    meta?.metrcSandboxLastTransfersSyncAt ||
+                    "",
+                ) || "—"}
+                {meta?.totalTransfersSynced != null
+                  ? ` (${meta.totalTransfersSynced})`
+                  : meta?.metrcSandboxLastTransfersCount != null
+                    ? ` (${meta.metrcSandboxLastTransfersCount})`
                     : ""}
               </div>
             </div>
@@ -4135,6 +4386,291 @@ export default function MetrcSandboxPage() {
           ) : (
             <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>Loading saved packages…</p>
           )}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>METRC transfers</h2>
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8" }}>
+            Sync from{" "}
+            <code style={{ color: "#cbd5e1" }}>GET /transfers/v2/incoming</code>,{" "}
+            <code style={{ color: "#cbd5e1" }}>/outgoing</code>, and{" "}
+            <code style={{ color: "#cbd5e1" }}>/templates/outgoing</code>. Create sandbox outgoing
+            transfer templates via{" "}
+            <code style={{ color: "#cbd5e1" }}>POST /transfers/v2/templates/outgoing</code> using a
+            synced package.
+          </p>
+          {activeFacilityLicense ? (
+            <p style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
+              Active facility license:{" "}
+              <code style={{ color: "#cbd5e1" }}>{activeFacilityLicense}</code>
+            </p>
+          ) : null}
+          <div style={{ ...styles.row, marginTop: 14, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              style={{ ...styles.btn, ...styles.btnPrimary }}
+              disabled={busy !== null}
+              onClick={() => void runTransfersSync()}
+            >
+              {busy === "transfers" ? "Syncing…" : "Sync Transfers"}
+            </button>
+          </div>
+          {lastTransfersSync?.diagnostics ? (
+            <details style={{ marginTop: 12 }}>
+              <summary style={{ cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>
+                Sync diagnostics
+              </summary>
+              <pre
+                style={{
+                  marginTop: 8,
+                  padding: 12,
+                  borderRadius: 10,
+                  border: "1px solid #334155",
+                  background: "rgba(2, 6, 23, 0.8)",
+                  fontSize: 11,
+                  color: "#cbd5e1",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {JSON.stringify(lastTransfersSync.diagnostics, null, 2)}
+              </pre>
+            </details>
+          ) : null}
+          {isSandboxEnvironment ? (
+            <div
+              style={{
+                marginTop: 20,
+                paddingTop: 16,
+                borderTop: "1px solid #334155",
+              }}
+            >
+              <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700 }}>Create Test Transfer</h3>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: "#94a3b8" }}>
+                Destination must be a different synced facility license. Confirmation required before
+                METRC write.
+              </p>
+              {transferDestinationFacilities.length === 0 ? (
+                <p style={{ margin: "0 0 12px", fontSize: 13, color: "#fbbf24" }}>
+                  Pull facilities first and ensure at least one license differs from the active source
+                  facility.
+                </p>
+              ) : null}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+                  gap: 12,
+                }}
+              >
+                <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+                  <span style={{ color: "#94a3b8" }}>Source package</span>
+                  <select
+                    value={createTransferPackageLabel}
+                    onChange={(e) => setCreateTransferPackageLabel(e.target.value)}
+                    style={styles.input}
+                  >
+                    <option value="">Select package…</option>
+                    {(packagesRows ?? []).map((row) => (
+                      <option key={row.packageLabel} value={row.packageLabel}>
+                        {row.packageLabel} — {row.itemName || "item"} ({row.quantity}{" "}
+                        {row.unitOfMeasure})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+                  <span style={{ color: "#94a3b8" }}>Destination facility</span>
+                  <select
+                    value={createTransferDestinationLicense}
+                    onChange={(e) => setCreateTransferDestinationLicense(e.target.value)}
+                    style={styles.input}
+                    disabled={transferDestinationFacilities.length === 0}
+                  >
+                    <option value="">Select facility…</option>
+                    {transferDestinationFacilities.map((f) => (
+                      <option key={f.licenseNumber} value={f.licenseNumber}>
+                        {f.facilityName || f.licenseNumber} ({f.licenseNumber})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+                  <span style={{ color: "#94a3b8" }}>Transfer date</span>
+                  <input
+                    type="date"
+                    value={createTransferDate}
+                    onChange={(e) => setCreateTransferDate(e.target.value)}
+                    style={styles.input}
+                  />
+                </label>
+                <label
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                    fontSize: 13,
+                    gridColumn: "1 / -1",
+                  }}
+                >
+                  <span style={{ color: "#94a3b8" }}>Planned route</span>
+                  <input
+                    type="text"
+                    value={createTransferRoute}
+                    onChange={(e) => setCreateTransferRoute(e.target.value)}
+                    style={styles.input}
+                  />
+                </label>
+                <label
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                    fontSize: 13,
+                    gridColumn: "1 / -1",
+                  }}
+                >
+                  <span style={{ color: "#94a3b8" }}>Notes / template name</span>
+                  <input
+                    type="text"
+                    value={createTransferNotes}
+                    onChange={(e) => setCreateTransferNotes(e.target.value)}
+                    style={styles.input}
+                  />
+                </label>
+              </div>
+              <div style={{ ...styles.row, marginTop: 12 }}>
+                <button
+                  type="button"
+                  style={{ ...styles.btn, ...styles.btnPrimary }}
+                  disabled={busy !== null}
+                  onClick={() => openCreateTransferConfirm()}
+                >
+                  {busy === "createTransfer" ? "Creating…" : "Create Test Transfer"}
+                </button>
+              </div>
+              {createTransferConfirmOpen ? (
+                <div
+                  style={{
+                    marginTop: 14,
+                    padding: 14,
+                    borderRadius: 10,
+                    border: "1px solid rgba(248, 113, 113, 0.45)",
+                    background: "rgba(69, 10, 10, 0.35)",
+                  }}
+                >
+                  <p style={{ margin: "0 0 10px", fontWeight: 700, color: "#fecaca" }}>
+                    Confirm METRC sandbox write
+                  </p>
+                  <p style={{ margin: "0 0 12px", fontSize: 13, color: "#fca5a5" }}>
+                    Sandbox only. This will create an outgoing transfer template for package &quot;
+                    {createTransferPackageLabel.trim()}&quot; to facility &quot;
+                    {createTransferDestinationLicense.trim()}&quot; on {createTransferDate}.
+                  </p>
+                  <div style={styles.row}>
+                    <button
+                      type="button"
+                      style={{ ...styles.btn, ...styles.btnPrimary }}
+                      onClick={() => void runCreateTestTransfer()}
+                    >
+                      Yes, create in METRC
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.btn}
+                      onClick={() => setCreateTransferConfirmOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {lastCreateTransfer ? (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px solid #334155",
+                    background: "rgba(2, 6, 23, 0.8)",
+                    fontSize: 12,
+                    color: "#94a3b8",
+                  }}
+                >
+                  <strong style={{ color: lastCreateTransfer.ok ? "#4ade80" : "#f87171" }}>
+                    Last create attempt ({lastCreateTransfer.status ?? "—"})
+                  </strong>
+                  <pre
+                    style={{
+                      marginTop: 8,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      fontFamily: "ui-monospace, monospace",
+                      color: "#cbd5e1",
+                    }}
+                  >
+                    {JSON.stringify(
+                      {
+                        message: lastCreateTransfer.message,
+                        endpoint: lastCreateTransfer.endpoint,
+                        metrcTransferId: lastCreateTransfer.metrcTransferId,
+                        transfersSynced: lastCreateTransfer.transfersSynced,
+                        validationErrors: lastCreateTransfer.validationErrors,
+                        request: lastCreateTransfer.requestPayload,
+                        response: lastCreateTransfer.responsePayload,
+                      },
+                      null,
+                      2,
+                    )}
+                  </pre>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p style={{ marginTop: 12, color: "#fbbf24", fontSize: 13 }}>
+              Create Test Transfer is available only when METRC environment is sandbox.
+            </p>
+          )}
+          {transfersLoaded && transfersRows && transfersRows.length > 0 ? (
+            <table style={{ ...styles.sampleTable, marginTop: 16 }}>
+              <thead>
+                <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+                  <th style={{ padding: "6px 8px" }}>ID</th>
+                  <th style={{ padding: "6px 8px" }}>Direction</th>
+                  <th style={{ padding: "6px 8px" }}>Manifest</th>
+                  <th style={{ padding: "6px 8px" }}>Type</th>
+                  <th style={{ padding: "6px 8px" }}>Status</th>
+                  <th style={{ padding: "6px 8px" }}>Destination</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transfersRows.map((row) => (
+                  <tr
+                    key={`${row.direction}:${row.metrcTransferId}`}
+                    style={{ borderTop: "1px solid #334155" }}
+                  >
+                    <td style={{ padding: "6px 8px", fontFamily: "ui-monospace, monospace" }}>
+                      {row.metrcTransferId}
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>{row.direction}</td>
+                    <td style={{ padding: "6px 8px" }}>{row.manifestNumber || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>{row.transferType || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>{row.status}</td>
+                    <td style={{ padding: "6px 8px" }}>{row.destinationFacility || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : lastTransfersSync?.ok && transfersRows?.length === 0 ? (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+              Transfers sync completed with 0 records. Create a test transfer or check METRC sandbox
+              data.
+            </p>
+          ) : transfersLoaded ? (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+              No transfers stored yet. Use Sync Transfers above.
+            </p>
+          ) : null}
         </section>
 
         <section style={styles.card}>

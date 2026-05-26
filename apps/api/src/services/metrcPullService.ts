@@ -28,7 +28,11 @@ import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 
 export type MetrcPullResource = Exclude<
   MetrcEndpointResource,
-  "plants_flowering" | "plants_vegetative"
+  | "plants_flowering"
+  | "plants_vegetative"
+  | "transfers_incoming"
+  | "transfers_outgoing"
+  | "transfers_templates"
 >;
 
 const RESOURCE_META: Record<

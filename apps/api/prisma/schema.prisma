@@ -232,6 +232,8 @@ model Company {
   metrcPlantBatchRequestLogs MetrcPlantBatchRequestLog[]
   metrcHarvests          MetrcHarvest[]
   metrcHarvestRequestLogs MetrcHarvestRequestLog[]
+  metrcTransfers         MetrcTransfer[]
+  metrcTransferRequestLogs MetrcTransferRequestLog[]
   metrcPlants            MetrcPlant[]
 
   serviceSettings CompanyServiceSettings?
@@ -1583,6 +1585,52 @@ model MetrcPlant {
 
 /// Admin/sandbox METRC harvest API request audit (sync + create-test).
 model MetrcHarvestRequestLog {
+  id                  String   @id @default(cuid())
+  companyId           String
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  action              String
+  method              String
+  endpoint            String
+  httpStatus          Int?
+  requestPayloadJson  String   @default("{}")
+  responsePayloadJson String   @default("{}")
+  durationMs          Int?
+  actorUserId         String?
+  createdAt           DateTime @default(now())
+
+  @@index([companyId, createdAt])
+}
+
+/// METRC transfers (incoming, outgoing, templates) synced per company.
+model MetrcTransfer {
+  id                    String    @id @default(cuid())
+  companyId             String
+  company               Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  metrcTransferId       String
+  direction             String
+  manifestNumber        String    @default("")
+  transferType          String    @default("")
+  status                String    @default("")
+  licenseNumber         String    @default("")
+  transporter           String    @default("")
+  destinationFacility   String    @default("")
+  packageLabelsJson     String    @default("[]")
+  plannedRoute          String    @default("")
+  plannedDate           DateTime?
+  createdViaTest        Boolean   @default(false)
+  rawPayloadJson        String
+  lastSyncedAt          DateTime
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([companyId, metrcTransferId, direction])
+  @@index([companyId, licenseNumber])
+  @@index([companyId, direction])
+  @@index([companyId, manifestNumber])
+}
+
+/// Admin/sandbox METRC transfer API request audit (sync + create-test).
+model MetrcTransferRequestLog {
   id                  String   @id @default(cuid())
   companyId           String
   company             Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)

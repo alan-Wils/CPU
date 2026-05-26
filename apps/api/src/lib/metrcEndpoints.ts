@@ -19,6 +19,10 @@ import {
   buildMetrcItemsActivePathCandidates,
   type MetrcItemsActiveQueryParams,
 } from "./metrcItemsActiveQuery.js";
+import {
+  buildMetrcTransfersListPathCandidates,
+  type MetrcTransfersActiveQueryParams,
+} from "./metrcTransfersActiveQuery.js";
 
 export type { MetrcLocationsActiveQueryParams };
 
@@ -30,6 +34,9 @@ export type MetrcEndpointResource =
   | "packages"
   | "plant_batches"
   | "harvests"
+  | "transfers_incoming"
+  | "transfers_outgoing"
+  | "transfers_templates"
   | "plants_flowering"
   | "plants_vegetative";
 
@@ -127,6 +134,27 @@ export function buildMetrcEndpointCandidates(
       }
       const q = licenseQuery(String(licenseNumberOrLocationsParams));
       return [`/harvests/v2/active${q}`, `/harvests/v1/active${q}`];
+    }
+    case "transfers_incoming": {
+      if (typeof licenseNumberOrLocationsParams !== "string") {
+        return buildMetrcTransfersListPathCandidates("incoming", licenseNumberOrLocationsParams);
+      }
+      const q = licenseQuery(String(licenseNumberOrLocationsParams));
+      return [`/transfers/v2/incoming${q}`, `/transfers/v1/incoming${q}`];
+    }
+    case "transfers_outgoing": {
+      if (typeof licenseNumberOrLocationsParams !== "string") {
+        return buildMetrcTransfersListPathCandidates("outgoing", licenseNumberOrLocationsParams);
+      }
+      const q = licenseQuery(String(licenseNumberOrLocationsParams));
+      return [`/transfers/v2/outgoing${q}`, `/transfers/v1/outgoing${q}`];
+    }
+    case "transfers_templates": {
+      if (typeof licenseNumberOrLocationsParams !== "string") {
+        return buildMetrcTransfersListPathCandidates("template", licenseNumberOrLocationsParams);
+      }
+      const q = licenseQuery(String(licenseNumberOrLocationsParams));
+      return [`/transfers/v2/templates/outgoing${q}`, `/transfers/v1/templates${q}`];
     }
     case "plants_flowering": {
       if (typeof licenseNumberOrLocationsParams !== "string") {

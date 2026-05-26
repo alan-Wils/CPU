@@ -36,6 +36,7 @@ const RUNNABLE_SYNC_TASKS: MetrcEvaluationTaskId[] = [
   "packages_sync",
   "plant_batches_sync",
   "harvests_sync",
+  "transfers_sync",
 ];
 
 const styles = {
@@ -297,7 +298,8 @@ export default function MetrcEvaluationPage() {
           taskId === "create_strain" ||
           taskId === "create_plant_batch" ||
           taskId === "create_harvest" ||
-          taskId === "create_package"
+          taskId === "create_package" ||
+          taskId === "transfers"
             ? buildEvaluationCreateRequestBody(taskId, current.tasks[taskId])
             : {};
         requestPayload = {
