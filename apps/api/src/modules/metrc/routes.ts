@@ -8,6 +8,7 @@ import { MetrcConnectionService } from "../../services/metrcConnectionService.js
 import { MetrcAvailablePlantTagsService } from "../../services/metrcAvailablePlantTagsService.js";
 import { MetrcSandboxService } from "../../services/metrcSandboxService.js";
 import { MetrcPullService } from "../../services/metrcPullService.js";
+import { MetrcFacilitiesSyncService } from "../../services/metrcFacilitiesSyncService.js";
 import { MetrcDebugAuthService } from "../../services/metrcDebugAuthService.js";
 import { env } from "../../config/env.js";
 
@@ -29,6 +30,7 @@ const metrcConnectionService = new MetrcConnectionService();
 const metrcAvailablePlantTagsService = new MetrcAvailablePlantTagsService();
 const metrcSandboxService = new MetrcSandboxService();
 const metrcPullService = new MetrcPullService();
+const metrcFacilitiesSyncService = new MetrcFacilitiesSyncService();
 const metrcDebugAuthService = new MetrcDebugAuthService();
 
 function httpStatusForMetrcAction(result: { ok: boolean; status?: number }): number {
@@ -131,10 +133,9 @@ metrcRouter.get(
   requireRole([...metrcAdminRoles]),
   asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
-    const result = await metrcPullService.pull({
+    const result = await metrcFacilitiesSyncService.syncMetrcFacilities({
       companyId,
       actorUserId: req.auth.userId,
-      resource: "facilities",
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),

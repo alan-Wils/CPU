@@ -30,6 +30,8 @@ type IntegrationsMeta = {
   metrcSandboxProvisioningStartedAt?: string | null;
   metrcLastConnectionStatus?: MetrcLastConnectionStatus | "";
   metrcLastConnectionCheckedAt?: string | null;
+  metrcSandboxLastFacilitiesSyncAt?: string | null;
+  metrcSandboxLastFacilitiesCount?: number | null;
   metrcSandboxLastRoomsSyncAt?: string | null;
   metrcSandboxLastStrainsSyncAt?: string | null;
   metrcSandboxLastPackagesSyncAt?: string | null;
@@ -66,6 +68,26 @@ type PullResult = {
   endpoint?: string;
   endpointNotAvailable?: boolean;
   credentialHint?: string;
+};
+
+type MetrcFacilityRow = {
+  licenseNumber: string;
+  facilityName: string;
+  facilityType: string;
+  stateCode: string;
+  active: boolean;
+};
+
+type FacilitiesSyncResult = {
+  ok: boolean;
+  status?: number;
+  count?: number;
+  syncedAt?: string;
+  facilities?: MetrcFacilityRow[];
+  message?: string;
+  rateLimitWarning?: string | null;
+  credentialHint?: string;
+  endpoint?: string;
 };
 
 function formatMetrcPullError(json: PullResult, resource: string): string {
@@ -264,6 +286,7 @@ export default function MetrcSandboxPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<{ tone: "ok" | "error" | "warn"; text: string } | null>(null);
   const [lastPull, setLastPull] = useState<PullResult | null>(null);
+  const [lastFacilities, setLastFacilities] = useState<FacilitiesSyncResult | null>(null);
   const [testAt, setTestAt] = useState<string | null>(null);
   const [setupDebug, setSetupDebug] = useState<SandboxSetupDebug | null>(null);
   const [sandboxUiStatus, setSandboxUiStatus] = useState<
@@ -485,6 +508,34 @@ export default function MetrcSandboxPage() {
     }
   }
 
+  async function runFacilitiesSync() {
+    setBusy("facilities");
+    setStatusMsg(null);
+    setLastFacilities(null);
+    try {
+      const res = await authFetch("/api/metrc/facilities");
+      const json = (await res.json()) as FacilitiesSyncResult;
+      setLastFacilities(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text: String(json.message || "Facilities sync failed."),
+        });
+        return;
+      }
+      const warn = json.rateLimitWarning ? ` ${json.rateLimitWarning}` : "";
+      setStatusMsg({
+        tone: json.rateLimitWarning ? "warn" : "ok",
+        text: `Synced ${json.count ?? 0} facilit${(json.count ?? 0) === 1 ? "y" : "ies"}.${warn}`,
+      });
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Facilities sync failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function runPull(resource: "rooms" | "strains" | "packages") {
     setBusy(resource);
     setStatusMsg(null);
@@ -680,6 +731,15 @@ export default function MetrcSandboxPage() {
               </div>
             </div>
             <div style={styles.metaItem}>
+              <div style={styles.metaLabel}>Last facilities sync</div>
+              <div style={styles.metaValue}>
+                {formatCompanyTimestamp(meta?.metrcSandboxLastFacilitiesSyncAt || "") || "—"}
+                {meta?.metrcSandboxLastFacilitiesCount != null
+                  ? ` (${meta.metrcSandboxLastFacilitiesCount})`
+                  : ""}
+              </div>
+            </div>
+            <div style={styles.metaItem}>
               <div style={styles.metaLabel}>Last locations sync</div>
               <div style={styles.metaValue}>
                 {formatCompanyTimestamp(meta?.metrcSandboxLastRoomsSyncAt || "") || "—"}
@@ -765,6 +825,14 @@ export default function MetrcSandboxPage() {
               type="button"
               style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
               disabled={!!busy}
+              onClick={() => void runFacilitiesSync()}
+            >
+              {busy === "facilities" ? "Pulling…" : "Pull Facilities"}
+            </button>
+            <button
+              type="button"
+              style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+              disabled={!!busy}
               onClick={() => void runPull("rooms")}
             >
               {busy === "rooms" ? "Pulling…" : "Pull Locations/Rooms"}
@@ -799,6 +867,31 @@ export default function MetrcSandboxPage() {
             >
               {statusMsg?.text || provisioningMessage}
             </div>
+          ) : null}
+
+          {lastFacilities?.ok && lastFacilities.facilities && lastFacilities.facilities.length > 0 ? (
+            <table style={styles.sampleTable}>
+              <thead>
+                <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+                  <th style={{ padding: "6px 8px" }}>License</th>
+                  <th style={{ padding: "6px 8px" }}>Facility name</th>
+                  <th style={{ padding: "6px 8px" }}>Facility type</th>
+                  <th style={{ padding: "6px 8px" }}>Active</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lastFacilities.facilities.map((row) => (
+                  <tr key={row.licenseNumber} style={{ borderTop: "1px solid #334155" }}>
+                    <td style={{ padding: "6px 8px", fontFamily: "ui-monospace, monospace" }}>
+                      {row.licenseNumber}
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>{row.facilityName || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>{row.facilityType || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>{row.active ? "Yes" : "No"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           ) : null}
 
           {lastPull?.ok && lastPull.sample && lastPull.sample.length > 0 ? (

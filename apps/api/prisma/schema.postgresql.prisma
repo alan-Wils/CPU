@@ -222,6 +222,7 @@ model Company {
 
   leafLinkStoredOrders     LeafLinkStoredOrder[]
   integrationSyncStates  IntegrationSyncState[]
+  metrcFacilities        MetrcFacility[]
 
   serviceSettings CompanyServiceSettings?
 
@@ -1305,6 +1306,26 @@ model IntegrationSyncState {
 
   @@unique([companyId, provider, resource])
   @@index([companyId, provider])
+}
+
+/// METRC GET /facilities/v2 rows synced per company (license is unique per tenant).
+model MetrcFacility {
+  id                 String   @id @default(cuid())
+  companyId          String
+  company            Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  licenseNumber      String
+  facilityName       String   @default("")
+  facilityType       String   @default("")
+  stateCode          String   @default("")
+  active             Boolean  @default(true)
+  capabilitiesJson   String   @default("[]")
+  rawPayloadJson     String
+  lastSyncedAt       DateTime
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([companyId, licenseNumber])
+  @@index([companyId, active])
 }
 
 model CheckCapture {
