@@ -7,6 +7,7 @@ export type MetrcEvaluationTaskId =
   | "facilities_sync"
   | "locations_sync"
   | "strains_sync"
+  | "create_strain"
   | "packages_sync"
   | "plant_batches_sync"
   | "create_plant_batch"
@@ -96,6 +97,16 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
     nexbatchPath: "/api/metrc/strains",
     method: "GET",
     runnable: true,
+  },
+  {
+    id: "create_strain",
+    label: "Create Strain",
+    description: "POST test strain to METRC sandbox (admin test action).",
+    nexbatchPath: null,
+    method: "POST",
+    runnable: false,
+    notAvailableReason:
+      "Use METRC Sandbox → Create Test Strain (sandbox-only, confirmation required). Default name: NexBatch Test Strain.",
   },
   {
     id: "packages_sync",

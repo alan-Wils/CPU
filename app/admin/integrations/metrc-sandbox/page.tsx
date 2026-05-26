@@ -179,6 +179,25 @@ type StrainsSyncResult = {
   endpoint?: string;
 };
 
+const DEFAULT_TEST_STRAIN_NAME = "NexBatch Test Strain";
+
+const METRC_STRAIN_TESTING_STATUSES = ["None", "InHouse", "ThirdParty"] as const;
+
+type CreateTestStrainResult = {
+  ok: boolean;
+  status?: number;
+  message?: string;
+  alreadyExists?: boolean;
+  credentialHint?: string;
+  endpoint?: string;
+  requestPayload?: unknown;
+  responsePayload?: unknown;
+  durationMs?: number;
+  metrcStrainId?: string;
+  strain?: MetrcStrainRow;
+  metrcMessage?: string;
+};
+
 type MetrcPackageRow = {
   packageLabel: string;
   itemName: string;
@@ -570,6 +589,10 @@ export default function MetrcSandboxPage() {
   const [lastStrainsSync, setLastStrainsSync] = useState<StrainsSyncResult | null>(null);
   const [strainsRows, setStrainsRows] = useState<MetrcStrainRow[] | null>(null);
   const [strainsLoaded, setStrainsLoaded] = useState(false);
+  const [createStrainName, setCreateStrainName] = useState(DEFAULT_TEST_STRAIN_NAME);
+  const [createStrainTestingStatus, setCreateStrainTestingStatus] = useState<string>("None");
+  const [createStrainConfirmOpen, setCreateStrainConfirmOpen] = useState(false);
+  const [lastCreateStrain, setLastCreateStrain] = useState<CreateTestStrainResult | null>(null);
   const [lastPackagesSync, setLastPackagesSync] = useState<PackagesSyncResult | null>(null);
   const [packagesRows, setPackagesRows] = useState<MetrcPackageRow[] | null>(null);
   const [packagesLoaded, setPackagesLoaded] = useState(false);
@@ -579,7 +602,7 @@ export default function MetrcSandboxPage() {
   const [plantBatchesRows, setPlantBatchesRows] = useState<MetrcPlantBatchRow[] | null>(null);
   const [plantBatchesLoaded, setPlantBatchesLoaded] = useState(false);
   const [createBatchName, setCreateBatchName] = useState("");
-  const [createBatchStrain, setCreateBatchStrain] = useState("");
+  const [createBatchStrain, setCreateBatchStrain] = useState(DEFAULT_TEST_STRAIN_NAME);
   const [createBatchCount, setCreateBatchCount] = useState("25");
   const [createBatchPlantingDate, setCreateBatchPlantingDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
@@ -1059,36 +1082,92 @@ export default function MetrcSandboxPage() {
     }
   }
 
-  async function runStrainsSync() {
-    setBusy("strains");
-    setStatusMsg(null);
-    setLastStrainsSync(null);
+  async function runStrainsSync(options?: { quiet?: boolean }) {
+    if (!options?.quiet) {
+      setBusy("strains");
+      setStatusMsg(null);
+      setLastStrainsSync(null);
+    }
     try {
       const res = await authFetch("/api/metrc/strains");
       const json = (await res.json()) as StrainsSyncResult;
-      setLastStrainsSync(json);
+      if (!options?.quiet) setLastStrainsSync(json);
       if (!res.ok || !json.ok) {
-        setStatusMsg({
-          tone: "error",
-          text: String(json.message || "Strains sync failed."),
-        });
-        return;
+        if (!options?.quiet) {
+          setStatusMsg({
+            tone: "error",
+            text: String(json.message || "Strains sync failed."),
+          });
+        }
+        return false;
       }
       const count = json.count ?? json.totalStrainsSynced ?? 0;
       setStrainsRows(json.strains ?? []);
       setStrainsLoaded(true);
-      const created =
-        typeof json.nexbatchStrainsCreated === "number" && json.nexbatchStrainsCreated > 0
-          ? ` Created ${json.nexbatchStrainsCreated} NexBatch strain${json.nexbatchStrainsCreated === 1 ? "" : "s"}.`
-          : "";
-      const warn = json.rateLimitWarning ? ` ${json.rateLimitWarning}` : "";
-      setStatusMsg({
-        tone: json.rateLimitWarning ? "warn" : "ok",
-        text: `Synced ${count} strain${count === 1 ? "" : "s"} (0 is valid when METRC returns no active strains).${created}${warn}`,
+      if (!options?.quiet) {
+        const created =
+          typeof json.nexbatchStrainsCreated === "number" && json.nexbatchStrainsCreated > 0
+            ? ` Created ${json.nexbatchStrainsCreated} NexBatch strain${json.nexbatchStrainsCreated === 1 ? "" : "s"}.`
+            : "";
+        const warn = json.rateLimitWarning ? ` ${json.rateLimitWarning}` : "";
+        setStatusMsg({
+          tone: json.rateLimitWarning ? "warn" : "ok",
+          text: `Synced ${count} strain${count === 1 ? "" : "s"} (0 is valid when METRC returns no active strains).${created}${warn}`,
+        });
+        await loadMeta();
+      }
+      return true;
+    } catch {
+      if (!options?.quiet) {
+        setStatusMsg({ tone: "error", text: "Strains sync failed — network error." });
+      }
+      return false;
+    } finally {
+      if (!options?.quiet) setBusy(null);
+    }
+  }
+
+  async function runCreateTestStrain() {
+    setCreateStrainConfirmOpen(false);
+    setBusy("createStrain");
+    setLastCreateStrain(null);
+    const name = createStrainName.trim();
+    try {
+      const res = await authFetch("/api/metrc/strains/create-test", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          testingStatus: createStrainTestingStatus.trim() || "None",
+        }),
       });
+      const json = (await res.json()) as CreateTestStrainResult;
+      setLastCreateStrain(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Create test strain failed."),
+        });
+        return;
+      }
+      const strainName = json.strain?.name || name;
+      setCreateBatchStrain(strainName);
+      setStatusMsg({
+        tone: "ok",
+        text: String(
+          json.message ||
+            (json.alreadyExists
+              ? `Using existing strain "${strainName}".`
+              : `Created test strain "${strainName}".`),
+        ),
+      });
+      await runStrainsSync({ quiet: true });
+      await loadSyncedStrains();
       await loadMeta();
     } catch {
-      setStatusMsg({ tone: "error", text: "Strains sync failed — network error." });
+      setStatusMsg({ tone: "error", text: "Create test strain failed — network error." });
     } finally {
       setBusy(null);
     }
@@ -1698,11 +1777,163 @@ export default function MetrcSandboxPage() {
             </p>
           ) : strainsLoaded ? (
             <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
-              No strains stored yet. Use Sync Strains above to pull from METRC.
+              No strains stored yet. Use Sync Strains above, or create a test strain below when METRC
+              has zero active strains.
             </p>
           ) : (
             <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>Loading saved strains…</p>
           )}
+
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid #334155" }}>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Create test strain</h3>
+            <div style={styles.warn}>
+              <strong>Sandbox only.</strong> POSTs a strain to METRC sandbox via{" "}
+              <code style={{ color: "#cbd5e1" }}>POST /strains/v2/create</code>. Duplicate names reuse
+              the existing NexBatch record.
+            </div>
+            {!isSandboxEnvironment && !loadingMeta ? (
+              <p style={{ marginTop: 12, color: "#f87171", fontSize: 13 }}>
+                METRC environment is not sandbox. Switch to sandbox in Company Config to enable creation.
+              </p>
+            ) : null}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+                gap: 12,
+                marginTop: 14,
+              }}
+            >
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Strain name</span>
+                <input
+                  type="text"
+                  value={createStrainName}
+                  onChange={(e) => setCreateStrainName(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: 13 }}>
+                <span style={{ color: "#94a3b8" }}>Testing status (optional)</span>
+                <select
+                  value={createStrainTestingStatus}
+                  onChange={(e) => setCreateStrainTestingStatus(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                >
+                  {METRC_STRAIN_TESTING_STATUSES.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div style={{ ...styles.row, marginTop: 12 }}>
+              <button
+                type="button"
+                style={{
+                  ...styles.btn,
+                  ...styles.btnPrimary,
+                  opacity: busy || !isSandboxEnvironment ? 0.6 : 1,
+                }}
+                disabled={!!busy || !isSandboxEnvironment || !createStrainName.trim()}
+                onClick={() => setCreateStrainConfirmOpen(true)}
+              >
+                {busy === "createStrain" ? "Creating…" : "Create Test Strain"}
+              </button>
+            </div>
+            {createStrainConfirmOpen ? (
+              <div
+                style={{
+                  marginTop: 14,
+                  padding: 14,
+                  borderRadius: 10,
+                  border: "1px solid rgba(248, 113, 113, 0.45)",
+                  background: "rgba(69, 10, 10, 0.35)",
+                }}
+              >
+                <p style={{ margin: "0 0 10px", fontWeight: 700, color: "#fecaca" }}>
+                  Confirm METRC sandbox write
+                </p>
+                <p style={{ margin: "0 0 12px", fontSize: 13, color: "#fca5a5" }}>
+                  Create strain &quot;{createStrainName.trim()}&quot; (testing status:{" "}
+                  {createStrainTestingStatus || "None"}) in METRC sandbox?
+                </p>
+                <div style={styles.row}>
+                  <button
+                    type="button"
+                    style={{ ...styles.btn, ...styles.btnPrimary }}
+                    onClick={() => void runCreateTestStrain()}
+                  >
+                    Yes, create in METRC
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.btn}
+                    onClick={() => setCreateStrainConfirmOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {lastCreateStrain ? (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: 12,
+                  borderRadius: 10,
+                  border: "1px solid #334155",
+                  background: "rgba(2, 6, 23, 0.8)",
+                  fontSize: 12,
+                  color: "#94a3b8",
+                }}
+              >
+                <strong style={{ color: lastCreateStrain.ok ? "#4ade80" : "#f87171" }}>
+                  Last create attempt ({lastCreateStrain.status ?? "—"})
+                  {lastCreateStrain.alreadyExists ? " · existing strain reused" : ""}
+                </strong>
+                <pre
+                  style={{
+                    marginTop: 8,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    fontFamily: "ui-monospace, monospace",
+                    color: "#cbd5e1",
+                  }}
+                >
+                  {JSON.stringify(
+                    {
+                      message: lastCreateStrain.message,
+                      endpoint: lastCreateStrain.endpoint,
+                      request: lastCreateStrain.requestPayload,
+                      response: lastCreateStrain.responsePayload,
+                    },
+                    null,
+                    2,
+                  )}
+                </pre>
+              </div>
+            ) : null}
+          </div>
         </section>
 
         <section style={styles.card}>

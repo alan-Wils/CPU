@@ -15,6 +15,7 @@ import { MetrcStrainsSyncService } from "../../services/metrcStrainsSyncService.
 import { MetrcPackagesSyncService } from "../../services/metrcPackagesSyncService.js";
 import { MetrcPlantBatchesSyncService } from "../../services/metrcPlantBatchesSyncService.js";
 import { MetrcPlantBatchCreateService } from "../../services/metrcPlantBatchCreateService.js";
+import { MetrcStrainCreateService } from "../../services/metrcStrainCreateService.js";
 import { MetrcDebugAuthService } from "../../services/metrcDebugAuthService.js";
 import { env } from "../../config/env.js";
 import { logInfo } from "../../lib/logger.js";
@@ -45,11 +46,17 @@ const metrcStrainsSyncService = new MetrcStrainsSyncService();
 const metrcPackagesSyncService = new MetrcPackagesSyncService();
 const metrcPlantBatchesSyncService = new MetrcPlantBatchesSyncService();
 const metrcPlantBatchCreateService = new MetrcPlantBatchCreateService();
+const metrcStrainCreateService = new MetrcStrainCreateService();
 
 const metrcLocationMappingBody = z.object({
   metrcLocationId: z.string().min(1),
   nexbatchRoomSuite: z.enum(["vegRooms", "flowerRooms", "dryRooms", "freezers"]).nullable(),
   nexbatchRoomId: z.string().nullable(),
+});
+
+const metrcCreateTestStrainBody = z.object({
+  name: z.string().min(1),
+  testingStatus: z.string().optional().nullable(),
 });
 
 const metrcCreateTestPlantBatchBody = z.object({
@@ -190,6 +197,36 @@ metrcRouter.get(
     const result = await metrcStrainsSyncService.syncMetrcStrains({
       companyId,
       actorUserId: req.auth.userId,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.get(
+  "/strains/request-logs",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const { listMetrcStrainRequestLogs } = await import(
+      "../../repositories/metrcStrainRepository.js"
+    );
+    const logs = await listMetrcStrainRequestLogs(companyId, 50);
+    res.status(200).json({ ok: true, logs });
+  }),
+);
+
+metrcRouter.post(
+  "/strains/create-test",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcCreateTestStrainBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcCreateTestStrainBody>;
+    const result = await metrcStrainCreateService.createTestStrain({
+      companyId,
+      actorUserId: req.auth.userId,
+      name: body.name,
+      testingStatus: body.testingStatus ?? null,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),

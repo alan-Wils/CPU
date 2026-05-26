@@ -225,6 +225,7 @@ model Company {
   metrcFacilities        MetrcFacility[]
   metrcLocations         MetrcLocation[]
   metrcStrains           MetrcStrain[]
+  metrcStrainRequestLogs MetrcStrainRequestLog[]
   metrcPackages          MetrcPackage[]
   metrcPlantBatches      MetrcPlantBatch[]
   metrcPlantBatchRequestLogs MetrcPlantBatchRequestLog[]
@@ -1381,6 +1382,25 @@ model MetrcStrain {
   @@unique([companyId, metrcStrainId])
   @@index([companyId, licenseNumber])
   @@index([companyId, nexbatchStrainId])
+  @@index([companyId, name])
+}
+
+/// Admin/sandbox METRC strain API request audit (create-test).
+model MetrcStrainRequestLog {
+  id                  String   @id @default(cuid())
+  companyId           String
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  action              String
+  method              String
+  endpoint            String
+  httpStatus          Int?
+  requestPayloadJson  String   @default("{}")
+  responsePayloadJson String   @default("{}")
+  durationMs          Int?
+  actorUserId         String?
+  createdAt           DateTime @default(now())
+
+  @@index([companyId, createdAt])
 }
 
 /// METRC GET /packages/v2/active rows synced per company (upsert by package label).
