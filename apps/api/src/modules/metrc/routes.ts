@@ -9,6 +9,7 @@ import { MetrcAvailablePlantTagsService } from "../../services/metrcAvailablePla
 import { MetrcSandboxService } from "../../services/metrcSandboxService.js";
 import { MetrcPullService } from "../../services/metrcPullService.js";
 import { MetrcFacilitiesSyncService } from "../../services/metrcFacilitiesSyncService.js";
+import { MetrcLocationsSyncService } from "../../services/metrcLocationsSyncService.js";
 import { MetrcDebugAuthService } from "../../services/metrcDebugAuthService.js";
 import { env } from "../../config/env.js";
 
@@ -31,6 +32,13 @@ const metrcAvailablePlantTagsService = new MetrcAvailablePlantTagsService();
 const metrcSandboxService = new MetrcSandboxService();
 const metrcPullService = new MetrcPullService();
 const metrcFacilitiesSyncService = new MetrcFacilitiesSyncService();
+const metrcLocationsSyncService = new MetrcLocationsSyncService();
+
+const metrcLocationMappingBody = z.object({
+  metrcLocationId: z.string().min(1),
+  nexbatchRoomSuite: z.enum(["vegRooms", "flowerRooms"]).nullable(),
+  nexbatchRoomId: z.string().nullable(),
+});
 const metrcDebugAuthService = new MetrcDebugAuthService();
 
 function httpStatusForMetrcAction(result: { ok: boolean; status?: number }): number {
@@ -170,14 +178,55 @@ metrcRouter.get(
 );
 
 metrcRouter.get(
+  "/locations/nexbatch-rooms",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const rooms = await metrcLocationsSyncService.loadNexbatchRoomOptions(companyId);
+    res.status(200).json({ ok: true, rooms });
+  }),
+);
+
+metrcRouter.get(
+  "/locations",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const locations = await metrcLocationsSyncService.listSyncedLocations(companyId);
+    res.status(200).json({ ok: true, locations });
+  }),
+);
+
+metrcRouter.patch(
+  "/locations/mapping",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcLocationMappingBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcLocationMappingBody>;
+    const result = await metrcLocationsSyncService.updateLocationMapping({
+      companyId,
+      actorUserId: req.auth.userId,
+      metrcLocationId: body.metrcLocationId,
+      nexbatchRoomSuite: body.nexbatchRoomSuite,
+      nexbatchRoomId: body.nexbatchRoomId,
+    });
+    if (result.ok === false) {
+      res.status(result.status).json(result);
+      return;
+    }
+    res.status(200).json(result);
+  }),
+);
+
+metrcRouter.get(
   "/rooms",
   requireRole([...metrcAdminRoles]),
   asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
-    const result = await metrcPullService.pull({
+    const result = await metrcLocationsSyncService.syncMetrcLocations({
       companyId,
       actorUserId: req.auth.userId,
-      resource: "rooms",
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),

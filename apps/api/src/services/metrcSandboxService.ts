@@ -276,7 +276,7 @@ export class MetrcSandboxService {
 
     if (partial?.facilityLicenseNumber) {
       const merged = mergeMetrcOperationalLicense(
-        String(metrc.licenseNumber || metrc.facilityLicenseNumber || "").trim(),
+        String(input.loaded.metrc.licenseNumber || input.loaded.metrc.facilityLicenseNumber || "").trim(),
         partial.facilityLicenseNumber,
       );
       nextMetrc.licenseNumber = merged;

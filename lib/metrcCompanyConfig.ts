@@ -53,6 +53,10 @@ export type MetrcCompanyConfig = {
   metrcSandboxLastStrainsSyncAt?: string;
   metrcSandboxLastItemsSyncAt?: string;
   metrcSandboxLastRoomsSyncAt?: string;
+  /** ISO timestamp of last GET /locations/v2/active sync. */
+  metrcLastLocationsSyncAt?: string;
+  /** Count from last locations sync. */
+  metrcTotalLocationsSynced?: number | null;
   metrcSandboxLastPackagesSyncAt?: string;
   metrcSandboxLastFacilitiesCount?: number | null;
   metrcSandboxLastStrainsCount?: number | null;

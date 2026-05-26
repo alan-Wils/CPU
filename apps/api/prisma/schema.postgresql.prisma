@@ -223,6 +223,7 @@ model Company {
   leafLinkStoredOrders     LeafLinkStoredOrder[]
   integrationSyncStates  IntegrationSyncState[]
   metrcFacilities        MetrcFacility[]
+  metrcLocations         MetrcLocation[]
 
   serviceSettings CompanyServiceSettings?
 
@@ -1326,6 +1327,30 @@ model MetrcFacility {
 
   @@unique([companyId, licenseNumber])
   @@index([companyId, active])
+}
+
+/// METRC GET /locations/v2/active rows synced per company (upsert by METRC location id).
+model MetrcLocation {
+  id                 String   @id @default(cuid())
+  companyId          String
+  company            Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  metrcLocationId    String
+  licenseNumber      String   @default("")
+  name               String   @default("")
+  locationTypeId     Int?
+  locationTypeName   String   @default("")
+  forPlants          Boolean  @default(false)
+  forHarvests        Boolean  @default(false)
+  forPackages        Boolean  @default(false)
+  rawPayloadJson     String
+  nexbatchRoomSuite  String?
+  nexbatchRoomId     String?
+  lastSyncedAt       DateTime
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([companyId, metrcLocationId])
+  @@index([companyId, licenseNumber])
 }
 
 model CheckCapture {
