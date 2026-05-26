@@ -8,12 +8,22 @@ import {
 } from "../lib/metrcCredentialDiagnostics.js";
 import {
   cacheMetrcEndpointPath,
+  metrcEndpointPathKey,
   metrcPullFailureMessage,
   orderMetrcEndpointCandidates,
   shouldTryNextMetrcEndpoint,
 } from "../lib/metrcEndpoints.js";
-import { parseMetrcItemsPayload } from "../lib/metrcItemsParse.js";
-import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
+import { parseMetrcItemsPayload, type ParsedMetrcItem } from "../lib/metrcItemsParse.js";
+import {
+  buildMetrcItemsActivePathForPage,
+  type MetrcItemsActiveQueryParams,
+} from "../lib/metrcItemsActiveQuery.js";
+import {
+  buildMetrcLocationsActiveParams,
+  logMetrcLocationsActiveRequest,
+  parseMetrcFacilityLicenseRows,
+  resolveMetrcLocationsActiveRequest,
+} from "../lib/metrcLocationsActiveQuery.js";
 import {
   applyMetrcOperationalSuccess,
   isMetrcSandboxPlaceholderLicense,
@@ -27,6 +37,9 @@ import {
   listMetrcItemsForCompany,
   upsertMetrcItemsForCompany,
 } from "../repositories/metrcItemRepository.js";
+import { listMetrcFacilitiesForCompany } from "../repositories/metrcFacilityRepository.js";
+
+const MAX_ITEM_PAGES = 50;
 
 export type MetrcItemDto = {
   metrcItemId: string;
@@ -36,6 +49,19 @@ export type MetrcItemDto = {
   quantityType: string;
   licenseNumber: string;
   lastSyncedAt: string;
+};
+
+export type MetrcItemsSyncDiagnostics = {
+  licenseNumber: string;
+  endpoint: string;
+  resolvedUrl: string;
+  params: MetrcItemsActiveQueryParams;
+  httpStatus: number;
+  totalReturned: number;
+  firstRawItem: Record<string, unknown> | null;
+  facilitySource?: string;
+  pagesFetched?: number;
+  triedLicenses?: string[];
 };
 
 export type MetrcItemsSyncSuccess = {
@@ -49,6 +75,9 @@ export type MetrcItemsSyncSuccess = {
   retries: number;
   rateLimitWarning: string | null;
   endpoint: string;
+  diagnostics: MetrcItemsSyncDiagnostics;
+  noItemsForFacility?: boolean;
+  message?: string;
 };
 
 export type MetrcItemsSyncFailure = {
@@ -57,6 +86,7 @@ export type MetrcItemsSyncFailure = {
   message: string;
   credentialHint?: string;
   endpoint?: string;
+  diagnostics?: MetrcItemsSyncDiagnostics;
 };
 
 export type MetrcItemsSyncResponse = MetrcItemsSyncSuccess | MetrcItemsSyncFailure;
@@ -73,6 +103,28 @@ function dbRowToDto(row: Awaited<ReturnType<typeof listMetrcItemsForCompany>>[nu
   };
 }
 
+function mergeParsedPages(pages: ParsedMetrcItem[][]): ParsedMetrcItem[] {
+  const byId = new Map<string, ParsedMetrcItem>();
+  for (const page of pages) {
+    for (const row of page) {
+      byId.set(row.metrcItemId, row);
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.itemName.localeCompare(b.itemName));
+}
+
+function buildResolvedUrl(baseUrl: string | null, pathnameAndQuery: string): string {
+  const base = String(baseUrl || "").replace(/\/+$/, "");
+  const path = pathnameAndQuery.startsWith("/") ? pathnameAndQuery : `/${pathnameAndQuery}`;
+  return base ? `${base}${path}` : path;
+}
+
+function firstRawItemFromParsed(parsed: ParsedMetrcItem[]): Record<string, unknown> | null {
+  if (!parsed.length) return null;
+  const raw = parsed[0]!.raw;
+  return raw && typeof raw === "object" ? raw : null;
+}
+
 export class MetrcItemsSyncService {
   configService = new ConfigService();
 
@@ -81,11 +133,202 @@ export class MetrcItemsSyncService {
     return rows.map(dbRowToDto);
   }
 
+  private async resolveLicenseCandidates(input: {
+    companyId: string;
+    client: MetrcClient;
+    loaded: Awaited<ReturnType<typeof loadCompanyMetrcConfig>>;
+    licenseOverride?: string;
+    tryAllFacilities: boolean;
+  }): Promise<string[]> {
+    const override = String(input.licenseOverride || "").trim();
+    if (override) return [override];
+
+    let license = String(input.loaded?.licenseNumber || "").trim();
+    if (isMetrcSandboxPlaceholderLicense(license)) {
+      const locationsRequest = await resolveMetrcLocationsActiveRequest({
+        client: input.client,
+        loaded: input.loaded!,
+        companyId: input.companyId,
+        purpose: "items_sync",
+      });
+      license = locationsRequest.params.licenseNumber;
+    }
+
+    if (!input.tryAllFacilities) {
+      return license ? [license] : [];
+    }
+
+    const fromDb = await listMetrcFacilitiesForCompany(input.companyId);
+    const dbLicenses = fromDb
+      .map((f) => String(f.licenseNumber || "").trim())
+      .filter(Boolean);
+    if (dbLicenses.length > 0) {
+      const unique = [...new Set(dbLicenses)];
+      if (license && !unique.includes(license)) {
+        return [license, ...unique];
+      }
+      return unique;
+    }
+
+    const facilitiesResult = await input.client.get<unknown>("/facilities/v2/");
+    if (!isMetrcClientFailure(facilitiesResult)) {
+      const rows = parseMetrcFacilityLicenseRows(facilitiesResult.data);
+      const apiLicenses = [...new Set(rows.map((r) => r.licenseNumber).filter(Boolean))];
+      if (apiLicenses.length > 0) {
+        if (license && !apiLicenses.includes(license)) {
+          return [license, ...apiLicenses];
+        }
+        return apiLicenses;
+      }
+    }
+
+    return license ? [license] : [];
+  }
+
+  private async fetchItemsForLicense(input: {
+    client: MetrcClient;
+    loaded: NonNullable<Awaited<ReturnType<typeof loadCompanyMetrcConfig>>>;
+    companyId: string;
+    licenseNumber: string;
+    endpointCtx: MetrcEndpointContext;
+    purpose: string;
+  }): Promise<
+    | {
+        ok: true;
+        parsed: ParsedMetrcItem[];
+        httpStatus: number;
+        endpoint: string;
+        resolvedUrl: string;
+        params: MetrcItemsActiveQueryParams;
+        facilitySource: string;
+        pagesFetched: number;
+        retries: number;
+        rateLimitWaitedMs: number;
+      }
+    | {
+        ok: false;
+        status: number;
+        message: string;
+        endpoint?: string;
+        resolvedUrl?: string;
+        params?: MetrcItemsActiveQueryParams;
+        httpStatus?: number;
+        retries: number;
+      }
+  > {
+    const locationsRequest = await resolveMetrcLocationsActiveRequest({
+      client: input.client,
+      loaded: { ...input.loaded, licenseNumber: input.licenseNumber },
+      companyId: input.companyId,
+      purpose: input.purpose,
+    });
+
+    const pageResults: ParsedMetrcItem[][] = [];
+    let pagesFetched = 0;
+    let totalRetries = 0;
+    let totalRateLimitWaitedMs = 0;
+    let lastStatus = 502;
+    let lastMessage = "METRC items sync failed.";
+    let lastEndpoint: string | undefined;
+    let lastResolvedUrl = buildResolvedUrl(
+      input.client.baseUrl,
+      locationsRequest.pathnameAndQuery,
+    );
+    let lastParams = locationsRequest.params;
+
+    for (let pageNumber = 1; pageNumber <= MAX_ITEM_PAGES; pageNumber += 1) {
+      const pageParams: MetrcItemsActiveQueryParams = { ...locationsRequest.params, pageNumber };
+      const candidates = orderMetrcEndpointCandidates(input.endpointCtx, "items", pageParams);
+      let pageParsed: ParsedMetrcItem[] | null = null;
+
+      for (let i = 0; i < candidates.length; i += 1) {
+        const candidatePath = candidates[i]!;
+        lastResolvedUrl = buildResolvedUrl(input.client.baseUrl, candidatePath);
+        lastParams = pageParams;
+
+        logMetrcLocationsActiveRequest({
+          companyId: input.companyId,
+          purpose: `${input.purpose}_page_${pageNumber}`,
+          baseUrl: input.client.baseUrl,
+          pathnameAndQuery: candidatePath,
+          params: pageParams,
+          facilitySource: locationsRequest.facilitySource,
+        });
+
+        const result = await input.client.get<unknown>(candidatePath);
+
+        if (!isMetrcClientFailure(result)) {
+          cacheMetrcEndpointPath(input.endpointCtx, "items", candidatePath);
+          pageParsed = parseMetrcItemsPayload(result.data);
+          totalRetries += result.retries;
+          totalRateLimitWaitedMs += result.rateLimitWaitedMs;
+          lastStatus = result.status;
+          lastEndpoint = metrcEndpointPathKey(candidatePath);
+          break;
+        }
+
+        lastStatus = result.status || 502;
+        lastMessage = metrcPullFailureMessage(lastStatus, result.metrcMessage || result.message);
+        lastEndpoint = result.endpoint ?? metrcEndpointPathKey(candidatePath);
+
+        if (
+          shouldTryNextMetrcEndpoint("items", i, candidates.length, {
+            status: result.status,
+            upstreamType: result.upstreamError?.type,
+          })
+        ) {
+          continue;
+        }
+        break;
+      }
+
+      if (!pageParsed) {
+        return {
+          ok: false,
+          status: lastStatus,
+          message: lastMessage,
+          endpoint: lastEndpoint,
+          resolvedUrl: lastResolvedUrl,
+          params: lastParams,
+          httpStatus: lastStatus,
+          retries: totalRetries,
+        };
+      }
+
+      pagesFetched += 1;
+      pageResults.push(pageParsed);
+      if (pageParsed.length < pageParams.pageSize) break;
+    }
+
+    const parsed = mergeParsedPages(pageResults);
+    const endpoint =
+      lastEndpoint ?? metrcEndpointPathKey(buildMetrcItemsActivePathForPage(lastParams, 1));
+
+    return {
+      ok: true,
+      parsed,
+      httpStatus: lastStatus,
+      endpoint,
+      resolvedUrl: lastResolvedUrl,
+      params: lastParams,
+      facilitySource: locationsRequest.facilitySource,
+      pagesFetched,
+      retries: totalRetries,
+      rateLimitWaitedMs: totalRateLimitWaitedMs,
+    };
+  }
+
   async syncMetrcItems(input: {
     companyId: string;
     actorUserId: string;
+    licenseNumber?: string;
+    tryAllFacilities?: boolean;
   }): Promise<MetrcItemsSyncResponse> {
-    logInfo("[METRC] items_sync_start", { companyId: input.companyId });
+    logInfo("[METRC] items_sync_start", {
+      companyId: input.companyId,
+      licenseOverride: input.licenseNumber ?? null,
+      tryAllFacilities: Boolean(input.tryAllFacilities),
+    });
 
     const loaded = await loadCompanyMetrcConfig(input.companyId);
     if (!loaded) {
@@ -100,8 +343,21 @@ export class MetrcItemsSyncService {
       };
     }
 
-    let license = String(loaded.licenseNumber || "").trim();
-    if (!license) {
+    const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
+    const endpointCtx = {
+      stateCode: loaded.stateCode || "CO",
+      environment: loaded.environment as MetrcEnvironment,
+    };
+
+    const licenseCandidates = await this.resolveLicenseCandidates({
+      companyId: input.companyId,
+      client,
+      loaded,
+      licenseOverride: input.licenseNumber,
+      tryAllFacilities: Boolean(input.tryAllFacilities),
+    });
+
+    if (!licenseCandidates.length) {
       return {
         ok: false,
         status: 400,
@@ -109,153 +365,219 @@ export class MetrcItemsSyncService {
       };
     }
 
-    const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
-    const endpointCtx = {
-      stateCode: loaded.stateCode || "CO",
-      environment: loaded.environment as MetrcEnvironment,
-    };
+    const startedAt = Date.now();
+    const triedLicenses: string[] = [];
+    let lastFailure: MetrcItemsSyncFailure | null = null;
+    let lastEmptyDiagnostics: MetrcItemsSyncDiagnostics | null = null;
 
-    let operationalLicense = license;
-    let candidates = orderMetrcEndpointCandidates(endpointCtx, "items", license);
-
-    if (isMetrcSandboxPlaceholderLicense(license)) {
-      const locationsRequest = await resolveMetrcLocationsActiveRequest({
+    for (const licenseNumber of licenseCandidates) {
+      triedLicenses.push(licenseNumber);
+      const fetchResult = await this.fetchItemsForLicense({
         client,
         loaded,
         companyId: input.companyId,
+        licenseNumber,
+        endpointCtx,
         purpose: "items_sync",
       });
-      operationalLicense = locationsRequest.params.licenseNumber;
-      license = operationalLicense;
-      candidates = orderMetrcEndpointCandidates(endpointCtx, "items", license);
-    }
 
-    const startedAt = Date.now();
-    let retries = 0;
-    let lastStatus = 502;
-    let lastMessage = "METRC items sync failed.";
-    let lastEndpoint: string | undefined;
+      if (fetchResult.ok === false) {
+        const failure = fetchResult;
+        lastFailure = {
+          ok: false,
+          status: failure.status,
+          message: failure.message,
+          endpoint: failure.endpoint,
+          diagnostics: failure.params
+            ? {
+                licenseNumber,
+                endpoint: failure.endpoint ?? "/items/v2/active",
+                resolvedUrl: failure.resolvedUrl ?? "",
+                params: failure.params,
+                httpStatus: failure.httpStatus ?? failure.status,
+                totalReturned: 0,
+                firstRawItem: null,
+                triedLicenses: [...triedLicenses],
+              }
+            : undefined,
+        };
+        if (failure.status === 401 || failure.status === 403) {
+          logMetrcCredentialDiagnostics({
+            companyId: input.companyId,
+            purpose: "items_sync",
+            userKeyLength: loaded.userApiKey.length,
+            vendorKeyLength: loaded.vendorApiKey.length,
+            licensePresent: Boolean(licenseNumber),
+          });
+          return {
+            ...lastFailure,
+            credentialHint: buildMetrcCredentialHintFromLoaded(loaded),
+          };
+        }
+        if (!input.tryAllFacilities) {
+          return lastFailure;
+        }
+        continue;
+      }
 
-    for (let i = 0; i < candidates.length; i += 1) {
-      const pathname = candidates[i]!;
-      const result = await client.get<unknown>(pathname);
-      lastEndpoint = pathname.split("?")[0];
+      const diagnostics: MetrcItemsSyncDiagnostics = {
+        licenseNumber,
+        endpoint: fetchResult.endpoint,
+        resolvedUrl: fetchResult.resolvedUrl,
+        params: fetchResult.params,
+        httpStatus: fetchResult.httpStatus,
+        totalReturned: fetchResult.parsed.length,
+        firstRawItem: firstRawItemFromParsed(fetchResult.parsed),
+        facilitySource: fetchResult.facilitySource,
+        pagesFetched: fetchResult.pagesFetched,
+        triedLicenses: input.tryAllFacilities ? [...triedLicenses] : undefined,
+      };
 
-      if (!isMetrcClientFailure(result)) {
-        cacheMetrcEndpointPath(endpointCtx, "items", pathname);
-        const parsed = parseMetrcItemsPayload(result.data);
+      logInfo("[METRC] items_sync_diagnostics", diagnostics);
+
+      if (fetchResult.parsed.length === 0) {
+        lastEmptyDiagnostics = diagnostics;
+        if (input.tryAllFacilities) {
+          continue;
+        }
         const syncedAt = new Date();
         const syncedAtIso = syncedAt.toISOString();
-        const rateLimitWarning =
-          result.rateLimitWaitedMs > 0
-            ? `Rate limiter delayed this request by ${result.rateLimitWaitedMs}ms.`
-            : result.retries > 0
-              ? `Completed after ${result.retries} retries.`
-              : null;
-
-        if (parsed.length > 0) {
-          await upsertMetrcItemsForCompany(
-            input.companyId,
-            parsed.map((row) => ({
-              metrcItemId: row.metrcItemId,
-              licenseNumber: operationalLicense,
-              itemName: row.itemName,
-              categoryName: row.categoryName,
-              unitOfMeasureName: row.unitOfMeasureName,
-              quantityType: row.quantityType,
-              rawPayloadJson: JSON.stringify(row.raw),
-              lastSyncedAt: syncedAt,
-            })),
-          );
-        }
-
-        const totalItemsSynced = parsed.length;
         const items = (await listMetrcItemsForCompany(input.companyId)).map(dbRowToDto);
-        const durationMs = Date.now() - startedAt;
-
-        let nextMetrc = applyMetrcOperationalSuccess(
-          {
-            ...loaded.metrc,
-            metrcSandboxLastItemsSyncAt: syncedAtIso,
-            metrcSandboxLastItemsCount: totalItemsSynced,
-            metrcSandboxLastRateLimitWarning: rateLimitWarning ?? "",
-          },
-          { operationalLicense, facilityName: null },
-        );
-        nextMetrc = applyMetrcSuccessStatus(nextMetrc, {
-          httpStatus: result.status,
-          message: formatMetrcSuccessMessage({ kind: "items_sync", count: totalItemsSynced }),
-          checkedAt: syncedAtIso,
-          totalItemsSynced,
-        });
-
-        await this.configService.upsert({
-          companyId: input.companyId,
-          actorUserId: input.actorUserId,
-          key: "company",
-          value: { ...loaded.company, metrc: nextMetrc },
-        });
-
-        logInfo("[METRC] items_sync_success", {
-          companyId: input.companyId,
-          count: items.length,
-          endpoint: lastEndpoint,
-          durationMs,
-        });
-
         return {
           ok: true,
           syncedAt: syncedAtIso,
-          count: parsed.length,
+          count: 0,
           totalItemsSynced: items.length,
           lastItemsSync: syncedAtIso,
           items,
-          durationMs,
-          retries: result.retries,
-          rateLimitWarning,
-          endpoint: lastEndpoint,
+          durationMs: Date.now() - startedAt,
+          retries: fetchResult.retries,
+          rateLimitWarning: null,
+          endpoint: fetchResult.endpoint,
+          diagnostics,
+          noItemsForFacility: true,
+          message: "No items found for selected facility.",
         };
       }
 
-      lastStatus = result.status || 502;
-      lastMessage = metrcPullFailureMessage(lastStatus, result.metrcMessage || result.message);
-      lastEndpoint = result.endpoint ?? pathname.split("?")[0];
-      retries = result.retries;
-      logWarn("[METRC] items_sync_attempt_failed", {
-        companyId: input.companyId,
-        endpoint: lastEndpoint,
-        status: lastStatus,
-        message: lastMessage,
+      const syncedAt = new Date();
+      const syncedAtIso = syncedAt.toISOString();
+      const operationalLicense = licenseNumber;
+      const rateLimitWarning =
+        fetchResult.rateLimitWaitedMs > 0
+          ? `Rate limiter delayed this request by ${fetchResult.rateLimitWaitedMs}ms.`
+          : fetchResult.retries > 0
+            ? `Completed after ${fetchResult.retries} retries.`
+            : null;
+
+      await upsertMetrcItemsForCompany(
+        input.companyId,
+        fetchResult.parsed.map((row) => ({
+          metrcItemId: row.metrcItemId,
+          licenseNumber: operationalLicense,
+          itemName: row.itemName,
+          categoryName: row.categoryName,
+          unitOfMeasureName: row.unitOfMeasureName,
+          quantityType: row.quantityType,
+          rawPayloadJson: JSON.stringify(row.raw),
+          lastSyncedAt: syncedAt,
+        })),
+      );
+
+      const totalItemsSynced = fetchResult.parsed.length;
+      const items = (await listMetrcItemsForCompany(input.companyId)).map(dbRowToDto);
+      const durationMs = Date.now() - startedAt;
+
+      let nextMetrc = applyMetrcOperationalSuccess(
+        {
+          ...loaded.metrc,
+          metrcSandboxLastItemsSyncAt: syncedAtIso,
+          metrcSandboxLastItemsCount: totalItemsSynced,
+          metrcSandboxLastRateLimitWarning: rateLimitWarning ?? "",
+        },
+        { operationalLicense, facilityName: null },
+      );
+      nextMetrc = applyMetrcSuccessStatus(nextMetrc, {
+        httpStatus: fetchResult.httpStatus,
+        message: formatMetrcSuccessMessage({ kind: "items_sync", count: totalItemsSynced }),
+        checkedAt: syncedAtIso,
+        totalItemsSynced,
       });
 
-      if (
-        shouldTryNextMetrcEndpoint("items", i, candidates.length, {
-          status: result.status,
-          upstreamType: result.upstreamError?.type,
-        })
-      ) {
-        continue;
-      }
-      break;
-    }
-
-    if (lastStatus === 401 || lastStatus === 403) {
-      logMetrcCredentialDiagnostics({
+      await this.configService.upsert({
         companyId: input.companyId,
-        purpose: "items_sync",
-        userKeyLength: loaded.userApiKey.length,
-        vendorKeyLength: loaded.vendorApiKey.length,
-        licensePresent: Boolean(loaded.licenseNumber),
+        actorUserId: input.actorUserId,
+        key: "company",
+        value: { ...loaded.company, metrc: nextMetrc },
       });
+
+      logInfo("[METRC] items_sync_success", {
+        companyId: input.companyId,
+        count: items.length,
+        endpoint: fetchResult.endpoint,
+        durationMs,
+        licenseNumber: operationalLicense,
+      });
+
+      return {
+        ok: true,
+        syncedAt: syncedAtIso,
+        count: totalItemsSynced,
+        totalItemsSynced: items.length,
+        lastItemsSync: syncedAtIso,
+        items,
+        durationMs,
+        retries: fetchResult.retries,
+        rateLimitWarning,
+        endpoint: fetchResult.endpoint,
+        diagnostics,
+        message:
+          input.tryAllFacilities && triedLicenses.length > 1
+            ? `Found ${totalItemsSynced} item(s) under license ${operationalLicense}.`
+            : undefined,
+      };
     }
 
-    const credentialHint = buildMetrcCredentialHintFromLoaded(loaded);
+    if (lastFailure) {
+      return lastFailure;
+    }
+
+    const syncedAt = new Date();
+    const syncedAtIso = syncedAt.toISOString();
+    const items = (await listMetrcItemsForCompany(input.companyId)).map(dbRowToDto);
+    const diagnostics: MetrcItemsSyncDiagnostics = lastEmptyDiagnostics ?? {
+      licenseNumber: licenseCandidates[licenseCandidates.length - 1] ?? "",
+      endpoint: "/items/v2/active",
+      resolvedUrl: "",
+      params: buildMetrcLocationsActiveParams({
+        facility: null,
+        configLicense: loaded.licenseNumber,
+      }),
+      httpStatus: 200,
+      totalReturned: 0,
+      firstRawItem: null,
+      triedLicenses,
+    };
+
     return {
-      ok: false,
-      status: lastStatus,
-      message: lastMessage,
-      credentialHint,
-      endpoint: lastEndpoint,
+      ok: true,
+      syncedAt: syncedAtIso,
+      count: 0,
+      totalItemsSynced: items.length,
+      lastItemsSync: syncedAtIso,
+      items,
+      durationMs: Date.now() - startedAt,
+      retries: 0,
+      rateLimitWarning: null,
+      endpoint: diagnostics.endpoint,
+      diagnostics,
+      noItemsForFacility: true,
+      message: `No items found for selected facility. Tried ${triedLicenses.length} license(s): ${triedLicenses.join(", ")}.`,
     };
   }
 }
+
+type MetrcEndpointContext = {
+  stateCode: string;
+  environment: MetrcEnvironment;
+};

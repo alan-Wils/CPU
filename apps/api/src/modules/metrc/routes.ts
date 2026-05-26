@@ -8,6 +8,7 @@ import { MetrcConnectionService } from "../../services/metrcConnectionService.js
 import { MetrcAvailablePlantTagsService } from "../../services/metrcAvailablePlantTagsService.js";
 import { MetrcAvailablePackageTagsService } from "../../services/metrcAvailablePackageTagsService.js";
 import { MetrcItemsSyncService } from "../../services/metrcItemsSyncService.js";
+import { MetrcItemCreateService } from "../../services/metrcItemCreateService.js";
 import { MetrcPackageCreateService } from "../../services/metrcPackageCreateService.js";
 import { MetrcSandboxService } from "../../services/metrcSandboxService.js";
 import { MetrcPullService } from "../../services/metrcPullService.js";
@@ -48,6 +49,22 @@ const availablePackageTagsQuery = z.object({
   limit: z.coerce.number().int().positive().max(500).optional(),
 });
 
+const metrcItemsSyncQuery = z.object({
+  licenseNumber: z.string().trim().min(1).optional(),
+  tryAllFacilities: z
+    .union([z.literal("true"), z.literal("false"), z.literal("1"), z.literal("0")])
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
+});
+
+const metrcCreateTestItemBody = z.object({
+  name: z.string().min(1),
+  productCategory: z.string().min(1),
+  unitOfMeasure: z.string().min(1),
+  quantityType: z.string().optional().nullable(),
+  strainName: z.string().optional().nullable(),
+});
+
 const metrcCreateTestPackageBody = z.object({
   metrcHarvestId: z.string().min(1),
   metrcItemId: z.string().optional().nullable(),
@@ -66,6 +83,7 @@ const metrcConnectionService = new MetrcConnectionService();
 const metrcAvailablePlantTagsService = new MetrcAvailablePlantTagsService();
 const metrcAvailablePackageTagsService = new MetrcAvailablePackageTagsService();
 const metrcItemsSyncService = new MetrcItemsSyncService();
+const metrcItemCreateService = new MetrcItemCreateService();
 const metrcPackageCreateService = new MetrcPackageCreateService();
 const metrcSandboxService = new MetrcSandboxService();
 const metrcPullService = new MetrcPullService();
@@ -304,20 +322,6 @@ metrcRouter.post(
 );
 
 metrcRouter.get(
-  "/items",
-  requireRole([...metrcAdminRoles]),
-  asyncHandler(async (req, res) => {
-    const companyId = getScopedCompanyId(req);
-    const result = await metrcPullService.pull({
-      companyId,
-      actorUserId: req.auth.userId,
-      resource: "items",
-    });
-    res.status(httpStatusForMetrcAction(result)).json(result);
-  }),
-);
-
-metrcRouter.get(
   "/locations/nexbatch-rooms",
   requireRole([...metrcAdminRoles]),
   asyncHandler(async (req, res) => {
@@ -405,11 +409,35 @@ metrcRouter.get(
 metrcRouter.get(
   "/items",
   requireRole([...metrcAdminRoles]),
+  validate({ query: metrcItemsSyncQuery }),
   asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
+    const query = req.query as z.infer<typeof metrcItemsSyncQuery>;
     const result = await metrcItemsSyncService.syncMetrcItems({
       companyId,
       actorUserId: req.auth.userId,
+      licenseNumber: query.licenseNumber,
+      tryAllFacilities: query.tryAllFacilities ?? false,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.post(
+  "/items/create-test",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcCreateTestItemBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcCreateTestItemBody>;
+    const result = await metrcItemCreateService.createTestItem({
+      companyId,
+      actorUserId: req.auth.userId,
+      name: body.name,
+      productCategory: body.productCategory,
+      unitOfMeasure: body.unitOfMeasure,
+      quantityType: body.quantityType ?? null,
+      strainName: body.strainName ?? null,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),

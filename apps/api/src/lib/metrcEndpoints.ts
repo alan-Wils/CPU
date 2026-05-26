@@ -15,6 +15,10 @@ import {
   buildMetrcPlantBatchesActivePathCandidates,
   type MetrcPlantBatchesActiveQueryParams,
 } from "./metrcPlantBatchesActiveQuery.js";
+import {
+  buildMetrcItemsActivePathCandidates,
+  type MetrcItemsActiveQueryParams,
+} from "./metrcItemsActiveQuery.js";
 
 export type { MetrcLocationsActiveQueryParams };
 
@@ -100,6 +104,9 @@ export function buildMetrcEndpointCandidates(
       return [`/strains/v2/active${q}`, `/strains/v1/active${q}`];
     }
     case "items": {
+      if (typeof licenseNumberOrLocationsParams !== "string") {
+        return buildMetrcItemsActivePathCandidates(licenseNumberOrLocationsParams);
+      }
       const q = licenseQuery(String(licenseNumberOrLocationsParams));
       return [`/items/v2/active${q}`, `/items/v1/active${q}`];
     }

@@ -186,6 +186,10 @@ type StrainsSyncResult = {
 };
 
 const DEFAULT_TEST_STRAIN_NAME = "NexBatch Test Strain";
+const DEFAULT_TEST_ITEM_NAME = "NexBatch Test Item";
+const DEFAULT_TEST_ITEM_CATEGORY = "Buds";
+const DEFAULT_TEST_ITEM_UOM = "Grams";
+const PACKAGE_ITEM_REQUIRED_MSG = "Sync or create an item before creating a package.";
 const DEFAULT_TEST_HARVEST_NAME = "NexBatch Test Harvest";
 const DEFAULT_PLANT_GROWTH_LOCATION_NAME = "SBX Default Location Type Location 1";
 const METRC_HARVEST_TYPE_OPTIONS = ["Product", "WholePlant"] as const;
@@ -373,6 +377,25 @@ type MetrcItemRow = {
   lastSyncedAt: string;
 };
 
+type ItemsSyncDiagnostics = {
+  licenseNumber: string;
+  endpoint: string;
+  resolvedUrl: string;
+  params: {
+    licenseNumber: string;
+    lastModifiedStart: string;
+    lastModifiedEnd: string;
+    pageNumber: number;
+    pageSize: number;
+  };
+  httpStatus: number;
+  totalReturned: number;
+  firstRawItem: Record<string, unknown> | null;
+  facilitySource?: string;
+  pagesFetched?: number;
+  triedLicenses?: string[];
+};
+
 type ItemsSyncResult = {
   ok: boolean;
   status?: number;
@@ -385,6 +408,23 @@ type ItemsSyncResult = {
   rateLimitWarning?: string | null;
   credentialHint?: string;
   endpoint?: string;
+  diagnostics?: ItemsSyncDiagnostics;
+  noItemsForFacility?: boolean;
+};
+
+type CreateTestItemResult = {
+  ok: boolean;
+  status?: number;
+  message?: string;
+  alreadyExists?: boolean;
+  credentialHint?: string;
+  endpoint?: string;
+  requestPayload?: unknown;
+  responsePayload?: unknown;
+  durationMs?: number;
+  metrcItemId?: string;
+  item?: MetrcItemRow;
+  metrcMessage?: string;
 };
 
 type CreateTestPackageResult = {
@@ -764,6 +804,14 @@ export default function MetrcSandboxPage() {
   const [lastItemsSync, setLastItemsSync] = useState<ItemsSyncResult | null>(null);
   const [itemsRows, setItemsRows] = useState<MetrcItemRow[] | null>(null);
   const [itemsLoaded, setItemsLoaded] = useState(false);
+  const [itemSyncLicense, setItemSyncLicense] = useState("");
+  const [itemSyncTryAllFacilities, setItemSyncTryAllFacilities] = useState(false);
+  const [createItemName, setCreateItemName] = useState(DEFAULT_TEST_ITEM_NAME);
+  const [createItemCategory, setCreateItemCategory] = useState(DEFAULT_TEST_ITEM_CATEGORY);
+  const [createItemUom, setCreateItemUom] = useState(DEFAULT_TEST_ITEM_UOM);
+  const [createItemStrain, setCreateItemStrain] = useState("");
+  const [createItemConfirmOpen, setCreateItemConfirmOpen] = useState(false);
+  const [lastCreateItem, setLastCreateItem] = useState<CreateTestItemResult | null>(null);
   const [createPackageHarvestId, setCreatePackageHarvestId] = useState("");
   const [createPackageItemId, setCreatePackageItemId] = useState("");
   const [createPackageTag, setCreatePackageTag] = useState("");
@@ -1851,11 +1899,17 @@ export default function MetrcSandboxPage() {
     }
   }
 
-  async function runItemsSync() {
+  async function runItemsSync(options?: { licenseNumber?: string; tryAllFacilities?: boolean }) {
     setBusy("items");
     setLastItemsSync(null);
+    const params = new URLSearchParams();
+    const license = String(options?.licenseNumber ?? itemSyncLicense).trim();
+    const tryAll = options?.tryAllFacilities ?? itemSyncTryAllFacilities;
+    if (license) params.set("licenseNumber", license);
+    if (tryAll) params.set("tryAllFacilities", "true");
+    const qs = params.toString();
     try {
-      const res = await authFetch("/api/metrc/items");
+      const res = await authFetch(`/api/metrc/items${qs ? `?${qs}` : ""}`);
       const json = (await res.json()) as ItemsSyncResult;
       setLastItemsSync(json);
       if (!res.ok || !json.ok) {
@@ -1867,9 +1921,21 @@ export default function MetrcSandboxPage() {
       }
       setItemsRows(json.items ?? []);
       setItemsLoaded(true);
+      if (json.items?.length) {
+        const first = json.items[0]!;
+        if (!createPackageItemId.trim()) {
+          setCreatePackageItemId(first.metrcItemId);
+          if (first.unitOfMeasureName) setCreatePackageUnit(first.unitOfMeasureName);
+        }
+      }
+      const tone = json.noItemsForFacility ? "error" : "ok";
       setStatusMsg({
-        tone: "ok",
-        text: `Synced ${json.count ?? json.totalItemsSynced ?? 0} METRC item(s).`,
+        tone,
+        text:
+          json.message ||
+          (json.noItemsForFacility
+            ? "No items found for selected facility."
+            : `Synced ${json.count ?? json.totalItemsSynced ?? 0} METRC item(s).`),
       });
       await loadMeta();
     } catch {
@@ -1877,6 +1943,63 @@ export default function MetrcSandboxPage() {
     } finally {
       setBusy(null);
     }
+  }
+
+  async function runCreateTestItem() {
+    setCreateItemConfirmOpen(false);
+    setBusy("createItem");
+    setLastCreateItem(null);
+    const itemRequestBody = {
+      name: createItemName.trim(),
+      productCategory: createItemCategory.trim(),
+      unitOfMeasure: createItemUom.trim(),
+      quantityType: "WeightBased",
+      strainName: createItemStrain.trim() || null,
+    };
+    try {
+      const res = await authFetch("/api/metrc/items/create-test", {
+        method: "POST",
+        body: JSON.stringify(itemRequestBody),
+      });
+      const json = (await res.json()) as CreateTestItemResult;
+      setLastCreateItem(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text: String(json.credentialHint || json.metrcMessage || json.message || "Create test item failed."),
+        });
+        return;
+      }
+      if (json.item) {
+        setItemsRows((prev) => {
+          const row = json.item!;
+          const rest = (prev ?? []).filter((i) => i.metrcItemId !== row.metrcItemId);
+          return [...rest, row].sort((a, b) => a.itemName.localeCompare(b.itemName));
+        });
+        setCreatePackageItemId(json.item.metrcItemId);
+        if (json.item.unitOfMeasureName) setCreatePackageUnit(json.item.unitOfMeasureName);
+        setItemsLoaded(true);
+      } else {
+        await runItemsSync();
+      }
+      setStatusMsg({
+        tone: "ok",
+        text: String(json.message || "Test item created in METRC sandbox."),
+      });
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Create test item failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function openCreatePackageConfirm() {
+    if (!(itemsRows?.length ?? 0) || !createPackageItemId.trim()) {
+      setStatusMsg({ tone: "error", text: PACKAGE_ITEM_REQUIRED_MSG });
+      return;
+    }
+    setCreatePackageConfirmOpen(true);
   }
 
   async function fetchAvailablePackageTags() {
@@ -3446,11 +3569,232 @@ export default function MetrcSandboxPage() {
                 creation.
               </p>
             ) : null}
-            {itemsLoaded && (itemsRows?.length ?? 0) === 0 ? (
-              <p style={{ marginTop: 12, color: "#fbbf24", fontSize: 13 }}>
-                Create or sync a METRC item before creating a package.
-              </p>
+            {!(itemsRows?.length ?? 0) || !createPackageItemId.trim() ? (
+              <p style={{ marginTop: 12, color: "#fbbf24", fontSize: 13 }}>{PACKAGE_ITEM_REQUIRED_MSG}</p>
             ) : null}
+            <div
+              style={{
+                marginTop: 14,
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid #334155",
+                background: "rgba(15, 23, 42, 0.6)",
+              }}
+            >
+              <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>METRC items</h4>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+                  gap: 12,
+                  marginTop: 10,
+                }}
+              >
+                <label style={{ fontSize: 13 }}>
+                  <span style={{ color: "#94a3b8" }}>Sync facility license</span>
+                  <select
+                    value={itemSyncLicense}
+                    onChange={(e) => setItemSyncLicense(e.target.value)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      marginTop: 4,
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #475569",
+                      background: "#0f172a",
+                      color: "#e2e8f0",
+                    }}
+                  >
+                    <option value="">Active / config license</option>
+                    {(lastFacilities?.facilities ?? []).map((f) => (
+                      <option key={f.licenseNumber} value={f.licenseNumber}>
+                        {f.licenseNumber}
+                        {f.facilityName ? ` — ${f.facilityName}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ fontSize: 13, display: "flex", alignItems: "flex-end", gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={itemSyncTryAllFacilities}
+                    onChange={(e) => setItemSyncTryAllFacilities(e.target.checked)}
+                  />
+                  <span style={{ color: "#94a3b8" }}>Try all synced facilities</span>
+                </label>
+              </div>
+              <div style={{ ...styles.row, marginTop: 10 }}>
+                <button
+                  type="button"
+                  style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+                  disabled={!!busy}
+                  onClick={() => void runItemsSync()}
+                >
+                  {busy === "items" ? "Syncing…" : "Sync Items"}
+                </button>
+                <button
+                  type="button"
+                  style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+                  disabled={!!busy}
+                  onClick={() =>
+                    void runItemsSync({ licenseNumber: itemSyncLicense, tryAllFacilities: true })
+                  }
+                >
+                  {busy === "items" ? "Searching…" : "Try all facilities"}
+                </button>
+              </div>
+              {lastItemsSync?.diagnostics ? (
+                <pre
+                  style={{
+                    marginTop: 10,
+                    padding: 10,
+                    borderRadius: 8,
+                    border: "1px solid #334155",
+                    background: "#020617",
+                    fontSize: 11,
+                    color: "#cbd5e1",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    fontFamily: "ui-monospace, monospace",
+                  }}
+                >
+                  {JSON.stringify(lastItemsSync.diagnostics, null, 2)}
+                </pre>
+              ) : null}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+                  gap: 10,
+                  marginTop: 12,
+                }}
+              >
+                <label style={{ fontSize: 13 }}>
+                  <span style={{ color: "#94a3b8" }}>Item name</span>
+                  <input
+                    value={createItemName}
+                    onChange={(e) => setCreateItemName(e.target.value)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      marginTop: 4,
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #475569",
+                      background: "#0f172a",
+                      color: "#e2e8f0",
+                    }}
+                  />
+                </label>
+                <label style={{ fontSize: 13 }}>
+                  <span style={{ color: "#94a3b8" }}>Product category</span>
+                  <input
+                    value={createItemCategory}
+                    onChange={(e) => setCreateItemCategory(e.target.value)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      marginTop: 4,
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #475569",
+                      background: "#0f172a",
+                      color: "#e2e8f0",
+                    }}
+                  />
+                </label>
+                <label style={{ fontSize: 13 }}>
+                  <span style={{ color: "#94a3b8" }}>Unit of measure</span>
+                  <input
+                    value={createItemUom}
+                    onChange={(e) => setCreateItemUom(e.target.value)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      marginTop: 4,
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #475569",
+                      background: "#0f172a",
+                      color: "#e2e8f0",
+                    }}
+                  />
+                </label>
+                <label style={{ fontSize: 13 }}>
+                  <span style={{ color: "#94a3b8" }}>Strain (optional)</span>
+                  <input
+                    value={createItemStrain}
+                    onChange={(e) => setCreateItemStrain(e.target.value)}
+                    placeholder="If category requires strain"
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      marginTop: 4,
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #475569",
+                      background: "#0f172a",
+                      color: "#e2e8f0",
+                    }}
+                  />
+                </label>
+              </div>
+              <div style={{ ...styles.row, marginTop: 10 }}>
+                <button
+                  type="button"
+                  style={{
+                    ...styles.btn,
+                    ...styles.btnPrimary,
+                    opacity:
+                      busy || !isSandboxEnvironment || !createItemName.trim() || !createItemCategory.trim()
+                        ? 0.6
+                        : 1,
+                  }}
+                  disabled={
+                    !!busy ||
+                    !isSandboxEnvironment ||
+                    !createItemName.trim() ||
+                    !createItemCategory.trim()
+                  }
+                  onClick={() => setCreateItemConfirmOpen(true)}
+                >
+                  {busy === "createItem" ? "Creating…" : "Create Test Item"}
+                </button>
+              </div>
+              {createItemConfirmOpen ? (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px solid rgba(248, 113, 113, 0.45)",
+                    background: "rgba(69, 10, 10, 0.35)",
+                  }}
+                >
+                  <p style={{ margin: "0 0 10px", fontSize: 13, color: "#fca5a5" }}>
+                    Create item &quot;{createItemName.trim()}&quot; ({createItemCategory.trim()},{" "}
+                    {createItemUom.trim()}) in METRC sandbox?
+                  </p>
+                  <div style={styles.row}>
+                    <button
+                      type="button"
+                      style={{ ...styles.btn, ...styles.btnPrimary }}
+                      onClick={() => void runCreateTestItem()}
+                    >
+                      Yes, create in METRC
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.btn}
+                      onClick={() => setCreateItemConfirmOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
             <div
               style={{
                 display: "grid",
@@ -3636,14 +3980,6 @@ export default function MetrcSandboxPage() {
                 type="button"
                 style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
                 disabled={!!busy}
-                onClick={() => void runItemsSync()}
-              >
-                {busy === "items" ? "Syncing…" : "Sync Items"}
-              </button>
-              <button
-                type="button"
-                style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
-                disabled={!!busy}
                 onClick={() => void fetchAvailablePackageTags()}
               >
                 {busy === "packageTags" ? "Fetching…" : "Fetch available package tags"}
@@ -3659,13 +3995,11 @@ export default function MetrcSandboxPage() {
                   !!busy ||
                   !isSandboxEnvironment ||
                   !createPackageHarvestId.trim() ||
-                  !createPackageItemId.trim() ||
                   !createPackageTag.trim() ||
                   !createPackageQuantity.trim() ||
-                  Number(createPackageQuantity) <= 0 ||
-                  (itemsRows?.length ?? 0) === 0
+                  Number(createPackageQuantity) <= 0
                 }
-                onClick={() => setCreatePackageConfirmOpen(true)}
+                onClick={() => openCreatePackageConfirm()}
               >
                 {busy === "createPackage" ? "Creating…" : "Create Test Package"}
               </button>
