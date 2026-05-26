@@ -334,6 +334,17 @@ type HarvestsSyncResult = {
   pagesFetched?: number;
 };
 
+type MetrcPlantRow = {
+  metrcPlantId: string;
+  label: string;
+  sourcePlantBatchId: string;
+  sourcePlantBatchName: string;
+  strainName: string;
+  growthPhase: string;
+  locationName: string;
+  active: boolean;
+};
+
 type CreateTestHarvestResult = {
   ok: boolean;
   status?: number;
@@ -347,6 +358,8 @@ type CreateTestHarvestResult = {
   metrcHarvestId?: string;
   harvest?: MetrcHarvestRow;
   metrcMessage?: string;
+  plantLabelsUsed?: string[];
+  promotedBatch?: boolean;
 };
 
 type PackageReconciliationSummary = {
@@ -703,6 +716,9 @@ export default function MetrcSandboxPage() {
   const [createHarvestType, setCreateHarvestType] = useState<string>("Product");
   const [createHarvestConfirmOpen, setCreateHarvestConfirmOpen] = useState(false);
   const [lastCreateHarvest, setLastCreateHarvest] = useState<CreateTestHarvestResult | null>(null);
+  const [batchPlantsRows, setBatchPlantsRows] = useState<MetrcPlantRow[] | null>(null);
+  const [batchPlantsLoaded, setBatchPlantsLoaded] = useState(false);
+  const [createHarvestPlantLabels, setCreateHarvestPlantLabels] = useState<string[]>([]);
   const [nexbatchRooms, setNexbatchRooms] = useState<NexbatchRoomOption[]>([]);
   const [mappingBusy, setMappingBusy] = useState<string | null>(null);
   const [locationCapabilityFilter, setLocationCapabilityFilter] =
@@ -828,6 +844,33 @@ export default function MetrcSandboxPage() {
     }
   }, []);
 
+  const loadBatchPlants = useCallback(async (metrcPlantBatchId: string) => {
+    const batchId = metrcPlantBatchId.trim();
+    if (!batchId) {
+      setBatchPlantsRows([]);
+      setBatchPlantsLoaded(true);
+      return;
+    }
+    setBatchPlantsLoaded(false);
+    try {
+      const res = await authFetch(
+        `/api/metrc/plants/persisted?metrcPlantBatchId=${encodeURIComponent(batchId)}`,
+      );
+      if (!res.ok) {
+        setBatchPlantsRows([]);
+        return;
+      }
+      const json = (await res.json()) as { ok?: boolean; plants?: MetrcPlantRow[] };
+      const plants = (json.plants ?? []).filter((p) => p.active);
+      setBatchPlantsRows(plants);
+      setCreateHarvestPlantLabels(plants.slice(0, 5).map((p) => p.label));
+    } catch {
+      setBatchPlantsRows([]);
+    } finally {
+      setBatchPlantsLoaded(true);
+    }
+  }, []);
+
   const loadMeta = useCallback(async () => {
     setLoadingMeta(true);
     try {
@@ -891,6 +934,27 @@ export default function MetrcSandboxPage() {
       (b) => b.metrcPlantBatchId === createHarvestPlantBatchId,
     ) ?? null;
   }, [createHarvestPlantBatchId, plantBatchesRows]);
+
+  const harvestBatchNeedsTaggedPlants = useMemo(() => {
+    if (!createHarvestPlantBatchId.trim()) return false;
+    if (!batchPlantsLoaded) return false;
+    return (batchPlantsRows?.length ?? 0) === 0 && createHarvestPlantLabels.length === 0;
+  }, [
+    createHarvestPlantBatchId,
+    batchPlantsLoaded,
+    batchPlantsRows,
+    createHarvestPlantLabels.length,
+  ]);
+
+  useEffect(() => {
+    if (!createHarvestPlantBatchId.trim()) {
+      setBatchPlantsRows(null);
+      setBatchPlantsLoaded(false);
+      setCreateHarvestPlantLabels([]);
+      return;
+    }
+    void loadBatchPlants(createHarvestPlantBatchId);
+  }, [createHarvestPlantBatchId, loadBatchPlants]);
 
   useEffect(() => {
     if (sandboxUiStatus !== "provisioning") return;
@@ -1530,17 +1594,46 @@ export default function MetrcSandboxPage() {
     }
   }
 
+  async function runSyncPlants() {
+    setBusy("plants");
+    setStatusMsg(null);
+    try {
+      const res = await authFetch("/api/metrc/plants");
+      const json = (await res.json()) as { ok?: boolean; count?: number; message?: string };
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text: String(json.message || "Plant sync failed."),
+        });
+        return;
+      }
+      setStatusMsg({
+        tone: "ok",
+        text: `Synced ${json.count ?? 0} METRC plant tag(s).`,
+      });
+      if (createHarvestPlantBatchId.trim()) {
+        await loadBatchPlants(createHarvestPlantBatchId);
+      }
+    } catch {
+      setStatusMsg({ tone: "error", text: "Plant sync failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function runCreateTestHarvest() {
     setCreateHarvestConfirmOpen(false);
     setBusy("createHarvest");
     setLastCreateHarvest(null);
     const harvestRequestBody = {
-      metrcPlantBatchId: createHarvestPlantBatchId.trim(),
+      metrcPlantBatchId: createHarvestPlantBatchId.trim() || null,
+      metrcPlantLabels: createHarvestPlantLabels,
       harvestName: createHarvestName.trim() || DEFAULT_TEST_HARVEST_NAME,
       harvestType: createHarvestType,
       wetWeight: 100,
       unitOfWeight: "Grams",
       actualDate: new Date().toISOString().slice(0, 10),
+      autoPromoteBatch: true,
     };
     const harvestCreateStarted = performance.now();
     try {
@@ -2682,10 +2775,10 @@ export default function MetrcSandboxPage() {
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid #334155" }}>
             <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Create test harvest</h3>
             <div style={styles.warn}>
-              <strong>Sandbox only.</strong> Creates a harvest from an existing METRC plant batch via{" "}
-              <code style={{ color: "#cbd5e1" }}>POST /harvests/v2/create</code> (falls back to plant
-              manicure endpoints when sandbox differs). Duplicate harvest names reuse the existing
-              NexBatch record.
+              <strong>Sandbox only.</strong> METRC harvest uses{" "}
+              <code style={{ color: "#cbd5e1" }}>PUT /plants/v2/harvest</code> with individual plant
+              tags — not plant batch names. If the batch has no tagged plants yet, NexBatch promotes it
+              via <code style={{ color: "#cbd5e1" }}>POST /plantbatches/v2/growthphase</code> first.
             </div>
             {!isSandboxEnvironment && !loadingMeta ? (
               <p style={{ marginTop: 12, color: "#f87171", fontSize: 13 }}>
@@ -2704,7 +2797,10 @@ export default function MetrcSandboxPage() {
                 <span style={{ color: "#94a3b8" }}>Plant batch</span>
                 <select
                   value={createHarvestPlantBatchId}
-                  onChange={(e) => setCreateHarvestPlantBatchId(e.target.value)}
+                  onChange={(e) => {
+                    setCreateHarvestPlantBatchId(e.target.value);
+                    setCreateHarvestPlantLabels([]);
+                  }}
                   style={{
                     display: "block",
                     width: "100%",
@@ -2809,6 +2905,74 @@ export default function MetrcSandboxPage() {
                 </select>
               </label>
             </div>
+            {createHarvestPlantBatchId.trim() ? (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ ...styles.row, marginBottom: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0" }}>
+                    Individual METRC plant tags
+                  </span>
+                  <button
+                    type="button"
+                    style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+                    disabled={!!busy}
+                    onClick={() => void runSyncPlants()}
+                  >
+                    {busy === "plants" ? "Syncing…" : "Sync Plants"}
+                  </button>
+                </div>
+                {!batchPlantsLoaded ? (
+                  <p style={{ fontSize: 13, color: "#94a3b8" }}>Loading plants for this batch…</p>
+                ) : harvestBatchNeedsTaggedPlants ? (
+                  <p style={{ fontSize: 13, color: "#fbbf24" }}>
+                    This is a plant batch, not an individual plant. No tagged plants are stored yet —
+                    Create Test Harvest will promote the batch to flowering (requires METRC plant tags),
+                    sync plants, then harvest by tag.
+                  </p>
+                ) : (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                      maxHeight: 160,
+                      overflow: "auto",
+                      padding: 10,
+                      borderRadius: 8,
+                      border: "1px solid #334155",
+                      background: "rgba(2, 6, 23, 0.5)",
+                    }}
+                  >
+                    {(batchPlantsRows ?? []).map((plant) => {
+                      const checked = createHarvestPlantLabels.includes(plant.label);
+                      return (
+                        <label
+                          key={plant.label}
+                          style={{ fontSize: 13, color: "#cbd5e1", cursor: "pointer" }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              setCreateHarvestPlantLabels((prev) => {
+                                if (e.target.checked) {
+                                  return [...new Set([...prev, plant.label])];
+                                }
+                                return prev.filter((l) => l !== plant.label);
+                              });
+                            }}
+                            style={{ marginRight: 8 }}
+                          />
+                          <span style={{ fontFamily: "ui-monospace, monospace" }}>{plant.label}</span>
+                          <span style={{ color: "#64748b", marginLeft: 8 }}>
+                            ({plant.growthPhase || "—"})
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : null}
             <div style={{ ...styles.row, marginTop: 12 }}>
               <button
                 type="button"
@@ -2842,9 +3006,12 @@ export default function MetrcSandboxPage() {
                   Confirm METRC sandbox write
                 </p>
                 <p style={{ margin: "0 0 12px", fontSize: 13, color: "#fca5a5" }}>
-                  Create harvest &quot;{createHarvestName.trim()}&quot; ({createHarvestType}) from plant
-                  batch &quot;{selectedHarvestPlantBatch?.name || createHarvestPlantBatchId}&quot; in METRC
-                  sandbox? Harvests will be re-synced on success.
+                  Create harvest &quot;{createHarvestName.trim()}&quot; ({createHarvestType}) using{" "}
+                  {createHarvestPlantLabels.length > 0
+                    ? `${createHarvestPlantLabels.length} plant tag(s)`
+                    : "auto-promoted plant tag(s)"}{" "}
+                  from batch &quot;{selectedHarvestPlantBatch?.name || createHarvestPlantBatchId}&quot;?
+                  METRC will receive <code>Plant</code> = tag labels only (never the batch name).
                 </p>
                 <div style={styles.row}>
                   <button
@@ -2879,6 +3046,7 @@ export default function MetrcSandboxPage() {
                 <strong style={{ color: lastCreateHarvest.ok ? "#4ade80" : "#f87171" }}>
                   Last create attempt ({lastCreateHarvest.status ?? "—"})
                   {lastCreateHarvest.alreadyExists ? " · existing harvest reused" : ""}
+                  {lastCreateHarvest.promotedBatch ? " · batch promoted" : ""}
                 </strong>
                 <pre
                   style={{
@@ -2893,6 +3061,7 @@ export default function MetrcSandboxPage() {
                     {
                       message: lastCreateHarvest.message,
                       endpoint: lastCreateHarvest.endpoint,
+                      plantLabelsUsed: lastCreateHarvest.plantLabelsUsed,
                       request: lastCreateHarvest.requestPayload,
                       response: lastCreateHarvest.responsePayload,
                     },

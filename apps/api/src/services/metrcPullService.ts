@@ -26,7 +26,10 @@ import {
 } from "../lib/metrcStatusPersistence.js";
 import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 
-export type MetrcPullResource = MetrcEndpointResource;
+export type MetrcPullResource = Exclude<
+  MetrcEndpointResource,
+  "plants_flowering" | "plants_vegetative"
+>;
 
 const RESOURCE_META: Record<
   MetrcPullResource,

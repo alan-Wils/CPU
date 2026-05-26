@@ -14,6 +14,7 @@ export type MetrcHarvestUpsertRow = {
   totalWeight: number;
   unitOfWeight: string;
   patientLicenseNumber: string;
+  sourcePlantLabelsJson?: string;
   plantedDate: Date | null;
   finishedDate: Date | null;
   active: boolean;
@@ -52,6 +53,7 @@ export async function upsertMetrcHarvestsForCompany(
           totalWeight: row.totalWeight,
           unitOfWeight: row.unitOfWeight,
           patientLicenseNumber: row.patientLicenseNumber,
+          sourcePlantLabelsJson: row.sourcePlantLabelsJson ?? "[]",
           plantedDate: row.plantedDate,
           finishedDate: row.finishedDate,
           active: row.active,
@@ -73,6 +75,7 @@ export async function upsertMetrcHarvestsForCompany(
           totalWeight: row.totalWeight,
           unitOfWeight: row.unitOfWeight,
           patientLicenseNumber: row.patientLicenseNumber,
+          ...(row.sourcePlantLabelsJson ? { sourcePlantLabelsJson: row.sourcePlantLabelsJson } : {}),
           plantedDate: row.plantedDate,
           finishedDate: row.finishedDate,
           active: row.active,

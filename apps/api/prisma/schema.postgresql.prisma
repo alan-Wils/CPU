@@ -231,6 +231,7 @@ model Company {
   metrcPlantBatchRequestLogs MetrcPlantBatchRequestLog[]
   metrcHarvests          MetrcHarvest[]
   metrcHarvestRequestLogs MetrcHarvestRequestLog[]
+  metrcPlants            MetrcPlant[]
 
   serviceSettings CompanyServiceSettings?
 
@@ -1496,6 +1497,7 @@ model MetrcHarvest {
   totalWeight           Float     @default(0)
   unitOfWeight          String    @default("")
   patientLicenseNumber  String    @default("")
+  sourcePlantLabelsJson String    @default("[]")
   plantedDate           DateTime?
   finishedDate          DateTime?
   active                Boolean   @default(true)
@@ -1510,6 +1512,33 @@ model MetrcHarvest {
   @@index([companyId, licenseNumber])
   @@index([companyId, harvestName])
   @@index([companyId, sourcePlantBatchId])
+}
+
+/// METRC individual tagged plant (veg/flower) — distinct from immature MetrcPlantBatch.
+model MetrcPlant {
+  id                   String    @id @default(cuid())
+  companyId            String
+  company              Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  metrcPlantId         String
+  label                String    @default("")
+  licenseNumber        String    @default("")
+  sourcePlantBatchId   String    @default("")
+  sourcePlantBatchName String    @default("")
+  strainName           String    @default("")
+  growthPhase          String    @default("")
+  metrcLocationId      String    @default("")
+  locationName         String    @default("")
+  plantedDate          DateTime?
+  active               Boolean   @default(true)
+  rawPayloadJson       String
+  lastSyncedAt         DateTime
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([companyId, label])
+  @@index([companyId, licenseNumber])
+  @@index([companyId, sourcePlantBatchId])
+  @@index([companyId, sourcePlantBatchName])
 }
 
 /// Admin/sandbox METRC harvest API request audit (sync + create-test).

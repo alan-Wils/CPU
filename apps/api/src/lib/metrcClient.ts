@@ -795,6 +795,10 @@ export class MetrcClient {
   post<T = unknown>(pathnameAndQuery: string, body?: unknown): Promise<MetrcClientResult<T>> {
     return this.request<T>({ method: "POST", pathnameAndQuery, body });
   }
+
+  put<T = unknown>(pathnameAndQuery: string, body?: unknown): Promise<MetrcClientResult<T>> {
+    return this.request<T>({ method: "PUT", pathnameAndQuery, body });
+  }
 }
 
 /** CO sandbox integrator setup host (per METRC sandbox docs). */

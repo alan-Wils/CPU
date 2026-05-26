@@ -8,6 +8,10 @@ import {
   type MetrcHarvestsActiveQueryParams,
 } from "./metrcHarvestsActiveQuery.js";
 import {
+  buildMetrcPlantsActivePathCandidates,
+  type MetrcPlantsActiveQueryParams,
+} from "./metrcPlantsActiveQuery.js";
+import {
   buildMetrcPlantBatchesActivePathCandidates,
   type MetrcPlantBatchesActiveQueryParams,
 } from "./metrcPlantBatchesActiveQuery.js";
@@ -21,7 +25,9 @@ export type MetrcEndpointResource =
   | "rooms"
   | "packages"
   | "plant_batches"
-  | "harvests";
+  | "harvests"
+  | "plants_flowering"
+  | "plants_vegetative";
 
 export type MetrcEndpointContext = {
   stateCode: string;
@@ -114,6 +120,20 @@ export function buildMetrcEndpointCandidates(
       }
       const q = licenseQuery(String(licenseNumberOrLocationsParams));
       return [`/harvests/v2/active${q}`, `/harvests/v1/active${q}`];
+    }
+    case "plants_flowering": {
+      if (typeof licenseNumberOrLocationsParams !== "string") {
+        return buildMetrcPlantsActivePathCandidates("flowering", licenseNumberOrLocationsParams);
+      }
+      const q = licenseQuery(String(licenseNumberOrLocationsParams));
+      return [`/plants/v2/flowering${q}`, `/plants/v1/flowering${q}`];
+    }
+    case "plants_vegetative": {
+      if (typeof licenseNumberOrLocationsParams !== "string") {
+        return buildMetrcPlantsActivePathCandidates("vegetative", licenseNumberOrLocationsParams);
+      }
+      const q = licenseQuery(String(licenseNumberOrLocationsParams));
+      return [`/plants/v2/vegetative${q}`, `/plants/v1/vegetative${q}`];
     }
     default:
       return [];

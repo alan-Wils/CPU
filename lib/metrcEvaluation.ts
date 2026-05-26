@@ -145,7 +145,7 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
     id: "create_harvest",
     label: "Create Harvest",
     description:
-      "POST test harvest to METRC sandbox from an existing plant batch (sandbox-only). Runnable here or from METRC Sandbox.",
+      "Sandbox harvest via PUT /plants/v2/harvest using individual plant tags. Promotes plant batch to flowering when needed — never sends batch names as Plant.",
     nexbatchPath: "/api/metrc/harvests/create-test",
     method: "POST",
     runnable: true,

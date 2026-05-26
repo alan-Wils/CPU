@@ -16,6 +16,7 @@ import { MetrcPackagesSyncService } from "../../services/metrcPackagesSyncServic
 import { MetrcPlantBatchesSyncService } from "../../services/metrcPlantBatchesSyncService.js";
 import { MetrcPlantBatchCreateService } from "../../services/metrcPlantBatchCreateService.js";
 import { MetrcHarvestsSyncService } from "../../services/metrcHarvestsSyncService.js";
+import { MetrcPlantsSyncService } from "../../services/metrcPlantsSyncService.js";
 import {
   METRC_DEFAULT_TEST_HARVEST_NAME,
   METRC_HARVEST_TYPES,
@@ -53,6 +54,7 @@ const metrcPackagesSyncService = new MetrcPackagesSyncService();
 const metrcPlantBatchesSyncService = new MetrcPlantBatchesSyncService();
 const metrcPlantBatchCreateService = new MetrcPlantBatchCreateService();
 const metrcHarvestsSyncService = new MetrcHarvestsSyncService();
+const metrcPlantsSyncService = new MetrcPlantsSyncService();
 const metrcHarvestCreateService = new MetrcHarvestCreateService();
 const metrcStrainCreateService = new MetrcStrainCreateService();
 
@@ -81,7 +83,8 @@ const metrcCreateTestPlantBatchBody = z.object({
 });
 
 const metrcCreateTestHarvestBody = z.object({
-  metrcPlantBatchId: z.string().min(1),
+  metrcPlantBatchId: z.string().optional().nullable(),
+  metrcPlantLabels: z.array(z.string().min(1)).optional(),
   harvestName: z.string().min(1).optional(),
   harvestType: z.enum(METRC_HARVEST_TYPES).optional(),
   wetWeight: z.coerce.number().positive().optional(),
@@ -89,6 +92,7 @@ const metrcCreateTestHarvestBody = z.object({
   actualDate: z.string().optional(),
   plantCount: z.coerce.number().int().positive().optional(),
   notes: z.string().optional().nullable(),
+  autoPromoteBatch: z.boolean().optional(),
 });
 const metrcDebugAuthService = new MetrcDebugAuthService();
 
@@ -437,6 +441,30 @@ metrcRouter.post(
 );
 
 metrcRouter.get(
+  "/plants/persisted",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const metrcPlantBatchId = String(req.query.metrcPlantBatchId || "").trim() || undefined;
+    const plants = await metrcPlantsSyncService.listSyncedPlants(companyId, metrcPlantBatchId);
+    res.status(200).json({ ok: true, plants });
+  }),
+);
+
+metrcRouter.get(
+  "/plants",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const result = await metrcPlantsSyncService.syncMetrcPlants({
+      companyId,
+      actorUserId: req.auth.userId,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.get(
   "/harvests/persisted",
   requireRole([...metrcAdminRoles]),
   asyncHandler(async (req, res) => {
@@ -482,7 +510,8 @@ metrcRouter.post(
     const result = await metrcHarvestCreateService.createTestHarvest({
       companyId,
       actorUserId: req.auth.userId,
-      metrcPlantBatchId: body.metrcPlantBatchId,
+      metrcPlantBatchId: body.metrcPlantBatchId ?? null,
+      metrcPlantLabels: body.metrcPlantLabels ?? null,
       harvestName: body.harvestName?.trim() || METRC_DEFAULT_TEST_HARVEST_NAME,
       harvestType: body.harvestType ?? null,
       wetWeight: body.wetWeight ?? null,
@@ -490,6 +519,7 @@ metrcRouter.post(
       actualDate: body.actualDate ?? null,
       plantCount: body.plantCount ?? null,
       notes: body.notes ?? null,
+      autoPromoteBatch: body.autoPromoteBatch ?? null,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),

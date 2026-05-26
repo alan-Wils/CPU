@@ -9,24 +9,29 @@ import {
 import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
 import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
 import { isMetrcSandboxPlaceholderLicense } from "../lib/metrcOperationalStatus.js";
-import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 import {
   appendMetrcHarvestRequestLog,
   findMetrcHarvestByName,
   upsertMetrcHarvestsForCompany,
 } from "../repositories/metrcHarvestRepository.js";
+import { listMetrcPlantsForPlantBatch } from "../repositories/metrcPlantRepository.js";
 import type { MetrcHarvestDto } from "./metrcHarvestsSyncService.js";
 import { MetrcHarvestsSyncService } from "./metrcHarvestsSyncService.js";
+import { MetrcPlantBatchGrowthPhaseService } from "./metrcPlantBatchGrowthPhaseService.js";
+import { MetrcPlantsSyncService } from "./metrcPlantsSyncService.js";
 
 export const METRC_DEFAULT_TEST_HARVEST_NAME = "NexBatch Test Harvest";
 
 export const METRC_HARVEST_TYPES = ["Product", "WholePlant"] as const;
 export type MetrcHarvestType = (typeof METRC_HARVEST_TYPES)[number];
 
+export type MetrcHarvestSourceType = "plant" | "plantBatch";
+
 export type MetrcCreateTestHarvestInput = {
   companyId: string;
   actorUserId: string;
-  metrcPlantBatchId: string;
+  metrcPlantBatchId?: string | null;
+  metrcPlantLabels?: string[] | null;
   harvestName: string;
   harvestType?: string | null;
   wetWeight?: number | null;
@@ -34,6 +39,7 @@ export type MetrcCreateTestHarvestInput = {
   actualDate?: string | null;
   plantCount?: number | null;
   notes?: string | null;
+  autoPromoteBatch?: boolean | null;
 };
 
 export type MetrcCreateTestHarvestSuccess = {
@@ -47,6 +53,8 @@ export type MetrcCreateTestHarvestSuccess = {
   durationMs: number;
   metrcHarvestId: string;
   harvest: MetrcHarvestDto;
+  plantLabelsUsed: string[];
+  promotedBatch: boolean;
 };
 
 export type MetrcCreateTestHarvestFailure = {
@@ -58,6 +66,8 @@ export type MetrcCreateTestHarvestFailure = {
   requestPayload?: unknown;
   responsePayload?: unknown;
   metrcMessage?: string;
+  sourceType?: MetrcHarvestSourceType;
+  sourceName?: string;
 };
 
 export type MetrcCreateTestHarvestResponse =
@@ -69,47 +79,53 @@ function licenseQuery(licenseNumber: string): string {
   return license ? `?licenseNumber=${encodeURIComponent(license)}` : "";
 }
 
-function buildCreatePathCandidates(licenseNumber: string): string[] {
-  const q = licenseQuery(licenseNumber);
-  return [
-    `/harvests/v2/create${q}`,
-    `/plants/v2/manicure${q}`,
-    `/plants/v1/manicureplants${q}`,
-  ];
-}
-
 function normalizeHarvestType(raw: string | null | undefined): MetrcHarvestType {
   const trimmed = String(raw ?? "").trim();
   if (trimmed.toLowerCase() === "wholeplant") return "WholePlant";
   return "Product";
 }
 
-function buildMetrcCreateHarvestBody(input: {
-  plantBatchName: string;
+function buildHarvestPlantsBody(input: {
+  plantLabels: string[];
   harvestName: string;
-  harvestType: MetrcHarvestType;
   locationName: string;
   wetWeight: number;
   unitOfWeight: string;
   actualDate: string;
-  plantCount: number;
-  notes: string | null;
 }): unknown[] {
-  return [
-    {
-      Plant: input.plantBatchName,
-      Weight: input.wetWeight,
-      UnitOfWeight: input.unitOfWeight,
-      DryingLocation: input.locationName || null,
-      DryingSublocation: null,
-      HarvestName: input.harvestName,
-      PatientLicenseNumber: null,
-      ActualDate: input.actualDate,
-      PlantCount: input.plantCount,
-      HarvestType: input.harvestType,
-      Note: input.notes,
-    },
-  ];
+  const perPlantWeight =
+    input.plantLabels.length > 0
+      ? Math.round((input.wetWeight / input.plantLabels.length) * 100) / 100
+      : input.wetWeight;
+
+  return input.plantLabels.map((label) => ({
+    Plant: label,
+    Weight: perPlantWeight,
+    UnitOfWeight: input.unitOfWeight,
+    DryingLocation: input.locationName || null,
+    DryingSublocation: null,
+    HarvestName: input.harvestName,
+    PatientLicenseNumber: null,
+    ActualDate: input.actualDate,
+  }));
+}
+
+function buildHarvestDiagnostics(input: {
+  sourceType: MetrcHarvestSourceType;
+  sourceName: string;
+  endpoint: string;
+  payload: unknown;
+  plantLabels: string[];
+  promotedBatch: boolean;
+}): Record<string, unknown> {
+  return {
+    sourceType: input.sourceType,
+    sourceName: input.sourceName,
+    endpoint: input.endpoint,
+    payload: input.payload,
+    plantLabels: input.plantLabels,
+    promotedBatch: input.promotedBatch,
+  };
 }
 
 function extractCreatedHarvestId(response: unknown, harvestName: string): string | null {
@@ -119,8 +135,6 @@ function extractCreatedHarvestId(response: unknown, harvestName: string): string
   if (Array.isArray(ids) && ids.length > 0) {
     return String(ids[0] ?? "").trim() || null;
   }
-  const id = data.Id ?? data.id;
-  if (id !== undefined && id !== null) return String(id).trim() || null;
   return `pending-${harvestName.toLowerCase().replace(/\s+/g, "-")}`;
 }
 
@@ -149,13 +163,48 @@ function rowToDto(
   };
 }
 
+async function resolvePlantBatchNameConflict(input: {
+  companyId: string;
+  labels: string[];
+}): Promise<{ ok: true; labels: string[] } | { ok: false; message: string; batchName: string }> {
+  const trimmed = input.labels.map((l) => l.trim()).filter(Boolean);
+  if (!trimmed.length) return { ok: true, labels: [] };
+
+  const batches = await prisma.metrcPlantBatch.findMany({ where: { companyId: input.companyId } });
+  const batchNames = new Set(batches.map((b) => b.name.trim().toLowerCase()).filter(Boolean));
+  const plants = await prisma.metrcPlant.findMany({
+    where: { companyId: input.companyId, label: { in: trimmed } },
+  });
+  const plantLabelSet = new Set(plants.map((p) => p.label.trim().toLowerCase()));
+
+  for (const label of trimmed) {
+    const lower = label.toLowerCase();
+    if (batchNames.has(lower) && !plantLabelSet.has(lower)) {
+      return {
+        ok: false,
+        message:
+          `"${label}" is a plant batch name, not an individual METRC plant tag. Promote the batch to flowering (tagged plants) before harvest.`,
+        batchName: label,
+      };
+    }
+  }
+
+  return { ok: true, labels: trimmed };
+}
+
 export class MetrcHarvestCreateService {
   harvestsSyncService = new MetrcHarvestsSyncService();
+  plantsSyncService = new MetrcPlantsSyncService();
+  growthPhaseService = new MetrcPlantBatchGrowthPhaseService();
 
   async createTestHarvest(input: MetrcCreateTestHarvestInput): Promise<MetrcCreateTestHarvestResponse> {
     const harvestName = String(input.harvestName || "").trim();
     const metrcPlantBatchId = String(input.metrcPlantBatchId || "").trim();
+    const explicitLabels = (input.metrcPlantLabels ?? [])
+      .map((l) => String(l || "").trim())
+      .filter(Boolean);
     const harvestType = normalizeHarvestType(input.harvestType);
+    const autoPromote = input.autoPromoteBatch !== false;
     const wetWeight =
       typeof input.wetWeight === "number" && Number.isFinite(input.wetWeight) && input.wetWeight > 0
         ? input.wetWeight
@@ -168,13 +217,18 @@ export class MetrcHarvestCreateService {
       companyId: input.companyId,
       harvestName,
       metrcPlantBatchId,
+      explicitPlantLabelCount: explicitLabels.length,
     });
 
     if (!harvestName) {
       return { ok: false, status: 400, message: "Harvest name is required." };
     }
-    if (!metrcPlantBatchId) {
-      return { ok: false, status: 400, message: "METRC plant batch is required." };
+    if (!metrcPlantBatchId && explicitLabels.length === 0) {
+      return {
+        ok: false,
+        status: 400,
+        message: "Select a plant batch and individual plant tag(s), or provide METRC plant labels.",
+      };
     }
 
     const loaded = await loadCompanyMetrcConfig(input.companyId);
@@ -213,7 +267,7 @@ export class MetrcHarvestCreateService {
         companyId: input.companyId,
         action: "create_test_dedupe",
         method: "POST",
-        endpoint: "harvests/create",
+        endpoint: "plants/v2/harvest",
         httpStatus: 200,
         requestPayload: { harvestName, metrcPlantBatchId, skipped: true },
         responsePayload: { alreadyExists: true, metrcHarvestId: existing.metrcHarvestId },
@@ -226,32 +280,138 @@ export class MetrcHarvestCreateService {
         status: 200,
         message: `Harvest "${harvestName}" already exists in NexBatch — using existing record.`,
         alreadyExists: true,
-        endpoint: "harvests/create",
+        endpoint: "plants/v2/harvest",
         requestPayload: { harvestName, metrcPlantBatchId },
         responsePayload: { alreadyExists: true },
         durationMs: 0,
         metrcHarvestId: existing.metrcHarvestId,
         harvest: rowToDto(existing),
+        plantLabelsUsed: [],
+        promotedBatch: false,
       };
     }
 
-    const plantBatch = await prisma.metrcPlantBatch.findFirst({
-      where: { companyId: input.companyId, metrcPlantBatchId },
+    let plantBatch: Awaited<ReturnType<typeof prisma.metrcPlantBatch.findFirst>> = null;
+    if (metrcPlantBatchId) {
+      plantBatch = await prisma.metrcPlantBatch.findFirst({
+        where: { companyId: input.companyId, metrcPlantBatchId },
+      });
+      if (!plantBatch) {
+        return {
+          ok: false,
+          status: 400,
+          message: "Plant batch not found in NexBatch. Sync plant batches first.",
+          sourceType: "plantBatch",
+          sourceName: metrcPlantBatchId,
+        };
+      }
+    }
+
+    const explicitLabelCheck = await resolvePlantBatchNameConflict({
+      companyId: input.companyId,
+      labels: explicitLabels,
     });
-    if (!plantBatch) {
+    if (explicitLabelCheck.ok === false) {
       return {
         ok: false,
         status: 400,
-        message: "Plant batch not found in NexBatch. Sync plant batches first.",
+        message: explicitLabelCheck.message,
+        sourceType: "plantBatch",
+        sourceName: explicitLabelCheck.batchName,
       };
     }
 
-    const plantBatchName = plantBatch.name.trim();
-    const locationName = plantBatch.locationName.trim() || plantBatch.metrcLocationId;
-    const plantCount =
+    let plantLabels = explicitLabelCheck.labels;
+    let promotedBatch = false;
+    const plantBatchName = plantBatch?.name.trim() ?? "";
+    const locationName =
+      plantBatch?.locationName.trim() || plantBatch?.metrcLocationId || "";
+    const maxPlants =
       typeof input.plantCount === "number" && input.plantCount > 0
-        ? Math.min(Math.floor(input.plantCount), Math.max(1, Math.floor(plantBatch.count)))
-        : Math.max(1, Math.min(5, Math.floor(plantBatch.count) || 1));
+        ? Math.floor(input.plantCount)
+        : plantBatch
+          ? Math.max(1, Math.min(5, Math.floor(plantBatch.count) || 1))
+          : explicitLabels.length || 1;
+
+    if (!plantLabels.length && plantBatch) {
+      let batchPlants = await listMetrcPlantsForPlantBatch(input.companyId, {
+        metrcPlantBatchId: plantBatch.metrcPlantBatchId,
+        name: plantBatch.name,
+      });
+
+      if (!batchPlants.length && autoPromote) {
+        const promote = await this.growthPhaseService.promotePlantBatchToTaggedPlants({
+          companyId: input.companyId,
+          actorUserId: input.actorUserId,
+          plantBatchName: plantBatch.name,
+          count: maxPlants,
+          locationName,
+          growthPhase: "Flowering",
+          growthDate: actualDate,
+        });
+        if (!promote.ok) {
+          return {
+            ok: false,
+            status: promote.status,
+            message: promote.message,
+            endpoint: promote.endpoint,
+            requestPayload: promote.requestPayload,
+            responsePayload: promote.responsePayload,
+            sourceType: "plantBatch",
+            sourceName: plantBatchName,
+          };
+        }
+        promotedBatch = true;
+
+        const syncPlants = await this.plantsSyncService.syncMetrcPlants({
+          companyId: input.companyId,
+          actorUserId: input.actorUserId,
+        });
+        if (syncPlants.ok === false) {
+          return {
+            ok: false,
+            status: syncPlants.status,
+            message: `Batch promoted but plant sync failed: ${syncPlants.message}`,
+            sourceType: "plantBatch",
+            sourceName: plantBatchName,
+          };
+        }
+
+        batchPlants = await listMetrcPlantsForPlantBatch(input.companyId, {
+          metrcPlantBatchId: plantBatch.metrcPlantBatchId,
+          name: plantBatch.name,
+        });
+      }
+
+      plantLabels = batchPlants.slice(0, maxPlants).map((p) => p.label);
+    }
+
+    if (!plantLabels.length) {
+      return {
+        ok: false,
+        status: 400,
+        message: plantBatch
+          ? `No individual METRC plant tags found for batch "${plantBatchName}". This is a plant batch, not an individual plant — promote the batch to flowering and sync plants before harvest.`
+          : "No METRC plant labels available for harvest.",
+        sourceType: plantBatch ? "plantBatch" : "plant",
+        sourceName: plantBatchName || metrcPlantBatchId,
+      };
+    }
+
+    const batchNameGuard = await resolvePlantBatchNameConflict({
+      companyId: input.companyId,
+      labels: plantLabels,
+    });
+    if (batchNameGuard.ok === false) {
+      return {
+        ok: false,
+        status: 400,
+        message: batchNameGuard.message,
+        sourceType: "plantBatch",
+        sourceName: batchNameGuard.batchName,
+      };
+    }
+    plantLabels = batchNameGuard.labels;
 
     const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
     if (isMetrcSandboxPlaceholderLicense(license)) {
@@ -264,44 +424,53 @@ export class MetrcHarvestCreateService {
       license = locationsRequest.params.licenseNumber;
     }
 
-    const requestBody = buildMetrcCreateHarvestBody({
-      plantBatchName,
+    const requestBody = buildHarvestPlantsBody({
+      plantLabels,
       harvestName,
-      harvestType,
       locationName,
       wetWeight,
       unitOfWeight,
       actualDate,
-      plantCount,
-      notes: input.notes ?? null,
     });
 
-    const candidates = buildCreatePathCandidates(license);
+    const harvestPath = `/plants/v2/harvest${licenseQuery(license)}`;
+    const fallbackPath = `/plants/v1/harvestplants${licenseQuery(license)}`;
     const startedAt = Date.now();
     let lastStatus = 502;
     let lastMessage = "METRC harvest create failed.";
-    let lastEndpoint: string | undefined;
+    let lastEndpoint = "plants/v2/harvest";
     let lastResponse: unknown = null;
 
-    for (const pathname of candidates) {
-      const result = await client.post<unknown>(pathname, requestBody);
-      lastEndpoint = pathname.split("?")[0];
+    const diagnostics = buildHarvestDiagnostics({
+      sourceType: "plant",
+      sourceName: plantLabels.join(", "),
+      endpoint: lastEndpoint,
+      payload: requestBody,
+      plantLabels,
+      promotedBatch,
+    });
+
+    for (const pathname of [harvestPath, fallbackPath]) {
+      lastEndpoint = pathname.split("?")[0]!;
+      diagnostics.endpoint = lastEndpoint;
+
+      const result = await client.put<unknown>(pathname, requestBody);
 
       if (!isMetrcClientFailure(result)) {
         const durationMs = Date.now() - startedAt;
         const syncedAt = new Date();
         const syncedAtIso = syncedAt.toISOString();
-        const metrcHarvestId = extractCreatedHarvestId(result.data, harvestName);
+        const metrcHarvestId = extractCreatedHarvestId(result.data, harvestName) ?? plantLabels[0]!;
 
         await upsertMetrcHarvestsForCompany(input.companyId, [
           {
             metrcHarvestId,
             licenseNumber: license,
             harvestName,
-            sourcePlantBatchId: plantBatch.metrcPlantBatchId,
+            sourcePlantBatchId: plantBatch?.metrcPlantBatchId ?? "",
             sourcePlantBatchName: plantBatchName,
-            strainName: plantBatch.strainName,
-            metrcLocationId: plantBatch.metrcLocationId,
+            strainName: plantBatch?.strainName ?? "",
+            metrcLocationId: plantBatch?.metrcLocationId ?? "",
             locationName,
             harvestType,
             wetWeight,
@@ -312,78 +481,59 @@ export class MetrcHarvestCreateService {
             finishedDate: null,
             active: true,
             createdViaTest: true,
+            sourcePlantLabelsJson: JSON.stringify(plantLabels),
             rawPayloadJson: JSON.stringify(result.data ?? {}),
             lastModified: syncedAt,
             lastSyncedAt: syncedAt,
           },
         ]);
 
-        const logPayload = {
+        await appendMetrcHarvestRequestLog({
           companyId: input.companyId,
           action: "create_test",
-          method: "POST",
+          method: "PUT",
           endpoint: lastEndpoint,
           httpStatus: result.status,
-          requestPayload: { pathname, body: requestBody, plantBatch },
+          requestPayload: diagnostics,
           responsePayload: result.data,
           durationMs,
           actorUserId: input.actorUserId,
-        };
-        await appendMetrcHarvestRequestLog(logPayload);
+        });
 
         const syncResult = await this.harvestsSyncService.syncMetrcHarvests({
           companyId: input.companyId,
           actorUserId: input.actorUserId,
         });
 
-        let harvest: MetrcHarvestDto;
+        const fallbackHarvest: MetrcHarvestDto = {
+          metrcHarvestId,
+          harvestName,
+          sourcePlantBatchId: plantBatch?.metrcPlantBatchId ?? "",
+          sourcePlantBatchName: plantBatchName,
+          strainName: plantBatch?.strainName ?? "",
+          metrcLocationId: plantBatch?.metrcLocationId ?? "",
+          locationName,
+          harvestType,
+          wetWeight,
+          totalWeight: wetWeight,
+          unitOfWeight,
+          patientLicenseNumber: "",
+          plantedDate: `${actualDate}T12:00:00.000Z`,
+          finishedDate: null,
+          active: true,
+          licenseNumber: license,
+          createdViaTest: true,
+          lastSyncedAt: syncedAtIso,
+        };
+
+        let harvest = fallbackHarvest;
         if (syncResult.ok) {
           harvest =
             syncResult.harvests.find(
               (h) =>
                 h.metrcHarvestId === metrcHarvestId ||
                 h.harvestName.trim().toLowerCase() === harvestName.toLowerCase(),
-            ) ?? {
-              metrcHarvestId,
-              harvestName,
-              sourcePlantBatchId: plantBatch.metrcPlantBatchId,
-              sourcePlantBatchName: plantBatchName,
-              strainName: plantBatch.strainName,
-              metrcLocationId: plantBatch.metrcLocationId,
-              locationName,
-              harvestType,
-              wetWeight,
-              totalWeight: wetWeight,
-              unitOfWeight,
-              patientLicenseNumber: "",
-              plantedDate: `${actualDate}T12:00:00.000Z`,
-              finishedDate: null,
-              active: true,
-              licenseNumber: license,
-              createdViaTest: true,
-              lastSyncedAt: syncedAtIso,
-            };
-        } else {
-          harvest = {
-            metrcHarvestId,
-            harvestName,
-            sourcePlantBatchId: plantBatch.metrcPlantBatchId,
-            sourcePlantBatchName: plantBatchName,
-            strainName: plantBatch.strainName,
-            metrcLocationId: plantBatch.metrcLocationId,
-            locationName,
-            harvestType,
-            wetWeight,
-            totalWeight: wetWeight,
-            unitOfWeight,
-            patientLicenseNumber: "",
-            plantedDate: `${actualDate}T12:00:00.000Z`,
-            finishedDate: null,
-            active: true,
-            licenseNumber: license,
-            createdViaTest: true,
-            lastSyncedAt: syncedAtIso,
-          };
+            ) ?? fallbackHarvest;
         }
 
         logInfo("[METRC] harvest_create_test_success", {
@@ -391,22 +541,28 @@ export class MetrcHarvestCreateService {
           endpoint: lastEndpoint,
           status: result.status,
           metrcHarvestId,
+          plantLabelCount: plantLabels.length,
+          promotedBatch,
           syncOk: syncResult.ok,
         });
 
         return {
           ok: true,
           status: result.status,
-          message: syncResult.ok
-            ? "Test harvest created in METRC sandbox and harvests re-synced."
-            : "Test harvest submitted to METRC sandbox. Harvest sync did not complete — run Sync Harvests.",
+          message: promotedBatch
+            ? `Promoted batch to flowering, harvested ${plantLabels.length} plant(s), and re-synced harvests.`
+            : syncResult.ok
+              ? `Harvested ${plantLabels.length} plant(s) in METRC sandbox and re-synced harvests.`
+              : `Harvest submitted for ${plantLabels.length} plant(s). Run Sync Harvests to refresh.`,
           alreadyExists: false,
           endpoint: lastEndpoint,
-          requestPayload: logPayload.requestPayload,
+          requestPayload: diagnostics,
           responsePayload: result.data,
           durationMs,
           metrcHarvestId,
           harvest,
+          plantLabelsUsed: plantLabels,
+          promotedBatch,
         };
       }
 
@@ -417,8 +573,6 @@ export class MetrcHarvestCreateService {
         message: result.message,
         metrcMessage: result.metrcMessage,
         endpoint: result.endpoint,
-        upstreamError: result.upstreamError,
-        authAttempts: result.authAttempts,
       };
 
       if (result.status !== 404) break;
@@ -428,10 +582,10 @@ export class MetrcHarvestCreateService {
     await appendMetrcHarvestRequestLog({
       companyId: input.companyId,
       action: "create_test",
-      method: "POST",
-      endpoint: lastEndpoint ?? "harvests/create",
+      method: "PUT",
+      endpoint: lastEndpoint,
       httpStatus: lastStatus,
-      requestPayload: { body: requestBody, candidates },
+      requestPayload: diagnostics,
       responsePayload: lastResponse,
       durationMs,
       actorUserId: input.actorUserId,
@@ -452,6 +606,7 @@ export class MetrcHarvestCreateService {
       status: lastStatus,
       endpoint: lastEndpoint,
       message: lastMessage,
+      plantLabels,
     });
 
     return {
@@ -463,12 +618,14 @@ export class MetrcHarvestCreateService {
           ? buildMetrcCredentialHintFromLoaded(loaded)
           : undefined,
       endpoint: lastEndpoint,
-      requestPayload: { body: requestBody, candidates },
+      requestPayload: diagnostics,
       responsePayload: lastResponse,
       metrcMessage:
         lastResponse && typeof lastResponse === "object" && "metrcMessage" in lastResponse
           ? String((lastResponse as { metrcMessage?: unknown }).metrcMessage || "")
           : undefined,
+      sourceType: "plant",
+      sourceName: plantLabels.join(", "),
     };
   }
 }
