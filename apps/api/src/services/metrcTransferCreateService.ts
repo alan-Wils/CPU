@@ -34,6 +34,7 @@ export type MetrcCreateTestTransferSuccess = {
   durationMs: number;
   metrcTransferId: string | null;
   transfersSynced: number;
+  payloadDiagnostics?: MetrcTransferTemplatePayloadDiagnostics;
 };
 
 export type MetrcCreateTestTransferFailure = {
@@ -46,6 +47,7 @@ export type MetrcCreateTestTransferFailure = {
   responsePayload?: unknown;
   metrcMessage?: string;
   validationErrors?: string[];
+  payloadDiagnostics?: MetrcTransferTemplatePayloadDiagnostics;
 };
 
 export type MetrcCreateTestTransferResponse =
@@ -57,10 +59,30 @@ function licenseQuery(licenseNumber: string): string {
   return license ? `?licenseNumber=${encodeURIComponent(license)}` : "";
 }
 
+export const METRC_TRANSFER_TYPE_OPTIONS = [
+  { label: "Transfer", value: "Transfer" },
+  { label: "Wholesale Transfer", value: "Wholesale" },
+  { label: "Internal Transfer", value: "Affiliated" },
+] as const;
+
+export type MetrcTransferTemplateApiVersion = "v1" | "v2";
+
+export function resolveTransferTemplateApiVersion(pathname: string): MetrcTransferTemplateApiVersion {
+  return pathname.includes("/v1/") ? "v1" : "v2";
+}
+
 export function buildTransferTemplateCreatePathCandidates(licenseNumber: string): string[] {
   const q = licenseQuery(licenseNumber);
   return [`/transfers/v2/templates/outgoing${q}`, `/transfers/v1/templates${q}`];
 }
+
+export type MetrcTransferTemplatePayloadDiagnostics = {
+  endpoint: string;
+  apiVersion: MetrcTransferTemplateApiVersion;
+  topLevelTransferTypeName: string;
+  destinationRecipientLicense: string;
+  packageLabels: string[];
+};
 
 function toMetrcDateTime(ymd: string, hour: number): string {
   const [y, m, d] = ymd.split("-").map((v) => Number(v));
@@ -70,73 +92,127 @@ function toMetrcDateTime(ymd: string, hour: number): string {
   return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}T${pad(dt.getUTCHours())}:00:00.000`;
 }
 
-export function buildMetrcTransferTemplateCreateBody(input: {
-  name: string;
-  sourceLicense: string;
-  destinationLicense: string;
-  packageLabel: string;
-  transferDate: string;
-  plannedRoute: string;
-  notes: string | null;
-  transporterFacilityLicense: string | null;
-  transferTypeName: string;
-  grossWeight: number;
-  grossUnitOfWeightName: string;
-}): unknown[] {
+export function buildMetrcTransferTemplateCreateBody(
+  input: {
+    name: string;
+    sourceLicense: string;
+    destinationLicense: string;
+    packageLabel: string;
+    transferDate: string;
+    plannedRoute: string;
+    notes: string | null;
+    transporterFacilityLicense: string | null;
+    transferTypeName: string;
+    grossWeight: number;
+    grossUnitOfWeightName: string;
+  },
+  apiVersion: MetrcTransferTemplateApiVersion,
+): unknown[] {
   const departure = toMetrcDateTime(input.transferDate, 10);
   const arrival = toMetrcDateTime(input.transferDate, 14);
   const transporterLicense = input.transporterFacilityLicense || input.sourceLicense;
 
-  return [
-    {
-      Name: input.name,
-      TransporterFacilityLicenseNumber: transporterLicense,
-      DriverOccupationalLicenseNumber: null,
-      DriverName: null,
-      DriverLicenseNumber: null,
-      PhoneNumberForQuestions: null,
-      VehicleMake: null,
-      VehicleModel: null,
-      VehicleLicensePlateNumber: null,
-      VehicleRegistrationNumber: null,
-      Destinations: [
-        {
-          RecipientLicenseNumber: input.destinationLicense,
-          InvoiceNumber: `INV-NB-${Date.now()}`,
-          TransferTypeName: input.transferTypeName,
-          PlannedRoute: input.plannedRoute,
-          EstimatedDepartureDateTime: departure,
-          EstimatedArrivalDateTime: arrival,
-          Transporters: [
-            {
-              TransporterFacilityLicenseNumber: transporterLicense,
-              DriverOccupationalLicenseNumber: "SANDBOX",
-              DriverName: "NexBatch Sandbox Driver",
-              DriverLicenseNumber: "SANDBOX",
-              DriverLayoverLeg: "FromAndToLayover",
-              PhoneNumberForQuestions: "18005555555",
-              VehicleMake: "NexBatch",
-              VehicleModel: "Van",
-              VehicleLicensePlateNumber: "NB-TEST",
-              VehicleRegistrationNumber: null,
-              IsLayover: false,
-              EstimatedDepartureDateTime: departure,
-              EstimatedArrivalDateTime: arrival,
-              TransporterDetails: [],
-            },
-          ],
-          Packages: [
-            {
-              PackageLabel: input.packageLabel,
-              WholesalePrice: null,
-              GrossWeight: input.grossWeight,
-              GrossUnitOfWeightName: input.grossUnitOfWeightName,
-            },
-          ],
-        },
-      ],
-    },
-  ];
+  const destination: Record<string, unknown> = {
+    RecipientLicenseNumber: input.destinationLicense,
+    InvoiceNumber: `INV-NB-${Date.now()}`,
+    PlannedRoute: input.plannedRoute,
+    EstimatedDepartureDateTime: departure,
+    EstimatedArrivalDateTime: arrival,
+    Transporters: [
+      {
+        TransporterFacilityLicenseNumber: transporterLicense,
+        DriverOccupationalLicenseNumber: "SANDBOX",
+        DriverName: "NexBatch Sandbox Driver",
+        DriverLicenseNumber: "SANDBOX",
+        DriverLayoverLeg: apiVersion === "v1" ? "ToLayover" : "FromAndToLayover",
+        PhoneNumberForQuestions: "18005555555",
+        VehicleMake: "NexBatch",
+        VehicleModel: "Van",
+        VehicleLicensePlateNumber: "NB-TEST",
+        VehicleRegistrationNumber: null,
+        IsLayover: false,
+        EstimatedDepartureDateTime: departure,
+        EstimatedArrivalDateTime: arrival,
+        TransporterDetails: apiVersion === "v1" ? null : [],
+      },
+    ],
+    Packages: [
+      {
+        PackageLabel: input.packageLabel,
+        WholesalePrice: null,
+        GrossWeight: input.grossWeight,
+        GrossUnitOfWeightName: input.grossUnitOfWeightName,
+      },
+    ],
+  };
+
+  // v2 docs: TransferTypeName on destination. v1 sandbox expects top-level only.
+  if (apiVersion === "v2") {
+    destination.TransferTypeName = input.transferTypeName;
+  }
+
+  const template: Record<string, unknown> = {
+    Name: input.name,
+    TransporterFacilityLicenseNumber: transporterLicense,
+    DriverOccupationalLicenseNumber: null,
+    DriverName: null,
+    DriverLicenseNumber: null,
+    PhoneNumberForQuestions: null,
+    VehicleMake: null,
+    VehicleModel: null,
+    VehicleLicensePlateNumber: null,
+    VehicleRegistrationNumber: null,
+    Destinations: [destination],
+  };
+
+  if (apiVersion === "v1") {
+    template.TransferTypeName = input.transferTypeName;
+  }
+
+  return [template];
+}
+
+export function buildTransferTemplatePayloadDiagnostics(input: {
+  pathname: string;
+  transferTypeName: string;
+  destinationLicense: string;
+  packageLabel: string;
+  body: unknown;
+}): MetrcTransferTemplatePayloadDiagnostics {
+  const apiVersion = resolveTransferTemplateApiVersion(input.pathname);
+  const row = Array.isArray(input.body) ? (input.body[0] as Record<string, unknown>) : null;
+  const topLevel =
+    row && typeof row.TransferTypeName === "string"
+      ? row.TransferTypeName
+      : apiVersion === "v1"
+        ? input.transferTypeName
+        : "";
+  const dest = row?.Destinations;
+  const destRow =
+    Array.isArray(dest) && dest[0] && typeof dest[0] === "object"
+      ? (dest[0] as Record<string, unknown>)
+      : null;
+  const recipient = String(destRow?.RecipientLicenseNumber ?? input.destinationLicense).trim();
+  const packages = destRow?.Packages;
+  const labels: string[] = [];
+  if (Array.isArray(packages)) {
+    for (const pkg of packages) {
+      if (!pkg || typeof pkg !== "object") continue;
+      const label = String((pkg as { PackageLabel?: unknown }).PackageLabel ?? "").trim();
+      if (label) labels.push(label);
+    }
+  }
+  if (!labels.length && input.packageLabel.trim()) {
+    labels.push(input.packageLabel.trim());
+  }
+
+  return {
+    endpoint: input.pathname.split("?")[0] || input.pathname,
+    apiVersion,
+    topLevelTransferTypeName: topLevel,
+    destinationRecipientLicense: recipient,
+    packageLabels: labels,
+  };
 }
 
 function extractCreatedTransferId(response: unknown): string | null {
@@ -254,7 +330,7 @@ export class MetrcTransferCreateService {
     const templateName =
       String(input.notes || "").trim() || `NexBatch Test Transfer ${transferDate}`;
 
-    const requestBody = buildMetrcTransferTemplateCreateBody({
+    const bodyInput = {
       name: templateName,
       sourceLicense,
       destinationLicense,
@@ -266,7 +342,7 @@ export class MetrcTransferCreateService {
       transferTypeName,
       grossWeight,
       grossUnitOfWeightName: grossUnit,
-    });
+    };
 
     const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
     const candidates = buildTransferTemplateCreatePathCandidates(sourceLicense);
@@ -275,8 +351,27 @@ export class MetrcTransferCreateService {
     let lastMessage = "METRC transfer create failed.";
     let lastEndpoint: string | undefined;
     let lastResponse: unknown = null;
+    let lastPayloadDiagnostics: MetrcTransferTemplatePayloadDiagnostics | undefined;
+    let lastRequestBody: unknown = null;
 
     for (const pathname of candidates) {
+      const apiVersion = resolveTransferTemplateApiVersion(pathname);
+      const requestBody = buildMetrcTransferTemplateCreateBody(bodyInput, apiVersion);
+      const payloadDiagnostics = buildTransferTemplatePayloadDiagnostics({
+        pathname,
+        transferTypeName,
+        destinationLicense,
+        packageLabel,
+        body: requestBody,
+      });
+      lastPayloadDiagnostics = payloadDiagnostics;
+      lastRequestBody = requestBody;
+
+      logInfo("[METRC] transfer_create_test_payload", {
+        companyId: input.companyId,
+        ...payloadDiagnostics,
+      });
+
       const result = await client.post<unknown>(pathname, requestBody);
       lastEndpoint = pathname.split("?")[0];
 
@@ -289,7 +384,13 @@ export class MetrcTransferCreateService {
           method: "POST",
           endpoint: lastEndpoint,
           httpStatus: result.status,
-          requestPayload: { pathname, body: requestBody, packageLabel, destinationLicense },
+          requestPayload: {
+            pathname,
+            body: requestBody,
+            packageLabel,
+            destinationLicense,
+            payloadDiagnostics,
+          },
           responsePayload: result.data,
           durationMs,
           actorUserId: input.actorUserId,
@@ -321,6 +422,7 @@ export class MetrcTransferCreateService {
           durationMs,
           metrcTransferId,
           transfersSynced,
+          payloadDiagnostics,
         };
       }
 
@@ -349,7 +451,12 @@ export class MetrcTransferCreateService {
       method: "POST",
       endpoint: lastEndpoint || "/transfers/v2/templates/outgoing",
       httpStatus: lastStatus,
-      requestPayload: { body: requestBody, packageLabel, destinationLicense },
+      requestPayload: {
+        body: lastRequestBody,
+        packageLabel,
+        destinationLicense,
+        payloadDiagnostics: lastPayloadDiagnostics,
+      },
       responsePayload: lastResponse,
       durationMs,
       actorUserId: input.actorUserId,
@@ -364,8 +471,9 @@ export class MetrcTransferCreateService {
           ? buildMetrcCredentialHintFromLoaded(loaded)
           : undefined,
       endpoint: lastEndpoint,
-      requestPayload: { body: requestBody },
+      requestPayload: { body: lastRequestBody, payloadDiagnostics: lastPayloadDiagnostics },
       responsePayload: lastResponse,
+      payloadDiagnostics: lastPayloadDiagnostics,
       metrcMessage:
         lastResponse && typeof lastResponse === "object" && "metrcMessage" in lastResponse
           ? String((lastResponse as { metrcMessage?: unknown }).metrcMessage ?? "")

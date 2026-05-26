@@ -336,6 +336,7 @@ export function buildEvaluationCreateRequestBody(
     transferDate: new Date().toISOString().slice(0, 10),
     plannedRoute: "NexBatch sandbox evaluation — direct facility transfer.",
     notes: "NexBatch Test Transfer",
+    transferTypeName: "Transfer",
   };
 }
 

@@ -503,12 +503,25 @@ type CreateTestTransferResult = {
   transfersSynced?: number;
   metrcMessage?: string;
   validationErrors?: string[];
+  payloadDiagnostics?: {
+    endpoint: string;
+    apiVersion: string;
+    topLevelTransferTypeName: string;
+    destinationRecipientLicense: string;
+    packageLabels: string[];
+  };
 };
 
 const DEFAULT_TRANSFER_PLANNED_ROUTE =
   "NexBatch sandbox evaluation — direct facility transfer.";
 const TRANSFER_PACKAGE_REQUIRED_MSG =
   "Sync or create a package before creating a transfer.";
+
+const METRC_TRANSFER_TYPE_OPTIONS = [
+  { label: "Transfer", value: "Transfer" },
+  { label: "Wholesale Transfer", value: "Wholesale" },
+  { label: "Internal Transfer", value: "Affiliated" },
+] as const;
 
 type PackageReconciliationSummary = {
   metrcCount: number;
@@ -903,6 +916,7 @@ export default function MetrcSandboxPage() {
   );
   const [createTransferRoute, setCreateTransferRoute] = useState(DEFAULT_TRANSFER_PLANNED_ROUTE);
   const [createTransferNotes, setCreateTransferNotes] = useState("NexBatch Test Transfer");
+  const [createTransferTypeName, setCreateTransferTypeName] = useState("Transfer");
   const [createTransferConfirmOpen, setCreateTransferConfirmOpen] = useState(false);
   const [lastCreateTransfer, setLastCreateTransfer] = useState<CreateTestTransferResult | null>(null);
   const [nexbatchRooms, setNexbatchRooms] = useState<NexbatchRoomOption[]>([]);
@@ -2273,6 +2287,7 @@ export default function MetrcSandboxPage() {
       transferDate: createTransferDate,
       plannedRoute: createTransferRoute.trim(),
       notes: createTransferNotes.trim() || null,
+      transferTypeName: createTransferTypeName,
     };
     const transferCreateStarted = performance.now();
     try {
@@ -2353,6 +2368,36 @@ export default function MetrcSandboxPage() {
       (f) => f.licenseNumber.trim() && f.licenseNumber.trim() !== activeFacilityLicense,
     );
   }, [lastFacilities, activeFacilityLicense]);
+
+  const transferPayloadPreview = useMemo(() => {
+    const packageLabels = createTransferPackageLabel.trim()
+      ? [createTransferPackageLabel.trim()]
+      : [];
+    const destinationRecipientLicense = createTransferDestinationLicense.trim();
+    return {
+      endpoints: [
+        "/transfers/v2/templates/outgoing",
+        "/transfers/v1/templates",
+      ],
+      v2: {
+        endpoint: "/transfers/v2/templates/outgoing",
+        topLevelTransferTypeName: "(v2 uses destination.TransferTypeName)",
+        destinationTransferTypeName: createTransferTypeName,
+        destinationRecipientLicense,
+        packageLabels,
+      },
+      v1: {
+        endpoint: "/transfers/v1/templates",
+        topLevelTransferTypeName: createTransferTypeName,
+        destinationRecipientLicense,
+        packageLabels,
+      },
+    };
+  }, [
+    createTransferPackageLabel,
+    createTransferDestinationLicense,
+    createTransferTypeName,
+  ]);
 
   const vegRoomOptions = useMemo(
     () => nexbatchRooms.filter((r) => r.suite === "vegRooms"),
@@ -4496,6 +4541,20 @@ export default function MetrcSandboxPage() {
                   </select>
                 </label>
                 <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+                  <span style={{ color: "#94a3b8" }}>Transfer type</span>
+                  <select
+                    value={createTransferTypeName}
+                    onChange={(e) => setCreateTransferTypeName(e.target.value)}
+                    style={styles.input}
+                  >
+                    {METRC_TRANSFER_TYPE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
                   <span style={{ color: "#94a3b8" }}>Transfer date</span>
                   <input
                     type="date"
@@ -4539,6 +4598,26 @@ export default function MetrcSandboxPage() {
                   />
                 </label>
               </div>
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>
+                  Payload preview (before submit)
+                </summary>
+                <pre
+                  style={{
+                    marginTop: 8,
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px solid #334155",
+                    background: "rgba(2, 6, 23, 0.8)",
+                    fontSize: 11,
+                    color: "#cbd5e1",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {JSON.stringify(transferPayloadPreview, null, 2)}
+                </pre>
+              </details>
               <div style={{ ...styles.row, marginTop: 12 }}>
                 <button
                   type="button"
@@ -4565,8 +4644,22 @@ export default function MetrcSandboxPage() {
                   <p style={{ margin: "0 0 12px", fontSize: 13, color: "#fca5a5" }}>
                     Sandbox only. This will create an outgoing transfer template for package &quot;
                     {createTransferPackageLabel.trim()}&quot; to facility &quot;
-                    {createTransferDestinationLicense.trim()}&quot; on {createTransferDate}.
+                    {createTransferDestinationLicense.trim()}&quot; on {createTransferDate} (
+                    {METRC_TRANSFER_TYPE_OPTIONS.find((o) => o.value === createTransferTypeName)
+                      ?.label || createTransferTypeName}
+                    ).
                   </p>
+                  <pre
+                    style={{
+                      margin: "0 0 12px",
+                      fontSize: 11,
+                      color: "#fecaca",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {JSON.stringify(transferPayloadPreview.v1, null, 2)}
+                  </pre>
                   <div style={styles.row}>
                     <button
                       type="button"
@@ -4616,6 +4709,7 @@ export default function MetrcSandboxPage() {
                         metrcTransferId: lastCreateTransfer.metrcTransferId,
                         transfersSynced: lastCreateTransfer.transfersSynced,
                         validationErrors: lastCreateTransfer.validationErrors,
+                        payloadDiagnostics: lastCreateTransfer.payloadDiagnostics,
                         request: lastCreateTransfer.requestPayload,
                         response: lastCreateTransfer.responsePayload,
                       },
