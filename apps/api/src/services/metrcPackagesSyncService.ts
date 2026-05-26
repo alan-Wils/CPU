@@ -128,17 +128,20 @@ export class MetrcPackagesSyncService {
       cultivationTransfers,
     });
 
-    return buildMetrcPackageInventoryReconciliation({
-      metrcPackages: metrcPackages.map((row) => ({
-        packageLabel: row.packageLabel,
-        itemName: row.itemName,
-        quantity: row.quantity,
-        unitOfMeasure: row.unitOfMeasure,
-        location: row.location,
-        strainName: row.strainName,
-      })),
-      nexbatchRefs,
-    });
+    return {
+      ok: true,
+      ...buildMetrcPackageInventoryReconciliation({
+        metrcPackages: metrcPackages.map((row) => ({
+          packageLabel: row.packageLabel,
+          itemName: row.itemName,
+          quantity: row.quantity,
+          unitOfMeasure: row.unitOfMeasure,
+          location: row.location,
+          strainName: row.strainName,
+        })),
+        nexbatchRefs,
+      }),
+    };
   }
 
   async syncMetrcPackages(input: {
