@@ -1347,6 +1347,8 @@ model MetrcLocation {
   rawPayloadJson     String
   nexbatchRoomSuite  String?
   nexbatchRoomId     String?
+  /// When true, sync auto-match must not change nexbatch room mapping.
+  nexbatchMappingManual Boolean @default(false)
   lastSyncedAt       DateTime
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt

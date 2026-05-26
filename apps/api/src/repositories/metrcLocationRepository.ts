@@ -13,6 +13,12 @@ export type MetrcLocationUpsertRow = {
   lastSyncedAt: Date;
 };
 
+export type MetrcLocationAutoMappingRow = {
+  metrcLocationId: string;
+  nexbatchRoomSuite: string;
+  nexbatchRoomId: string;
+};
+
 export async function upsertMetrcLocationsForCompany(
   companyId: string,
   rows: MetrcLocationUpsertRow[],
@@ -64,11 +70,37 @@ export async function listMetrcLocationsForCompany(companyId: string) {
   });
 }
 
+export async function applyAutoMetrcLocationMappings(
+  companyId: string,
+  rows: MetrcLocationAutoMappingRow[],
+): Promise<number> {
+  if (!rows.length) return 0;
+  await prisma.$transaction(
+    rows.map((row) =>
+      prisma.metrcLocation.updateMany({
+        where: {
+          companyId,
+          metrcLocationId: row.metrcLocationId,
+          nexbatchMappingManual: false,
+          nexbatchRoomId: null,
+        },
+        data: {
+          nexbatchRoomSuite: row.nexbatchRoomSuite,
+          nexbatchRoomId: row.nexbatchRoomId,
+          nexbatchMappingManual: false,
+        },
+      }),
+    ),
+  );
+  return rows.length;
+}
+
 export async function updateMetrcLocationMapping(input: {
   companyId: string;
   metrcLocationId: string;
   nexbatchRoomSuite: string | null;
   nexbatchRoomId: string | null;
+  nexbatchMappingManual: boolean;
 }) {
   return prisma.metrcLocation.update({
     where: {
@@ -80,6 +112,7 @@ export async function updateMetrcLocationMapping(input: {
     data: {
       nexbatchRoomSuite: input.nexbatchRoomSuite,
       nexbatchRoomId: input.nexbatchRoomId,
+      nexbatchMappingManual: input.nexbatchMappingManual,
     },
   });
 }

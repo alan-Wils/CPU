@@ -103,11 +103,15 @@ type FacilitiesSyncResult = {
   endpoint?: string;
 };
 
+type NexbatchRoomSuite = "vegRooms" | "flowerRooms" | "dryRooms" | "freezers";
+
 type NexbatchRoomOption = {
-  suite: "vegRooms" | "flowerRooms";
+  suite: NexbatchRoomSuite;
   roomId: string;
   name: string;
 };
+
+type LocationCapabilityFilter = "all" | "plants" | "harvest" | "packages";
 
 type MetrcLocationRow = {
   metrcLocationId: string;
@@ -118,9 +122,11 @@ type MetrcLocationRow = {
   forHarvests: boolean;
   forPackages: boolean;
   licenseNumber: string;
-  nexbatchRoomSuite: NexbatchRoomOption["suite"] | null;
+  nexbatchRoomSuite: NexbatchRoomSuite | null;
   nexbatchRoomId: string | null;
   nexbatchRoomLabel: string | null;
+  mappingSource?: "manual" | "auto" | "none";
+  nexbatchMappingManual?: boolean;
 };
 
 type LocationsSyncResult = {
@@ -132,6 +138,7 @@ type LocationsSyncResult = {
   syncedAt?: string;
   locations?: MetrcLocationRow[];
   nexbatchRooms?: NexbatchRoomOption[];
+  autoMappedCount?: number;
   message?: string;
   rateLimitWarning?: string | null;
   credentialHint?: string;
@@ -166,12 +173,61 @@ type StrainsSyncResult = {
 };
 
 function formatNexbatchRoomOptionLabel(option: NexbatchRoomOption): string {
-  return `${option.suite === "vegRooms" ? "Veg" : "Flower"}: ${option.name}`;
+  const prefix =
+    option.suite === "vegRooms"
+      ? "Veg"
+      : option.suite === "flowerRooms"
+        ? "Flower"
+        : option.suite === "dryRooms"
+          ? "Dry"
+          : "Freezer";
+  return `${prefix}: ${option.name}`;
 }
 
 function mappingSelectValue(row: MetrcLocationRow): string {
   if (!row.nexbatchRoomSuite || !row.nexbatchRoomId) return "";
   return `${row.nexbatchRoomSuite}:${row.nexbatchRoomId}`;
+}
+
+function parseMappingSelectValue(value: string): {
+  suite: NexbatchRoomSuite | null;
+  roomId: string | null;
+} {
+  if (!value) return { suite: null, roomId: null };
+  const colon = value.indexOf(":");
+  if (colon < 0) return { suite: null, roomId: null };
+  const suite = value.slice(0, colon) as NexbatchRoomSuite;
+  const roomId = value.slice(colon + 1).trim();
+  if (
+    suite !== "vegRooms" &&
+    suite !== "flowerRooms" &&
+    suite !== "dryRooms" &&
+    suite !== "freezers"
+  ) {
+    return { suite: null, roomId: null };
+  }
+  return { suite, roomId: roomId || null };
+}
+
+function CapabilityBadge({ active, label }: { active: boolean; label: string }) {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        marginRight: 4,
+        marginBottom: 2,
+        padding: "2px 6px",
+        borderRadius: 4,
+        fontSize: 11,
+        fontWeight: 600,
+        border: `1px solid ${active ? "rgba(34, 197, 94, 0.5)" : "rgba(100, 116, 139, 0.5)"}`,
+        background: active ? "rgba(6, 78, 59, 0.45)" : "rgba(30, 41, 59, 0.6)",
+        color: active ? "#bbf7d0" : "#94a3b8",
+      }}
+    >
+      {label}
+    </span>
+  );
 }
 
 function formatMetrcPullError(json: PullResult, resource: string): string {
@@ -418,6 +474,12 @@ export default function MetrcSandboxPage() {
   const [strainsLoaded, setStrainsLoaded] = useState(false);
   const [nexbatchRooms, setNexbatchRooms] = useState<NexbatchRoomOption[]>([]);
   const [mappingBusy, setMappingBusy] = useState<string | null>(null);
+  const [locationCapabilityFilter, setLocationCapabilityFilter] =
+    useState<LocationCapabilityFilter>("all");
+  const [mappingToast, setMappingToast] = useState<{
+    tone: "ok" | "error";
+    text: string;
+  } | null>(null);
   const [testAt, setTestAt] = useState<string | null>(null);
   const [setupDebug, setSetupDebug] = useState<SandboxSetupDebug | null>(null);
   const [sandboxUiStatus, setSandboxUiStatus] = useState<
@@ -601,6 +663,14 @@ export default function MetrcSandboxPage() {
     sandboxUiStatus,
   ]);
 
+  const filteredLocations = useMemo(() => {
+    const rows = locationsRows ?? [];
+    if (locationCapabilityFilter === "plants") return rows.filter((r) => r.forPlants);
+    if (locationCapabilityFilter === "harvest") return rows.filter((r) => r.forHarvests);
+    if (locationCapabilityFilter === "packages") return rows.filter((r) => r.forPackages);
+    return rows;
+  }, [locationsRows, locationCapabilityFilter]);
+
   async function runSetup() {
     setBusy("setup");
     setStatusMsg(null);
@@ -709,24 +779,41 @@ export default function MetrcSandboxPage() {
   }
 
   async function saveLocationMapping(metrcLocationId: string, value: string) {
+    const previousRows = locationsRows;
+    const { suite: nexbatchRoomSuite, roomId: nexbatchRoomId } = parseMappingSelectValue(value);
+    const matched = nexbatchRooms.find(
+      (opt) => opt.suite === nexbatchRoomSuite && opt.roomId === nexbatchRoomId,
+    );
+
+    setLocationsRows((prev) =>
+      (prev ?? []).map((row) =>
+        row.metrcLocationId === metrcLocationId
+          ? {
+              ...row,
+              nexbatchRoomSuite,
+              nexbatchRoomId,
+              nexbatchRoomLabel: matched ? formatNexbatchRoomOptionLabel(matched) : null,
+              mappingSource: nexbatchRoomId ? "manual" : "none",
+              nexbatchMappingManual: true,
+            }
+          : row,
+      ),
+    );
     setMappingBusy(metrcLocationId);
+    setMappingToast(null);
+
     try {
-      let nexbatchRoomSuite: NexbatchRoomOption["suite"] | null = null;
-      let nexbatchRoomId: string | null = null;
-      if (value) {
-        const [suite, roomId] = value.split(":");
-        if (suite === "vegRooms" || suite === "flowerRooms") {
-          nexbatchRoomSuite = suite;
-          nexbatchRoomId = roomId || null;
-        }
-      }
       const res = await authFetch("/api/metrc/locations/mapping", {
         method: "PATCH",
         body: JSON.stringify({ metrcLocationId, nexbatchRoomSuite, nexbatchRoomId }),
       });
       const json = (await res.json()) as { ok?: boolean; location?: MetrcLocationRow; message?: string };
       if (!res.ok || !json.ok || !json.location) {
-        setStatusMsg({ tone: "error", text: json.message || "Failed to save room mapping." });
+        setLocationsRows(previousRows);
+        setMappingToast({
+          tone: "error",
+          text: json.message || "Failed to save room mapping.",
+        });
         return;
       }
       setLocationsRows((prev) =>
@@ -734,8 +821,13 @@ export default function MetrcSandboxPage() {
           row.metrcLocationId === metrcLocationId ? json.location! : row,
         ),
       );
+      setMappingToast({
+        tone: "ok",
+        text: nexbatchRoomId ? "Room mapping saved." : "Room mapping cleared.",
+      });
     } catch {
-      setStatusMsg({ tone: "error", text: "Failed to save room mapping — network error." });
+      setLocationsRows(previousRows);
+      setMappingToast({ tone: "error", text: "Failed to save room mapping — network error." });
     } finally {
       setMappingBusy(null);
     }
@@ -759,10 +851,14 @@ export default function MetrcSandboxPage() {
       const count = json.count ?? json.totalLocationsSynced ?? 0;
       setLocationsRows(json.locations ?? []);
       setLocationsLoaded(true);
+      const autoMapped =
+        typeof json.autoMappedCount === "number" && json.autoMappedCount > 0
+          ? ` Auto-matched ${json.autoMappedCount} room${json.autoMappedCount === 1 ? "" : "s"} by name.`
+          : "";
       const warn = json.rateLimitWarning ? ` ${json.rateLimitWarning}` : "";
       setStatusMsg({
         tone: json.rateLimitWarning ? "warn" : "ok",
-        text: `Synced ${count} location${count === 1 ? "" : "s"} (0 is valid when METRC returns no active locations).${warn}`,
+        text: `Synced ${count} location${count === 1 ? "" : "s"} (0 is valid when METRC returns no active locations).${autoMapped}${warn}`,
       });
       await loadMeta();
     } catch {
@@ -1263,61 +1359,116 @@ export default function MetrcSandboxPage() {
         <section style={styles.card}>
           <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>METRC locations</h2>
           <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8" }}>
-            Synced from <code style={{ color: "#cbd5e1" }}>GET /locations/v2/active</code>. Map each
-            location to a NexBatch veg or flower room.
+            Synced from <code style={{ color: "#cbd5e1" }}>GET /locations/v2/active</code>. Room
+            mappings are saved immediately and persist across refreshes. Auto-match runs on sync for
+            unmapped locations only.
           </p>
+          {mappingToast ? (
+            <div style={mappingToast.tone === "error" ? styles.error : styles.ok}>{mappingToast.text}</div>
+          ) : null}
           {locationsLoaded && locationsRows && locationsRows.length > 0 ? (
-            <table style={styles.sampleTable}>
-              <thead>
-                <tr style={{ color: "#94a3b8", textAlign: "left" }}>
-                  <th style={{ padding: "6px 8px" }}>METRC ID</th>
-                  <th style={{ padding: "6px 8px" }}>Name</th>
-                  <th style={{ padding: "6px 8px" }}>Type</th>
-                  <th style={{ padding: "6px 8px" }}>Plant capable</th>
-                  <th style={{ padding: "6px 8px" }}>Harvest capable</th>
-                  <th style={{ padding: "6px 8px" }}>Package capable</th>
-                  <th style={{ padding: "6px 8px" }}>NexBatch room</th>
-                </tr>
-              </thead>
-              <tbody>
-                {locationsRows.map((row) => (
-                  <tr key={row.metrcLocationId} style={{ borderTop: "1px solid #334155" }}>
-                    <td style={{ padding: "6px 8px", fontFamily: "ui-monospace, monospace" }}>
-                      {row.metrcLocationId}
-                    </td>
-                    <td style={{ padding: "6px 8px" }}>{row.name || "—"}</td>
-                    <td style={{ padding: "6px 8px" }}>{row.locationTypeName || "—"}</td>
-                    <td style={{ padding: "6px 8px" }}>{row.forPlants ? "Yes" : "No"}</td>
-                    <td style={{ padding: "6px 8px" }}>{row.forHarvests ? "Yes" : "No"}</td>
-                    <td style={{ padding: "6px 8px" }}>{row.forPackages ? "Yes" : "No"}</td>
-                    <td style={{ padding: "6px 8px" }}>
-                      <select
-                        value={mappingSelectValue(row)}
-                        disabled={mappingBusy === row.metrcLocationId}
-                        onChange={(e) => void saveLocationMapping(row.metrcLocationId, e.target.value)}
-                        style={{
-                          width: "100%",
-                          minWidth: 160,
-                          background: "#0f172a",
-                          color: "#e2e8f0",
-                          border: "1px solid #475569",
-                          borderRadius: 6,
-                          padding: "4px 6px",
-                          fontSize: 12,
-                        }}
-                      >
-                        <option value="">— Not mapped —</option>
-                        {nexbatchRooms.map((opt) => (
-                          <option key={`${opt.suite}:${opt.roomId}`} value={`${opt.suite}:${opt.roomId}`}>
-                            {formatNexbatchRoomOptionLabel(opt)}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                  </tr>
+            <>
+              <div style={{ ...styles.row, marginTop: 12, flexWrap: "wrap" }}>
+                {(
+                  [
+                    ["all", "All"],
+                    ["plants", "Plant capable"],
+                    ["harvest", "Harvest capable"],
+                    ["packages", "Package capable"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    style={{
+                      ...styles.btn,
+                      ...(locationCapabilityFilter === key
+                        ? { borderColor: "#38bdf8", color: "#e0f2fe" }
+                        : {}),
+                      opacity: 1,
+                    }}
+                    onClick={() => setLocationCapabilityFilter(key)}
+                  >
+                    {label}
+                  </button>
                 ))}
-              </tbody>
-            </table>
+              </div>
+              <table style={styles.sampleTable}>
+                <thead>
+                  <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+                    <th style={{ padding: "6px 8px" }}>METRC ID</th>
+                    <th style={{ padding: "6px 8px" }}>Name</th>
+                    <th style={{ padding: "6px 8px" }}>Type</th>
+                    <th style={{ padding: "6px 8px" }}>Capabilities</th>
+                    <th style={{ padding: "6px 8px" }}>NexBatch room</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredLocations.map((row) => (
+                    <tr key={row.metrcLocationId} style={{ borderTop: "1px solid #334155" }}>
+                      <td style={{ padding: "6px 8px", fontFamily: "ui-monospace, monospace" }}>
+                        {row.metrcLocationId}
+                      </td>
+                      <td style={{ padding: "6px 8px" }}>
+                        {row.name || "—"}
+                        {row.mappingSource === "auto" ? (
+                          <span
+                            style={{
+                              marginLeft: 6,
+                              fontSize: 10,
+                              color: "#93c5fd",
+                              fontWeight: 700,
+                            }}
+                          >
+                            AUTO
+                          </span>
+                        ) : null}
+                      </td>
+                      <td style={{ padding: "6px 8px" }}>{row.locationTypeName || "—"}</td>
+                      <td style={{ padding: "6px 8px" }}>
+                        <CapabilityBadge active={row.forPlants} label="Plant" />
+                        <CapabilityBadge active={row.forHarvests} label="Harvest" />
+                        <CapabilityBadge active={row.forPackages} label="Package" />
+                      </td>
+                      <td style={{ padding: "6px 8px" }}>
+                        <select
+                          value={mappingSelectValue(row)}
+                          disabled={mappingBusy === row.metrcLocationId}
+                          onChange={(e) =>
+                            void saveLocationMapping(row.metrcLocationId, e.target.value)
+                          }
+                          style={{
+                            width: "100%",
+                            minWidth: 180,
+                            background: "#0f172a",
+                            color: "#e2e8f0",
+                            border: "1px solid #475569",
+                            borderRadius: 6,
+                            padding: "4px 6px",
+                            fontSize: 12,
+                          }}
+                        >
+                          <option value="">— Not mapped —</option>
+                          {nexbatchRooms.map((opt) => (
+                            <option
+                              key={`${opt.suite}:${opt.roomId}`}
+                              value={`${opt.suite}:${opt.roomId}`}
+                            >
+                              {formatNexbatchRoomOptionLabel(opt)}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {filteredLocations.length === 0 ? (
+                <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+                  No locations match the selected capability filter.
+                </p>
+              ) : null}
+            </>
           ) : lastLocationsSync?.ok && locationsRows?.length === 0 ? (
             <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
               Locations sync completed successfully with 0 active locations in the selected date range.

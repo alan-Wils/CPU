@@ -15,6 +15,7 @@ import {
 } from "../lib/metrcEndpoints.js";
 import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
 import { parseMetrcLocationsPayload, type ParsedMetrcLocation } from "../lib/metrcLocationsParse.js";
+import { suggestNexbatchRoomForMetrcLocation } from "../lib/metrcLocationRoomMatch.js";
 import {
   findNexbatchRoomOption,
   formatNexbatchRoomLabel,
@@ -32,6 +33,7 @@ import {
 } from "../lib/metrcStatusPersistence.js";
 import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 import {
+  applyAutoMetrcLocationMappings,
   listMetrcLocationsForCompany,
   updateMetrcLocationMapping,
   upsertMetrcLocationsForCompany,
@@ -49,6 +51,8 @@ export type MetrcLocationDto = {
   nexbatchRoomSuite: NexbatchRoomSuite | null;
   nexbatchRoomId: string | null;
   nexbatchRoomLabel: string | null;
+  mappingSource: "manual" | "auto" | "none";
+  nexbatchMappingManual: boolean;
 };
 
 export type MetrcLocationsSyncSuccess = {
@@ -63,6 +67,7 @@ export type MetrcLocationsSyncSuccess = {
   rateLimitWarning: string | null;
   endpoint: string;
   nexbatchRooms: NexbatchRoomOption[];
+  autoMappedCount: number;
 };
 
 export type MetrcLocationsSyncFailure = {
@@ -75,38 +80,27 @@ export type MetrcLocationsSyncFailure = {
 
 export type MetrcLocationsSyncResponse = MetrcLocationsSyncSuccess | MetrcLocationsSyncFailure;
 
-function toLocationDto(
-  row: ParsedMetrcLocation,
-  licenseNumber: string,
-  mapping?: { suite: string | null; roomId: string | null },
-  nexbatchRooms?: NexbatchRoomOption[],
-): MetrcLocationDto {
-  const suite =
-    mapping?.suite === "vegRooms" || mapping?.suite === "flowerRooms"
-      ? mapping.suite
-      : null;
-  const roomId = mapping?.roomId ? String(mapping.roomId) : null;
-  const matched = findNexbatchRoomOption(nexbatchRooms ?? [], suite, roomId);
-  return {
-    metrcLocationId: row.metrcLocationId,
-    name: row.name,
-    locationTypeId: row.locationTypeId,
-    locationTypeName: row.locationTypeName,
-    forPlants: row.forPlants,
-    forHarvests: row.forHarvests,
-    forPackages: row.forPackages,
-    licenseNumber,
-    nexbatchRoomSuite: suite,
-    nexbatchRoomId: roomId,
-    nexbatchRoomLabel: matched ? formatNexbatchRoomLabel(matched) : null,
-  };
+function parseNexbatchSuite(raw: string | null | undefined): NexbatchRoomSuite | null {
+  const s = String(raw ?? "").trim();
+  if (s === "vegRooms" || s === "flowerRooms" || s === "dryRooms" || s === "freezers") {
+    return s;
+  }
+  return null;
 }
 
-function dbRowToDto(row: Awaited<ReturnType<typeof listMetrcLocationsForCompany>>[number], nexbatchRooms: NexbatchRoomOption[]): MetrcLocationDto {
-  const suite =
-    row.nexbatchRoomSuite === "vegRooms" || row.nexbatchRoomSuite === "flowerRooms"
-      ? row.nexbatchRoomSuite
-      : null;
+function resolveMappingSource(row: {
+  nexbatchRoomId: string | null;
+  nexbatchMappingManual: boolean;
+}): MetrcLocationDto["mappingSource"] {
+  if (!row.nexbatchRoomId) return "none";
+  return row.nexbatchMappingManual ? "manual" : "auto";
+}
+
+function dbRowToDto(
+  row: Awaited<ReturnType<typeof listMetrcLocationsForCompany>>[number],
+  nexbatchRooms: NexbatchRoomOption[],
+): MetrcLocationDto {
+  const suite = parseNexbatchSuite(row.nexbatchRoomSuite);
   const matched = findNexbatchRoomOption(nexbatchRooms, suite, row.nexbatchRoomId);
   return {
     metrcLocationId: row.metrcLocationId,
@@ -120,7 +114,34 @@ function dbRowToDto(row: Awaited<ReturnType<typeof listMetrcLocationsForCompany>
     nexbatchRoomSuite: suite,
     nexbatchRoomId: row.nexbatchRoomId,
     nexbatchRoomLabel: matched ? formatNexbatchRoomLabel(matched) : null,
+    mappingSource: resolveMappingSource(row),
+    nexbatchMappingManual: row.nexbatchMappingManual,
   };
+}
+
+async function applyAutoRoomMappingsForCompany(input: {
+  companyId: string;
+  nexbatchRooms: NexbatchRoomOption[];
+}): Promise<number> {
+  const persisted = await listMetrcLocationsForCompany(input.companyId);
+  const autoRows = [];
+  for (const row of persisted) {
+    if (row.nexbatchMappingManual || row.nexbatchRoomId) continue;
+    const suggested = suggestNexbatchRoomForMetrcLocation(row.name, input.nexbatchRooms);
+    if (!suggested) continue;
+    autoRows.push({
+      metrcLocationId: row.metrcLocationId,
+      nexbatchRoomSuite: suggested.suite,
+      nexbatchRoomId: suggested.roomId,
+    });
+  }
+  if (!autoRows.length) return 0;
+  await applyAutoMetrcLocationMappings(input.companyId, autoRows);
+  logInfo("[METRC] locations_auto_mapped", {
+    companyId: input.companyId,
+    count: autoRows.length,
+  });
+  return autoRows.length;
 }
 
 export class MetrcLocationsSyncService {
@@ -250,19 +271,13 @@ export class MetrcLocationsSyncService {
           value: { ...loaded.company, metrc: nextMetrc },
         });
 
+        const autoMappedCount = await applyAutoRoomMappingsForCompany({
+          companyId: input.companyId,
+          nexbatchRooms,
+        });
+
         const persisted = await listMetrcLocationsForCompany(input.companyId);
-        const persistedById = new Map(persisted.map((r) => [r.metrcLocationId, r]));
-        const locations = parsed.map((row) =>
-          toLocationDto(
-            row,
-            operationalLicense,
-            {
-              suite: persistedById.get(row.metrcLocationId)?.nexbatchRoomSuite ?? null,
-              roomId: persistedById.get(row.metrcLocationId)?.nexbatchRoomId ?? null,
-            },
-            nexbatchRooms,
-          ),
-        );
+        const locations = persisted.map((row) => dbRowToDto(row, nexbatchRooms));
 
         const endpointKey = metrcEndpointPathKey(pathname);
 
@@ -271,6 +286,7 @@ export class MetrcLocationsSyncService {
           endpoint: endpointKey,
           status: result.status,
           count: totalLocationsSynced,
+          autoMappedCount,
           durationMs: result.durationMs,
           retries: result.retries,
         });
@@ -287,6 +303,7 @@ export class MetrcLocationsSyncService {
           rateLimitWarning,
           endpoint: endpointKey,
           nexbatchRooms,
+          autoMappedCount,
         };
       }
 
@@ -355,17 +372,19 @@ export class MetrcLocationsSyncService {
     const suite = input.nexbatchRoomSuite;
     const roomId = input.nexbatchRoomId ? String(input.nexbatchRoomId).trim() : null;
 
-    if ((suite && !roomId) || (!suite && roomId)) {
+    const parsedSuite = parseNexbatchSuite(suite);
+
+    if (roomId && !parsedSuite) {
       return {
         ok: false,
         status: 400,
-        message: "Provide both NexBatch room suite and room id, or clear both to unmap.",
+        message: "Invalid NexBatch room suite.",
       };
     }
 
-    if (suite && roomId) {
+    if (parsedSuite && roomId) {
       const options = await this.loadNexbatchRoomOptions(input.companyId);
-      const match = findNexbatchRoomOption(options, suite, roomId);
+      const match = findNexbatchRoomOption(options, parsedSuite, roomId);
       if (!match) {
         return {
           ok: false,
@@ -375,12 +394,21 @@ export class MetrcLocationsSyncService {
       }
     }
 
+    if ((parsedSuite && !roomId) || (!parsedSuite && roomId)) {
+      return {
+        ok: false,
+        status: 400,
+        message: "Provide both NexBatch room suite and room id, or clear both to unmap.",
+      };
+    }
+
     try {
       const updated = await updateMetrcLocationMapping({
         companyId: input.companyId,
         metrcLocationId,
-        nexbatchRoomSuite: suite,
+        nexbatchRoomSuite: parsedSuite,
         nexbatchRoomId: roomId,
+        nexbatchMappingManual: true,
       });
       const nexbatchRooms = await this.loadNexbatchRoomOptions(input.companyId);
       return { ok: true, location: dbRowToDto(updated, nexbatchRooms) };

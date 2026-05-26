@@ -10,6 +10,7 @@ import { MetrcSandboxService } from "../../services/metrcSandboxService.js";
 import { MetrcPullService } from "../../services/metrcPullService.js";
 import { MetrcFacilitiesSyncService } from "../../services/metrcFacilitiesSyncService.js";
 import { MetrcLocationsSyncService } from "../../services/metrcLocationsSyncService.js";
+import { MetrcLocationMappingService } from "../../services/metrcLocationMappingService.js";
 import { MetrcStrainsSyncService } from "../../services/metrcStrainsSyncService.js";
 import { MetrcDebugAuthService } from "../../services/metrcDebugAuthService.js";
 import { env } from "../../config/env.js";
@@ -34,11 +35,12 @@ const metrcSandboxService = new MetrcSandboxService();
 const metrcPullService = new MetrcPullService();
 const metrcFacilitiesSyncService = new MetrcFacilitiesSyncService();
 const metrcLocationsSyncService = new MetrcLocationsSyncService();
+const metrcLocationMappingService = new MetrcLocationMappingService();
 const metrcStrainsSyncService = new MetrcStrainsSyncService();
 
 const metrcLocationMappingBody = z.object({
   metrcLocationId: z.string().min(1),
-  nexbatchRoomSuite: z.enum(["vegRooms", "flowerRooms"]).nullable(),
+  nexbatchRoomSuite: z.enum(["vegRooms", "flowerRooms", "dryRooms", "freezers"]).nullable(),
   nexbatchRoomId: z.string().nullable(),
 });
 const metrcDebugAuthService = new MetrcDebugAuthService();
@@ -205,6 +207,16 @@ metrcRouter.get(
     const companyId = getScopedCompanyId(req);
     const locations = await metrcLocationsSyncService.listSyncedLocations(companyId);
     res.status(200).json({ ok: true, locations });
+  }),
+);
+
+metrcRouter.get(
+  "/locations/mappings",
+  requireRole(cultivationMetrcReadRoles),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const mappings = await metrcLocationMappingService.listLocationRoomMappings(companyId);
+    res.status(200).json({ ok: true, mappings });
   }),
 );
 

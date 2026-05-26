@@ -7,6 +7,7 @@ const {
   upsertMock,
   upsertLocationsMock,
   listLocationsMock,
+  applyAutoMappingsMock,
   configListMock,
 } = vi.hoisted(() => ({
   loadConfigMock: vi.fn(),
@@ -15,6 +16,7 @@ const {
   upsertMock: vi.fn(),
   upsertLocationsMock: vi.fn(),
   listLocationsMock: vi.fn(),
+  applyAutoMappingsMock: vi.fn(),
   configListMock: vi.fn(),
 }));
 
@@ -32,6 +34,7 @@ vi.mock("./configService.js", () => ({
 vi.mock("../repositories/metrcLocationRepository.js", () => ({
   upsertMetrcLocationsForCompany: upsertLocationsMock,
   listMetrcLocationsForCompany: listLocationsMock,
+  applyAutoMetrcLocationMappings: applyAutoMappingsMock,
   updateMetrcLocationMapping: vi.fn(),
 }));
 
@@ -80,6 +83,7 @@ describe("MetrcLocationsSyncService", () => {
     }));
     upsertMock.mockResolvedValue({});
     upsertLocationsMock.mockResolvedValue(1);
+    applyAutoMappingsMock.mockResolvedValue(0);
     configListMock.mockResolvedValue([{ key: "company", value: loaded.company }]);
     getMock.mockImplementation(async (path: string) => {
       if (path.startsWith("/facilities/")) {
@@ -129,6 +133,7 @@ describe("MetrcLocationsSyncService", () => {
         forPackages: false,
         nexbatchRoomSuite: null,
         nexbatchRoomId: null,
+        nexbatchMappingManual: false,
       },
     ]);
   });
