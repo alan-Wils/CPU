@@ -10,6 +10,7 @@ import {
   type MetrcSandboxUiStatus,
 } from "../lib/metrcSandboxStatus.js";
 import type { MetrcClientAuthMode } from "../lib/metrcAuthStrategy.js";
+import { isMetrcProvisioningComplete } from "../lib/metrcOperationalStatus.js";
 import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
 
 export type MetrcDebugAuthAttempt = {
@@ -62,7 +63,7 @@ export class MetrcDebugAuthService {
 
     const sandboxMode = loaded.environment === "sandbox";
     const hasUserKey = Boolean(loaded.userApiKey.trim());
-    const provisioningComplete = Boolean(loaded.metrc.sandboxReady) && hasUserKey;
+    let provisioningComplete = isMetrcProvisioningComplete(loaded.metrc, hasUserKey);
     const userCreationPending = Boolean(loaded.metrc.sandboxProvisioning) && !hasUserKey;
 
     const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
@@ -101,6 +102,7 @@ export class MetrcDebugAuthService {
       if (probe.status >= 200 && probe.status < 300) {
         successfulAuthMode = mode;
         operationalAccessGranted = true;
+        provisioningComplete = true;
         break;
       }
       if (!shouldTryNextMetrcAuthMode(probe.status)) break;

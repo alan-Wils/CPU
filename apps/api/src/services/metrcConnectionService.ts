@@ -27,6 +27,11 @@ import {
   probeMetrcKeysPossiblySwapped,
 } from "../lib/metrcKeySwapProbe.js";
 import {
+  applyMetrcOperationalSuccess,
+  isMetrcProvisioningComplete,
+  pickMetrcFacilityNameFromLocations,
+} from "../lib/metrcOperationalStatus.js";
+import {
   resolveMetrcSandboxUiStatus,
   sandboxStatusLabel,
   type MetrcSandboxUiStatus,
@@ -85,18 +90,24 @@ function buildConnectionDiagnostics(input: {
   operationalAccessGranted: boolean;
 }): MetrcConnectionDiagnostics {
   const hasUserKey = Boolean(input.loaded.userApiKey.trim());
-  const provisioningComplete = Boolean(input.loaded.metrc.sandboxReady) && hasUserKey;
+  const operationalAccessGranted =
+    input.operationalAccessGranted || Boolean(input.loaded.metrc.metrcOperationalAccessGranted);
+  const provisioningComplete =
+    operationalAccessGranted ||
+    isMetrcProvisioningComplete(input.loaded.metrc, hasUserKey);
   const userCreationPending = Boolean(input.loaded.metrc.sandboxProvisioning) && !hasUserKey;
-  const sandboxStatus = resolveMetrcSandboxUiStatus({
-    sandboxProvisioning: Boolean(input.loaded.metrc.sandboxProvisioning),
-    sandboxReady: Boolean(input.loaded.metrc.sandboxReady),
-    credentialsReady: Boolean(
-      input.loaded.vendorApiKey && input.loaded.userApiKey && input.loaded.licenseNumber,
-    ),
-    hasUserApiKey: hasUserKey,
-    lastConnectionStatus: input.operationalAccessGranted ? "connected" : "not_connected",
-    lastConnectionHttpStatus: input.status,
-  });
+  const sandboxStatus: MetrcSandboxUiStatus = operationalAccessGranted
+    ? "connected"
+    : resolveMetrcSandboxUiStatus({
+        sandboxProvisioning: Boolean(input.loaded.metrc.sandboxProvisioning),
+        sandboxReady: Boolean(input.loaded.metrc.sandboxReady),
+        credentialsReady: Boolean(
+          input.loaded.vendorApiKey && input.loaded.userApiKey && input.loaded.licenseNumber,
+        ),
+        hasUserApiKey: hasUserKey,
+        lastConnectionStatus: String(input.loaded.metrc.metrcLastConnectionStatus || ""),
+        lastConnectionHttpStatus: input.status,
+      });
 
   return {
     sandboxStatus,
@@ -106,7 +117,7 @@ function buildConnectionDiagnostics(input: {
     metrcResponseMessage: input.metrcMessage.slice(0, 2000),
     provisioningComplete,
     userCreationPending,
-    operationalAccessGranted: input.operationalAccessGranted,
+    operationalAccessGranted,
     environment: input.loaded.environment,
   };
 }
@@ -291,6 +302,7 @@ export class MetrcConnectionService {
         });
 
         const locations = parseLocationsPayload(result.data);
+        const facilityName = pickMetrcFacilityNameFromLocations(locations);
         const success: MetrcTestConnectionSuccess = {
           ok: true,
           connected: true,
@@ -316,6 +328,7 @@ export class MetrcConnectionService {
           loaded.company,
           loaded.metrc,
           success,
+          { operationalLicense, facilityName },
         );
         return success;
       }
@@ -417,12 +430,13 @@ export class MetrcConnectionService {
             const retryResult = await retryClient.get<unknown>(testPath);
             if (!isMetrcClientFailure(retryResult)) {
               const locations = parseLocationsPayload(retryResult.data);
+              const facilityName = pickMetrcFacilityNameFromLocations(locations);
               const success: MetrcTestConnectionSuccess = {
                 ok: true,
                 connected: true,
                 checkedAt,
                 baseUrl: retryClient.baseUrl ?? baseUrl,
-                licenseNumber,
+                licenseNumber: operationalLicense,
                 locationCount: locations.length,
                 sampleLocations: locations.slice(0, 5).map(toSampleLocation),
                 authMode: retryResult.authMode as MetrcClientAuthMode,
@@ -442,6 +456,7 @@ export class MetrcConnectionService {
                 reloaded.company,
                 reloaded.metrc,
                 success,
+                { operationalLicense, facilityName },
               );
               return success;
             }
@@ -511,18 +526,21 @@ export class MetrcConnectionService {
     company: Record<string, unknown>,
     metrc: Record<string, unknown>,
     result: MetrcTestConnectionResponse,
+    operationalPatch?: { operationalLicense?: string; facilityName?: string | null },
   ): Promise<void> {
-    const nextMetrc: Record<string, unknown> = { ...metrc };
+    let nextMetrc: Record<string, unknown> = { ...metrc };
     nextMetrc.metrcLastConnectionCheckedAt = result.checkedAt;
 
     if (result.ok && result.connected) {
-      nextMetrc.metrcLastConnectionStatus = "connected";
+      nextMetrc = applyMetrcOperationalSuccess(nextMetrc, {
+        operationalLicense: operationalPatch?.operationalLicense ?? result.licenseNumber,
+        facilityName: operationalPatch?.facilityName ?? null,
+      });
       nextMetrc.metrcLastConnectionMessage = "";
       nextMetrc.metrcLastConnectionHttpStatus = null;
       nextMetrc.metrcLastLocationCount = result.locationCount;
       nextMetrc.metrcLastSuccessfulAuthMode = result.authMode;
-      nextMetrc.metrcSandboxOperationalStatus = result.diagnostics.sandboxStatus;
-      nextMetrc.metrcOperationalAccessGranted = true;
+      nextMetrc.metrcSandboxOperationalStatus = "connected";
     } else {
       const fail = result as MetrcTestConnectionFailure;
       nextMetrc.metrcLastConnectionStatus = "not_connected";

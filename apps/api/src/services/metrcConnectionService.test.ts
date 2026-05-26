@@ -92,7 +92,15 @@ describe("MetrcConnectionService", () => {
     expect(out.authMode).toBe("sandbox_basic_vendor_user");
     expect(out.licenseNumber).toBe("SF-SBX-CO-1-13402");
     expect(out.diagnostics.operationalAccessGranted).toBe(true);
+    expect(out.diagnostics.provisioningComplete).toBe(true);
+    expect(out.diagnostics.sandboxStatus).toBe("connected");
     expect(out.userKeyLength).toBeGreaterThan(40);
+    expect(upsertMock).toHaveBeenCalled();
+    const savedMetrc = (upsertMock.mock.calls.at(-1)?.[0] as { value?: { metrc?: Record<string, unknown> } })
+      ?.value?.metrc;
+    expect(savedMetrc?.sandboxReady).toBe(true);
+    expect(savedMetrc?.metrcOperationalAccessGranted).toBe(true);
+    expect(savedMetrc?.licenseNumber).toBe("SF-SBX-CO-1-13402");
     expect(getMock).toHaveBeenCalled();
     const locationsCall = getMock.mock.calls.find((c) =>
       String(c[0] ?? "").includes("/locations/v2/active"),

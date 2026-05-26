@@ -624,7 +624,9 @@ export default function MetrcSandboxPage() {
             <div style={styles.metaItem}>
               <div style={styles.metaLabel}>Provisioning complete</div>
               <div style={styles.metaValue}>
-                {lastDiagnostics?.provisioningComplete ?? meta?.metrcSandboxCredentialsReady
+                {lastDiagnostics?.provisioningComplete ||
+                meta?.metrcSandboxReady ||
+                meta?.metrcOperationalAccessGranted
                   ? "Yes"
                   : "No"}
               </div>

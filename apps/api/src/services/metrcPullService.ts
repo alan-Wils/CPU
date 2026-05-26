@@ -15,6 +15,11 @@ import {
   type MetrcEndpointResource,
 } from "../lib/metrcEndpoints.js";
 import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
+import {
+  applyMetrcOperationalSuccess,
+  isMetrcSandboxPlaceholderLicense,
+  pickMetrcFacilityNameFromLocations,
+} from "../lib/metrcOperationalStatus.js";
 import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 
 export type MetrcPullResource = MetrcEndpointResource;
@@ -118,7 +123,7 @@ export class MetrcPullService {
       };
     }
 
-    const license = loaded.licenseNumber;
+    let license = loaded.licenseNumber;
     if (input.resource !== "facilities" && !license) {
       return {
         ok: false,
@@ -134,6 +139,9 @@ export class MetrcPullService {
       environment: loaded.environment as MetrcEnvironment,
     };
 
+    let operationalLicense: string | undefined;
+    let facilityNameFromLocations: string | null = null;
+
     let candidates = orderMetrcEndpointCandidates(endpointCtx, input.resource, license);
     if (input.resource === "rooms") {
       const locationsRequest = await resolveMetrcLocationsActiveRequest({
@@ -142,11 +150,23 @@ export class MetrcPullService {
         companyId: input.companyId,
         purpose: `pull_${input.resource}`,
       });
+      operationalLicense = locationsRequest.params.licenseNumber;
+      license = operationalLicense;
       candidates = orderMetrcEndpointCandidates(
         endpointCtx,
         "rooms",
         locationsRequest.params,
       );
+    } else if (input.resource !== "facilities" && isMetrcSandboxPlaceholderLicense(license)) {
+      const locationsRequest = await resolveMetrcLocationsActiveRequest({
+        client,
+        loaded,
+        companyId: input.companyId,
+        purpose: `pull_${input.resource}_license`,
+      });
+      operationalLicense = locationsRequest.params.licenseNumber;
+      license = operationalLicense;
+      candidates = orderMetrcEndpointCandidates(endpointCtx, input.resource, license);
     }
     const spec = RESOURCE_META[input.resource];
 
@@ -167,12 +187,22 @@ export class MetrcPullService {
               ? `Completed after ${result.retries} retries.`
               : null;
 
-        const nextMetrc: Record<string, unknown> = {
-          ...loaded.metrc,
-          [spec.syncAtKey]: syncedAt,
-          [spec.countKey]: rows.length,
-          metrcSandboxLastRateLimitWarning: rateLimitWarning ?? "",
-        };
+        if (input.resource === "rooms") {
+          facilityNameFromLocations = pickMetrcFacilityNameFromLocations(rows);
+        }
+
+        const nextMetrc = applyMetrcOperationalSuccess(
+          {
+            ...loaded.metrc,
+            [spec.syncAtKey]: syncedAt,
+            [spec.countKey]: rows.length,
+            metrcSandboxLastRateLimitWarning: rateLimitWarning ?? "",
+          },
+          {
+            operationalLicense,
+            facilityName: facilityNameFromLocations,
+          },
+        );
 
         await this.configService.upsert({
           companyId: input.companyId,

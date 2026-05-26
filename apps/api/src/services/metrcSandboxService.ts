@@ -8,6 +8,10 @@ import {
 } from "../lib/metrcClient.js";
 import { maskHeadersForLog } from "../lib/metrcAuthStrategy.js";
 import {
+  isMetrcProvisioningComplete,
+  mergeMetrcOperationalLicense,
+} from "../lib/metrcOperationalStatus.js";
+import {
   resolveMetrcSandboxUiStatus,
   sandboxStatusLabel,
   type MetrcSandboxUiStatus,
@@ -154,8 +158,10 @@ export class MetrcSandboxService {
     parsed: MetrcSandboxSetupParsed,
     stateCode: string,
   ): Record<string, unknown> {
-    const licenseNumber =
-      parsed.facilityLicenseNumber || String(metrc.licenseNumber || metrc.facilityLicenseNumber || "").trim();
+    const licenseNumber = mergeMetrcOperationalLicense(
+      String(metrc.licenseNumber || metrc.facilityLicenseNumber || "").trim(),
+      parsed.facilityLicenseNumber || "",
+    );
     return {
       ...metrc,
       apiKey: vendorApiKey,
@@ -193,7 +199,7 @@ export class MetrcSandboxService {
   }): MetrcSandboxStatusResponse {
     const hasUserKey = Boolean(input.userApiKey);
     const userCreationPending = Boolean(input.metrc.sandboxProvisioning) && !hasUserKey;
-    const provisioningComplete = Boolean(input.metrc.sandboxReady) && hasUserKey;
+    const provisioningComplete = isMetrcProvisioningComplete(input.metrc, hasUserKey);
     const operationalAccessGranted = Boolean(input.metrc.metrcOperationalAccessGranted);
     const sandboxUiStatus = resolveMetrcSandboxUiStatus({
       sandboxProvisioning: Boolean(input.metrc.sandboxProvisioning),
@@ -269,8 +275,12 @@ export class MetrcSandboxService {
     };
 
     if (partial?.facilityLicenseNumber) {
-      nextMetrc.licenseNumber = partial.facilityLicenseNumber;
-      nextMetrc.facilityLicenseNumber = partial.facilityLicenseNumber;
+      const merged = mergeMetrcOperationalLicense(
+        String(metrc.licenseNumber || metrc.facilityLicenseNumber || "").trim(),
+        partial.facilityLicenseNumber,
+      );
+      nextMetrc.licenseNumber = merged;
+      nextMetrc.facilityLicenseNumber = merged;
     }
     if (partial?.facilityName) nextMetrc.facilityName = partial.facilityName;
     if (partial?.username) nextMetrc.username = partial.username;
