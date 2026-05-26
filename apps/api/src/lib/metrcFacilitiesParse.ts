@@ -1,10 +1,13 @@
 import { parseMetrcDataRecords } from "./metrcConnectionHelpers.js";
+import { readMetrcDisplayLabel } from "./metrcDisplayLabel.js";
 import { normalizeMetrcFacilityDisplayName } from "./metrcOperationalStatus.js";
 
 export type ParsedMetrcFacility = {
   licenseNumber: string;
   facilityName: string;
+  /** @deprecated Prefer {@link facilityTypeName}; kept for API/DB column compat. */
   facilityType: string;
+  facilityTypeName: string;
   stateCode: string;
   active: boolean;
   capabilities: Record<string, unknown>;
@@ -34,16 +37,15 @@ function readFacilityName(row: Record<string, unknown>): string {
   return normalizeMetrcFacilityDisplayName(raw);
 }
 
-function readFacilityType(row: Record<string, unknown>): string {
-  return String(
+function readFacilityTypeName(row: Record<string, unknown>): string {
+  const direct = readMetrcDisplayLabel(
     row.FacilityTypeName
       ?? row.facilityTypeName
       ?? row.LicenseType
-      ?? row.licenseType
-      ?? row.FacilityType
-      ?? row.facilityType
-      ?? "",
-  ).trim();
+      ?? row.licenseType,
+  );
+  if (direct) return direct;
+  return readMetrcDisplayLabel(row.FacilityType ?? row.facilityType);
 }
 
 function readStateCode(row: Record<string, unknown>, fallbackState: string): string {
@@ -95,10 +97,12 @@ export function parseMetrcFacilitiesPayload(
   for (const row of parseMetrcDataRecords(body)) {
     const licenseNumber = readLicenseNumber(row);
     if (!licenseNumber) continue;
+    const facilityTypeName = readFacilityTypeName(row);
     out.push({
       licenseNumber,
       facilityName: readFacilityName(row),
-      facilityType: readFacilityType(row),
+      facilityType: facilityTypeName,
+      facilityTypeName,
       stateCode: readStateCode(row, fallbackStateCode),
       active: readActive(row),
       capabilities: extractMetrcFacilityCapabilities(row),

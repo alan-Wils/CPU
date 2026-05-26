@@ -10,6 +10,7 @@ import { MetrcSandboxService } from "../../services/metrcSandboxService.js";
 import { MetrcPullService } from "../../services/metrcPullService.js";
 import { MetrcFacilitiesSyncService } from "../../services/metrcFacilitiesSyncService.js";
 import { MetrcLocationsSyncService } from "../../services/metrcLocationsSyncService.js";
+import { MetrcStrainsSyncService } from "../../services/metrcStrainsSyncService.js";
 import { MetrcDebugAuthService } from "../../services/metrcDebugAuthService.js";
 import { env } from "../../config/env.js";
 
@@ -33,6 +34,7 @@ const metrcSandboxService = new MetrcSandboxService();
 const metrcPullService = new MetrcPullService();
 const metrcFacilitiesSyncService = new MetrcFacilitiesSyncService();
 const metrcLocationsSyncService = new MetrcLocationsSyncService();
+const metrcStrainsSyncService = new MetrcStrainsSyncService();
 
 const metrcLocationMappingBody = z.object({
   metrcLocationId: z.string().min(1),
@@ -150,14 +152,23 @@ metrcRouter.get(
 );
 
 metrcRouter.get(
+  "/strains/persisted",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const strains = await metrcStrainsSyncService.listSyncedStrains(companyId);
+    res.status(200).json({ ok: true, strains });
+  }),
+);
+
+metrcRouter.get(
   "/strains",
   requireRole([...metrcAdminRoles]),
   asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
-    const result = await metrcPullService.pull({
+    const result = await metrcStrainsSyncService.syncMetrcStrains({
       companyId,
       actorUserId: req.auth.userId,
-      resource: "strains",
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),

@@ -224,6 +224,7 @@ model Company {
   integrationSyncStates  IntegrationSyncState[]
   metrcFacilities        MetrcFacility[]
   metrcLocations         MetrcLocation[]
+  metrcStrains           MetrcStrain[]
 
   serviceSettings CompanyServiceSettings?
 
@@ -1317,6 +1318,7 @@ model MetrcFacility {
   licenseNumber      String
   facilityName       String   @default("")
   facilityType       String   @default("")
+  facilityTypeName   String   @default("")
   stateCode          String   @default("")
   active             Boolean  @default(true)
   capabilitiesJson   String   @default("[]")
@@ -1351,6 +1353,29 @@ model MetrcLocation {
 
   @@unique([companyId, metrcLocationId])
   @@index([companyId, licenseNumber])
+}
+
+/// METRC GET /strains/v2/active rows synced per company (upsert by METRC strain id).
+model MetrcStrain {
+  id              String   @id @default(cuid())
+  companyId       String
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  metrcStrainId   String
+  licenseNumber   String   @default("")
+  name            String   @default("")
+  testingStatus   String   @default("")
+  active          Boolean  @default(true)
+  archived        Boolean  @default(false)
+  lastModified    DateTime?
+  rawPayloadJson  String
+  nexbatchStrainId String?
+  lastSyncedAt    DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([companyId, metrcStrainId])
+  @@index([companyId, licenseNumber])
+  @@index([companyId, nexbatchStrainId])
 }
 
 model CheckCapture {

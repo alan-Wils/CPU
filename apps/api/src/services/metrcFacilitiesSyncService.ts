@@ -34,6 +34,7 @@ export type MetrcFacilityDto = {
   licenseNumber: string;
   facilityName: string;
   facilityType: string;
+  facilityTypeName: string;
   stateCode: string;
   active: boolean;
   capabilities: Record<string, unknown>;
@@ -64,7 +65,8 @@ function toFacilityDto(row: ParsedMetrcFacility): MetrcFacilityDto {
   return {
     licenseNumber: row.licenseNumber,
     facilityName: row.facilityName,
-    facilityType: row.facilityType,
+    facilityType: row.facilityTypeName || row.facilityType,
+    facilityTypeName: row.facilityTypeName,
     stateCode: row.stateCode,
     active: row.active,
     capabilities: row.capabilities,
@@ -139,7 +141,8 @@ export class MetrcFacilitiesSyncService {
           parsed.map((row) => ({
             licenseNumber: row.licenseNumber,
             facilityName: row.facilityName,
-            facilityType: row.facilityType,
+            facilityType: row.facilityTypeName || row.facilityType,
+            facilityTypeName: row.facilityTypeName,
             stateCode: row.stateCode,
             active: row.active,
             capabilitiesJson: JSON.stringify(row.capabilities),
@@ -249,7 +252,8 @@ export class MetrcFacilitiesSyncService {
     return rows.map((row) => ({
       licenseNumber: row.licenseNumber,
       facilityName: row.facilityName,
-      facilityType: row.facilityType,
+      facilityType: row.facilityTypeName || row.facilityType,
+      facilityTypeName: row.facilityTypeName,
       stateCode: row.stateCode,
       active: row.active,
       capabilities: safeParseJsonObject(row.capabilitiesJson),

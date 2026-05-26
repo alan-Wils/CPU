@@ -25,8 +25,27 @@ describe("metrcFacilitiesParse", () => {
     expect(rows[0]?.licenseNumber).toBe("SF-SBX-CO-1-13402");
     expect(rows[0]?.facilityName).toBe("SBX Centralized Processing Hub");
     expect(rows[0]?.facilityType).toBe("Processor");
+    expect(rows[0]?.facilityTypeName).toBe("Processor");
     expect(rows[0]?.active).toBe(true);
     expect(rows[0]?.capabilities.CanTrackPackaged).toBe(true);
+  });
+
+  it("reads facility type from nested FacilityType object", () => {
+    const rows = parseMetrcFacilitiesPayload(
+      {
+        Data: [
+          {
+            LicenseNumber: "SF-SBX-CO-1-13402",
+            Name: "SBX Centralized Processing Hub",
+            FacilityType: { Name: "Processor", NameDisplay: "Processor (MIP)" },
+            IsActive: true,
+          },
+        ],
+      },
+      "CO",
+    );
+    expect(rows[0]?.facilityTypeName).toBe("Processor (MIP)");
+    expect(rows[0]?.facilityType).toBe("Processor (MIP)");
   });
 
   it("picks primary operational license and display name", () => {

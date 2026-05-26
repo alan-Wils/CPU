@@ -4,6 +4,7 @@ export type MetrcFacilityUpsertRow = {
   licenseNumber: string;
   facilityName: string;
   facilityType: string;
+  facilityTypeName: string;
   stateCode: string;
   active: boolean;
   capabilitiesJson: string;
@@ -30,6 +31,7 @@ export async function upsertMetrcFacilitiesForCompany(
           licenseNumber: row.licenseNumber,
           facilityName: row.facilityName,
           facilityType: row.facilityType,
+          facilityTypeName: row.facilityTypeName,
           stateCode: row.stateCode,
           active: row.active,
           capabilitiesJson: row.capabilitiesJson,
@@ -39,6 +41,7 @@ export async function upsertMetrcFacilitiesForCompany(
         update: {
           facilityName: row.facilityName,
           facilityType: row.facilityType,
+          facilityTypeName: row.facilityTypeName,
           stateCode: row.stateCode,
           active: row.active,
           capabilitiesJson: row.capabilitiesJson,

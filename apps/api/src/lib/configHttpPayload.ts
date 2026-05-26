@@ -389,6 +389,12 @@ export function buildIntegrationsMetaView(merged: MergedCompanyConfig): Record<s
         metrcLastConnectionCheckedAt: String(metrc.metrcLastConnectionCheckedAt ?? "").trim() || null,
         metrcSandboxLastFacilitiesSyncAt: String(metrc.metrcSandboxLastFacilitiesSyncAt ?? "").trim() || null,
         metrcSandboxLastStrainsSyncAt: String(metrc.metrcSandboxLastStrainsSyncAt ?? "").trim() || null,
+        metrcLastStrainsSyncAt:
+            String(metrc.metrcLastStrainsSyncAt ?? metrc.metrcSandboxLastStrainsSyncAt ?? "").trim() ||
+            null,
+        lastStrainsSync:
+            String(metrc.metrcLastStrainsSyncAt ?? metrc.metrcSandboxLastStrainsSyncAt ?? "").trim() ||
+            null,
         metrcSandboxLastItemsSyncAt: String(metrc.metrcSandboxLastItemsSyncAt ?? "").trim() || null,
         metrcSandboxLastRoomsSyncAt: String(metrc.metrcSandboxLastRoomsSyncAt ?? "").trim() || null,
         metrcLastLocationsSyncAt:

@@ -12,6 +12,7 @@ import {
 import { getAuthToken } from "@/lib/auth";
 import { formatCompanyTimestamp } from "@/lib/companyTimezone";
 import type { MetrcLastConnectionStatus } from "@/lib/metrcCompanyConfig";
+import { formatMetrcFacilityTypeLabel } from "@/lib/metrcDisplayLabel";
 
 type IntegrationsMeta = {
   metrcIntegrationEnabled?: boolean;
@@ -39,6 +40,8 @@ type IntegrationsMeta = {
   metrcTotalLocationsSynced?: number | null;
   totalLocationsSynced?: number | null;
   metrcSandboxLastStrainsSyncAt?: string | null;
+  metrcLastStrainsSyncAt?: string | null;
+  lastStrainsSync?: string | null;
   metrcSandboxLastPackagesSyncAt?: string | null;
   metrcSandboxLastRoomsCount?: number | null;
   metrcSandboxLastStrainsCount?: number | null;
@@ -83,6 +86,7 @@ type MetrcFacilityRow = {
   licenseNumber: string;
   facilityName: string;
   facilityType: string;
+  facilityTypeName?: string;
   stateCode: string;
   active: boolean;
 };
@@ -128,6 +132,33 @@ type LocationsSyncResult = {
   syncedAt?: string;
   locations?: MetrcLocationRow[];
   nexbatchRooms?: NexbatchRoomOption[];
+  message?: string;
+  rateLimitWarning?: string | null;
+  credentialHint?: string;
+  endpoint?: string;
+};
+
+type MetrcStrainRow = {
+  metrcStrainId: string;
+  name: string;
+  testingStatus: string;
+  active: boolean;
+  archived: boolean;
+  lastModified: string | null;
+  licenseNumber: string;
+  nexbatchStrainId: string | null;
+  nexbatchStrainLabel: string | null;
+};
+
+type StrainsSyncResult = {
+  ok: boolean;
+  status?: number;
+  count?: number;
+  totalStrainsSynced?: number;
+  lastStrainsSync?: string;
+  syncedAt?: string;
+  nexbatchStrainsCreated?: number;
+  strains?: MetrcStrainRow[];
   message?: string;
   rateLimitWarning?: string | null;
   credentialHint?: string;
@@ -382,6 +413,9 @@ export default function MetrcSandboxPage() {
   const [lastLocationsSync, setLastLocationsSync] = useState<LocationsSyncResult | null>(null);
   const [locationsRows, setLocationsRows] = useState<MetrcLocationRow[] | null>(null);
   const [locationsLoaded, setLocationsLoaded] = useState(false);
+  const [lastStrainsSync, setLastStrainsSync] = useState<StrainsSyncResult | null>(null);
+  const [strainsRows, setStrainsRows] = useState<MetrcStrainRow[] | null>(null);
+  const [strainsLoaded, setStrainsLoaded] = useState(false);
   const [nexbatchRooms, setNexbatchRooms] = useState<NexbatchRoomOption[]>([]);
   const [mappingBusy, setMappingBusy] = useState<string | null>(null);
   const [testAt, setTestAt] = useState<string | null>(null);
@@ -414,6 +448,19 @@ export default function MetrcSandboxPage() {
       setLocationsRows([]);
     } finally {
       setLocationsLoaded(true);
+    }
+  }, []);
+
+  const loadSyncedStrains = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/metrc/strains/persisted");
+      if (!res.ok) return;
+      const json = (await res.json()) as { ok?: boolean; strains?: MetrcStrainRow[] };
+      setStrainsRows(json.strains ?? []);
+    } catch {
+      setStrainsRows([]);
+    } finally {
+      setStrainsLoaded(true);
     }
   }, []);
 
@@ -458,7 +505,8 @@ export default function MetrcSandboxPage() {
     void loadMeta();
     void loadNexbatchRooms();
     void loadSyncedLocations();
-  }, [loadMeta, loadNexbatchRooms, loadSyncedLocations]);
+    void loadSyncedStrains();
+  }, [loadMeta, loadNexbatchRooms, loadSyncedLocations, loadSyncedStrains]);
 
   useEffect(() => {
     if (sandboxUiStatus !== "provisioning") return;
@@ -724,7 +772,42 @@ export default function MetrcSandboxPage() {
     }
   }
 
-  async function runPull(resource: "strains" | "packages") {
+  async function runStrainsSync() {
+    setBusy("strains");
+    setStatusMsg(null);
+    setLastStrainsSync(null);
+    try {
+      const res = await authFetch("/api/metrc/strains");
+      const json = (await res.json()) as StrainsSyncResult;
+      setLastStrainsSync(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text: String(json.message || "Strains sync failed."),
+        });
+        return;
+      }
+      const count = json.count ?? json.totalStrainsSynced ?? 0;
+      setStrainsRows(json.strains ?? []);
+      setStrainsLoaded(true);
+      const created =
+        typeof json.nexbatchStrainsCreated === "number" && json.nexbatchStrainsCreated > 0
+          ? ` Created ${json.nexbatchStrainsCreated} NexBatch strain${json.nexbatchStrainsCreated === 1 ? "" : "s"}.`
+          : "";
+      const warn = json.rateLimitWarning ? ` ${json.rateLimitWarning}` : "";
+      setStatusMsg({
+        tone: json.rateLimitWarning ? "warn" : "ok",
+        text: `Synced ${count} strain${count === 1 ? "" : "s"} (0 is valid when METRC returns no active strains).${created}${warn}`,
+      });
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Strains sync failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runPull(resource: "packages") {
     setBusy(resource);
     setStatusMsg(null);
     setLastPull(null);
@@ -946,7 +1029,12 @@ export default function MetrcSandboxPage() {
             <div style={styles.metaItem}>
               <div style={styles.metaLabel}>Last strains sync</div>
               <div style={styles.metaValue}>
-                {formatCompanyTimestamp(meta?.metrcSandboxLastStrainsSyncAt || "") || "—"}
+                {formatCompanyTimestamp(
+                  meta?.metrcLastStrainsSyncAt ||
+                    meta?.lastStrainsSync ||
+                    meta?.metrcSandboxLastStrainsSyncAt ||
+                    "",
+                ) || "—"}
                 {meta?.totalStrainsSynced != null
                   ? ` (${meta.totalStrainsSynced})`
                   : meta?.metrcSandboxLastStrainsCount != null
@@ -1040,9 +1128,9 @@ export default function MetrcSandboxPage() {
               type="button"
               style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
               disabled={!!busy}
-              onClick={() => void runPull("strains")}
+              onClick={() => void runStrainsSync()}
             >
-              {busy === "strains" ? "Pulling…" : "Pull Strains"}
+              {busy === "strains" ? "Syncing…" : "Sync Strains"}
             </button>
             <button
               type="button"
@@ -1085,7 +1173,9 @@ export default function MetrcSandboxPage() {
                       {row.licenseNumber}
                     </td>
                     <td style={{ padding: "6px 8px" }}>{row.facilityName || "—"}</td>
-                    <td style={{ padding: "6px 8px" }}>{row.facilityType || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>
+                      {formatMetrcFacilityTypeLabel(row) || "—"}
+                    </td>
                     <td style={{ padding: "6px 8px" }}>{row.active ? "Yes" : "No"}</td>
                   </tr>
                 ))}
@@ -1113,6 +1203,61 @@ export default function MetrcSandboxPage() {
               </tbody>
             </table>
           ) : null}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>METRC strains</h2>
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8" }}>
+            Synced from <code style={{ color: "#cbd5e1" }}>GET /strains/v2/active</code>. Exact name
+            matches link to NexBatch cultivation strains; unmatched METRC strains are added to Company
+            Config automatically.
+          </p>
+          {strainsLoaded && strainsRows && strainsRows.length > 0 ? (
+            <table style={styles.sampleTable}>
+              <thead>
+                <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+                  <th style={{ padding: "6px 8px" }}>METRC ID</th>
+                  <th style={{ padding: "6px 8px" }}>Name</th>
+                  <th style={{ padding: "6px 8px" }}>Testing status</th>
+                  <th style={{ padding: "6px 8px" }}>Active</th>
+                  <th style={{ padding: "6px 8px" }}>Archived</th>
+                  <th style={{ padding: "6px 8px" }}>Last modified</th>
+                  <th style={{ padding: "6px 8px" }}>NexBatch strain</th>
+                </tr>
+              </thead>
+              <tbody>
+                {strainsRows.map((row) => (
+                  <tr key={row.metrcStrainId} style={{ borderTop: "1px solid #334155" }}>
+                    <td style={{ padding: "6px 8px", fontFamily: "ui-monospace, monospace" }}>
+                      {row.metrcStrainId}
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>{row.name || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>{row.testingStatus || "—"}</td>
+                    <td style={{ padding: "6px 8px" }}>{row.active ? "Yes" : "No"}</td>
+                    <td style={{ padding: "6px 8px" }}>{row.archived ? "Yes" : "No"}</td>
+                    <td style={{ padding: "6px 8px" }}>
+                      {row.lastModified
+                        ? formatCompanyTimestamp(row.lastModified) || row.lastModified
+                        : "—"}
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>
+                      {row.nexbatchStrainLabel || row.nexbatchStrainId || "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : lastStrainsSync?.ok && strainsRows?.length === 0 ? (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+              Strains sync completed successfully with 0 active strains in METRC.
+            </p>
+          ) : strainsLoaded ? (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+              No strains stored yet. Use Sync Strains above to pull from METRC.
+            </p>
+          ) : (
+            <p style={{ marginTop: 12, color: "#94a3b8", fontSize: 13 }}>Loading saved strains…</p>
+          )}
         </section>
 
         <section style={styles.card}>
