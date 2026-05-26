@@ -14,13 +14,18 @@ export type ParsedMetrcFacility = {
   raw: Record<string, unknown>;
 };
 
-function readLicenseNumber(row: Record<string, unknown>): string {
+function readLicenseRecord(row: Record<string, unknown>): Record<string, unknown> {
   const licenseObj = row.License ?? row.license;
   if (licenseObj && typeof licenseObj === "object" && !Array.isArray(licenseObj)) {
-    const lic = licenseObj as Record<string, unknown>;
-    const nested = String(lic.Number ?? lic.number ?? "").trim();
-    if (nested) return nested;
+    return licenseObj as Record<string, unknown>;
   }
+  return {};
+}
+
+function readLicenseNumber(row: Record<string, unknown>): string {
+  const lic = readLicenseRecord(row);
+  const nested = String(lic.Number ?? lic.number ?? "").trim();
+  if (nested) return nested;
   return String(
     row.LicenseNumber
       ?? row.licenseNumber
@@ -37,15 +42,34 @@ function readFacilityName(row: Record<string, unknown>): string {
   return normalizeMetrcFacilityDisplayName(raw);
 }
 
+/**
+ * METRC GET /facilities/v2: `License.LicenseType` is the human-readable facility type.
+ * `FacilityType` is a nested capability-flags object (not a display name).
+ */
 function readFacilityTypeName(row: Record<string, unknown>): string {
-  const direct = readMetrcDisplayLabel(
-    row.FacilityTypeName
-      ?? row.facilityTypeName
-      ?? row.LicenseType
-      ?? row.licenseType,
+  const license = readLicenseRecord(row);
+  const fromLicense = readMetrcDisplayLabel(license.LicenseType ?? license.licenseType);
+  if (fromLicense) return fromLicense;
+
+  const legacy = readMetrcDisplayLabel(
+    row.FacilityTypeName ?? row.facilityTypeName ?? row.LicenseType ?? row.licenseType,
   );
-  if (direct) return direct;
-  return readMetrcDisplayLabel(row.FacilityType ?? row.facilityType);
+  if (legacy) return legacy;
+
+  return "";
+}
+
+/** Re-parse facility type from a stored METRC facility JSON row (fixes empty DB values without re-sync). */
+export function resolveMetrcFacilityTypeNameFromPayload(rawPayloadJson: string): string {
+  try {
+    const parsed = JSON.parse(rawPayloadJson) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return readFacilityTypeName(parsed as Record<string, unknown>);
+    }
+  } catch {
+    /* ignore */
+  }
+  return "";
 }
 
 function readStateCode(row: Record<string, unknown>, fallbackState: string): string {

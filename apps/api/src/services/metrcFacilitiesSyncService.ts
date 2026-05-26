@@ -17,6 +17,7 @@ import {
   parseMetrcFacilitiesPayload,
   pickMetrcFacilityNameFromFacilities,
   pickPrimaryMetrcOperationalLicense,
+  resolveMetrcFacilityTypeNameFromPayload,
   type ParsedMetrcFacility,
 } from "../lib/metrcFacilitiesParse.js";
 import { applyMetrcOperationalSuccess } from "../lib/metrcOperationalStatus.js";
@@ -249,15 +250,22 @@ export class MetrcFacilitiesSyncService {
 
   async listSyncedFacilities(companyId: string): Promise<MetrcFacilityDto[]> {
     const rows = await listMetrcFacilitiesForCompany(companyId);
-    return rows.map((row) => ({
-      licenseNumber: row.licenseNumber,
-      facilityName: row.facilityName,
-      facilityType: row.facilityTypeName || row.facilityType,
-      facilityTypeName: row.facilityTypeName,
-      stateCode: row.stateCode,
-      active: row.active,
-      capabilities: safeParseJsonObject(row.capabilitiesJson),
-    }));
+    return rows.map((row) => {
+      const storedType = String(row.facilityTypeName || row.facilityType || "").trim();
+      const facilityTypeName =
+        storedType && storedType !== "[object Object]"
+          ? storedType
+          : resolveMetrcFacilityTypeNameFromPayload(row.rawPayloadJson);
+      return {
+        licenseNumber: row.licenseNumber,
+        facilityName: row.facilityName,
+        facilityType: facilityTypeName,
+        facilityTypeName,
+        stateCode: row.stateCode,
+        active: row.active,
+        capabilities: safeParseJsonObject(row.capabilitiesJson),
+      };
+    });
   }
 }
 

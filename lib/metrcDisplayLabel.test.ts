@@ -4,10 +4,11 @@ import { formatMetrcDisplayLabel, formatMetrcFacilityTypeLabel } from "./metrcDi
 describe("metrcDisplayLabel", () => {
   it("never returns [object Object] for nested METRC objects", () => {
     expect(formatMetrcDisplayLabel({ Name: "Cultivation" })).toBe("Cultivation");
-    expect(formatMetrcFacilityTypeLabel({ facilityType: { NameDisplay: "Processor" } })).toBe(
-      "Processor",
+    expect(formatMetrcFacilityTypeLabel({ facilityTypeName: "Medical Cultivation" })).toBe(
+      "Medical Cultivation",
     );
     expect(formatMetrcFacilityTypeLabel({ facilityTypeName: "Retail" })).toBe("Retail");
     expect(formatMetrcFacilityTypeLabel({ facilityType: "[object Object]" })).toBe("");
+    expect(formatMetrcFacilityTypeLabel({ facilityType: { IsRetail: true } })).toBe("");
   });
 });

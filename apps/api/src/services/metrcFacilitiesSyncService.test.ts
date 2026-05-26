@@ -38,6 +38,7 @@ vi.mock("../lib/metrcClient.js", async () => {
   };
 });
 
+import { METRC_FACILITIES_V2_PROCESSOR_ROW } from "../lib/metrcFacilitiesV2Fixture.js";
 import { MetrcFacilitiesSyncService } from "./metrcFacilitiesSyncService.js";
 
 const loaded = {
@@ -71,14 +72,7 @@ describe("MetrcFacilitiesSyncService", () => {
       ok: true,
       status: 200,
       data: {
-        Data: [
-          {
-            LicenseNumber: "SF-SBX-CO-1-13402",
-            Name: "SBX Centralized Processing Hub Location 1",
-            FacilityTypeName: "Processor",
-            IsActive: true,
-          },
-        ],
+        Data: [METRC_FACILITIES_V2_PROCESSOR_ROW],
       },
       durationMs: 12,
       retries: 0,
@@ -100,6 +94,7 @@ describe("MetrcFacilitiesSyncService", () => {
     if (!out.ok) return;
     expect(out.count).toBe(1);
     expect(out.facilities[0]?.licenseNumber).toBe("SF-SBX-CO-1-13402");
+    expect(out.facilities[0]?.facilityTypeName).toBe("Processor");
     expect(out.facilities[0]?.facilityName).toBe("SBX Centralized Processing Hub");
     expect(upsertFacilitiesMock).toHaveBeenCalledTimes(1);
     expect(upsertMock).toHaveBeenCalled();
