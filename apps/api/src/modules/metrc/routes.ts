@@ -29,7 +29,10 @@ import {
 import { MetrcStrainCreateService } from "../../services/metrcStrainCreateService.js";
 import { MetrcTransfersSyncService } from "../../services/metrcTransfersSyncService.js";
 import { MetrcTransferCreateService } from "../../services/metrcTransferCreateService.js";
-import { MetrcTransferTypesSyncService } from "../../services/metrcTransferTypesSyncService.js";
+import {
+  MetrcTransferTypesSyncService,
+  resolveTransferTypesSource,
+} from "../../services/metrcTransferTypesSyncService.js";
 import { MetrcDebugAuthService } from "../../services/metrcDebugAuthService.js";
 import { env } from "../../config/env.js";
 import { logInfo } from "../../lib/logger.js";
@@ -686,7 +689,13 @@ metrcRouter.get(
   asyncHandler(async (req, res) => {
     const companyId = getScopedCompanyId(req);
     const transferTypes = await metrcTransferTypesSyncService.listSyncedTransferTypes(companyId);
-    res.status(200).json({ ok: true, transferTypes });
+    const source = resolveTransferTypesSource(transferTypes);
+    res.status(200).json({
+      ok: true,
+      transferTypes,
+      count: transferTypes.length,
+      source,
+    });
   }),
 );
 

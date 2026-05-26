@@ -8,7 +8,6 @@ import { findMetrcPackageByLabel } from "../repositories/metrcPackageRepository.
 import {
   appendMetrcTransferRequestLog,
 } from "../repositories/metrcTransferRepository.js";
-import { listMetrcTransferTypesForCompany } from "../repositories/metrcTransferTypeRepository.js";
 import { MetrcTransfersSyncService } from "./metrcTransfersSyncService.js";
 import {
   METRC_TRANSFER_TYPE_FALLBACK_NAMES,
@@ -349,16 +348,17 @@ export class MetrcTransferCreateService {
       };
     }
 
-    const syncedTypes = await listMetrcTransferTypesForCompany(input.companyId);
-    const transferTypesUsedFallback =
-      syncedTypes.length > 0 && syncedTypes.every((row) => row.source === "fallback");
-    const transferTypeOptionsCount = syncedTypes.length;
-    const firstRawTransferType =
-      syncedTypes[0] != null
-        ? (JSON.parse(syncedTypes[0].rawPayloadJson || "{}") as Record<string, unknown>)
-        : null;
+    const { transferTypes, source: transferTypesSource } =
+      await this.transferTypesSyncService.resolveTransferTypesForCompany({
+        companyId: input.companyId,
+        licenseNumber: sourceLicense,
+        environment: loaded.environment,
+      });
+    const transferTypesUsedFallback = transferTypesSource === "fallback";
+    const transferTypeOptionsCount = transferTypes.length;
+    const firstRawTransferType = transferTypes[0]?.raw ?? null;
 
-    if (!syncedTypes.length) {
+    if (!transferTypes.length) {
       return {
         ok: false,
         status: 400,
@@ -367,8 +367,8 @@ export class MetrcTransferCreateService {
       };
     }
 
-    const knownNames = new Set(syncedTypes.map((row) => row.name));
-    if (!knownNames.has(transferTypeName) && !transferTypesUsedFallback) {
+    const knownNames = new Set(transferTypes.map((row) => row.name));
+    if (!knownNames.has(transferTypeName)) {
       return {
         ok: false,
         status: 400,

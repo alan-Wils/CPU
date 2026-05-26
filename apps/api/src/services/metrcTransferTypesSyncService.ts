@@ -19,18 +19,26 @@ import {
 import {
   listMetrcTransferTypesForCompany,
   replaceMetrcTransferTypesForCompany,
+  seedFallbackTransferTypesForCompany,
   type MetrcTransferTypeUpsertRow,
 } from "../repositories/metrcTransferTypeRepository.js";
 
 export const METRC_TRANSFER_TYPE_FALLBACK_NAMES = [
   "Wholesale Transfer",
   "Transfer",
-  "Sales Delivery",
   "Internal Transfer",
-  "Hub Transfer",
-  "Wholesale",
-  "Affiliated",
+  "Sales Delivery",
 ] as const;
+
+export type MetrcTransferTypesSource = "metrc" | "fallback" | "none";
+
+export function resolveTransferTypesSource(
+  rows: Array<{ source: string }>,
+): MetrcTransferTypesSource {
+  if (!rows.length) return "none";
+  if (rows.every((row) => row.source === "fallback")) return "fallback";
+  return "metrc";
+}
 
 function licenseQuery(licenseNumber: string): string {
   const license = String(licenseNumber || "").trim();
@@ -138,6 +146,33 @@ export class MetrcTransferTypesSyncService {
   async listSyncedTransferTypes(companyId: string): Promise<MetrcTransferTypeDto[]> {
     const rows = await listMetrcTransferTypesForCompany(companyId);
     return rows.map(dbRowToDto);
+  }
+
+  /** Load persisted types; in sandbox, seed fallback list when table is empty. */
+  async resolveTransferTypesForCompany(input: {
+    companyId: string;
+    licenseNumber: string;
+    environment: string;
+  }): Promise<{ transferTypes: MetrcTransferTypeDto[]; source: MetrcTransferTypesSource }> {
+    let rows = await listMetrcTransferTypesForCompany(input.companyId);
+    if (!rows.length && String(input.environment || "").trim().toLowerCase() === "sandbox") {
+      const license = String(input.licenseNumber || "").trim();
+      if (license) {
+        await seedFallbackTransferTypesForCompany(
+          input.companyId,
+          license,
+          METRC_TRANSFER_TYPE_FALLBACK_NAMES,
+        );
+        rows = await listMetrcTransferTypesForCompany(input.companyId);
+        logWarn("[METRC] transfer_types_seeded_fallback_on_resolve", {
+          companyId: input.companyId,
+          licenseNumber: license,
+          count: rows.length,
+        });
+      }
+    }
+    const transferTypes = rows.map(dbRowToDto);
+    return { transferTypes, source: resolveTransferTypesSource(transferTypes) };
   }
 
   async syncMetrcTransferTypes(input: {

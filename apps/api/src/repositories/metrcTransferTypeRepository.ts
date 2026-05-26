@@ -52,6 +52,26 @@ export async function listMetrcTransferTypesForCompany(companyId: string) {
   });
 }
 
+export async function seedFallbackTransferTypesForCompany(
+  companyId: string,
+  licenseNumber: string,
+  names: readonly string[],
+): Promise<number> {
+  const existing = await listMetrcTransferTypesForCompany(companyId);
+  if (existing.length > 0) return existing.length;
+
+  const syncedAt = new Date();
+  const rows: MetrcTransferTypeUpsertRow[] = names.map((name) => ({
+    name,
+    typeCode: name,
+    licenseNumber,
+    source: "fallback",
+    rawPayloadJson: JSON.stringify({ Name: name, source: "nexbatch_fallback" }),
+    lastSyncedAt: syncedAt,
+  }));
+  return upsertMetrcTransferTypesForCompany(companyId, rows);
+}
+
 export async function replaceMetrcTransferTypesForCompany(
   companyId: string,
   rows: MetrcTransferTypeUpsertRow[],
