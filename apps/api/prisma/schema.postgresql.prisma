@@ -235,6 +235,7 @@ model Company {
   metrcHarvestRequestLogs MetrcHarvestRequestLog[]
   metrcTransfers         MetrcTransfer[]
   metrcTransferRequestLogs MetrcTransferRequestLog[]
+  metrcTransferTypes     MetrcTransferType[]
   metrcPlants            MetrcPlant[]
 
   serviceSettings CompanyServiceSettings?
@@ -1646,6 +1647,24 @@ model MetrcTransferRequestLog {
   createdAt           DateTime @default(now())
 
   @@index([companyId, createdAt])
+}
+
+/// METRC GET /transfers/v2/types (or fallback list) per company.
+model MetrcTransferType {
+  id             String   @id @default(cuid())
+  companyId      String
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name           String
+  typeCode       String   @default("")
+  licenseNumber  String   @default("")
+  source         String   @default("metrc")
+  rawPayloadJson String
+  lastSyncedAt   DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([companyId, name])
+  @@index([companyId, licenseNumber])
 }
 
 model CheckCapture {

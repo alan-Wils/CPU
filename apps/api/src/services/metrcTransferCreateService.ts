@@ -8,7 +8,12 @@ import { findMetrcPackageByLabel } from "../repositories/metrcPackageRepository.
 import {
   appendMetrcTransferRequestLog,
 } from "../repositories/metrcTransferRepository.js";
+import { listMetrcTransferTypesForCompany } from "../repositories/metrcTransferTypeRepository.js";
 import { MetrcTransfersSyncService } from "./metrcTransfersSyncService.js";
+import {
+  METRC_TRANSFER_TYPE_FALLBACK_NAMES,
+  MetrcTransferTypesSyncService,
+} from "./metrcTransferTypesSyncService.js";
 
 export type MetrcCreateTestTransferInput = {
   companyId: string;
@@ -59,13 +64,11 @@ function licenseQuery(licenseNumber: string): string {
   return license ? `?licenseNumber=${encodeURIComponent(license)}` : "";
 }
 
-export const METRC_TRANSFER_TYPE_OPTIONS = [
-  { label: "Transfer", value: "Transfer" },
-  { label: "Wholesale Transfer", value: "Wholesale" },
-  { label: "Internal Transfer", value: "Affiliated" },
-] as const;
-
 export type MetrcTransferTemplateApiVersion = "v1" | "v2";
+
+function isTransferTypeNameMetrcError(message: string): boolean {
+  return /transfer type name/i.test(message);
+}
 
 export function resolveTransferTemplateApiVersion(pathname: string): MetrcTransferTemplateApiVersion {
   return pathname.includes("/v1/") ? "v1" : "v2";
@@ -82,6 +85,11 @@ export type MetrcTransferTemplatePayloadDiagnostics = {
   topLevelTransferTypeName: string;
   destinationRecipientLicense: string;
   packageLabels: string[];
+  selectedTransferTypeName: string;
+  transferTypeOptionsCount: number;
+  transferTypesUsedFallback: boolean;
+  firstRawTransferType: Record<string, unknown> | null;
+  transferTypeAttempts?: string[];
 };
 
 function toMetrcDateTime(ymd: string, hour: number): string {
@@ -212,6 +220,10 @@ export function buildTransferTemplatePayloadDiagnostics(input: {
     topLevelTransferTypeName: topLevel,
     destinationRecipientLicense: recipient,
     packageLabels: labels,
+    selectedTransferTypeName: input.transferTypeName,
+    transferTypeOptionsCount: 0,
+    transferTypesUsedFallback: false,
+    firstRawTransferType: null,
   };
 }
 
@@ -226,6 +238,7 @@ function extractCreatedTransferId(response: unknown): string | null {
 
 export class MetrcTransferCreateService {
   transfersSyncService = new MetrcTransfersSyncService();
+  transferTypesSyncService = new MetrcTransferTypesSyncService();
 
   async createTestTransfer(
     input: MetrcCreateTestTransferInput,
@@ -326,7 +339,50 @@ export class MetrcTransferCreateService {
           ? pkg.quantity
           : 10;
     const grossUnit = String(input.grossUnitOfWeightName || pkg.unitOfMeasure || "Grams").trim() || "Grams";
-    const transferTypeName = String(input.transferTypeName || "Transfer").trim() || "Transfer";
+    const transferTypeName = String(input.transferTypeName || "").trim();
+    if (!transferTypeName) {
+      return {
+        ok: false,
+        status: 400,
+        message: "Select a METRC transfer type.",
+        validationErrors: ["Select a METRC transfer type."],
+      };
+    }
+
+    const syncedTypes = await listMetrcTransferTypesForCompany(input.companyId);
+    const transferTypesUsedFallback =
+      syncedTypes.length > 0 && syncedTypes.every((row) => row.source === "fallback");
+    const transferTypeOptionsCount = syncedTypes.length;
+    const firstRawTransferType =
+      syncedTypes[0] != null
+        ? (JSON.parse(syncedTypes[0].rawPayloadJson || "{}") as Record<string, unknown>)
+        : null;
+
+    if (!syncedTypes.length) {
+      return {
+        ok: false,
+        status: 400,
+        message: "No METRC transfer types loaded. Sync transfer types before creating a transfer.",
+        validationErrors: ["Sync transfer types first."],
+      };
+    }
+
+    const knownNames = new Set(syncedTypes.map((row) => row.name));
+    if (!knownNames.has(transferTypeName) && !transferTypesUsedFallback) {
+      return {
+        ok: false,
+        status: 400,
+        message: `Transfer type "${transferTypeName}" was not found. Sync transfer types and select a valid type.`,
+        validationErrors: ["Unknown transfer type name."],
+      };
+    }
+
+    const typeNamesToTry: string[] = [transferTypeName];
+    if (transferTypesUsedFallback) {
+      for (const name of METRC_TRANSFER_TYPE_FALLBACK_NAMES) {
+        if (!typeNamesToTry.includes(name)) typeNamesToTry.push(name);
+      }
+    }
     const templateName =
       String(input.notes || "").trim() || `NexBatch Test Transfer ${transferDate}`;
 
@@ -353,95 +409,126 @@ export class MetrcTransferCreateService {
     let lastResponse: unknown = null;
     let lastPayloadDiagnostics: MetrcTransferTemplatePayloadDiagnostics | undefined;
     let lastRequestBody: unknown = null;
+    const transferTypeAttempts: string[] = [];
 
-    for (const pathname of candidates) {
+    outer: for (const pathname of candidates) {
       const apiVersion = resolveTransferTemplateApiVersion(pathname);
-      const requestBody = buildMetrcTransferTemplateCreateBody(bodyInput, apiVersion);
-      const payloadDiagnostics = buildTransferTemplatePayloadDiagnostics({
-        pathname,
-        transferTypeName,
-        destinationLicense,
-        packageLabel,
-        body: requestBody,
-      });
-      lastPayloadDiagnostics = payloadDiagnostics;
-      lastRequestBody = requestBody;
 
-      logInfo("[METRC] transfer_create_test_payload", {
-        companyId: input.companyId,
-        ...payloadDiagnostics,
-      });
-
-      const result = await client.post<unknown>(pathname, requestBody);
-      lastEndpoint = pathname.split("?")[0];
-
-      if (!isMetrcClientFailure(result)) {
-        const durationMs = Date.now() - startedAt;
-        const metrcTransferId = extractCreatedTransferId(result.data);
-        const logPayload = {
-          companyId: input.companyId,
-          action: "create_test",
-          method: "POST",
-          endpoint: lastEndpoint,
-          httpStatus: result.status,
-          requestPayload: {
+      for (const attemptTypeName of typeNamesToTry) {
+        transferTypeAttempts.push(attemptTypeName);
+        const attemptBodyInput = { ...bodyInput, transferTypeName: attemptTypeName };
+        const requestBody = buildMetrcTransferTemplateCreateBody(attemptBodyInput, apiVersion);
+        const payloadDiagnostics: MetrcTransferTemplatePayloadDiagnostics = {
+          ...buildTransferTemplatePayloadDiagnostics({
             pathname,
-            body: requestBody,
-            packageLabel,
+            transferTypeName: attemptTypeName,
             destinationLicense,
-            payloadDiagnostics,
-          },
-          responsePayload: result.data,
-          durationMs,
-          actorUserId: input.actorUserId,
+            packageLabel,
+            body: requestBody,
+          }),
+          selectedTransferTypeName: transferTypeName,
+          transferTypeOptionsCount,
+          transferTypesUsedFallback,
+          firstRawTransferType,
+          transferTypeAttempts: [...transferTypeAttempts],
         };
-        await appendMetrcTransferRequestLog(logPayload);
+        lastPayloadDiagnostics = payloadDiagnostics;
+        lastRequestBody = requestBody;
 
-        const syncResult = await this.transfersSyncService.syncMetrcTransfers({
+        logInfo("[METRC] transfer_create_test_payload", {
           companyId: input.companyId,
-          actorUserId: input.actorUserId,
-        });
-        const transfersSynced =
-          syncResult.ok === true ? syncResult.totalTransfersSynced ?? syncResult.count : 0;
-
-        logInfo("[METRC] transfer_create_test_success", {
-          companyId: input.companyId,
-          endpoint: lastEndpoint,
-          status: result.status,
-          metrcTransferId,
-          transfersSynced,
+          attemptTransferTypeName: attemptTypeName,
+          ...payloadDiagnostics,
         });
 
-        return {
-          ok: true,
+        const result = await client.post<unknown>(pathname, requestBody);
+        lastEndpoint = pathname.split("?")[0];
+
+        if (!isMetrcClientFailure(result)) {
+          const durationMs = Date.now() - startedAt;
+          const metrcTransferId = extractCreatedTransferId(result.data);
+          const logPayload = {
+            companyId: input.companyId,
+            action: "create_test",
+            method: "POST",
+            endpoint: lastEndpoint,
+            httpStatus: result.status,
+            requestPayload: {
+              pathname,
+              body: requestBody,
+              packageLabel,
+              destinationLicense,
+              payloadDiagnostics,
+            },
+            responsePayload: result.data,
+            durationMs,
+            actorUserId: input.actorUserId,
+          };
+          await appendMetrcTransferRequestLog(logPayload);
+
+          const syncResult = await this.transfersSyncService.syncMetrcTransfers({
+            companyId: input.companyId,
+            actorUserId: input.actorUserId,
+          });
+          const transfersSynced =
+            syncResult.ok === true ? syncResult.totalTransfersSynced ?? syncResult.count : 0;
+
+          logInfo("[METRC] transfer_create_test_success", {
+            companyId: input.companyId,
+            endpoint: lastEndpoint,
+            status: result.status,
+            metrcTransferId,
+            transfersSynced,
+            acceptedTransferTypeName: attemptTypeName,
+          });
+
+          return {
+            ok: true,
+            status: result.status,
+            message: "Test transfer template submitted to METRC sandbox and transfers re-synced.",
+            endpoint: lastEndpoint,
+            requestPayload: logPayload.requestPayload,
+            responsePayload: result.data,
+            durationMs,
+            metrcTransferId,
+            transfersSynced,
+            payloadDiagnostics: {
+              ...payloadDiagnostics,
+              topLevelTransferTypeName: attemptTypeName,
+            },
+          };
+        }
+
+        lastStatus = result.status || 502;
+        lastMessage = metrcPullFailureMessage(lastStatus, result.metrcMessage || result.message);
+        lastResponse = {
           status: result.status,
-          message: "Test transfer template submitted to METRC sandbox and transfers re-synced.",
-          endpoint: lastEndpoint,
-          requestPayload: logPayload.requestPayload,
-          responsePayload: result.data,
-          durationMs,
-          metrcTransferId,
-          transfersSynced,
-          payloadDiagnostics,
+          message: result.message,
+          metrcMessage: result.metrcMessage,
+          endpoint: result.endpoint,
+          upstreamError: result.upstreamError,
         };
+
+        logWarn("[METRC] transfer_create_test_attempt_failed", {
+          companyId: input.companyId,
+          endpoint: lastEndpoint,
+          status: lastStatus,
+          message: lastMessage,
+          attemptTransferTypeName: attemptTypeName,
+        });
+
+        if (
+          transferTypesUsedFallback &&
+          isTransferTypeNameMetrcError(lastMessage) &&
+          attemptTypeName !== typeNamesToTry[typeNamesToTry.length - 1]
+        ) {
+          continue;
+        }
+
+        if (!transferTypesUsedFallback || !isTransferTypeNameMetrcError(lastMessage)) {
+          break outer;
+        }
       }
-
-      lastStatus = result.status || 502;
-      lastMessage = metrcPullFailureMessage(lastStatus, result.metrcMessage || result.message);
-      lastResponse = {
-        status: result.status,
-        message: result.message,
-        metrcMessage: result.metrcMessage,
-        endpoint: result.endpoint,
-        upstreamError: result.upstreamError,
-      };
-
-      logWarn("[METRC] transfer_create_test_attempt_failed", {
-        companyId: input.companyId,
-        endpoint: lastEndpoint,
-        status: lastStatus,
-        message: lastMessage,
-      });
     }
 
     const durationMs = Date.now() - startedAt;

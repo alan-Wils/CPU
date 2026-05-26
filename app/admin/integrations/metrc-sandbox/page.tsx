@@ -517,11 +517,39 @@ const DEFAULT_TRANSFER_PLANNED_ROUTE =
 const TRANSFER_PACKAGE_REQUIRED_MSG =
   "Sync or create a package before creating a transfer.";
 
-const METRC_TRANSFER_TYPE_OPTIONS = [
-  { label: "Transfer", value: "Transfer" },
-  { label: "Wholesale Transfer", value: "Wholesale" },
-  { label: "Internal Transfer", value: "Affiliated" },
-] as const;
+type MetrcTransferTypeRow = {
+  name: string;
+  typeCode: string;
+  licenseNumber: string;
+  source: string;
+  lastSyncedAt: string;
+  raw: Record<string, unknown>;
+};
+
+type TransferTypesSyncDiagnostics = {
+  licenseNumber: string;
+  endpoint: string | null;
+  httpStatus: number | null;
+  transferTypeOptionsCount: number;
+  selectedTransferTypeName: string | null;
+  firstRawTransferType: Record<string, unknown> | null;
+  usedFallback: boolean;
+  fallbackNames: string[];
+};
+
+type TransferTypesSyncResult = {
+  ok: boolean;
+  status?: number;
+  count?: number;
+  transferTypes?: MetrcTransferTypeRow[];
+  usedFallback?: boolean;
+  diagnostics?: TransferTypesSyncDiagnostics;
+  message?: string;
+  credentialHint?: string;
+  endpoint?: string | null;
+};
+
+const TRANSFER_TYPE_REQUIRED_MSG = "Select a METRC transfer type.";
 
 type PackageReconciliationSummary = {
   metrcCount: number;
@@ -916,7 +944,12 @@ export default function MetrcSandboxPage() {
   );
   const [createTransferRoute, setCreateTransferRoute] = useState(DEFAULT_TRANSFER_PLANNED_ROUTE);
   const [createTransferNotes, setCreateTransferNotes] = useState("NexBatch Test Transfer");
-  const [createTransferTypeName, setCreateTransferTypeName] = useState("Transfer");
+  const [createTransferTypeName, setCreateTransferTypeName] = useState("");
+  const [transferTypesRows, setTransferTypesRows] = useState<MetrcTransferTypeRow[] | null>(null);
+  const [transferTypesLoaded, setTransferTypesLoaded] = useState(false);
+  const [lastTransferTypesSync, setLastTransferTypesSync] = useState<TransferTypesSyncResult | null>(
+    null,
+  );
   const [createTransferConfirmOpen, setCreateTransferConfirmOpen] = useState(false);
   const [lastCreateTransfer, setLastCreateTransfer] = useState<CreateTestTransferResult | null>(null);
   const [nexbatchRooms, setNexbatchRooms] = useState<NexbatchRoomOption[]>([]);
@@ -1070,6 +1103,24 @@ export default function MetrcSandboxPage() {
     }
   }, []);
 
+  const loadSyncedTransferTypes = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/metrc/transfer-types/persisted");
+      if (!res.ok) return;
+      const json = (await res.json()) as { ok?: boolean; transferTypes?: MetrcTransferTypeRow[] };
+      const types = json.transferTypes ?? [];
+      setTransferTypesRows(types);
+      setCreateTransferTypeName((prev) => {
+        if (prev && types.some((t) => t.name === prev)) return prev;
+        return types[0]?.name ?? "";
+      });
+    } catch {
+      setTransferTypesRows([]);
+    } finally {
+      setTransferTypesLoaded(true);
+    }
+  }, []);
+
   const loadBatchPlants = useCallback(async (metrcPlantBatchId: string) => {
     const batchId = metrcPlantBatchId.trim();
     if (!batchId) {
@@ -1145,6 +1196,7 @@ export default function MetrcSandboxPage() {
     void loadSyncedHarvests();
     void loadSyncedItems();
     void loadSyncedTransfers();
+    void loadSyncedTransferTypes();
   }, [
     loadMeta,
     loadNexbatchRooms,
@@ -1156,6 +1208,7 @@ export default function MetrcSandboxPage() {
     loadSyncedHarvests,
     loadSyncedItems,
     loadSyncedTransfers,
+    loadSyncedTransferTypes,
   ]);
 
   const selectedHarvestPlantBatch = useMemo(() => {
@@ -2255,9 +2308,49 @@ export default function MetrcSandboxPage() {
     }
   }
 
+  async function runTransferTypesSync() {
+    setBusy("transferTypes");
+    setLastTransferTypesSync(null);
+    try {
+      const res = await authFetch("/api/metrc/transfer-types");
+      const json = (await res.json()) as TransferTypesSyncResult;
+      setLastTransferTypesSync(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text: String(json.message || json.credentialHint || "Transfer types sync failed."),
+        });
+        return;
+      }
+      const types = json.transferTypes ?? [];
+      setTransferTypesRows(types);
+      setTransferTypesLoaded(true);
+      setCreateTransferTypeName((prev) => {
+        if (prev && types.some((t) => t.name === prev)) return prev;
+        return types[0]?.name ?? "";
+      });
+      const warn = json.usedFallback
+        ? " Using fallback type list — METRC types endpoint unavailable."
+        : "";
+      setStatusMsg({
+        tone: json.usedFallback ? "warn" : "ok",
+        text: `Loaded ${types.length} transfer type${types.length === 1 ? "" : "s"} from METRC.${warn}`,
+      });
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Transfer types sync failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function openCreateTransferConfirm() {
     if (!(packagesRows?.length ?? 0) || !createTransferPackageLabel.trim()) {
       setStatusMsg({ tone: "error", text: TRANSFER_PACKAGE_REQUIRED_MSG });
+      return;
+    }
+    if (!createTransferTypeName.trim()) {
+      setStatusMsg({ tone: "error", text: TRANSFER_TYPE_REQUIRED_MSG });
       return;
     }
     if (!createTransferDestinationLicense.trim()) {
@@ -2374,21 +2467,23 @@ export default function MetrcSandboxPage() {
       ? [createTransferPackageLabel.trim()]
       : [];
     const destinationRecipientLicense = createTransferDestinationLicense.trim();
+    const diagnostics = lastTransferTypesSync?.diagnostics;
     return {
-      endpoints: [
-        "/transfers/v2/templates/outgoing",
-        "/transfers/v1/templates",
-      ],
-      v2: {
-        endpoint: "/transfers/v2/templates/outgoing",
-        topLevelTransferTypeName: "(v2 uses destination.TransferTypeName)",
-        destinationTransferTypeName: createTransferTypeName,
-        destinationRecipientLicense,
-        packageLabels,
-      },
+      selectedTransferTypeName: createTransferTypeName || null,
+      transferTypeOptionsCount: transferTypesRows?.length ?? diagnostics?.transferTypeOptionsCount ?? 0,
+      transferTypesUsedFallback: lastTransferTypesSync?.usedFallback ?? false,
+      firstRawTransferType: diagnostics?.firstRawTransferType ?? transferTypesRows?.[0]?.raw ?? null,
+      transferTypesSyncEndpoint: diagnostics?.endpoint ?? null,
+      endpoints: ["/transfers/v2/templates/outgoing", "/transfers/v1/templates"],
       v1: {
         endpoint: "/transfers/v1/templates",
         topLevelTransferTypeName: createTransferTypeName,
+        destinationRecipientLicense,
+        packageLabels,
+      },
+      v2: {
+        endpoint: "/transfers/v2/templates/outgoing",
+        destinationTransferTypeName: createTransferTypeName,
         destinationRecipientLicense,
         packageLabels,
       },
@@ -2397,6 +2492,8 @@ export default function MetrcSandboxPage() {
     createTransferPackageLabel,
     createTransferDestinationLicense,
     createTransferTypeName,
+    transferTypesRows,
+    lastTransferTypesSync,
   ]);
 
   const vegRoomOptions = useMemo(
@@ -4541,15 +4638,23 @@ export default function MetrcSandboxPage() {
                   </select>
                 </label>
                 <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-                  <span style={{ color: "#94a3b8" }}>Transfer type</span>
+                  <span style={{ color: "#94a3b8" }}>Transfer type (METRC Name)</span>
                   <select
                     value={createTransferTypeName}
                     onChange={(e) => setCreateTransferTypeName(e.target.value)}
                     style={styles.input}
+                    disabled={!(transferTypesRows?.length ?? 0)}
                   >
-                    {METRC_TRANSFER_TYPE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
+                    <option value="">
+                      {(transferTypesRows?.length ?? 0) > 0
+                        ? "Select transfer type…"
+                        : "Sync transfer types first…"}
+                    </option>
+                    {(transferTypesRows ?? []).map((row) => (
+                      <option key={row.name} value={row.name}>
+                        {row.name}
+                        {row.source === "fallback" ? " (fallback)" : ""}
+                        {row.typeCode && row.typeCode !== row.name ? ` · ${row.typeCode}` : ""}
                       </option>
                     ))}
                   </select>
@@ -4598,6 +4703,43 @@ export default function MetrcSandboxPage() {
                   />
                 </label>
               </div>
+              <div style={{ ...styles.row, marginTop: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  style={styles.btn}
+                  disabled={busy !== null}
+                  onClick={() => void runTransferTypesSync()}
+                >
+                  {busy === "transferTypes" ? "Syncing types…" : "Sync Transfer Types"}
+                </button>
+                {lastTransferTypesSync?.usedFallback ? (
+                  <span style={{ fontSize: 12, color: "#fbbf24" }}>
+                    Fallback list — METRC types API unavailable
+                  </span>
+                ) : null}
+              </div>
+              {lastTransferTypesSync?.diagnostics ? (
+                <details style={{ marginTop: 10 }}>
+                  <summary style={{ cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>
+                    Transfer types diagnostics
+                  </summary>
+                  <pre
+                    style={{
+                      marginTop: 8,
+                      padding: 12,
+                      borderRadius: 10,
+                      border: "1px solid #334155",
+                      background: "rgba(2, 6, 23, 0.8)",
+                      fontSize: 11,
+                      color: "#cbd5e1",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {JSON.stringify(lastTransferTypesSync.diagnostics, null, 2)}
+                  </pre>
+                </details>
+              ) : null}
               <details style={{ marginTop: 12 }}>
                 <summary style={{ cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>
                   Payload preview (before submit)
@@ -4644,10 +4786,8 @@ export default function MetrcSandboxPage() {
                   <p style={{ margin: "0 0 12px", fontSize: 13, color: "#fca5a5" }}>
                     Sandbox only. This will create an outgoing transfer template for package &quot;
                     {createTransferPackageLabel.trim()}&quot; to facility &quot;
-                    {createTransferDestinationLicense.trim()}&quot; on {createTransferDate} (
-                    {METRC_TRANSFER_TYPE_OPTIONS.find((o) => o.value === createTransferTypeName)
-                      ?.label || createTransferTypeName}
-                    ).
+                    {createTransferDestinationLicense.trim()}&quot; on {createTransferDate} (type:{" "}
+                    {createTransferTypeName.trim()}).
                   </p>
                   <pre
                     style={{

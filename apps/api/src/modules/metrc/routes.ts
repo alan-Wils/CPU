@@ -29,6 +29,7 @@ import {
 import { MetrcStrainCreateService } from "../../services/metrcStrainCreateService.js";
 import { MetrcTransfersSyncService } from "../../services/metrcTransfersSyncService.js";
 import { MetrcTransferCreateService } from "../../services/metrcTransferCreateService.js";
+import { MetrcTransferTypesSyncService } from "../../services/metrcTransferTypesSyncService.js";
 import { MetrcDebugAuthService } from "../../services/metrcDebugAuthService.js";
 import { env } from "../../config/env.js";
 import { logInfo } from "../../lib/logger.js";
@@ -114,6 +115,7 @@ const metrcHarvestCreateService = new MetrcHarvestCreateService();
 const metrcStrainCreateService = new MetrcStrainCreateService();
 const metrcTransfersSyncService = new MetrcTransfersSyncService();
 const metrcTransferCreateService = new MetrcTransferCreateService();
+const metrcTransferTypesSyncService = new MetrcTransferTypesSyncService();
 
 const metrcLocationMappingBody = z.object({
   metrcLocationId: z.string().min(1),
@@ -673,6 +675,29 @@ metrcRouter.post(
       metrcGrowthLocationId: body.metrcGrowthLocationId ?? null,
       dryingLocationName: body.dryingLocationName ?? null,
       metrcDryingLocationId: body.metrcDryingLocationId ?? null,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.get(
+  "/transfer-types/persisted",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const transferTypes = await metrcTransferTypesSyncService.listSyncedTransferTypes(companyId);
+    res.status(200).json({ ok: true, transferTypes });
+  }),
+);
+
+metrcRouter.get(
+  "/transfer-types",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const result = await metrcTransferTypesSyncService.syncMetrcTransferTypes({
+      companyId,
+      actorUserId: req.auth.userId,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),
