@@ -38,12 +38,26 @@ export type MetrcPackageSyncDiagnostics = {
   newestPackageModifiedAt: string | null;
   returnedLabels: string[];
   pagesFetched: number;
+  createdTag?: string | null;
+  createLicenseNumber?: string | null;
+  lookupLicenseNumber?: string | null;
+  lookupEndpoint?: string | null;
+  lookupDateWindow?: { lastModifiedStart: string; lastModifiedEnd: string } | null;
+  directLookupUsed?: boolean;
 };
 
 export function buildMetrcPackageSyncDiagnostics(input: {
   rawMetrcPackageCount: number;
   parsed: ParsedMetrcPackage[];
   pagesFetched: number;
+  lookupEndpoint?: string | null;
+  lookupContext?: {
+    createdTag?: string | null;
+    createLicenseNumber?: string | null;
+    lookupLicenseNumber?: string | null;
+    lookupDateWindow?: { lastModifiedStart: string; lastModifiedEnd: string } | null;
+    directLookupUsed?: boolean;
+  };
 }): MetrcPackageSyncDiagnostics {
   const sorted = sortParsedPackagesNewestFirst(input.parsed);
   const newest = sorted[0];
@@ -56,5 +70,7 @@ export function buildMetrcPackageSyncDiagnostics(input: {
     newestPackageModifiedAt: newestModified ? newestModified.toISOString() : null,
     returnedLabels: sorted.map((row) => row.packageLabel),
     pagesFetched: input.pagesFetched,
+    lookupEndpoint: input.lookupEndpoint ?? null,
+    ...(input.lookupContext ?? {}),
   };
 }

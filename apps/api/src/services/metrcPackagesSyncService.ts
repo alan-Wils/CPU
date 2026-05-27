@@ -22,6 +22,7 @@ import {
   type MetrcPackageReconciliationSummary,
 } from "../lib/metrcPackageInventoryReconciliation.js";
 import { parseMetrcPackagesPayload, type ParsedMetrcPackage } from "../lib/metrcPackagesParse.js";
+import { buildWideMetrcPackagesActiveDateRange } from "../lib/metrcPackagesActiveQuery.js";
 import {
   buildMetrcPackageSyncDiagnostics,
   sortParsedPackagesNewestFirst,
@@ -175,6 +176,12 @@ export class MetrcPackagesSyncService {
     actorUserId: string;
     waitForPackageLabel?: string | null;
     maxWaitMs?: number;
+    activeDateRange?: "default" | "wide";
+    lookupContext?: {
+      createdTag?: string | null;
+      createLicenseNumber?: string | null;
+      lookupLicenseNumber?: string | null;
+    };
   }): Promise<MetrcPackagesSyncResponse> {
     const waitForPackageLabel = String(input.waitForPackageLabel || "").trim() || null;
     const maxWaitMs = Math.max(0, input.maxWaitMs ?? (waitForPackageLabel ? 5000 : 0));
@@ -186,6 +193,8 @@ export class MetrcPackagesSyncService {
         companyId: input.companyId,
         actorUserId: input.actorUserId,
         waitForPackageLabel,
+        activeDateRange: input.activeDateRange,
+        lookupContext: input.lookupContext,
       });
 
       if (!waitForPackageLabel || lastResult.ok !== true) {
@@ -218,6 +227,12 @@ export class MetrcPackagesSyncService {
     companyId: string;
     actorUserId: string;
     waitForPackageLabel?: string | null;
+    activeDateRange?: "default" | "wide";
+    lookupContext?: {
+      createdTag?: string | null;
+      createLicenseNumber?: string | null;
+      lookupLicenseNumber?: string | null;
+    };
   }): Promise<MetrcPackagesSyncResponse> {
     logInfo("[METRC] packages_sync_start", {
       companyId: input.companyId,
@@ -298,8 +313,15 @@ export class MetrcPackagesSyncService {
     let lastMessage = "METRC packages sync failed.";
     let lastEndpoint: string | undefined;
 
+    const wideDateWindow =
+      input.activeDateRange === "wide" ? buildWideMetrcPackagesActiveDateRange() : null;
+
     for (let pageNumber = 1; pageNumber <= MAX_PACKAGE_PAGES; pageNumber += 1) {
-      const pageParams = { ...locationsRequest.params, pageNumber };
+      const pageParams = {
+        ...locationsRequest.params,
+        ...(wideDateWindow ?? {}),
+        pageNumber,
+      };
       const candidates = orderMetrcEndpointCandidates(endpointCtx, "packages", pageParams);
       let pageParsed: ParsedMetrcPackage[] | null = null;
 
@@ -347,6 +369,18 @@ export class MetrcPackagesSyncService {
         rawMetrcPackageCount,
         parsed,
         pagesFetched,
+        lookupEndpoint: lastEndpointKey,
+        lookupContext: {
+          createdTag: input.lookupContext?.createdTag ?? input.waitForPackageLabel ?? null,
+          createLicenseNumber:
+            input.lookupContext?.createLicenseNumber ??
+            input.lookupContext?.lookupLicenseNumber ??
+            operationalLicense,
+          lookupLicenseNumber:
+            input.lookupContext?.lookupLicenseNumber ?? operationalLicense,
+          lookupDateWindow: wideDateWindow,
+          directLookupUsed: false,
+        },
       });
 
       logInfo("[METRC] packages_sync_parsed", {

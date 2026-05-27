@@ -9,6 +9,8 @@ import {
   selectSandboxPackageTag,
   type SelectedSandboxPackageTag,
 } from "../lib/metrcPackageTagGenerator.js";
+import { confirmCreatedPackageInNexbatch } from "../lib/metrcPackagePostCreateLookup.js";
+import type { MetrcPackagePostCreateLookupDiagnostics } from "../lib/metrcPackagePostCreateLookup.js";
 import {
   appendMetrcPackageRequestLog,
   findMetrcPackageByLabel,
@@ -42,7 +44,11 @@ export type MetrcCreateTestPackageSuccess = {
   durationMs: number;
   packageLabel: string;
   packagesSynced: number;
-  syncDiagnostics?: import("../lib/metrcPackageSyncDiagnostics.js").MetrcPackageSyncDiagnostics;
+  syncDiagnostics?: MetrcPackagePostCreateLookupDiagnostics;
+  postCreateLookup?: MetrcPackagePostCreateLookupDiagnostics;
+  activeSyncPendingWarning?: string | null;
+  waitForPackageFound?: boolean;
+  metrcPackageId?: string | null;
   selectedPackageTag?: string;
   tagSelectionSource?: SelectedSandboxPackageTag["tagSelectionSource"];
   availableTagCount?: number;
@@ -373,38 +379,17 @@ export class MetrcPackageCreateService {
         };
         await appendMetrcPackageRequestLog(logPayload);
 
-        const syncResult = await this.packagesSyncService.syncMetrcPackages({
+        const postCreate = await confirmCreatedPackageInNexbatch({
           companyId: input.companyId,
           actorUserId: input.actorUserId,
-          waitForPackageLabel: packageTag,
-          maxWaitMs: 5000,
+          client,
+          licenseNumber: license,
+          packageLabel: packageTag,
+          metrcCreateResponse: result.data,
+          packagesSyncService: this.packagesSyncService,
         });
-        const packagesSynced =
-          syncResult.ok === true ? syncResult.totalPackagesSynced ?? syncResult.count : 0;
 
-        if (syncResult.ok !== true) {
-          return {
-            ok: false,
-            status: 502,
-            message: `Package ${packageTag} was created in METRC but packages sync failed.`,
-            requestPayload: logPayload.requestPayload,
-            responsePayload: syncResult,
-          };
-        }
-
-        if (syncResult.waitForPackageFound !== true) {
-          return {
-            ok: false,
-            status: 502,
-            message: `Package ${packageTag} was created in METRC but was not found after packages sync.`,
-            requestPayload: logPayload.requestPayload,
-            responsePayload: {
-              packageTag,
-              syncDiagnostics: syncResult.syncDiagnostics,
-              waitForPackageFound: syncResult.waitForPackageFound,
-            },
-          };
-        }
+        const packagesSynced = postCreate.diagnostics.filteredPackageCount;
 
         logInfo("[METRC] package_create_test_success", {
           companyId: input.companyId,
@@ -412,20 +397,33 @@ export class MetrcPackageCreateService {
           status: result.status,
           packageTag,
           packagesSynced,
+          postCreateFound: postCreate.found,
+          directLookupUsed: postCreate.directLookupUsed,
         });
+
+        const successMessage = postCreate.warning
+          ? `Test package submitted to METRC sandbox. ${postCreate.warning}`
+          : "Test package submitted to METRC sandbox and package record confirmed in NexBatch.";
 
         return {
           ok: true,
           status: result.status,
-          message: "Test package submitted to METRC sandbox and packages re-synced.",
+          message: successMessage,
           alreadyExists: false,
           endpoint: lastEndpoint,
           requestPayload: logPayload.requestPayload,
-          responsePayload: result.data,
+          responsePayload: {
+            metrcResponse: result.data,
+            postCreateLookup: postCreate.diagnostics,
+          },
           durationMs,
           packageLabel: packageTag,
           packagesSynced,
-          syncDiagnostics: syncResult.syncDiagnostics,
+          syncDiagnostics: postCreate.diagnostics,
+          postCreateLookup: postCreate.diagnostics,
+          activeSyncPendingWarning: postCreate.warning ?? null,
+          waitForPackageFound: postCreate.found,
+          metrcPackageId: postCreate.packageId,
           ...(tagSelection
             ? {
                 selectedPackageTag: tagSelection.selectedPackageTag,
