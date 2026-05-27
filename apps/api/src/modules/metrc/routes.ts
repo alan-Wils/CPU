@@ -20,6 +20,7 @@ import { MetrcStrainsSyncService } from "../../services/metrcStrainsSyncService.
 import { MetrcPackagesSyncService } from "../../services/metrcPackagesSyncService.js";
 import { MetrcPlantBatchesSyncService } from "../../services/metrcPlantBatchesSyncService.js";
 import { MetrcPlantBatchCreateService } from "../../services/metrcPlantBatchCreateService.js";
+import { MetrcPlantBatchMotherPackageService } from "../../services/metrcPlantBatchMotherPackageService.js";
 import { MetrcHarvestsSyncService } from "../../services/metrcHarvestsSyncService.js";
 import { MetrcPlantsSyncService } from "../../services/metrcPlantsSyncService.js";
 import {
@@ -131,6 +132,7 @@ const metrcStrainsSyncService = new MetrcStrainsSyncService();
 const metrcPackagesSyncService = new MetrcPackagesSyncService();
 const metrcPlantBatchesSyncService = new MetrcPlantBatchesSyncService();
 const metrcPlantBatchCreateService = new MetrcPlantBatchCreateService();
+const metrcPlantBatchMotherPackageService = new MetrcPlantBatchMotherPackageService();
 const metrcHarvestsSyncService = new MetrcHarvestsSyncService();
 const metrcPlantsSyncService = new MetrcPlantsSyncService();
 const metrcHarvestCreateService = new MetrcHarvestCreateService();
@@ -162,6 +164,15 @@ const metrcCreateTestPlantBatchBody = z.object({
   metrcLocationId: z.string().optional().nullable(),
   nexbatchRoomSuite: z.enum(["vegRooms", "flowerRooms", "dryRooms", "freezers"]).optional().nullable(),
   nexbatchRoomId: z.string().optional().nullable(),
+});
+
+const metrcMotherPlantPackageBody = z.object({
+  plantBatchId: z.coerce.number().int().positive(),
+  packageTag: z.string().min(1),
+  count: z.coerce.number().int().positive(),
+  actualDate: z.string().min(1),
+  locationName: z.string().optional().nullable(),
+  itemName: z.string().optional().nullable(),
 });
 
 const metrcCreateTestHarvestBody = z.object({
@@ -688,6 +699,27 @@ metrcRouter.post(
       metrcLocationId: body.metrcLocationId ?? null,
       nexbatchRoomSuite: body.nexbatchRoomSuite ?? null,
       nexbatchRoomId: body.nexbatchRoomId ?? null,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.post(
+  "/test/plantbatch-package-from-mother",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcMotherPlantPackageBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcMotherPlantPackageBody>;
+    const result = await metrcPlantBatchMotherPackageService.createPackageFromMotherPlant({
+      companyId,
+      actorUserId: req.auth.userId,
+      plantBatchId: body.plantBatchId,
+      packageTag: body.packageTag,
+      count: body.count,
+      actualDate: body.actualDate,
+      locationName: body.locationName ?? null,
+      itemName: body.itemName ?? null,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),

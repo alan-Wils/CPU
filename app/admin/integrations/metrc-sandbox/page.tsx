@@ -310,6 +310,20 @@ type CreateTestPlantBatchResult = {
   metrcMessage?: string;
 };
 
+type MotherPlantPackageResult = {
+  ok: boolean;
+  status?: number;
+  message?: string;
+  credentialHint?: string;
+  endpoint?: string;
+  requestPayload?: unknown;
+  responsePayload?: unknown;
+  durationMs?: number;
+  packageTag?: string;
+  plantBatchId?: number;
+  metrcMessage?: string;
+};
+
 type MetrcHarvestRow = {
   metrcHarvestId: string;
   harvestName: string;
@@ -899,6 +913,15 @@ export default function MetrcSandboxPage() {
   const [lastCreatePlantBatch, setLastCreatePlantBatch] = useState<CreateTestPlantBatchResult | null>(
     null,
   );
+  const [motherPackagePlantBatchId, setMotherPackagePlantBatchId] = useState("");
+  const [motherPackageTag, setMotherPackageTag] = useState("");
+  const [motherPackageCount, setMotherPackageCount] = useState("3");
+  const [motherPackageDate, setMotherPackageDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [motherPackageLocationId, setMotherPackageLocationId] = useState("");
+  const [lastMotherPlantPackage, setLastMotherPlantPackage] =
+    useState<MotherPlantPackageResult | null>(null);
   const [lastHarvestsSync, setLastHarvestsSync] = useState<HarvestsSyncResult | null>(null);
   const [harvestsRows, setHarvestsRows] = useState<MetrcHarvestRow[] | null>(null);
   const [harvestsLoaded, setHarvestsLoaded] = useState(false);
@@ -1968,6 +1991,65 @@ export default function MetrcSandboxPage() {
       await loadMeta();
     } catch {
       setStatusMsg({ tone: "error", text: "Create test plant batch failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runCreateMotherPlantPackage() {
+    const plantBatchId = Number.parseInt(motherPackagePlantBatchId, 10);
+    const count = Number.parseInt(motherPackageCount, 10);
+    if (!Number.isFinite(plantBatchId) || plantBatchId <= 0) {
+      setStatusMsg({ tone: "error", text: "Select a source plant batch." });
+      return;
+    }
+    if (!motherPackageTag.trim()) {
+      setStatusMsg({ tone: "error", text: "Package tag is required." });
+      return;
+    }
+    if (!Number.isFinite(count) || count < 1) {
+      setStatusMsg({ tone: "error", text: "Quantity must be at least 1." });
+      return;
+    }
+
+    const selectedLocation =
+      (locationsRows ?? []).find((l) => l.metrcLocationId === motherPackageLocationId) ?? null;
+
+    setBusy("motherPlantPackage");
+    setLastMotherPlantPackage(null);
+    const requestBody = {
+      plantBatchId,
+      packageTag: motherPackageTag.trim(),
+      count,
+      actualDate: motherPackageDate,
+      locationName: selectedLocation?.name?.trim() || null,
+    };
+    try {
+      const res = await authFetch("/api/metrc/test/plantbatch-package-from-mother", {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+      });
+      const json = (await res.json()) as MotherPlantPackageResult;
+      setLastMotherPlantPackage(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Create mother plant package failed."),
+        });
+        return;
+      }
+      setStatusMsg({
+        tone: "ok",
+        text: String(json.message || "Mother plant package created in METRC sandbox."),
+      });
+      await runPackagesSync();
+      await loadSyncedPackages();
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Create mother plant package failed — network error." });
     } finally {
       setBusy(null);
     }
@@ -3567,6 +3649,197 @@ export default function MetrcSandboxPage() {
                     endpoint: lastCreatePlantBatch.endpoint,
                     request: lastCreatePlantBatch.requestPayload,
                     response: lastCreatePlantBatch.responsePayload,
+                  },
+                  null,
+                  2,
+                )}
+              </pre>
+            </div>
+          ) : null}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Create package from mother plant</h2>
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8" }}>
+            Sandbox only. Creates a package from an existing METRC plant batch using{" "}
+            <code style={{ color: "#cbd5e1" }}>POST /plantbatches/v2/packages/frommotherplant</code>{" "}
+            for METRC evaluation/testing.
+          </p>
+          {!isSandboxEnvironment && !loadingMeta ? (
+            <p style={{ marginTop: 12, color: "#f87171", fontSize: 13 }}>
+              METRC environment is not sandbox. Switch to sandbox in Company Config to enable creation.
+            </p>
+          ) : null}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+              gap: 12,
+              marginTop: 14,
+            }}
+          >
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Source plant batch</span>
+              <select
+                value={motherPackagePlantBatchId}
+                onChange={(e) => setMotherPackagePlantBatchId(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                <option value="">Select plant batch…</option>
+                {(plantBatchesRows ?? []).map((batch) => (
+                  <option key={batch.metrcPlantBatchId} value={batch.metrcPlantBatchId}>
+                    {batch.name || batch.metrcPlantBatchId}
+                    {batch.strainName ? ` · ${batch.strainName}` : ""}
+                    {batch.count != null ? ` · ${batch.count}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Package tag / label</span>
+              <input
+                type="text"
+                value={motherPackageTag}
+                onChange={(e) => setMotherPackageTag(e.target.value)}
+                placeholder="Enter unused METRC package tag"
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Quantity</span>
+              <input
+                type="number"
+                min={1}
+                value={motherPackageCount}
+                onChange={(e) => setMotherPackageCount(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Packaged date</span>
+              <input
+                type="date"
+                value={motherPackageDate}
+                onChange={(e) => setMotherPackageDate(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Location (optional)</span>
+              <select
+                value={motherPackageLocationId}
+                onChange={(e) => setMotherPackageLocationId(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                <option value="">METRC default</option>
+                {(locationsRows ?? []).map((loc) => (
+                  <option key={loc.metrcLocationId} value={loc.metrcLocationId}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div style={{ ...styles.row, marginTop: 12 }}>
+            <button
+              type="button"
+              style={{
+                ...styles.btn,
+                ...styles.btnPrimary,
+                opacity:
+                  busy || !isSandboxEnvironment || !motherPackagePlantBatchId || !motherPackageTag.trim()
+                    ? 0.6
+                    : 1,
+              }}
+              disabled={
+                !!busy ||
+                !isSandboxEnvironment ||
+                !motherPackagePlantBatchId ||
+                !motherPackageTag.trim() ||
+                Number.parseInt(motherPackageCount, 10) < 1
+              }
+              onClick={() => void runCreateMotherPlantPackage()}
+            >
+              {busy === "motherPlantPackage" ? "Creating…" : "Create Mother Plant Package"}
+            </button>
+          </div>
+          {lastMotherPlantPackage ? (
+            <div
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid #334155",
+                background: "rgba(2, 6, 23, 0.8)",
+                fontSize: 12,
+                color: "#94a3b8",
+              }}
+            >
+              <strong style={{ color: lastMotherPlantPackage.ok ? "#4ade80" : "#f87171" }}>
+                Last create attempt ({lastMotherPlantPackage.status ?? "—"})
+              </strong>
+              <pre
+                style={{
+                  marginTop: 8,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "ui-monospace, monospace",
+                  color: "#cbd5e1",
+                }}
+              >
+                {JSON.stringify(
+                  {
+                    message: lastMotherPlantPackage.message,
+                    endpoint:
+                      lastMotherPlantPackage.endpoint ||
+                      "/plantbatches/v2/packages/frommotherplant",
+                    request: lastMotherPlantPackage.requestPayload,
+                    response: lastMotherPlantPackage.responsePayload,
                   },
                   null,
                   2,

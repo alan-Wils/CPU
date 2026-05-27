@@ -76,6 +76,17 @@ export async function listMetrcPlantBatchesForCompany(companyId: string) {
   });
 }
 
+export async function findMetrcPlantBatchByMetrcId(
+  companyId: string,
+  metrcPlantBatchId: string,
+) {
+  const id = String(metrcPlantBatchId || "").trim();
+  if (!id) return null;
+  return prisma.metrcPlantBatch.findFirst({
+    where: { companyId, metrcPlantBatchId: id },
+  });
+}
+
 export async function findMetrcPlantBatchByName(
   companyId: string,
   name: string,
