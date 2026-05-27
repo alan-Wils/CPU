@@ -1,18 +1,8 @@
 import { describe, expect, it } from "vitest";
-import {
-  METRC_EVALUATION_DEFAULT_ADJUSTMENT_REASON,
-  resolveMetrcPackageAdjustmentReason,
-} from "./metrcPackageEvaluationDefaults.js";
+import { METRC_EVALUATION_ADJUST_QUANTITY } from "./metrcPackageEvaluationDefaults.js";
 
-describe("resolveMetrcPackageAdjustmentReason", () => {
-  it("uses Inventory Adjustment when reason is missing or legacy Entry Error", () => {
-    expect(resolveMetrcPackageAdjustmentReason(null)).toBe(
-      METRC_EVALUATION_DEFAULT_ADJUSTMENT_REASON,
-    );
-    expect(resolveMetrcPackageAdjustmentReason("Entry Error")).toBe("Inventory Adjustment");
-  });
-
-  it("keeps an explicit non-legacy reason", () => {
-    expect(resolveMetrcPackageAdjustmentReason("Correction")).toBe("Correction");
+describe("metrcPackageEvaluationDefaults", () => {
+  it("uses a small non-zero evaluation adjust quantity", () => {
+    expect(METRC_EVALUATION_ADJUST_QUANTITY).toBe(0.01);
   });
 });

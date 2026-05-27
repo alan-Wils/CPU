@@ -177,7 +177,7 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
     id: "package_adjust",
     label: "Adjust Package",
     description:
-      "PUT /packages/v2/adjust on the most recently synced sandbox package (sandbox-only). Records a small evaluation adjustment.",
+      "PUT /packages/v2/adjust on the most recently synced sandbox package (sandbox-only). Fetches valid adjustment reasons from METRC first, then records a small evaluation adjustment.",
     nexbatchPath: "/api/metrc/packages/adjust-test",
     method: "POST",
     runnable: true,
@@ -186,7 +186,7 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
     id: "package_finish",
     label: "Finish Package",
     description:
-      "PUT /packages/v2/finish on the most recently synced sandbox package (sandbox-only).",
+      "PUT /packages/v2/finish on the most recently synced sandbox package (sandbox-only). Run after Adjust Package when quantity is zero; METRC will reject finish if the package is not empty.",
     nexbatchPath: "/api/metrc/packages/finish-test",
     method: "POST",
     runnable: true,
@@ -237,7 +237,7 @@ export const METRC_SANDBOX_CREATE_TASK_IDS = [
 export const METRC_EVALUATION_DEFAULT_PACKAGE_LABEL = "AAA00090000196B000000001";
 export const METRC_EVALUATION_DEFAULT_PACKAGE_ID = "46601";
 export const METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE = "SF-SBX-CO-7-13402";
-export const METRC_EVALUATION_DEFAULT_PACKAGE_ADJUSTMENT_REASON = "Inventory Adjustment";
+export const METRC_EVALUATION_ADJUST_QUANTITY = 0.01;
 
 export const METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_QUANTITY = 10;
 export const METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT = "Grams";
@@ -340,8 +340,7 @@ export function buildEvaluationCreateRequestBody(
       packageLabel: METRC_EVALUATION_DEFAULT_PACKAGE_LABEL,
       packageId: METRC_EVALUATION_DEFAULT_PACKAGE_ID,
       licenseNumber: METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
-      quantity: 0,
-      adjustmentReason: METRC_EVALUATION_DEFAULT_PACKAGE_ADJUSTMENT_REASON,
+      quantity: METRC_EVALUATION_ADJUST_QUANTITY,
       adjustmentDate: new Date().toISOString().slice(0, 10),
       reasonNote: "NexBatch evaluation",
     };
@@ -349,11 +348,9 @@ export function buildEvaluationCreateRequestBody(
     if (stored && typeof stored === "object") {
       const body = (stored as { body?: unknown }).body ?? stored;
       if (body && typeof body === "object" && !Array.isArray(body)) {
-        return {
-          ...defaults,
-          ...(body as Record<string, unknown>),
-          adjustmentReason: METRC_EVALUATION_DEFAULT_PACKAGE_ADJUSTMENT_REASON,
-        };
+        const merged = { ...defaults, ...(body as Record<string, unknown>) };
+        delete merged.adjustmentReason;
+        return merged;
       }
     }
     return defaults;
