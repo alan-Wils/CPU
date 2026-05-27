@@ -2,8 +2,42 @@ import {
   METRC_EVALUATION_DEFAULT_PACKAGE_ID,
   METRC_EVALUATION_DEFAULT_PACKAGE_LABEL,
   METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
+  METRC_EVALUATION_DEFAULT_PACKAGE_UNIT,
 } from "./metrcPackageEvaluationDefaults.js";
 import { listMetrcPackagesForCompany } from "../repositories/metrcPackageRepository.js";
+
+function readStringField(row: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const raw = row[key];
+    if (raw === undefined || raw === null) continue;
+    const s = String(raw).trim();
+    if (s) return s;
+  }
+  return "";
+}
+
+const PACKAGE_UNIT_FIELD_KEYS = [
+  "UnitOfWeight",
+  "unitOfWeight",
+  "UnitOfWeightName",
+  "unitOfWeightName",
+  "UnitOfMeasureName",
+  "unitOfMeasureName",
+  "UnitOfMeasure",
+  "unitOfMeasure",
+] as const;
+
+/** Unit of measure for METRC package mutations — raw METRC UnitOfWeight first, then synced row. */
+export function resolvePackageUnitOfMeasure(input: {
+  persistedUnitOfMeasure?: string | null;
+  raw?: Record<string, unknown> | null;
+}): string {
+  if (input.raw && typeof input.raw === "object") {
+    const fromRaw = readStringField(input.raw, [...PACKAGE_UNIT_FIELD_KEYS]);
+    if (fromRaw) return fromRaw;
+  }
+  return String(input.persistedUnitOfMeasure || "").trim();
+}
 
 export type ResolvedMetrcEvaluationPackage = {
   packageLabel: string;
@@ -44,7 +78,10 @@ function rowToResolved(
     packageId: readPackageIdFromRaw(row.rawPayloadJson),
     licenseNumber: row.licenseNumber.trim() || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
     itemName: row.itemName.trim(),
-    unitOfMeasure: row.unitOfMeasure.trim() || "Grams",
+    unitOfMeasure: resolvePackageUnitOfMeasure({
+      persistedUnitOfMeasure: row.unitOfMeasure,
+      raw,
+    }),
     raw,
     source,
   };
@@ -97,7 +134,7 @@ export async function resolveMetrcEvaluationPackage(input: {
     packageId: explicitId || METRC_EVALUATION_DEFAULT_PACKAGE_ID,
     licenseNumber: explicitLicense || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
     itemName: "",
-    unitOfMeasure: "Grams",
+    unitOfMeasure: METRC_EVALUATION_DEFAULT_PACKAGE_UNIT,
     raw: {},
     source: "fallback",
   };

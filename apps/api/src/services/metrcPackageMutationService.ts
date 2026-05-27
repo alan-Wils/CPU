@@ -12,7 +12,10 @@ import {
   buildMetrcPackageFinishBody,
   buildMetrcPackageUnfinishBody,
 } from "../lib/metrcPackageMutationBodies.js";
-import { resolveMetrcEvaluationPackage } from "../lib/metrcPackageResolve.js";
+import {
+  resolveMetrcEvaluationPackage,
+  resolvePackageUnitOfMeasure,
+} from "../lib/metrcPackageResolve.js";
 import {
   attachSpreadsheetFieldsToResponse,
   buildMetrcSpreadsheetFields,
@@ -160,11 +163,15 @@ function buildRequestBody(
       const quantity =
         input.quantity != null && Number.isFinite(Number(input.quantity))
           ? Number(input.quantity)
-          : 0.01;
+          : 0;
+      const unitOfMeasure = resolvePackageUnitOfMeasure({
+        persistedUnitOfMeasure: pkg.unitOfMeasure,
+        raw: pkg.raw,
+      });
       return buildMetrcPackageAdjustBody({
         packageLabel: pkg.packageLabel,
         quantity,
-        unitOfMeasure: String(input.unitOfMeasure || pkg.unitOfMeasure || "Grams").trim() || "Grams",
+        unitOfMeasure,
         adjustmentReason:
           String(input.adjustmentReason || "").trim() || METRC_EVALUATION_DEFAULT_ADJUSTMENT_REASON,
         adjustmentDate: String(input.adjustmentDate || "").trim() || todayYmd(),
@@ -253,6 +260,20 @@ export class MetrcPackageMutationService {
     }
 
     const requestBody = buildRequestBody(input.kind, pkg, input, itemName);
+
+    if (input.kind === "adjust") {
+      const adjustRow = (requestBody as { UnitOfMeasure?: string }[])[0];
+      const unitOfMeasure = String(adjustRow?.UnitOfMeasure || "").trim();
+      if (!unitOfMeasure) {
+        return {
+          ok: false,
+          status: 400,
+          message:
+            "Package unit of measure could not be resolved. Sync packages first so UnitOfWeight is available.",
+        };
+      }
+    }
+
     const pathname = `${endpointForKind(input.kind)}${licenseQuery(license)}`;
     const startedAt = Date.now();
 

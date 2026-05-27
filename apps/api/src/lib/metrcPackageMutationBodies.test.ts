@@ -20,14 +20,15 @@ describe("metrcPackageMutationBodies", () => {
   it("builds METRC v2 adjust body", () => {
     const body = buildMetrcPackageAdjustBody({
       packageLabel: "AAA00090000196B000000001",
-      quantity: 0.01,
-      unitOfMeasure: "Grams",
+      quantity: 0,
+      unitOfMeasure: "Kilograms",
       adjustmentReason: "Entry Error",
       adjustmentDate: "2026-05-26",
     });
     expect(body[0]).toMatchObject({
       Label: "AAA00090000196B000000001",
-      Quantity: 0.01,
+      Quantity: 0,
+      UnitOfMeasure: "Kilograms",
       AdjustmentReason: "Entry Error",
     });
   });

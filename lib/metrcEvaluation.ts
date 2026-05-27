@@ -378,9 +378,20 @@ export function buildEvaluationCreateRequestBody(
     };
   }
 
+  if (taskId === "package_adjust") {
+    return {
+      packageLabel: METRC_EVALUATION_DEFAULT_PACKAGE_LABEL,
+      packageId: METRC_EVALUATION_DEFAULT_PACKAGE_ID,
+      licenseNumber: METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
+      quantity: 0,
+      adjustmentReason: "Entry Error",
+      adjustmentDate: new Date().toISOString().slice(0, 10),
+      reasonNote: "NexBatch evaluation",
+    };
+  }
+
   if (
     taskId === "package_change_item" ||
-    taskId === "package_adjust" ||
     taskId === "package_finish" ||
     taskId === "package_unfinish"
   ) {
@@ -389,8 +400,6 @@ export function buildEvaluationCreateRequestBody(
       packageId: METRC_EVALUATION_DEFAULT_PACKAGE_ID,
       licenseNumber: METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
       itemName: "",
-      quantity: 0.01,
-      unitOfMeasure: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT,
       adjustmentReason: "Entry Error",
       adjustmentDate: new Date().toISOString().slice(0, 10),
       actualDate: new Date().toISOString().slice(0, 10),

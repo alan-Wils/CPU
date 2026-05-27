@@ -40,4 +40,17 @@ describe("metrcPackagesParse", () => {
   it("returns empty array for empty payload", () => {
     expect(parseMetrcPackagesPayload({ Data: [] })).toEqual([]);
   });
+
+  it("reads UnitOfWeight when UnitOfMeasureName is absent", () => {
+    const rows = parseMetrcPackagesPayload({
+      Data: [
+        {
+          Label: "AAA00090000196B000000001",
+          Quantity: 1,
+          UnitOfWeight: "Kilograms",
+        },
+      ],
+    });
+    expect(rows[0]?.unitOfMeasure).toBe("Kilograms");
+  });
 });

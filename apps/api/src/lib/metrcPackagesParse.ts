@@ -121,6 +121,10 @@ export function parseMetrcPackagesPayload(body: unknown): ParsedMetrcPackage[] {
       itemName,
       quantity: readNumberField(row, ["Quantity", "quantity", "RemainingQuantity", "remainingQuantity"]),
       unitOfMeasure: readStringField(row, [
+        "UnitOfWeight",
+        "unitOfWeight",
+        "UnitOfWeightName",
+        "unitOfWeightName",
         "UnitOfMeasureName",
         "unitOfMeasureName",
         "UnitOfMeasure",
