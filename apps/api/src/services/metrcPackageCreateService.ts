@@ -39,6 +39,7 @@ export type MetrcCreateTestPackageSuccess = {
   durationMs: number;
   packageLabel: string;
   packagesSynced: number;
+  syncDiagnostics?: import("../lib/metrcPackageSyncDiagnostics.js").MetrcPackageSyncDiagnostics;
   generatedPackageTag?: string;
   packageTagSource?: GeneratedSandboxPackageTag["packageTagSource"];
   previousPackageLabel?: string | null;
@@ -332,9 +333,35 @@ export class MetrcPackageCreateService {
         const syncResult = await this.packagesSyncService.syncMetrcPackages({
           companyId: input.companyId,
           actorUserId: input.actorUserId,
+          waitForPackageLabel: packageTag,
+          maxWaitMs: 5000,
         });
         const packagesSynced =
           syncResult.ok === true ? syncResult.totalPackagesSynced ?? syncResult.count : 0;
+
+        if (syncResult.ok !== true) {
+          return {
+            ok: false,
+            status: 502,
+            message: `Package ${packageTag} was created in METRC but packages sync failed.`,
+            requestPayload: logPayload.requestPayload,
+            responsePayload: syncResult,
+          };
+        }
+
+        if (syncResult.waitForPackageFound !== true) {
+          return {
+            ok: false,
+            status: 502,
+            message: `Package ${packageTag} was created in METRC but was not found after packages sync.`,
+            requestPayload: logPayload.requestPayload,
+            responsePayload: {
+              packageTag,
+              syncDiagnostics: syncResult.syncDiagnostics,
+              waitForPackageFound: syncResult.waitForPackageFound,
+            },
+          };
+        }
 
         logInfo("[METRC] package_create_test_success", {
           companyId: input.companyId,
@@ -355,6 +382,7 @@ export class MetrcPackageCreateService {
           durationMs,
           packageLabel: packageTag,
           packagesSynced,
+          syncDiagnostics: syncResult.syncDiagnostics,
           ...(tagGeneration
             ? {
                 generatedPackageTag: tagGeneration.generatedPackageTag,

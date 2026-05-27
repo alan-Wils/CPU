@@ -337,8 +337,8 @@ export function buildEvaluationCreateRequestBody(
 ): Record<string, unknown> {
   if (taskId === "package_adjust") {
     const defaults: Record<string, unknown> = {
-      packageLabel: METRC_EVALUATION_DEFAULT_PACKAGE_LABEL,
-      packageId: METRC_EVALUATION_DEFAULT_PACKAGE_ID,
+      packageLabel: "",
+      packageId: "",
       licenseNumber: METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
       quantity: METRC_EVALUATION_ADJUST_QUANTITY,
       adjustmentDate: new Date().toISOString().slice(0, 10),
@@ -349,6 +349,8 @@ export function buildEvaluationCreateRequestBody(
       const body = (stored as { body?: unknown }).body ?? stored;
       if (body && typeof body === "object" && !Array.isArray(body)) {
         const merged = { ...defaults, ...(body as Record<string, unknown>) };
+        merged.packageLabel = "";
+        merged.packageId = "";
         delete merged.adjustmentReason;
         merged.quantity = METRC_EVALUATION_ADJUST_QUANTITY;
         return merged;
@@ -416,15 +418,26 @@ export function buildEvaluationCreateRequestBody(
     taskId === "package_finish" ||
     taskId === "package_unfinish"
   ) {
-    return {
-      packageLabel: METRC_EVALUATION_DEFAULT_PACKAGE_LABEL,
-      packageId: METRC_EVALUATION_DEFAULT_PACKAGE_ID,
+    const defaults: Record<string, unknown> = {
+      packageLabel: "",
+      packageId: "",
       licenseNumber: METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
       itemName: "",
       adjustmentDate: new Date().toISOString().slice(0, 10),
       actualDate: new Date().toISOString().slice(0, 10),
       reasonNote: "NexBatch evaluation",
     };
+    const stored = task.requestPayload;
+    if (stored && typeof stored === "object") {
+      const body = (stored as { body?: unknown }).body ?? stored;
+      if (body && typeof body === "object" && !Array.isArray(body)) {
+        const merged = { ...defaults, ...(body as Record<string, unknown>) };
+        merged.packageLabel = "";
+        merged.packageId = "";
+        return merged;
+      }
+    }
+    return defaults;
   }
 
   if (taskId === "transfers") {

@@ -21,7 +21,12 @@ import {
   type MetrcPackageInventoryReconciliationRow,
   type MetrcPackageReconciliationSummary,
 } from "../lib/metrcPackageInventoryReconciliation.js";
-import { parseMetrcPackagesPayload } from "../lib/metrcPackagesParse.js";
+import { parseMetrcPackagesPayload, type ParsedMetrcPackage } from "../lib/metrcPackagesParse.js";
+import {
+  buildMetrcPackageSyncDiagnostics,
+  sortParsedPackagesNewestFirst,
+  type MetrcPackageSyncDiagnostics,
+} from "../lib/metrcPackageSyncDiagnostics.js";
 import {
   applyMetrcOperationalSuccess,
   isMetrcSandboxPlaceholderLicense,
@@ -33,6 +38,7 @@ import {
 import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 import { prisma } from "../config/prisma.js";
 import {
+  findMetrcPackageByLabel,
   listMetrcPackagesForCompany,
   upsertMetrcPackagesForCompany,
 } from "../repositories/metrcPackageRepository.js";
@@ -63,6 +69,9 @@ export type MetrcPackagesSyncSuccess = {
   retries: number;
   rateLimitWarning: string | null;
   endpoint: string;
+  syncDiagnostics: MetrcPackageSyncDiagnostics;
+  waitForPackageLabel?: string | null;
+  waitForPackageFound?: boolean;
 };
 
 export type MetrcPackagesSyncFailure = {
@@ -80,6 +89,23 @@ export type MetrcPackagesReconciliationResponse = {
   rows: MetrcPackageInventoryReconciliationRow[];
   summary: MetrcPackageReconciliationSummary;
 };
+
+const MAX_PACKAGE_PAGES = 50;
+const PACKAGE_SYNC_RETRY_INTERVAL_MS = 500;
+
+function mergeParsedPackagePages(pages: ParsedMetrcPackage[][]): ParsedMetrcPackage[] {
+  const byLabel = new Map<string, ParsedMetrcPackage>();
+  for (const page of pages) {
+    for (const row of page) {
+      byLabel.set(row.packageLabel, row);
+    }
+  }
+  return [...byLabel.values()];
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function dbRowToDto(row: Awaited<ReturnType<typeof listMetrcPackagesForCompany>>[number]): MetrcPackageDto {
   return {
@@ -147,8 +173,56 @@ export class MetrcPackagesSyncService {
   async syncMetrcPackages(input: {
     companyId: string;
     actorUserId: string;
+    waitForPackageLabel?: string | null;
+    maxWaitMs?: number;
   }): Promise<MetrcPackagesSyncResponse> {
-    logInfo("[METRC] packages_sync_start", { companyId: input.companyId });
+    const waitForPackageLabel = String(input.waitForPackageLabel || "").trim() || null;
+    const maxWaitMs = Math.max(0, input.maxWaitMs ?? (waitForPackageLabel ? 5000 : 0));
+    const startedAt = Date.now();
+    let lastResult: MetrcPackagesSyncResponse | null = null;
+
+    while (true) {
+      lastResult = await this.syncMetrcPackagesOnce({
+        companyId: input.companyId,
+        actorUserId: input.actorUserId,
+        waitForPackageLabel,
+      });
+
+      if (!waitForPackageLabel || lastResult.ok !== true) {
+        return lastResult;
+      }
+
+      const found =
+        lastResult.waitForPackageFound === true ||
+        lastResult.packages.some((pkg) => pkg.packageLabel === waitForPackageLabel) ||
+        Boolean(await findMetrcPackageByLabel(input.companyId, waitForPackageLabel));
+
+      if (found) {
+        return { ...lastResult, waitForPackageLabel, waitForPackageFound: true };
+      }
+
+      if (Date.now() - startedAt >= maxWaitMs) {
+        logWarn("[METRC] packages_sync_wait_exhausted", {
+          companyId: input.companyId,
+          waitForPackageLabel,
+          maxWaitMs,
+        });
+        return { ...lastResult, waitForPackageLabel, waitForPackageFound: false };
+      }
+
+      await sleep(PACKAGE_SYNC_RETRY_INTERVAL_MS);
+    }
+  }
+
+  private async syncMetrcPackagesOnce(input: {
+    companyId: string;
+    actorUserId: string;
+    waitForPackageLabel?: string | null;
+  }): Promise<MetrcPackagesSyncResponse> {
+    logInfo("[METRC] packages_sync_start", {
+      companyId: input.companyId,
+      waitForPackageLabel: input.waitForPackageLabel ?? null,
+    });
 
     const loaded = await loadCompanyMetrcConfig(input.companyId);
     if (!loaded) {
@@ -194,7 +268,6 @@ export class MetrcPackagesSyncService {
     };
 
     let operationalLicense = license;
-    let candidates = orderMetrcEndpointCandidates(endpointCtx, "packages", license);
 
     if (isMetrcSandboxPlaceholderLicense(license)) {
       const locationsRequest = await resolveMetrcLocationsActiveRequest({
@@ -205,115 +278,172 @@ export class MetrcPackagesSyncService {
       });
       operationalLicense = locationsRequest.params.licenseNumber;
       license = operationalLicense;
-      candidates = orderMetrcEndpointCandidates(endpointCtx, "packages", license);
     }
 
+    const locationsRequest = await resolveMetrcLocationsActiveRequest({
+      client,
+      loaded: { ...loaded, licenseNumber: license },
+      companyId: input.companyId,
+      purpose: "packages_sync",
+    });
+
+    const syncStartedAt = Date.now();
+    let totalRetries = 0;
+    let totalRateLimitWaitedMs = 0;
+    let lastEndpointKey = metrcEndpointPathKey(locationsRequest.pathnameAndQuery);
+    const pageResults: ParsedMetrcPackage[][] = [];
+    let rawMetrcPackageCount = 0;
+    let pagesFetched = 0;
     let lastStatus = 502;
     let lastMessage = "METRC packages sync failed.";
     let lastEndpoint: string | undefined;
 
-    for (let i = 0; i < candidates.length; i += 1) {
-      const pathname = candidates[i]!;
-      const result = await client.get<unknown>(pathname);
+    for (let pageNumber = 1; pageNumber <= MAX_PACKAGE_PAGES; pageNumber += 1) {
+      const pageParams = { ...locationsRequest.params, pageNumber };
+      const candidates = orderMetrcEndpointCandidates(endpointCtx, "packages", pageParams);
+      let pageParsed: ParsedMetrcPackage[] | null = null;
 
-      if (!isMetrcClientFailure(result)) {
-        cacheMetrcEndpointPath(endpointCtx, "packages", pathname);
-        const parsed = parseMetrcPackagesPayload(result.data);
-        const syncedAt = new Date();
-        const syncedAtIso = syncedAt.toISOString();
-        const rateLimitWarning =
-          result.rateLimitWaitedMs > 0
-            ? `Rate limiter delayed this request by ${result.rateLimitWaitedMs}ms.`
-            : result.retries > 0
-              ? `Completed after ${result.retries} retries.`
-              : null;
+      for (let i = 0; i < candidates.length; i += 1) {
+        const pathname = candidates[i]!;
+        const result = await client.get<unknown>(pathname);
 
-        await upsertMetrcPackagesForCompany(
-          input.companyId,
-          parsed.map((row) => ({
-            packageLabel: row.packageLabel,
-            licenseNumber: operationalLicense,
-            itemName: row.itemName,
-            quantity: row.quantity,
-            unitOfMeasure: row.unitOfMeasure,
-            location: row.location,
-            productionBatchNumber: row.productionBatchNumber,
-            sourceHarvestNames: row.sourceHarvestNames,
-            packagedDate: row.packagedDate,
-            expirationDate: row.expirationDate,
-            strainName: row.strainName,
-            rawPayloadJson: JSON.stringify(row.raw),
-            lastSyncedAt: syncedAt,
-          })),
-        );
+        if (!isMetrcClientFailure(result)) {
+          cacheMetrcEndpointPath(endpointCtx, "packages", pathname);
+          lastEndpointKey = metrcEndpointPathKey(pathname);
+          const records = parseMetrcPackagesPayload(result.data);
+          rawMetrcPackageCount += records.length;
+          pageParsed = records;
+          totalRetries += result.retries;
+          totalRateLimitWaitedMs += result.rateLimitWaitedMs;
+          lastStatus = result.status;
+          break;
+        }
 
-        const totalPackagesSynced = parsed.length;
+        lastStatus = result.status || 502;
+        lastMessage = metrcPullFailureMessage(lastStatus, result.metrcMessage || result.message);
+        lastEndpoint = result.endpoint ?? pathname.split("?")[0];
 
-        let nextMetrc = applyMetrcOperationalSuccess(
-          {
-            ...loaded.metrc,
-            metrcSandboxLastPackagesSyncAt: syncedAtIso,
-            metrcLastPackagesSyncAt: syncedAtIso,
-            lastPackagesSync: syncedAtIso,
-            metrcSandboxLastPackagesCount: totalPackagesSynced,
-            metrcSandboxLastRateLimitWarning: rateLimitWarning ?? "",
-          },
-          { operationalLicense, facilityName: null },
-        );
-        nextMetrc = applyMetrcSuccessStatus(nextMetrc, {
-          httpStatus: result.status,
-          message: formatMetrcSuccessMessage({ kind: "packages_sync", count: totalPackagesSynced }),
-          checkedAt: syncedAtIso,
-          totalPackagesSynced,
-        });
+        if (
+          shouldTryNextMetrcEndpoint("packages", i, candidates.length, {
+            status: result.status,
+            upstreamType: result.upstreamError?.type,
+          })
+        ) {
+          continue;
+        }
+        break;
+      }
 
-        await this.configService.upsert({
-          companyId: input.companyId,
-          actorUserId: input.actorUserId,
-          key: "company",
-          value: { ...loaded.company, metrc: nextMetrc },
-        });
+      if (!pageParsed) break;
 
-        const persisted = await listMetrcPackagesForCompany(input.companyId);
-        const packages = persisted.map(dbRowToDto);
-        const endpointKey = metrcEndpointPathKey(pathname);
+      pagesFetched += 1;
+      pageResults.push(pageParsed);
+      if (pageParsed.length < pageParams.pageSize) break;
+    }
 
-        logInfo("[METRC] packages_sync_success", {
-          companyId: input.companyId,
-          endpoint: endpointKey,
-          status: result.status,
-          count: totalPackagesSynced,
-          durationMs: result.durationMs,
-          retries: result.retries,
-        });
+    if (pagesFetched > 0) {
+      const parsed = sortParsedPackagesNewestFirst(mergeParsedPackagePages(pageResults));
+      const syncDiagnostics = buildMetrcPackageSyncDiagnostics({
+        rawMetrcPackageCount,
+        parsed,
+        pagesFetched,
+      });
 
-        return {
-          ok: true,
-          syncedAt: syncedAtIso,
-          count: totalPackagesSynced,
-          totalPackagesSynced,
+      logInfo("[METRC] packages_sync_parsed", {
+        companyId: input.companyId,
+        ...syncDiagnostics,
+      });
+
+      const syncedAt = new Date();
+      const syncedAtIso = syncedAt.toISOString();
+      const rateLimitWarning =
+        totalRateLimitWaitedMs > 0
+          ? `Rate limiter delayed requests by ${totalRateLimitWaitedMs}ms.`
+          : totalRetries > 0
+            ? `Completed after ${totalRetries} retries.`
+            : null;
+
+      await upsertMetrcPackagesForCompany(
+        input.companyId,
+        parsed.map((row) => ({
+          packageLabel: row.packageLabel,
+          licenseNumber: operationalLicense,
+          itemName: row.itemName,
+          quantity: row.quantity,
+          unitOfMeasure: row.unitOfMeasure,
+          location: row.location,
+          productionBatchNumber: row.productionBatchNumber,
+          sourceHarvestNames: row.sourceHarvestNames,
+          packagedDate: row.packagedDate,
+          expirationDate: row.expirationDate,
+          strainName: row.strainName,
+          rawPayloadJson: JSON.stringify(row.raw),
+          lastSyncedAt: syncedAt,
+        })),
+      );
+
+      const totalPackagesSynced = parsed.length;
+
+      let nextMetrc = applyMetrcOperationalSuccess(
+        {
+          ...loaded.metrc,
+          metrcSandboxLastPackagesSyncAt: syncedAtIso,
+          metrcLastPackagesSyncAt: syncedAtIso,
           lastPackagesSync: syncedAtIso,
-          packages,
-          durationMs: result.durationMs,
-          retries: result.retries,
-          rateLimitWarning,
-          endpoint: endpointKey,
-        };
-      }
+          metrcSandboxLastPackagesCount: totalPackagesSynced,
+          metrcSandboxLastRateLimitWarning: rateLimitWarning ?? "",
+        },
+        { operationalLicense, facilityName: null },
+      );
+      nextMetrc = applyMetrcSuccessStatus(nextMetrc, {
+        httpStatus: lastStatus,
+        message: formatMetrcSuccessMessage({ kind: "packages_sync", count: totalPackagesSynced }),
+        checkedAt: syncedAtIso,
+        totalPackagesSynced,
+      });
 
-      lastStatus = result.status || 502;
-      lastMessage = metrcPullFailureMessage(lastStatus, result.metrcMessage || result.message);
-      lastEndpoint = result.endpoint ?? pathname.split("?")[0];
+      await this.configService.upsert({
+        companyId: input.companyId,
+        actorUserId: input.actorUserId,
+        key: "company",
+        value: { ...loaded.company, metrc: nextMetrc },
+      });
 
-      if (
-        shouldTryNextMetrcEndpoint("packages", i, candidates.length, {
-          status: result.status,
-          upstreamType: result.upstreamError?.type,
-        })
-      ) {
-        continue;
-      }
-      break;
+      const persisted = await listMetrcPackagesForCompany(input.companyId);
+      const packages = persisted.map(dbRowToDto);
+      const durationMs = Date.now() - syncStartedAt;
+      const waitForPackageLabel = String(input.waitForPackageLabel || "").trim() || null;
+      const waitForPackageFound = waitForPackageLabel
+        ? packages.some((pkg) => pkg.packageLabel === waitForPackageLabel) ||
+          Boolean(await findMetrcPackageByLabel(input.companyId, waitForPackageLabel))
+        : undefined;
+
+      logInfo("[METRC] packages_sync_success", {
+        companyId: input.companyId,
+        endpoint: lastEndpointKey,
+        status: lastStatus,
+        count: totalPackagesSynced,
+        durationMs,
+        retries: totalRetries,
+        waitForPackageLabel,
+        waitForPackageFound,
+      });
+
+      return {
+        ok: true,
+        syncedAt: syncedAtIso,
+        count: totalPackagesSynced,
+        totalPackagesSynced,
+        lastPackagesSync: syncedAtIso,
+        packages,
+        durationMs,
+        retries: totalRetries,
+        rateLimitWarning,
+        endpoint: lastEndpointKey,
+        syncDiagnostics,
+        waitForPackageLabel,
+        waitForPackageFound,
+      };
     }
 
     if (lastStatus === 401 || lastStatus === 403) {

@@ -69,7 +69,7 @@ export async function upsertMetrcPackagesForCompany(
 export async function listMetrcPackagesForCompany(companyId: string) {
   return prisma.metrcPackage.findMany({
     where: { companyId },
-    orderBy: [{ packageLabel: "asc" }],
+    orderBy: [{ lastSyncedAt: "desc" }, { packageLabel: "desc" }],
   });
 }
 

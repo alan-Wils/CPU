@@ -1,17 +1,59 @@
 import {
   METRC_EVALUATION_ADJUST_QUANTITY,
-  METRC_EVALUATION_DEFAULT_PACKAGE_ID,
   METRC_EVALUATION_DEFAULT_PACKAGE_LABEL,
   METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
   METRC_EVALUATION_DEFAULT_PACKAGE_UNIT,
 } from "./metrcPackageEvaluationDefaults.js";
 import {
+  listEvaluationCreatedPackageRefs,
+  type EvaluationCreatedPackageRef,
+} from "./metrcEvaluationCreatedPackages.js";
+import {
   isPackageFinished,
+  isPackageOnHold,
+  isPackageQuantityEmpty,
+  isPackageTransferable,
   PACKAGE_QUANTITY_EMPTY_EPSILON,
 } from "./metrcPackageStatus.js";
 import { listMetrcPackagesForCompany } from "../repositories/metrcPackageRepository.js";
 
 export { isPackageQuantityEmpty, PACKAGE_QUANTITY_EMPTY_EPSILON } from "./metrcPackageStatus.js";
+
+export type MetrcEvaluationPackageResolveKind =
+  | "change_item"
+  | "adjust"
+  | "finish"
+  | "unfinish"
+  | "transfer"
+  | "default";
+
+export type ResolvedMetrcEvaluationPackage = {
+  packageLabel: string;
+  packageId: string | null;
+  licenseNumber: string;
+  itemName: string;
+  quantity: number;
+  unitOfMeasure: string;
+  isFinished: boolean;
+  raw: Record<string, unknown>;
+  source:
+    | "evaluation_created"
+    | "transferable_fallback"
+    | "synced_label"
+    | "synced_recent";
+  selectedReason: string;
+  createdViaTest: boolean;
+  createdAt: string | null;
+};
+
+export class MetrcEvaluationPackageNotFoundError extends Error {
+  constructor(
+    message = "No usable evaluation package found. Run Create Package first.",
+  ) {
+    super(message);
+    this.name = "MetrcEvaluationPackageNotFoundError";
+  }
+}
 
 function readStringField(row: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
@@ -45,18 +87,6 @@ export function resolvePackageUnitOfMeasure(input: {
   }
   return String(input.persistedUnitOfMeasure || "").trim();
 }
-
-export type ResolvedMetrcEvaluationPackage = {
-  packageLabel: string;
-  packageId: string | null;
-  licenseNumber: string;
-  itemName: string;
-  quantity: number;
-  unitOfMeasure: string;
-  isFinished: boolean;
-  raw: Record<string, unknown>;
-  source: "synced_recent" | "synced_label" | "fallback";
-};
 
 function readNumberField(row: Record<string, unknown>, keys: string[]): number {
   for (const key of keys) {
@@ -127,10 +157,30 @@ function readPackageIdFromRaw(rawPayloadJson: string): string | null {
   }
 }
 
-function rowToResolved(
+function isStaleEvaluationDefaultLabel(label: string | null | undefined): boolean {
+  const normalized = String(label || "").trim();
+  return !normalized || normalized === METRC_EVALUATION_DEFAULT_PACKAGE_LABEL;
+}
+
+function matchesLicense(rowLicense: string, licenseNumber: string | null | undefined): boolean {
+  const license = String(licenseNumber || "").trim();
+  if (!license) return true;
+  return rowLicense.trim().toLowerCase() === license.toLowerCase();
+}
+
+type PackageCandidate = {
+  row: Awaited<ReturnType<typeof listMetrcPackagesForCompany>>[number];
+  raw: Record<string, unknown>;
+  quantity: number;
+  isFinished: boolean;
+  isOnHold: boolean;
+  createdRef: EvaluationCreatedPackageRef | null;
+};
+
+function buildCandidate(
   row: Awaited<ReturnType<typeof listMetrcPackagesForCompany>>[number],
-  source: ResolvedMetrcEvaluationPackage["source"],
-): ResolvedMetrcEvaluationPackage {
+  createdRef: EvaluationCreatedPackageRef | null,
+): PackageCandidate {
   const raw = (() => {
     try {
       return JSON.parse(row.rawPayloadJson || "{}") as Record<string, unknown>;
@@ -140,18 +190,69 @@ function rowToResolved(
   })();
 
   return {
-    packageLabel: row.packageLabel,
-    packageId: readPackageIdFromRaw(row.rawPayloadJson),
-    licenseNumber: row.licenseNumber.trim() || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
-    itemName: row.itemName.trim(),
-    quantity: resolvePackageQuantity({ persistedQuantity: row.quantity, raw }),
-    unitOfMeasure: resolvePackageUnitOfMeasure({
-      persistedUnitOfMeasure: row.unitOfMeasure,
-      raw,
-    }),
-    isFinished: isPackageFinished({ raw }),
+    row,
     raw,
-    source,
+    quantity: resolveSyncedPackageQuantity({ persistedQuantity: row.quantity, raw }),
+    isFinished: isPackageFinished({ raw }),
+    isOnHold: isPackageOnHold({ raw }),
+    createdRef,
+  };
+}
+
+function matchesKindCriteria(candidate: PackageCandidate, kind: MetrcEvaluationPackageResolveKind): boolean {
+  if (candidate.isOnHold) return false;
+
+  if (kind === "finish") {
+    return !candidate.isFinished && isPackageQuantityEmpty(candidate.quantity);
+  }
+
+  if (kind === "unfinish") {
+    return candidate.isFinished;
+  }
+
+  if (kind === "transfer") {
+    return isPackageTransferable({
+      quantity: candidate.quantity,
+      isFinished: candidate.isFinished,
+      isOnHold: candidate.isOnHold,
+      raw: candidate.raw,
+    });
+  }
+
+  if (candidate.isFinished) return false;
+  return candidate.quantity > PACKAGE_QUANTITY_EMPTY_EPSILON;
+}
+
+function candidateToResolved(
+  candidate: PackageCandidate,
+  input: {
+    licenseNumber?: string | null;
+    source: ResolvedMetrcEvaluationPackage["source"];
+    selectedReason: string;
+    createdViaTest: boolean;
+    createdAt: string | null;
+    explicitPackageId?: string | null;
+  },
+): ResolvedMetrcEvaluationPackage {
+  return {
+    packageLabel: candidate.row.packageLabel,
+    packageId: input.explicitPackageId ?? readPackageIdFromRaw(candidate.row.rawPayloadJson),
+    licenseNumber:
+      String(input.licenseNumber || "").trim() ||
+      candidate.row.licenseNumber.trim() ||
+      METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
+    itemName: candidate.row.itemName.trim(),
+    quantity: candidate.quantity,
+    unitOfMeasure: resolvePackageUnitOfMeasure({
+      persistedUnitOfMeasure: candidate.row.unitOfMeasure,
+      raw: candidate.raw,
+    }),
+    isFinished: candidate.isFinished,
+    raw: candidate.raw,
+    source: input.source,
+    selectedReason: input.selectedReason,
+    createdViaTest: input.createdViaTest,
+    createdAt: input.createdAt,
   };
 }
 
@@ -160,52 +261,103 @@ export async function resolveMetrcEvaluationPackage(input: {
   packageLabel?: string | null;
   packageId?: string | null;
   licenseNumber?: string | null;
+  kind?: MetrcEvaluationPackageResolveKind;
 }): Promise<ResolvedMetrcEvaluationPackage> {
-  const explicitLabel = String(input.packageLabel || "").trim();
+  const kind = input.kind ?? "default";
+  const explicitLabel = isStaleEvaluationDefaultLabel(input.packageLabel)
+    ? ""
+    : String(input.packageLabel || "").trim();
   const explicitId = String(input.packageId || "").trim();
-  const explicitLicense = String(input.licenseNumber || "").trim();
+  const licenseNumber = String(input.licenseNumber || "").trim();
 
   const rows = await listMetrcPackagesForCompany(input.companyId);
-  const sorted = [...rows].sort(
-    (a, b) => b.lastSyncedAt.getTime() - a.lastSyncedAt.getTime(),
-  );
+  const createdRefs = await listEvaluationCreatedPackageRefs(input.companyId);
+  const createdByLabel = new Map(createdRefs.map((ref) => [ref.packageLabel, ref]));
+
+  const candidates = rows
+    .filter((row) => matchesLicense(row.licenseNumber, licenseNumber))
+    .map((row) => buildCandidate(row, createdByLabel.get(row.packageLabel) ?? null));
 
   if (explicitLabel) {
-    const match = sorted.find((row) => row.packageLabel === explicitLabel);
-    if (match) {
-      const resolved = rowToResolved(match, "synced_label");
-      if (explicitLicense) resolved.licenseNumber = explicitLicense;
-      if (explicitId) resolved.packageId = explicitId;
-      return resolved;
+    const match = candidates.find((candidate) => candidate.row.packageLabel === explicitLabel);
+    if (match && matchesKindCriteria(match, kind)) {
+      return candidateToResolved(match, {
+        licenseNumber,
+        source: "synced_label",
+        selectedReason: "explicit_package_label",
+        createdViaTest: Boolean(match.createdRef),
+        createdAt: match.createdRef?.createdAt.toISOString() ?? null,
+        explicitPackageId: explicitId || undefined,
+      });
     }
   }
 
   if (explicitId) {
-    const match = sorted.find((row) => readPackageIdFromRaw(row.rawPayloadJson) === explicitId);
-    if (match) {
-      const resolved = rowToResolved(match, "synced_label");
-      if (explicitLicense) resolved.licenseNumber = explicitLicense;
-      return resolved;
+    const match = candidates.find(
+      (candidate) => readPackageIdFromRaw(candidate.row.rawPayloadJson) === explicitId,
+    );
+    if (match && matchesKindCriteria(match, kind)) {
+      return candidateToResolved(match, {
+        licenseNumber,
+        source: "synced_label",
+        selectedReason: "explicit_package_id",
+        createdViaTest: Boolean(match.createdRef),
+        createdAt: match.createdRef?.createdAt.toISOString() ?? null,
+        explicitPackageId: explicitId,
+      });
     }
   }
 
-  if (sorted[0]) {
-    const resolved = rowToResolved(sorted[0], "synced_recent");
-    if (explicitLicense) resolved.licenseNumber = explicitLicense;
-    if (explicitId) resolved.packageId = explicitId;
-    if (explicitLabel) resolved.packageLabel = explicitLabel;
-    return resolved;
+  const evaluationCreated = candidates
+    .filter((candidate) => candidate.createdRef)
+    .sort(
+      (a, b) =>
+        (b.createdRef?.createdAt.getTime() ?? 0) - (a.createdRef?.createdAt.getTime() ?? 0),
+    );
+
+  for (const candidate of evaluationCreated) {
+    if (!matchesKindCriteria(candidate, kind)) continue;
+    return candidateToResolved(candidate, {
+      licenseNumber,
+      source: "evaluation_created",
+      selectedReason: "newest_evaluation_created_package",
+      createdViaTest: true,
+      createdAt: candidate.createdRef?.createdAt.toISOString() ?? null,
+    });
   }
 
+  const transferableFallback = [...candidates]
+    .filter((candidate) => matchesKindCriteria(candidate, kind))
+    .sort((a, b) => b.row.lastSyncedAt.getTime() - a.row.lastSyncedAt.getTime());
+
+  const fallback = transferableFallback[0];
+  if (fallback) {
+    return candidateToResolved(fallback, {
+      licenseNumber,
+      source: "transferable_fallback",
+      selectedReason:
+        kind === "transfer"
+          ? "newest_transferable_synced_package"
+          : "newest_usable_synced_package",
+      createdViaTest: Boolean(fallback.createdRef),
+      createdAt: fallback.createdRef?.createdAt.toISOString() ?? null,
+    });
+  }
+
+  throw new MetrcEvaluationPackageNotFoundError();
+}
+
+export function buildEvaluationPackageSelectionDiagnostics(
+  pkg: ResolvedMetrcEvaluationPackage,
+): Record<string, unknown> {
   return {
-    packageLabel: explicitLabel || METRC_EVALUATION_DEFAULT_PACKAGE_LABEL,
-    packageId: explicitId || METRC_EVALUATION_DEFAULT_PACKAGE_ID,
-    licenseNumber: explicitLicense || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
-    itemName: "",
-    quantity: 0,
-    unitOfMeasure: METRC_EVALUATION_DEFAULT_PACKAGE_UNIT,
-    isFinished: false,
-    raw: {},
-    source: "fallback",
+    selectedPackageLabel: pkg.packageLabel,
+    selectedReason: pkg.selectedReason,
+    selectedPackageQuantity: pkg.quantity,
+    selectedPackageUnit: pkg.unitOfMeasure,
+    selectedPackageLicense: pkg.licenseNumber,
+    createdViaTest: pkg.createdViaTest,
+    selectedPackageCreatedAt: pkg.createdAt,
+    packageSource: pkg.source,
   };
 }

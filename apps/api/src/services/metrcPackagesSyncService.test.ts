@@ -7,8 +7,10 @@ const {
   upsertMock,
   upsertPackagesMock,
   listPackagesMock,
+  findPackageByLabelMock,
   readPersistedInventoryMock,
   cultivationFindManyMock,
+  resolveLocationsRequestMock,
 } = vi.hoisted(() => ({
   loadConfigMock: vi.fn(),
   getMock: vi.fn(),
@@ -16,8 +18,10 @@ const {
   upsertMock: vi.fn(),
   upsertPackagesMock: vi.fn(),
   listPackagesMock: vi.fn(),
+  findPackageByLabelMock: vi.fn(),
   readPersistedInventoryMock: vi.fn(),
   cultivationFindManyMock: vi.fn(),
+  resolveLocationsRequestMock: vi.fn(),
 }));
 
 vi.mock("../lib/metrcConfigLoader.js", () => ({
@@ -33,7 +37,16 @@ vi.mock("./configService.js", () => ({
 vi.mock("../repositories/metrcPackageRepository.js", () => ({
   upsertMetrcPackagesForCompany: upsertPackagesMock,
   listMetrcPackagesForCompany: listPackagesMock,
+  findMetrcPackageByLabel: findPackageByLabelMock,
 }));
+
+vi.mock("../lib/metrcLocationsActiveQuery.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/metrcLocationsActiveQuery.js")>();
+  return {
+    ...actual,
+    resolveMetrcLocationsActiveRequest: resolveLocationsRequestMock,
+  };
+});
 
 vi.mock("./leaflinkService.js", () => ({
   LeafLinkInventoryService: class {
@@ -86,8 +99,10 @@ describe("MetrcPackagesSyncService", () => {
     upsertMock.mockReset();
     upsertPackagesMock.mockReset();
     listPackagesMock.mockReset();
+    findPackageByLabelMock.mockReset();
     readPersistedInventoryMock.mockReset();
     cultivationFindManyMock.mockReset();
+    resolveLocationsRequestMock.mockReset();
     loadConfigMock.mockResolvedValue(loaded);
     fromLoadedConfigMock.mockImplementation(() => ({
       baseUrl: "https://sandbox-api-co.metrc.com",
@@ -98,6 +113,18 @@ describe("MetrcPackagesSyncService", () => {
     readPersistedInventoryMock.mockResolvedValue({ items: [], lastSyncedAt: "" });
     cultivationFindManyMock.mockResolvedValue([]);
     listPackagesMock.mockResolvedValue([]);
+    findPackageByLabelMock.mockResolvedValue(null);
+    resolveLocationsRequestMock.mockResolvedValue({
+      pathnameAndQuery:
+        "/packages/v2/active?licenseNumber=SF-SBX-CO-1-13402&lastModifiedStart=2026-01-01&lastModifiedEnd=2026-05-26&pageNumber=1&pageSize=20",
+      params: {
+        licenseNumber: "SF-SBX-CO-1-13402",
+        lastModifiedStart: "2026-01-01",
+        lastModifiedEnd: "2026-05-26",
+        pageNumber: 1,
+        pageSize: 20,
+      },
+    });
   });
 
   afterEach(() => {
@@ -123,6 +150,7 @@ describe("MetrcPackagesSyncService", () => {
     if (res.ok) {
       expect(res.count).toBe(0);
       expect(res.packages).toEqual([]);
+      expect(res.syncDiagnostics.filteredPackageCount).toBe(0);
     }
     expect(upsertPackagesMock).toHaveBeenCalledWith("c1", []);
   });
@@ -173,5 +201,8 @@ describe("MetrcPackagesSyncService", () => {
     expect(upsertPackagesMock).toHaveBeenCalledTimes(1);
     const rows = upsertPackagesMock.mock.calls[0]![1] as Array<{ packageLabel: string }>;
     expect(rows[0]?.packageLabel).toBe("PKG-1");
+    if (res.ok) {
+      expect(res.syncDiagnostics.returnedLabels).toContain("PKG-1");
+    }
   });
 });

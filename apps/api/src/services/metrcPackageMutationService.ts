@@ -13,10 +13,13 @@ import {
 } from "../lib/metrcPackageMutationBodies.js";
 import { refreshEvaluationPackageFromMetrc } from "../lib/metrcPackageLiveRefresh.js";
 import {
+  buildEvaluationPackageSelectionDiagnostics,
   isPackageQuantityEmpty,
+  MetrcEvaluationPackageNotFoundError,
   resolveEvaluationAdjustQuantity,
   resolveMetrcEvaluationPackage,
   resolvePackageUnitOfMeasure,
+  type MetrcEvaluationPackageResolveKind,
   type ResolvedMetrcEvaluationPackage,
 } from "../lib/metrcPackageResolve.js";
 import {
@@ -200,7 +203,7 @@ export class MetrcPackageMutationService {
     packageLabel?: string | null;
     packageId?: string | null;
     licenseNumber?: string | null;
-    fallback: ResolvedMetrcEvaluationPackage;
+    kind: MetrcEvaluationPackageResolveKind;
   }): Promise<ResolvedMetrcEvaluationPackage> {
     await this.packagesSyncService.syncMetrcPackages({
       companyId: input.companyId,
@@ -208,9 +211,10 @@ export class MetrcPackageMutationService {
     });
     return resolveMetrcEvaluationPackage({
       companyId: input.companyId,
-      packageLabel: input.packageLabel ?? input.fallback.packageLabel,
-      packageId: input.packageId ?? input.fallback.packageId,
-      licenseNumber: input.licenseNumber ?? input.fallback.licenseNumber,
+      packageLabel: input.packageLabel,
+      packageId: input.packageId,
+      licenseNumber: input.licenseNumber,
+      kind: input.kind,
     });
   }
 
@@ -223,6 +227,7 @@ export class MetrcPackageMutationService {
     packageLabel?: string | null;
     packageId?: string | null;
     licenseOverride?: string | null;
+    kind: MetrcEvaluationPackageResolveKind;
   }): Promise<ResolvedMetrcEvaluationPackage> {
     const synced = await this.syncAndResolveEvaluationPackage({
       companyId: input.companyId,
@@ -230,7 +235,7 @@ export class MetrcPackageMutationService {
       packageLabel: input.packageLabel,
       packageId: input.packageId,
       licenseNumber: input.licenseOverride,
-      fallback: input.pkg,
+      kind: input.kind,
     });
     return refreshEvaluationPackageFromMetrc({
       client: input.client,
@@ -269,12 +274,23 @@ export class MetrcPackageMutationService {
       };
     }
 
-    let pkg = await resolveMetrcEvaluationPackage({
-      companyId: input.companyId,
-      packageLabel: input.packageLabel,
-      packageId: input.packageId,
-      licenseNumber: input.licenseNumber ?? loaded.licenseNumber,
-    });
+    let pkg: ResolvedMetrcEvaluationPackage;
+    try {
+      pkg = await resolveMetrcEvaluationPackage({
+        companyId: input.companyId,
+        packageLabel: input.packageLabel,
+        packageId: input.packageId,
+        licenseNumber: input.licenseNumber ?? loaded.licenseNumber,
+        kind: input.kind,
+      });
+    } catch (err) {
+      if (err instanceof MetrcEvaluationPackageNotFoundError) {
+        return { ok: false, status: 400, message: err.message };
+      }
+      throw err;
+    }
+
+    const packageSelectionDiagnostics = buildEvaluationPackageSelectionDiagnostics(pkg);
 
     let itemName = pkg.itemName;
     if (input.kind === "change_item") {
@@ -316,6 +332,7 @@ export class MetrcPackageMutationService {
         packageLabel: input.packageLabel,
         packageId: input.packageId,
         licenseOverride: input.licenseNumber ?? pkg.licenseNumber ?? loaded.licenseNumber,
+        kind: input.kind,
       });
       packageResolvedBeforeMutation = pkg;
       logInfo("[METRC] package_mutation_reresolved_after_sync", {
@@ -384,6 +401,7 @@ export class MetrcPackageMutationService {
         : null;
 
     const evaluationMutationMeta = {
+      ...packageSelectionDiagnostics,
       ...(adjustmentReasonMeta ? { adjustmentReasonLookup: adjustmentReasonMeta } : {}),
       ...(packageResolvedBeforeMutation
         ? {
@@ -478,6 +496,7 @@ export class MetrcPackageMutationService {
           packageLabel: input.packageLabel,
           packageId: input.packageId,
           licenseOverride: input.licenseNumber ?? pkg.licenseNumber,
+          kind: input.kind,
         });
         if (isPackageQuantityEmpty(pkg.quantity)) break;
 
@@ -506,6 +525,7 @@ export class MetrcPackageMutationService {
         packageLabel: input.packageLabel,
         packageId: input.packageId,
         licenseOverride: input.licenseNumber ?? pkg.licenseNumber,
+        kind: input.kind,
       });
 
       if (!isPackageQuantityEmpty(pkg.quantity)) {

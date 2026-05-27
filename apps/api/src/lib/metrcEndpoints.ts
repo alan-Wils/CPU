@@ -8,6 +8,10 @@ import {
   type MetrcHarvestsActiveQueryParams,
 } from "./metrcHarvestsActiveQuery.js";
 import {
+  buildMetrcPackagesActivePathCandidates,
+  type MetrcPackagesActiveQueryParams,
+} from "./metrcPackagesActiveQuery.js";
+import {
   buildMetrcPlantsActivePathCandidates,
   type MetrcPlantsActiveQueryParams,
 } from "./metrcPlantsActiveQuery.js";
@@ -118,6 +122,9 @@ export function buildMetrcEndpointCandidates(
       return [`/items/v2/active${q}`, `/items/v1/active${q}`];
     }
     case "packages": {
+      if (typeof licenseNumberOrLocationsParams !== "string") {
+        return buildMetrcPackagesActivePathCandidates(licenseNumberOrLocationsParams);
+      }
       const q = licenseQuery(String(licenseNumberOrLocationsParams));
       return [`/packages/v2/active${q}`, `/packages/v1/active${q}`];
     }

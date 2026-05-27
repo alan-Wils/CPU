@@ -7,6 +7,8 @@ import {
   isPackageTransferable,
 } from "./metrcPackageStatus.js";
 import {
+  MetrcEvaluationPackageNotFoundError,
+  resolveMetrcEvaluationPackage,
   resolvePackageUnitOfMeasure,
   resolveSyncedPackageQuantity,
 } from "./metrcPackageResolve.js";
@@ -137,6 +139,32 @@ export async function resolveTransferableMetrcPackage(input: {
     ).map((label) => String(label || "").trim()).filter(Boolean),
   );
 
+  try {
+    const evaluationPkg = await resolveMetrcEvaluationPackage({
+      companyId: input.companyId,
+      licenseNumber,
+      kind: "transfer",
+    });
+    if (!excludedLabels.has(evaluationPkg.packageLabel)) {
+      return {
+        packageLabel: evaluationPkg.packageLabel,
+        packageId: evaluationPkg.packageId,
+        licenseNumber: evaluationPkg.licenseNumber,
+        quantity: evaluationPkg.quantity,
+        unitOfMeasure: evaluationPkg.unitOfMeasure,
+        lastSyncedAt: evaluationPkg.createdAt ?? new Date().toISOString(),
+        selectionReason: evaluationPkg.selectedReason,
+        excludedPackageLabels: [...excludedLabels].sort(),
+        skippedPackages: [],
+        raw: evaluationPkg.raw,
+      };
+    }
+  } catch (err) {
+    if (!(err instanceof MetrcEvaluationPackageNotFoundError)) {
+      throw err;
+    }
+  }
+
   const rows = await listMetrcPackagesForCompany(input.companyId);
   const sorted = [...rows].sort(
     (a, b) => b.lastSyncedAt.getTime() - a.lastSyncedAt.getTime(),
@@ -180,6 +208,9 @@ export async function refreshTransferablePackageSelection(input: {
       isFinished: isPackageFinished({ raw: input.selection.raw }),
       raw: input.selection.raw,
       source: "synced_label",
+      selectedReason: input.selection.selectionReason,
+      createdViaTest: false,
+      createdAt: input.selection.lastSyncedAt,
     },
   });
 
