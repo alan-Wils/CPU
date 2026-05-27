@@ -254,108 +254,117 @@ function readEvaluationTrimmedString(value: unknown): string {
   return String(value).trim();
 }
 
+function extractLabelFromFinishChecklistRoot(root: unknown): EvaluationFinishedPackageRef | null {
+  if (!root || typeof root !== "object") return null;
+  const record = root as Record<string, unknown>;
+
+  const licenseFromRecord = (): string => {
+    const direct = readEvaluationTrimmedString(record.licenseNumber);
+    if (direct) return direct;
+    const spreadsheetFields = record.spreadsheetFields;
+    if (spreadsheetFields && typeof spreadsheetFields === "object") {
+      const fromSheet = readEvaluationTrimmedString(
+        (spreadsheetFields as { licenseNumber?: unknown }).licenseNumber,
+      );
+      if (fromSheet) return fromSheet;
+    }
+    const pkg = record.package;
+    if (pkg && typeof pkg === "object" && !Array.isArray(pkg)) {
+      const fromPkg = readEvaluationTrimmedString((pkg as { licenseNumber?: unknown }).licenseNumber);
+      if (fromPkg) return fromPkg;
+    }
+    return METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE;
+  };
+
+  const labelCandidates = [
+    readEvaluationTrimmedString(record.packageLabel),
+    readEvaluationTrimmedString(record.selectedPackageLabel),
+    record.spreadsheetFields && typeof record.spreadsheetFields === "object"
+      ? readEvaluationTrimmedString((record.spreadsheetFields as { tagNumber?: unknown }).tagNumber)
+      : "",
+    Array.isArray(record.body) && record.body[0] && typeof record.body[0] === "object"
+      ? readEvaluationTrimmedString(
+          (record.body[0] as { Label?: unknown; label?: unknown }).Label ??
+            (record.body[0] as { label?: unknown }).label,
+        )
+      : "",
+    record.package && typeof record.package === "object" && !Array.isArray(record.package)
+      ? readEvaluationTrimmedString((record.package as { packageLabel?: unknown }).packageLabel)
+      : "",
+    record.evaluationPackage && typeof record.evaluationPackage === "object"
+      ? readEvaluationTrimmedString((record.evaluationPackage as { packageLabel?: unknown }).packageLabel)
+      : "",
+  ];
+
+  const packageLabel = labelCandidates.find((label) => label.length > 0) ?? "";
+  if (!packageLabel) return null;
+
+  return {
+    packageLabel,
+    packageId: readEvaluationTrimmedString(record.packageId),
+    licenseNumber: licenseFromRecord(),
+  };
+}
+
+function extractFinishChecklistPackageRefFromPayloads(input: {
+  responsePayload?: unknown;
+  requestPayload?: Record<string, unknown> | null;
+}): EvaluationFinishedPackageRef | null {
+  const roots: unknown[] = [];
+
+  if (input.responsePayload && typeof input.responsePayload === "object") {
+    const response = input.responsePayload as Record<string, unknown>;
+    roots.push(response);
+    if (response.responsePayload) roots.push(response.responsePayload);
+    if (response.requestPayload) roots.push(response.requestPayload);
+  }
+
+  if (input.requestPayload && typeof input.requestPayload === "object") {
+    const request = input.requestPayload;
+    roots.push(request);
+    if (request.body) roots.push({ ...request, body: request.body });
+    if (request.package) roots.push(request);
+  }
+
+  for (const root of roots) {
+    const ref = extractLabelFromFinishChecklistRoot(root);
+    if (ref) return ref;
+  }
+
+  return null;
+}
+
 /** Package identity from a successful Finish Package evaluation result. */
 export function extractEvaluationPackageFromFinishPayload(
   responsePayload: unknown,
   requestPayload?: Record<string, unknown> | null,
 ): EvaluationFinishedPackageRef | null {
-  const licenseFrom = (record: Record<string, unknown>): string =>
-    readEvaluationTrimmedString(record.licenseNumber) || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE;
-
-  const fromLabelFields = (
-    record: Record<string, unknown>,
-    packageLabel: string,
-  ): EvaluationFinishedPackageRef | null => {
-    if (!packageLabel) return null;
-    return {
-      packageLabel,
-      packageId: readEvaluationTrimmedString(record.packageId),
-      licenseNumber: licenseFrom(record),
-    };
-  };
-
-  const tryRoot = (root: unknown): EvaluationFinishedPackageRef | null => {
-    if (!root || typeof root !== "object") return null;
-    const record = root as Record<string, unknown>;
-
-    const topLabel = readEvaluationTrimmedString(record.packageLabel);
-    const fromTop = fromLabelFields(record, topLabel);
-    if (fromTop) return fromTop;
-
-    const spreadsheetFields = record.spreadsheetFields;
-    if (spreadsheetFields && typeof spreadsheetFields === "object") {
-      const tagNumber = readEvaluationTrimmedString(
-        (spreadsheetFields as { tagNumber?: unknown }).tagNumber,
-      );
-      const fromTag = fromLabelFields(
-        {
-          ...record,
-          packageId:
-            (spreadsheetFields as { packageId?: unknown }).packageId ?? record.packageId,
-          licenseNumber:
-            (spreadsheetFields as { licenseNumber?: unknown }).licenseNumber ??
-            record.licenseNumber,
-        },
-        tagNumber,
-      );
-      if (fromTag) return fromTag;
-    }
-
-    const body = record.body;
-    if (Array.isArray(body) && body[0] && typeof body[0] === "object") {
-      const label = readEvaluationTrimmedString(
-        (body[0] as { Label?: unknown; label?: unknown }).Label ??
-          (body[0] as { label?: unknown }).label,
-      );
-      const fromBody = fromLabelFields(record, label);
-      if (fromBody) return fromBody;
-    }
-
-    const evaluationPackage = record.evaluationPackage;
-    if (evaluationPackage && typeof evaluationPackage === "object") {
-      const pkg = evaluationPackage as Record<string, unknown>;
-      const fromEval = fromLabelFields(
-        {
-          packageId: pkg.packageId,
-          licenseNumber: pkg.licenseNumber ?? record.licenseNumber,
-        },
-        readEvaluationTrimmedString(pkg.packageLabel),
-      );
-      if (fromEval) return fromEval;
-    }
-
-    return null;
-  };
-
-  const fromResponse = tryRoot(responsePayload);
-  if (fromResponse) return fromResponse;
-
-  const nestedRequest =
-    responsePayload && typeof responsePayload === "object"
-      ? (responsePayload as Record<string, unknown>).requestPayload
-      : null;
-  if (nestedRequest && typeof nestedRequest === "object") {
-    const fromNested = tryRoot(nestedRequest);
-    if (fromNested) return fromNested;
-  }
-
-  if (!requestPayload) return null;
-  const fromRequest = tryRoot(requestPayload);
-  if (fromRequest) return fromRequest;
-
-  const body = (requestPayload as { body?: unknown }).body ?? requestPayload;
-  return tryRoot(body);
+  return extractFinishChecklistPackageRefFromPayloads({ responsePayload, requestPayload });
 }
 
+/** Latest passed package_finish checklist item (task record, then request history). */
 export function resolveUnfinishPackageFromEvaluationState(
   state: MetrcEvaluationState,
 ): EvaluationFinishedPackageRef | null {
   const finishTask = state.tasks.package_finish;
-  if (finishTask.status !== "passed") return null;
-  return extractEvaluationPackageFromFinishPayload(
-    finishTask.responsePayload,
-    finishTask.requestPayload,
-  );
+  if (finishTask.status === "passed") {
+    const fromTask = extractEvaluationPackageFromFinishPayload(
+      finishTask.responsePayload,
+      finishTask.requestPayload,
+    );
+    if (fromTask) return fromTask;
+  }
+
+  for (const entry of state.requestHistory) {
+    if (entry.taskId !== "package_finish" || entry.status !== "success") continue;
+    const fromHistory = extractEvaluationPackageFromFinishPayload(
+      entry.responsePayload,
+      entry.requestPayload,
+    );
+    if (fromHistory) return fromHistory;
+  }
+
+  return null;
 }
 
 export const METRC_EVALUATION_DEFAULT_CREATE_STRAIN_REQUEST = {
@@ -506,13 +515,17 @@ export function buildEvaluationCreateRequestBody(
       actualDate: new Date().toISOString().slice(0, 10),
       reasonNote: "NexBatch evaluation",
     };
+    const finishTask = state?.tasks.package_finish;
     const fromFinish = state ? resolveUnfinishPackageFromEvaluationState(state) : null;
     if (fromFinish) {
       return {
         ...defaults,
         packageLabel: fromFinish.packageLabel,
+        selectedPackageLabel: fromFinish.packageLabel,
         packageId: fromFinish.packageId,
         licenseNumber: fromFinish.licenseNumber,
+        finishChecklistResponse: finishTask?.responsePayload ?? null,
+        finishChecklistRequest: finishTask?.requestPayload ?? null,
       };
     }
     return defaults;

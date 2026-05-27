@@ -88,8 +88,11 @@ const metrcCreateTestPackageBody = z.object({
 
 const metrcPackageMutationTestBody = z.object({
   packageLabel: z.string().optional().nullable(),
+  selectedPackageLabel: z.string().optional().nullable(),
   packageId: z.string().optional().nullable(),
   licenseNumber: z.string().optional().nullable(),
+  finishChecklistResponse: z.unknown().optional().nullable(),
+  finishChecklistRequest: z.unknown().optional().nullable(),
   itemName: z.string().optional().nullable(),
   quantity: z.coerce.number().optional().nullable(),
   unitOfMeasure: z.string().optional().nullable(),

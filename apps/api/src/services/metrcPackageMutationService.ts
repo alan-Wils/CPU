@@ -50,8 +50,11 @@ export type MetrcPackageMutationInput = {
   actorUserId: string;
   kind: MetrcPackageMutationKind;
   packageLabel?: string | null;
+  selectedPackageLabel?: string | null;
   packageId?: string | null;
   licenseNumber?: string | null;
+  finishChecklistResponse?: unknown;
+  finishChecklistRequest?: unknown;
   itemName?: string | null;
   quantity?: number | null;
   unitOfMeasure?: string | null;
@@ -290,6 +293,8 @@ export class MetrcPackageMutationService {
       metrcHttpStatus: input.metrcHttpStatus ?? null,
     });
 
+    const finishSelectionDiagnostics = buildEvaluationPackageSelectionDiagnostics(input.pkg);
+
     return {
       ok: true,
       status: 200,
@@ -306,10 +311,16 @@ export class MetrcPackageMutationService {
       responsePayload,
       durationMs,
       packagesSynced,
+      ...finishSelectionDiagnostics,
       packageLabel: input.pkg.packageLabel,
       packageId: input.pkg.packageId,
       licenseNumber: input.license,
       spreadsheetFields,
+      evaluationPackage: {
+        packageLabel: input.pkg.packageLabel,
+        packageId: input.pkg.packageId,
+        licenseNumber: input.license,
+      },
     };
   }
 
@@ -397,8 +408,11 @@ export class MetrcPackageMutationService {
           ? await resolveUnfinishPackageForEvaluation({
               companyId: input.companyId,
               packageLabel: input.packageLabel,
+              selectedPackageLabel: input.selectedPackageLabel,
               packageId: input.packageId,
               licenseNumber: input.licenseNumber ?? loaded.licenseNumber,
+              finishChecklistResponse: input.finishChecklistResponse,
+              finishChecklistRequest: input.finishChecklistRequest,
             })
           : await resolveMetrcEvaluationPackage({
               companyId: input.companyId,
@@ -858,10 +872,12 @@ export class MetrcPackageMutationService {
       responsePayload,
       durationMs,
       packagesSynced,
+      ...packageSelectionDiagnostics,
       packageLabel: pkg.packageLabel,
       packageId: pkg.packageId,
       licenseNumber: license,
       spreadsheetFields,
+      ...(evaluationPackage ? { evaluationPackage } : {}),
     };
   }
 

@@ -1,4 +1,7 @@
-import { getLatestEvaluationFinishPackageRef } from "./metrcEvaluationFinishPackageRef.js";
+import {
+  extractFinishChecklistPackageRefFromPayloads,
+  type FinishChecklistPackageRef,
+} from "./metrcFinishChecklistPackageRef.js";
 import {
   METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
   METRC_EVALUATION_DEFAULT_PACKAGE_UNIT,
@@ -11,59 +14,69 @@ import {
 const UNFINISH_NO_PACKAGE_MESSAGE =
   "No finished evaluation package found. Run Finish Package first.";
 
-function buildUnfinishPackageFromFinishResult(input: {
-  packageLabel: string;
-  packageId: string | null;
-  licenseNumber: string;
-  selectedReason: string;
-}): ResolvedMetrcEvaluationPackage {
+export const UNFINISH_FROM_FINISH_REASON = "latest_finish_result";
+
+function buildUnfinishPackageFromFinishResult(
+  ref: FinishChecklistPackageRef,
+): ResolvedMetrcEvaluationPackage {
   return {
-    packageLabel: input.packageLabel,
-    packageId: input.packageId,
-    licenseNumber: input.licenseNumber || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
+    packageLabel: ref.packageLabel,
+    packageId: ref.packageId,
+    licenseNumber: ref.licenseNumber || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
     itemName: "",
     quantity: 0,
     unitOfMeasure: METRC_EVALUATION_DEFAULT_PACKAGE_UNIT,
     isFinished: true,
-    raw: { Label: input.packageLabel, IsFinished: true, Quantity: 0 },
+    raw: { Label: ref.packageLabel, IsFinished: true, Quantity: 0 },
     source: "from_package_finish_result",
-    selectedReason: input.selectedReason,
+    selectedReason: UNFINISH_FROM_FINISH_REASON,
     createdViaTest: false,
     createdAt: null,
   };
 }
 
+function readTrimmed(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  return String(value).trim();
+}
+
 /**
  * Resolves the package for Unfinish Package evaluation only.
- * Uses the finish checklist / request label directly — never the generic evaluation resolver.
+ * Reuses the latest successful package_finish checklist result — never the generic resolver.
  */
 export async function resolveUnfinishPackageForEvaluation(input: {
   companyId: string;
   packageLabel?: string | null;
+  selectedPackageLabel?: string | null;
   packageId?: string | null;
   licenseNumber?: string | null;
+  finishChecklistResponse?: unknown;
+  finishChecklistRequest?: unknown;
 }): Promise<ResolvedMetrcEvaluationPackage> {
-  const requestLabel = String(input.packageLabel ?? "").trim();
-  const requestId = String(input.packageId ?? "").trim();
-  const licenseNumber =
-    String(input.licenseNumber ?? "").trim() || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE;
+  void input.companyId;
+
+  const requestLabel =
+    readTrimmed(input.packageLabel) || readTrimmed(input.selectedPackageLabel);
+  const requestId = readTrimmed(input.packageId);
+  const requestLicense = readTrimmed(input.licenseNumber);
 
   if (requestLabel) {
     return buildUnfinishPackageFromFinishResult({
       packageLabel: requestLabel,
       packageId: requestId || null,
-      licenseNumber,
-      selectedReason: "package_label_from_finish_checklist_result",
+      licenseNumber: requestLicense || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
     });
   }
 
-  const latestFinish = await getLatestEvaluationFinishPackageRef(input.companyId);
-  if (latestFinish?.packageLabel) {
+  const fromChecklist = extractFinishChecklistPackageRefFromPayloads({
+    responsePayload: input.finishChecklistResponse,
+    requestPayload: input.finishChecklistRequest,
+  });
+  if (fromChecklist) {
     return buildUnfinishPackageFromFinishResult({
-      packageLabel: latestFinish.packageLabel,
-      packageId: latestFinish.packageId ?? (requestId || null),
-      licenseNumber: latestFinish.licenseNumber || licenseNumber,
-      selectedReason: "from_latest_package_finish_log",
+      packageLabel: fromChecklist.packageLabel,
+      packageId: fromChecklist.packageId ?? (requestId || null),
+      licenseNumber: fromChecklist.licenseNumber || requestLicense || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
     });
   }
 
