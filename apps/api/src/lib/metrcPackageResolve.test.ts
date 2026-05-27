@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isPackageQuantityEmpty,
   resolveEvaluationAdjustQuantity,
   resolvePackageQuantity,
   resolvePackageUnitOfMeasure,
@@ -32,6 +33,11 @@ describe("resolvePackageUnitOfMeasure", () => {
 describe("resolvePackageQuantity", () => {
   it("reads quantity from raw METRC payload", () => {
     expect(resolvePackageQuantity({ persistedQuantity: 0, raw: { Quantity: 0.01 } })).toBe(0.01);
+  });
+
+  it("reads explicit zero quantity from raw METRC payload", () => {
+    expect(resolvePackageQuantity({ persistedQuantity: 0.01, raw: { Quantity: 0 } })).toBe(0);
+    expect(isPackageQuantityEmpty(0)).toBe(true);
   });
 });
 

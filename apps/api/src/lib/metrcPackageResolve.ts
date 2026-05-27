@@ -5,7 +5,13 @@ import {
   METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
   METRC_EVALUATION_DEFAULT_PACKAGE_UNIT,
 } from "./metrcPackageEvaluationDefaults.js";
+import {
+  isPackageFinished,
+  PACKAGE_QUANTITY_EMPTY_EPSILON,
+} from "./metrcPackageStatus.js";
 import { listMetrcPackagesForCompany } from "../repositories/metrcPackageRepository.js";
+
+export { isPackageQuantityEmpty, PACKAGE_QUANTITY_EMPTY_EPSILON } from "./metrcPackageStatus.js";
 
 function readStringField(row: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
@@ -47,6 +53,7 @@ export type ResolvedMetrcEvaluationPackage = {
   itemName: string;
   quantity: number;
   unitOfMeasure: string;
+  isFinished: boolean;
   raw: Record<string, unknown>;
   source: "synced_recent" | "synced_label" | "fallback";
 };
@@ -61,18 +68,25 @@ function readNumberField(row: Record<string, unknown>, keys: string[]): number {
   return 0;
 }
 
+const PACKAGE_QUANTITY_FIELD_KEYS = [
+  "Quantity",
+  "quantity",
+  "RemainingQuantity",
+  "remainingQuantity",
+] as const;
+
 export function resolvePackageQuantity(input: {
   persistedQuantity?: number | null;
   raw?: Record<string, unknown> | null;
 }): number {
   if (input.raw && typeof input.raw === "object") {
-    const fromRaw = readNumberField(input.raw, [
-      "Quantity",
-      "quantity",
-      "RemainingQuantity",
-      "remainingQuantity",
-    ]);
-    if (fromRaw !== 0) return fromRaw;
+    for (const key of PACKAGE_QUANTITY_FIELD_KEYS) {
+      if (!(key in input.raw)) continue;
+      const raw = input.raw[key];
+      if (raw === undefined || raw === null || raw === "") continue;
+      const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+      if (Number.isFinite(n)) return n;
+    }
   }
   const persisted = Number(input.persistedQuantity);
   return Number.isFinite(persisted) ? persisted : 0;
@@ -87,7 +101,7 @@ export function resolveEvaluationAdjustQuantity(pkg: {
     persistedQuantity: pkg.quantity,
     raw: pkg.raw,
   });
-  if (current > 0) return -current;
+  if (current > PACKAGE_QUANTITY_EMPTY_EPSILON) return -current;
   return METRC_EVALUATION_ADJUST_QUANTITY;
 }
 
@@ -125,6 +139,7 @@ function rowToResolved(
       persistedUnitOfMeasure: row.unitOfMeasure,
       raw,
     }),
+    isFinished: isPackageFinished({ raw }),
     raw,
     source,
   };
@@ -179,6 +194,7 @@ export async function resolveMetrcEvaluationPackage(input: {
     itemName: "",
     quantity: 0,
     unitOfMeasure: METRC_EVALUATION_DEFAULT_PACKAGE_UNIT,
+    isFinished: false,
     raw: {},
     source: "fallback",
   };

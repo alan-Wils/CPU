@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseMetrcPackageAdjustmentReasonsPayload,
+  pickEvaluationPackageAdjustmentReason,
   pickFirstActivePackageAdjustmentReason,
 } from "./metrcPackageAdjustmentReasonsParse.js";
 
@@ -28,5 +29,12 @@ describe("metrcPackageAdjustmentReasonsParse", () => {
     });
     const selected = pickFirstActivePackageAdjustmentReason(reasons);
     expect(selected?.name).toBe("Scale Variance");
+  });
+
+  it("prefers Entry Error for evaluation when listed", () => {
+    const reasons = parseMetrcPackageAdjustmentReasonsPayload({
+      Data: [{ Name: "Drying" }, { Name: "Entry Error" }],
+    });
+    expect(pickEvaluationPackageAdjustmentReason(reasons)?.name).toBe("Entry Error");
   });
 });

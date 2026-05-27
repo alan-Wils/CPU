@@ -2,7 +2,7 @@ import { logInfo, logWarn } from "../lib/logger.js";
 import { MetrcClient, isMetrcClientFailure } from "../lib/metrcClient.js";
 import { loadCompanyMetrcConfig } from "../lib/metrcConfigLoader.js";
 import {
-  pickFirstActivePackageAdjustmentReason,
+  pickEvaluationPackageAdjustmentReason,
   parseMetrcPackageAdjustmentReasonsPayload,
   type ParsedMetrcPackageAdjustmentReason,
 } from "../lib/metrcPackageAdjustmentReasonsParse.js";
@@ -100,7 +100,7 @@ export async function fetchMetrcPackageAdjustmentReasons(input: {
     }
 
     const reasons = parseMetrcPackageAdjustmentReasonsPayload(result.data);
-    const selectedReason = pickFirstActivePackageAdjustmentReason(reasons);
+    const selectedReason = pickEvaluationPackageAdjustmentReason(reasons);
     if (!selectedReason) {
       attempts.push({
         endpoint: endpointKey,

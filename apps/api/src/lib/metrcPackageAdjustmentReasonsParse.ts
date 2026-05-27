@@ -65,3 +65,13 @@ export function pickFirstActivePackageAdjustmentReason(
 ): ParsedMetrcPackageAdjustmentReason | null {
   return reasons.find(isActivePackageAdjustmentReason) ?? null;
 }
+
+/** Prefer Entry Error when METRC lists it for package adjustments (sandbox evaluation). */
+export function pickEvaluationPackageAdjustmentReason(
+  reasons: ParsedMetrcPackageAdjustmentReason[],
+): ParsedMetrcPackageAdjustmentReason | null {
+  const active = reasons.filter(isActivePackageAdjustmentReason);
+  const entryError = active.find((reason) => reason.name === "Entry Error");
+  if (entryError) return entryError;
+  return active[0] ?? null;
+}

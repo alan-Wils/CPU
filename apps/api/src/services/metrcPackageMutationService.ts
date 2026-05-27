@@ -11,7 +11,9 @@ import {
   buildMetrcPackageFinishBody,
   buildMetrcPackageUnfinishBody,
 } from "../lib/metrcPackageMutationBodies.js";
+import { refreshEvaluationPackageFromMetrc } from "../lib/metrcPackageLiveRefresh.js";
 import {
+  isPackageQuantityEmpty,
   resolveEvaluationAdjustQuantity,
   resolveMetrcEvaluationPackage,
   resolvePackageUnitOfMeasure,
@@ -192,6 +194,51 @@ function buildRequestBody(
 export class MetrcPackageMutationService {
   packagesSyncService = new MetrcPackagesSyncService();
 
+  private async syncAndResolveEvaluationPackage(input: {
+    companyId: string;
+    actorUserId: string;
+    packageLabel?: string | null;
+    packageId?: string | null;
+    licenseNumber?: string | null;
+    fallback: ResolvedMetrcEvaluationPackage;
+  }): Promise<ResolvedMetrcEvaluationPackage> {
+    await this.packagesSyncService.syncMetrcPackages({
+      companyId: input.companyId,
+      actorUserId: input.actorUserId,
+    });
+    return resolveMetrcEvaluationPackage({
+      companyId: input.companyId,
+      packageLabel: input.packageLabel ?? input.fallback.packageLabel,
+      packageId: input.packageId ?? input.fallback.packageId,
+      licenseNumber: input.licenseNumber ?? input.fallback.licenseNumber,
+    });
+  }
+
+  private async refreshEvaluationPackageState(input: {
+    companyId: string;
+    actorUserId: string;
+    client: MetrcClient;
+    licenseNumber: string;
+    pkg: ResolvedMetrcEvaluationPackage;
+    packageLabel?: string | null;
+    packageId?: string | null;
+    licenseOverride?: string | null;
+  }): Promise<ResolvedMetrcEvaluationPackage> {
+    const synced = await this.syncAndResolveEvaluationPackage({
+      companyId: input.companyId,
+      actorUserId: input.actorUserId,
+      packageLabel: input.packageLabel,
+      packageId: input.packageId,
+      licenseNumber: input.licenseOverride,
+      fallback: input.pkg,
+    });
+    return refreshEvaluationPackageFromMetrc({
+      client: input.client,
+      licenseNumber: input.licenseNumber,
+      pkg: synced,
+    });
+  }
+
   async runPackageMutation(
     input: MetrcPackageMutationInput,
   ): Promise<MetrcPackageMutationResponse> {
@@ -259,16 +306,16 @@ export class MetrcPackageMutationService {
     }
 
     let packageResolvedBeforeMutation: ResolvedMetrcEvaluationPackage | null = null;
-    if (input.kind === "finish" || input.kind === "unfinish") {
-      await this.packagesSyncService.syncMetrcPackages({
+    if (input.kind === "adjust" || input.kind === "finish" || input.kind === "unfinish") {
+      pkg = await this.refreshEvaluationPackageState({
         companyId: input.companyId,
         actorUserId: input.actorUserId,
-      });
-      pkg = await resolveMetrcEvaluationPackage({
-        companyId: input.companyId,
-        packageLabel: input.packageLabel ?? pkg.packageLabel,
-        packageId: input.packageId ?? pkg.packageId,
-        licenseNumber: input.licenseNumber ?? pkg.licenseNumber ?? loaded.licenseNumber,
+        client,
+        licenseNumber: license,
+        pkg,
+        packageLabel: input.packageLabel,
+        packageId: input.packageId,
+        licenseOverride: input.licenseNumber ?? pkg.licenseNumber ?? loaded.licenseNumber,
       });
       packageResolvedBeforeMutation = pkg;
       logInfo("[METRC] package_mutation_reresolved_after_sync", {
@@ -276,6 +323,8 @@ export class MetrcPackageMutationService {
         kind: input.kind,
         packageLabel: pkg.packageLabel,
         quantity: pkg.quantity,
+        unitOfMeasure: pkg.unitOfMeasure,
+        isFinished: pkg.isFinished,
       });
     }
 
@@ -357,7 +406,7 @@ export class MetrcPackageMutationService {
         : {}),
     };
 
-    if (input.kind === "finish" && pkg.quantity > 0) {
+    if (input.kind === "finish" && !isPackageQuantityEmpty(pkg.quantity)) {
       return {
         ok: false,
         status: 400,
@@ -365,7 +414,21 @@ export class MetrcPackageMutationService {
         requestPayload: { package: pkg, ...evaluationMutationMeta },
         responsePayload: {
           ok: false,
-          message: `Package is not empty (quantity ${pkg.quantity}).`,
+          message: `Package is not empty (quantity ${pkg.quantity} ${pkg.unitOfMeasure || ""}).`,
+          ...evaluationMutationMeta,
+        },
+      };
+    }
+
+    if (input.kind === "unfinish" && !pkg.isFinished) {
+      return {
+        ok: false,
+        status: 400,
+        message: `Package ${pkg.packageLabel} is not finished. Run Finish Package first, then retry Unfinish Package.`,
+        requestPayload: { package: pkg, ...evaluationMutationMeta },
+        responsePayload: {
+          ok: false,
+          message: "Package is not in a finished state.",
           ...evaluationMutationMeta,
         },
       };
@@ -398,8 +461,81 @@ export class MetrcPackageMutationService {
     const pathname = `${endpointForKind(input.kind)}${licenseQuery(license)}`;
     const startedAt = Date.now();
 
-    const result = await client.put<unknown>(pathname, requestBody);
-    const endpointKey = pathname.split("?")[0] || pathname;
+    let result = await client.put<unknown>(pathname, requestBody);
+    let endpointKey = pathname.split("?")[0] || pathname;
+    let finalRequestBody = requestBody;
+    let adjustAttempts = 1;
+
+    if (input.kind === "adjust" && !isMetrcClientFailure(result)) {
+      const maxAdjustAttempts = 2;
+      while (adjustAttempts < maxAdjustAttempts) {
+        pkg = await this.refreshEvaluationPackageState({
+          companyId: input.companyId,
+          actorUserId: input.actorUserId,
+          client,
+          licenseNumber: license,
+          pkg,
+          packageLabel: input.packageLabel,
+          packageId: input.packageId,
+          licenseOverride: input.licenseNumber ?? pkg.licenseNumber,
+        });
+        if (isPackageQuantityEmpty(pkg.quantity)) break;
+
+        const retryBody = buildRequestBody(
+          input.kind,
+          pkg,
+          input,
+          itemName,
+          adjustmentReasonsResult?.ok === true
+            ? adjustmentReasonsResult.selectedReason.name
+            : null,
+        );
+        const retryResult = await client.put<unknown>(pathname, retryBody);
+        adjustAttempts += 1;
+        finalRequestBody = retryBody;
+        result = retryResult;
+        if (isMetrcClientFailure(retryResult)) break;
+      }
+
+      pkg = await this.refreshEvaluationPackageState({
+        companyId: input.companyId,
+        actorUserId: input.actorUserId,
+        client,
+        licenseNumber: license,
+        pkg,
+        packageLabel: input.packageLabel,
+        packageId: input.packageId,
+        licenseOverride: input.licenseNumber ?? pkg.licenseNumber,
+      });
+
+      if (!isPackageQuantityEmpty(pkg.quantity)) {
+        return {
+          ok: false,
+          status: 400,
+          message: `Adjust Package completed but quantity is still ${pkg.quantity} ${pkg.unitOfMeasure || ""}. METRC did not zero the package.`,
+          endpoint: endpointKey,
+          requestPayload: {
+            pathname,
+            body: finalRequestBody,
+            package: pkg,
+            ...evaluationMutationMeta,
+            packageAdjustResolution: {
+              quantityBefore: packageResolvedBeforeMutation?.quantity ?? null,
+              adjustDelta: (finalRequestBody as { Quantity?: number }[])[0]?.Quantity ?? null,
+              targetQuantity: 0,
+              adjustAttempts,
+              quantityAfter: pkg.quantity,
+            },
+          },
+          responsePayload: {
+            ok: false,
+            message: `Package still has quantity ${pkg.quantity} after adjust.`,
+            adjustAttempts,
+            quantityAfter: pkg.quantity,
+          },
+        };
+      }
+    }
 
     if (isMetrcClientFailure(result)) {
       const durationMs = Date.now() - startedAt;
@@ -409,7 +545,7 @@ export class MetrcPackageMutationService {
         licenseNumber: license,
         packageId: pkg.packageId,
         packageLabel: pkg.packageLabel,
-        requestBody,
+        requestBody: finalRequestBody,
         responsePayload: result,
       });
 
@@ -419,7 +555,7 @@ export class MetrcPackageMutationService {
         method: "PUT",
         endpoint: endpointKey,
         httpStatus: result.status,
-        requestPayload: { pathname, body: requestBody, ...mutationRequestExtras },
+        requestPayload: { pathname, body: finalRequestBody, ...mutationRequestExtras },
         responsePayload: attachSpreadsheetFieldsToResponse(
           { error: message, metrcMessage: result.metrcMessage, ...evaluationMutationMeta },
           spreadsheetFields,
@@ -444,7 +580,7 @@ export class MetrcPackageMutationService {
             ? buildMetrcCredentialHintFromLoaded(loaded)
             : undefined,
         endpoint: endpointKey,
-        requestPayload: { pathname, body: requestBody, ...mutationRequestExtras },
+        requestPayload: { pathname, body: finalRequestBody, ...mutationRequestExtras },
         responsePayload: attachSpreadsheetFieldsToResponse(
           { error: message, metrcMessage: result.metrcMessage, ...evaluationMutationMeta },
           spreadsheetFields,
@@ -472,7 +608,7 @@ export class MetrcPackageMutationService {
       licenseNumber: license,
       packageId: pkg.packageId,
       packageLabel: pkg.packageLabel,
-      requestBody,
+      requestBody: finalRequestBody,
       responsePayload: responseData,
     });
 
@@ -482,6 +618,10 @@ export class MetrcPackageMutationService {
         metrcResponse: responseData,
         packagesSynced,
         packageSource: pkg.source,
+        quantityAfter: pkg.quantity,
+        unitOfMeasureAfter: pkg.unitOfMeasure,
+        isFinishedAfter: pkg.isFinished,
+        ...(input.kind === "adjust" ? { adjustAttempts } : {}),
         ...evaluationMutationMeta,
       },
       spreadsheetFields,
@@ -493,7 +633,7 @@ export class MetrcPackageMutationService {
       method: "PUT",
       endpoint: endpointKey,
       httpStatus: result.status,
-      requestPayload: { pathname, body: requestBody, ...mutationRequestExtras },
+      requestPayload: { pathname, body: finalRequestBody, ...mutationRequestExtras },
       responsePayload,
       durationMs,
       actorUserId: input.actorUserId,
@@ -512,7 +652,7 @@ export class MetrcPackageMutationService {
       status: result.status,
       message: `${label} submitted to METRC sandbox and packages re-synced.`,
       endpoint: endpointKey,
-      requestPayload: { pathname, body: requestBody, ...mutationRequestExtras },
+      requestPayload: { pathname, body: finalRequestBody, ...mutationRequestExtras },
       responsePayload,
       durationMs,
       packagesSynced,
