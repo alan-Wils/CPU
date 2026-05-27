@@ -198,6 +198,10 @@ const PACKAGE_ITEM_REQUIRED_MSG = "Sync or create an item before creating a pack
 const DEFAULT_TEST_HARVEST_NAME = "NexBatch Test Harvest";
 const DEFAULT_PLANT_GROWTH_LOCATION_NAME = "SBX Default Location Type Location 1";
 const DEFAULT_SANDBOX_PACKAGE_ITEM_NAME = "SBX Bud allocated for extraction SBX Strain 1 Item";
+const DEFAULT_SANDBOX_PLANT_BATCH_PACKAGE_ITEM_NAME =
+  "SBX Immature Plants SBX Strain 2 Item";
+const DEFAULT_PLANT_BATCH_PACKAGE_NOTE =
+  "NexBatch sandbox evaluation - plant batch package.";
 const METRC_HARVEST_TYPE_OPTIONS = ["Product", "WholePlant"] as const;
 const DEFAULT_STRAIN_INDICA_PCT = "50";
 const DEFAULT_STRAIN_SATIVA_PCT = "50";
@@ -211,6 +215,18 @@ function resolveDefaultSandboxPackageItemId(items: MetrcItemRow[]): string | nul
   if (exact) return exact.metrcItemId;
   const partial = items.find((i) =>
     i.itemName.trim().toLowerCase().includes("sbx bud allocated"),
+  );
+  if (partial) return partial.metrcItemId;
+  return items[0]!.metrcItemId;
+}
+
+function resolveDefaultSandboxPlantBatchPackageItemId(items: MetrcItemRow[]): string | null {
+  if (!items.length) return null;
+  const preferred = DEFAULT_SANDBOX_PLANT_BATCH_PACKAGE_ITEM_NAME.trim().toLowerCase();
+  const exact = items.find((i) => i.itemName.trim().toLowerCase() === preferred);
+  if (exact) return exact.metrcItemId;
+  const partial = items.find((i) =>
+    i.itemName.trim().toLowerCase().includes("sbx immature plants"),
   );
   if (partial) return partial.metrcItemId;
   return items[0]!.metrcItemId;
@@ -945,6 +961,19 @@ export default function MetrcSandboxPage() {
   const [motherPackageItemId, setMotherPackageItemId] = useState("");
   const [lastMotherPlantPackage, setLastMotherPlantPackage] =
     useState<MotherPlantPackageResult | null>(null);
+  const [plantBatchPackagePlantBatchId, setPlantBatchPackagePlantBatchId] = useState("");
+  const [plantBatchPackageTag, setPlantBatchPackageTag] = useState("");
+  const [plantBatchPackageCount, setPlantBatchPackageCount] = useState("3");
+  const [plantBatchPackageDate, setPlantBatchPackageDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [plantBatchPackageLocationId, setPlantBatchPackageLocationId] = useState("");
+  const [plantBatchPackageItemId, setPlantBatchPackageItemId] = useState("");
+  const [plantBatchPackageNote, setPlantBatchPackageNote] = useState(
+    DEFAULT_PLANT_BATCH_PACKAGE_NOTE,
+  );
+  const [lastPlantBatchPackage, setLastPlantBatchPackage] =
+    useState<MotherPlantPackageResult | null>(null);
   const [lastHarvestsSync, setLastHarvestsSync] = useState<HarvestsSyncResult | null>(null);
   const [harvestsRows, setHarvestsRows] = useState<MetrcHarvestRow[] | null>(null);
   const [harvestsLoaded, setHarvestsLoaded] = useState(false);
@@ -1332,6 +1361,11 @@ export default function MetrcSandboxPage() {
     [itemsRows, motherPackageItemId],
   );
 
+  const selectedPlantBatchPackageItem = useMemo(
+    () => (itemsRows ?? []).find((i) => i.metrcItemId === plantBatchPackageItemId) ?? null,
+    [itemsRows, plantBatchPackageItemId],
+  );
+
   const selectedPackageLocation = useMemo(
     () =>
       packageCapableLocations.find((l) => l.metrcLocationId === createPackageLocationId) ?? null,
@@ -1388,7 +1422,11 @@ export default function MetrcSandboxPage() {
     if (!motherPackageItemId.trim()) {
       setMotherPackageItemId(defaultItemId);
     }
-  }, [itemsLoaded, itemsRows, createPackageItemId, motherPackageItemId]);
+    if (!plantBatchPackageItemId.trim()) {
+      const plantBatchItemId = resolveDefaultSandboxPlantBatchPackageItemId(itemsRows);
+      if (plantBatchItemId) setPlantBatchPackageItemId(plantBatchItemId);
+    }
+  }, [itemsLoaded, itemsRows, createPackageItemId, motherPackageItemId, plantBatchPackageItemId]);
 
   useEffect(() => {
     if (!createHarvestPlantBatchId.trim()) {
@@ -2113,6 +2151,83 @@ export default function MetrcSandboxPage() {
     }
   }
 
+  async function runCreatePlantBatchPackage() {
+    const selectedBatch =
+      (plantBatchesRows ?? []).find(
+        (batch) => batch.metrcPlantBatchId === plantBatchPackagePlantBatchId,
+      ) ?? null;
+    const plantBatchName = selectedBatch?.name?.trim() || "";
+    const plantBatchId = Number.parseInt(plantBatchPackagePlantBatchId, 10);
+    const count = Number.parseInt(plantBatchPackageCount, 10);
+    if (!selectedBatch || !plantBatchName) {
+      setStatusMsg({ tone: "error", text: "Select a source plant batch." });
+      return;
+    }
+    if (!plantBatchPackageTag.trim()) {
+      setStatusMsg({ tone: "error", text: "Package tag is required." });
+      return;
+    }
+    if (!Number.isFinite(count) || count < 1) {
+      setStatusMsg({ tone: "error", text: "Quantity must be at least 1." });
+      return;
+    }
+    const selectedItem =
+      selectedPlantBatchPackageItem ??
+      (itemsRows ?? []).find((i) => i.metrcItemId === plantBatchPackageItemId) ??
+      null;
+    const itemName = selectedItem?.itemName?.trim() || "";
+    if (!itemName) {
+      setStatusMsg({ tone: "error", text: PACKAGE_ITEM_REQUIRED_MSG });
+      return;
+    }
+
+    const selectedLocation =
+      (locationsRows ?? []).find((l) => l.metrcLocationId === plantBatchPackageLocationId) ??
+      null;
+
+    setBusy("plantBatchPackage");
+    setLastPlantBatchPackage(null);
+    const requestBody = {
+      plantBatchName,
+      plantBatchId: Number.isFinite(plantBatchId) && plantBatchId > 0 ? plantBatchId : undefined,
+      packageTag: plantBatchPackageTag.trim(),
+      count,
+      actualDate: plantBatchPackageDate,
+      locationName: selectedLocation?.name?.trim() || selectedBatch.locationName?.trim() || null,
+      itemName,
+      note: plantBatchPackageNote.trim() || null,
+    };
+    try {
+      const res = await authFetch("/api/metrc/test/plantbatch-package", {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+      });
+      const json = (await res.json()) as MotherPlantPackageResult;
+      setLastPlantBatchPackage(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Create plant batch package failed."),
+        });
+        return;
+      }
+      setStatusMsg({
+        tone: "ok",
+        text: String(json.message || "Plant batch package created in METRC sandbox."),
+      });
+      await runPackagesSync();
+      await loadSyncedPackages();
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Create plant batch package failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function runSyncPlants() {
     setBusy("plants");
     setStatusMsg(null);
@@ -2260,6 +2375,10 @@ export default function MetrcSandboxPage() {
           }
           if (!motherPackageItemId.trim()) {
             setMotherPackageItemId(defaultItemId);
+          }
+          if (!plantBatchPackageItemId.trim()) {
+            const plantBatchItemId = resolveDefaultSandboxPlantBatchPackageItemId(json.items);
+            if (plantBatchItemId) setPlantBatchPackageItemId(plantBatchItemId);
           }
         }
       }
@@ -3940,6 +4059,248 @@ export default function MetrcSandboxPage() {
                     requestDebug: lastMotherPlantPackage.requestDebug,
                     request: lastMotherPlantPackage.requestPayload,
                     response: lastMotherPlantPackage.responsePayload,
+                  },
+                  null,
+                  2,
+                )}
+              </pre>
+            </div>
+          ) : null}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Create package from plant batch</h2>
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8" }}>
+            Sandbox only. Creates a package from an existing METRC plant batch using{" "}
+            <code style={{ color: "#cbd5e1" }}>POST /plantbatches/v2/packages</code> for METRC
+            Generic Evaluation Plant Batches Step 3.
+          </p>
+          {!isSandboxEnvironment && !loadingMeta ? (
+            <p style={{ marginTop: 12, color: "#f87171", fontSize: 13 }}>
+              METRC environment is not sandbox. Switch to sandbox in Company Config to enable creation.
+            </p>
+          ) : null}
+          {itemsLoaded && !(itemsRows?.length ?? 0) ? (
+            <p style={{ marginTop: 12, color: "#fbbf24", fontSize: 13 }}>
+              Sync METRC items first — an item is required for plant batch packages.
+            </p>
+          ) : null}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+              gap: 12,
+              marginTop: 14,
+            }}
+          >
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Source plant batch</span>
+              <select
+                value={plantBatchPackagePlantBatchId}
+                onChange={(e) => setPlantBatchPackagePlantBatchId(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                <option value="">Select plant batch…</option>
+                {(plantBatchesRows ?? []).map((batch) => (
+                  <option key={batch.metrcPlantBatchId} value={batch.metrcPlantBatchId}>
+                    {batch.name || batch.metrcPlantBatchId}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Item</span>
+              <select
+                value={plantBatchPackageItemId}
+                onChange={(e) => setPlantBatchPackageItemId(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                <option value="">Select item…</option>
+                {(itemsRows ?? []).map((item) => (
+                  <option key={item.metrcItemId} value={item.metrcItemId}>
+                    {item.itemName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Package tag / label</span>
+              <input
+                type="text"
+                value={plantBatchPackageTag}
+                onChange={(e) => setPlantBatchPackageTag(e.target.value)}
+                placeholder="Unused METRC package tag"
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Quantity</span>
+              <input
+                type="number"
+                min={1}
+                value={plantBatchPackageCount}
+                onChange={(e) => setPlantBatchPackageCount(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Packaged date</span>
+              <input
+                type="date"
+                value={plantBatchPackageDate}
+                onChange={(e) => setPlantBatchPackageDate(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Location (optional)</span>
+              <select
+                value={plantBatchPackageLocationId}
+                onChange={(e) => setPlantBatchPackageLocationId(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                <option value="">METRC default</option>
+                {(locationsRows ?? []).map((loc) => (
+                  <option key={loc.metrcLocationId} value={loc.metrcLocationId}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 13, gridColumn: "1 / -1" }}>
+              <span style={{ color: "#94a3b8" }}>Note (optional)</span>
+              <input
+                type="text"
+                value={plantBatchPackageNote}
+                onChange={(e) => setPlantBatchPackageNote(e.target.value)}
+                placeholder="Optional package note"
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+          </div>
+          <div style={{ ...styles.row, marginTop: 12 }}>
+            <button
+              type="button"
+              style={{
+                ...styles.btn,
+                ...styles.btnPrimary,
+                opacity:
+                  busy ||
+                  !isSandboxEnvironment ||
+                  !plantBatchPackagePlantBatchId ||
+                  !plantBatchPackageItemId.trim() ||
+                  !plantBatchPackageTag.trim()
+                    ? 0.6
+                    : 1,
+              }}
+              disabled={
+                !!busy ||
+                !isSandboxEnvironment ||
+                !plantBatchPackagePlantBatchId ||
+                !plantBatchPackageItemId.trim() ||
+                !plantBatchPackageTag.trim() ||
+                Number.parseInt(plantBatchPackageCount, 10) < 1
+              }
+              onClick={() => void runCreatePlantBatchPackage()}
+            >
+              {busy === "plantBatchPackage" ? "Creating…" : "Create Plant Batch Package"}
+            </button>
+          </div>
+          {lastPlantBatchPackage ? (
+            <div
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid #334155",
+                background: "rgba(2, 6, 23, 0.8)",
+                fontSize: 12,
+                color: "#94a3b8",
+              }}
+            >
+              <strong style={{ color: lastPlantBatchPackage.ok ? "#4ade80" : "#f87171" }}>
+                Last create attempt ({lastPlantBatchPackage.status ?? "—"})
+              </strong>
+              <pre
+                style={{
+                  marginTop: 8,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "ui-monospace, monospace",
+                  color: "#cbd5e1",
+                }}
+              >
+                {JSON.stringify(
+                  {
+                    message: lastPlantBatchPackage.message,
+                    endpoint:
+                      lastPlantBatchPackage.endpoint || "/plantbatches/v2/packages",
+                    requestDebug: lastPlantBatchPackage.requestDebug,
+                    request: lastPlantBatchPackage.requestPayload,
+                    response: lastPlantBatchPackage.responsePayload,
                   },
                   null,
                   2,
