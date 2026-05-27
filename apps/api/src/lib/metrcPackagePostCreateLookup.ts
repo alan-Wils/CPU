@@ -62,16 +62,18 @@ export async function confirmCreatedPackageInNexbatch(input: {
   let directLookupUsed = false;
   let packageId = readPackageIdFromCreateResponse(input.metrcCreateResponse);
 
-  const baseDiagnostics = (): Omit<
-    MetrcPackagePostCreateLookupDiagnostics,
-    keyof MetrcPackageSyncDiagnostics
-  > => ({
+  const buildPostCreateDiagnostics = (
+    sync: MetrcPackageSyncDiagnostics,
+    overrides: Partial<MetrcPackagePostCreateLookupDiagnostics> = {},
+  ): MetrcPackagePostCreateLookupDiagnostics => ({
+    ...sync,
     createdTag,
     createLicenseNumber: lookupLicenseNumber,
     lookupLicenseNumber,
     lookupEndpoint,
     lookupDateWindow,
     directLookupUsed,
+    ...overrides,
   });
 
   const direct = await fetchMetrcPackageByLabel({
@@ -114,16 +116,15 @@ export async function confirmCreatedPackageInNexbatch(input: {
       directLookupUsed: true,
       packageLabel: createdTag,
       packageId,
-      diagnostics: {
-        ...buildMetrcPackageSyncDiagnostics({
+      diagnostics: buildPostCreateDiagnostics(
+        buildMetrcPackageSyncDiagnostics({
           rawMetrcPackageCount: 1,
           parsed: [direct.parsed],
           pagesFetched: 0,
+          lookupEndpoint,
         }),
-        ...baseDiagnostics(),
-        lookupEndpoint,
-        directLookupUsed: true,
-      },
+        { lookupEndpoint, directLookupUsed: true },
+      ),
     };
   }
 
@@ -170,12 +171,10 @@ export async function confirmCreatedPackageInNexbatch(input: {
       directLookupUsed: false,
       packageLabel: createdTag,
       packageId,
-      diagnostics: {
-        ...syncDiagnostics,
-        ...baseDiagnostics(),
+      diagnostics: buildPostCreateDiagnostics(syncDiagnostics, {
         directLookupUsed: false,
         lookupEndpoint: syncResult.ok === true ? syncResult.endpoint : null,
-      },
+      }),
     };
   }
 
@@ -186,11 +185,9 @@ export async function confirmCreatedPackageInNexbatch(input: {
     packageId,
     warning:
       "Package created in METRC; active sync has not surfaced it yet.",
-    diagnostics: {
-      ...syncDiagnostics,
-      ...baseDiagnostics(),
+    diagnostics: buildPostCreateDiagnostics(syncDiagnostics, {
       directLookupUsed: false,
       lookupEndpoint: syncResult.ok === true ? syncResult.endpoint : null,
-    },
+    }),
   };
 }
