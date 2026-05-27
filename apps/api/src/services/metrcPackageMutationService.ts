@@ -23,6 +23,11 @@ import {
   type ResolvedMetrcEvaluationPackage,
 } from "../lib/metrcPackageResolve.js";
 import {
+  buildFinishPackageIdempotentSpreadsheetFields,
+  isMetrcPackageAlreadyFinishedMessage,
+  type FinishPackageIdempotentResult,
+} from "../lib/metrcPackageFinishIdempotency.js";
+import {
   attachSpreadsheetFieldsToResponse,
   buildMetrcSpreadsheetFields,
   type MetrcSpreadsheetFields,
@@ -196,6 +201,109 @@ function buildRequestBody(
 
 export class MetrcPackageMutationService {
   packagesSyncService = new MetrcPackagesSyncService();
+
+  private async completeFinishPackageIdempotent(input: {
+    companyId: string;
+    actorUserId: string;
+    license: string;
+    pkg: ResolvedMetrcEvaluationPackage;
+    pathname: string;
+    endpointKey: string;
+    finalRequestBody: unknown;
+    startedAt: number;
+    evaluationMutationMeta: Record<string, unknown>;
+    mutationRequestExtras: Record<string, unknown>;
+    result: FinishPackageIdempotentResult;
+    skippedMetrcCall: boolean;
+    metrcHttpStatus?: number;
+    metrcRawResponse?: unknown;
+  }): Promise<MetrcPackageMutationSuccess> {
+    const durationMs = Date.now() - input.startedAt;
+    const syncResult = await this.packagesSyncService.syncMetrcPackages({
+      companyId: input.companyId,
+      actorUserId: input.actorUserId,
+    });
+    const packagesSynced =
+      syncResult.ok === true ? syncResult.count ?? syncResult.packages?.length ?? 0 : 0;
+
+    const spreadsheetFields = buildFinishPackageIdempotentSpreadsheetFields({
+      licenseNumber: input.license,
+      packageId: input.pkg.packageId,
+      packageLabel: input.pkg.packageLabel,
+      requestBody: input.finalRequestBody,
+      result: input.result,
+    });
+
+    const responsePayload = attachSpreadsheetFieldsToResponse(
+      {
+        ok: true,
+        idempotent: true,
+        alreadyFinished: true,
+        message:
+          input.result === "Package already finished"
+            ? "Package already finished."
+            : "Package already finished in METRC.",
+        ...(input.metrcHttpStatus != null ? { metrcHttpStatus: input.metrcHttpStatus } : {}),
+        metrcResponse:
+          input.metrcRawResponse ??
+          (input.skippedMetrcCall
+            ? { skippedMetrcCall: true, alreadyFinished: true }
+            : { alreadyFinished: true }),
+        packagesSynced,
+        packageSource: input.pkg.source,
+        isFinishedAfter: true,
+        skippedMetrcCall: input.skippedMetrcCall,
+        ...input.evaluationMutationMeta,
+      },
+      spreadsheetFields,
+    );
+
+    await appendMetrcPackageRequestLog({
+      companyId: input.companyId,
+      action: "evaluation_finish",
+      method: input.skippedMetrcCall ? "SKIP" : "PUT",
+      endpoint: input.endpointKey,
+      httpStatus: input.metrcHttpStatus ?? 200,
+      requestPayload: {
+        pathname: input.pathname,
+        body: input.finalRequestBody,
+        ...input.mutationRequestExtras,
+      },
+      responsePayload,
+      durationMs,
+      actorUserId: input.actorUserId,
+    });
+
+    logInfo("[METRC] package_finish_idempotent_success", {
+      companyId: input.companyId,
+      packageLabel: input.pkg.packageLabel,
+      result: input.result,
+      skippedMetrcCall: input.skippedMetrcCall,
+      metrcHttpStatus: input.metrcHttpStatus ?? null,
+    });
+
+    return {
+      ok: true,
+      status: 200,
+      message:
+        input.result === "Package already finished"
+          ? "Finish Package: package already finished (desired state)."
+          : "Finish Package: package already finished in METRC (desired state).",
+      endpoint: input.endpointKey,
+      requestPayload: {
+        pathname: input.pathname,
+        body: input.finalRequestBody,
+        ...input.mutationRequestExtras,
+      },
+      responsePayload,
+      durationMs,
+      packagesSynced,
+      packageLabel: input.pkg.packageLabel,
+      packageId: input.pkg.packageId,
+      licenseNumber: input.license,
+      spreadsheetFields,
+    };
+  }
 
   private async syncAndResolveEvaluationPackage(input: {
     companyId: string;
@@ -452,6 +560,28 @@ export class MetrcPackageMutationService {
       };
     }
 
+    const pathname = `${endpointForKind(input.kind)}${licenseQuery(license)}`;
+    const endpointKey = pathname.split("?")[0] || pathname;
+    const startedAt = Date.now();
+    const mutationRequestExtras = { package: pkg, ...evaluationMutationMeta };
+
+    if (input.kind === "finish" && pkg.isFinished) {
+      return this.completeFinishPackageIdempotent({
+        companyId: input.companyId,
+        actorUserId: input.actorUserId,
+        license,
+        pkg,
+        pathname,
+        endpointKey,
+        finalRequestBody: requestBody,
+        startedAt,
+        evaluationMutationMeta,
+        mutationRequestExtras,
+        result: "Package already finished",
+        skippedMetrcCall: true,
+      });
+    }
+
     if (input.kind === "adjust") {
       const unitOfMeasure = String(adjustRow?.UnitOfMeasure || "").trim();
       const adjustmentReason = String(adjustRow?.AdjustmentReason || "").trim();
@@ -474,13 +604,7 @@ export class MetrcPackageMutationService {
       }
     }
 
-    const mutationRequestExtras = { package: pkg, ...evaluationMutationMeta };
-
-    const pathname = `${endpointForKind(input.kind)}${licenseQuery(license)}`;
-    const startedAt = Date.now();
-
     let result = await client.put<unknown>(pathname, requestBody);
-    let endpointKey = pathname.split("?")[0] || pathname;
     let finalRequestBody = requestBody;
     let adjustAttempts = 1;
 
@@ -558,6 +682,34 @@ export class MetrcPackageMutationService {
     }
 
     if (isMetrcClientFailure(result)) {
+      if (
+        input.kind === "finish" &&
+        isMetrcPackageAlreadyFinishedMessage(result.metrcMessage || result.message)
+      ) {
+        return this.completeFinishPackageIdempotent({
+          companyId: input.companyId,
+          actorUserId: input.actorUserId,
+          license,
+          pkg,
+          pathname,
+          endpointKey,
+          finalRequestBody,
+          startedAt,
+          evaluationMutationMeta,
+          mutationRequestExtras,
+          result: "Already Finished",
+          skippedMetrcCall: false,
+          metrcHttpStatus: result.status,
+          metrcRawResponse: {
+            status: result.status,
+            message: result.message,
+            metrcMessage: result.metrcMessage,
+            endpoint: result.endpoint,
+            upstreamError: result.upstreamError,
+          },
+        });
+      }
+
       const durationMs = Date.now() - startedAt;
       const message = metrcPullFailureMessage(result.status, result.metrcMessage || result.message);
       const spreadsheetFields = buildMetrcSpreadsheetFields({
