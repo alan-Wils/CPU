@@ -300,6 +300,10 @@ export default function MetrcEvaluationPage() {
           taskId === "create_plant_batch" ||
           taskId === "create_harvest" ||
           taskId === "create_package" ||
+          taskId === "package_change_item" ||
+          taskId === "package_adjust" ||
+          taskId === "package_finish" ||
+          taskId === "package_unfinish" ||
           taskId === "transfers"
             ? buildEvaluationCreateRequestBody(taskId, current.tasks[taskId])
             : {};

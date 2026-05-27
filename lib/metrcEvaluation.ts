@@ -14,6 +14,10 @@ export type MetrcEvaluationTaskId =
   | "harvests_sync"
   | "create_harvest"
   | "create_package"
+  | "package_change_item"
+  | "package_adjust"
+  | "package_finish"
+  | "package_unfinish"
   | "transfers_sync"
   | "transfers";
 
@@ -161,6 +165,42 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
     runnable: true,
   },
   {
+    id: "package_change_item",
+    label: "Change Package Item",
+    description:
+      "PUT /packages/v2/item on the most recently synced sandbox package (sandbox-only). Uses synced package label and item catalog.",
+    nexbatchPath: "/api/metrc/packages/change-item-test",
+    method: "POST",
+    runnable: true,
+  },
+  {
+    id: "package_adjust",
+    label: "Adjust Package",
+    description:
+      "PUT /packages/v2/adjust on the most recently synced sandbox package (sandbox-only). Records a small evaluation adjustment.",
+    nexbatchPath: "/api/metrc/packages/adjust-test",
+    method: "POST",
+    runnable: true,
+  },
+  {
+    id: "package_finish",
+    label: "Finish Package",
+    description:
+      "PUT /packages/v2/finish on the most recently synced sandbox package (sandbox-only).",
+    nexbatchPath: "/api/metrc/packages/finish-test",
+    method: "POST",
+    runnable: true,
+  },
+  {
+    id: "package_unfinish",
+    label: "Unfinish Package",
+    description:
+      "PUT /packages/v2/unfinish on the most recently synced sandbox package (sandbox-only). Run after Finish Package.",
+    nexbatchPath: "/api/metrc/packages/unfinish-test",
+    method: "POST",
+    runnable: true,
+  },
+  {
     id: "transfers_sync",
     label: "Transfers Sync",
     description:
@@ -187,8 +227,16 @@ export const METRC_SANDBOX_CREATE_TASK_IDS = [
   "create_plant_batch",
   "create_harvest",
   "create_package",
+  "package_change_item",
+  "package_adjust",
+  "package_finish",
+  "package_unfinish",
   "transfers",
 ] as const;
+
+export const METRC_EVALUATION_DEFAULT_PACKAGE_LABEL = "AAA00090000196B000000001";
+export const METRC_EVALUATION_DEFAULT_PACKAGE_ID = "46601";
+export const METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE = "SF-SBX-CO-7-13402";
 
 export const METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_QUANTITY = 10;
 export const METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT = "Grams";
@@ -327,6 +375,26 @@ export function buildEvaluationCreateRequestBody(
       quantity: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_QUANTITY,
       unitOfMeasure: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT,
       packagedDate: new Date().toISOString().slice(0, 10),
+    };
+  }
+
+  if (
+    taskId === "package_change_item" ||
+    taskId === "package_adjust" ||
+    taskId === "package_finish" ||
+    taskId === "package_unfinish"
+  ) {
+    return {
+      packageLabel: METRC_EVALUATION_DEFAULT_PACKAGE_LABEL,
+      packageId: METRC_EVALUATION_DEFAULT_PACKAGE_ID,
+      licenseNumber: METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
+      itemName: "",
+      quantity: 0.01,
+      unitOfMeasure: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT,
+      adjustmentReason: "Entry Error",
+      adjustmentDate: new Date().toISOString().slice(0, 10),
+      actualDate: new Date().toISOString().slice(0, 10),
+      reasonNote: "NexBatch evaluation",
     };
   }
 
@@ -497,7 +565,7 @@ export function exportEvaluationJson(state: MetrcEvaluationState): string {
       pending: checklist.filter((t) => t.status === "pending").length,
       notAvailable: checklist.filter((t) => t.status === "not_available").length,
     },
-    futureExportFormats: ["spreadsheet"],
+    futureExportFormats: [],
   };
   return JSON.stringify(payload, null, 2);
 }

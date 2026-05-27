@@ -10,6 +10,7 @@ import { MetrcAvailablePackageTagsService } from "../../services/metrcAvailableP
 import { MetrcItemsSyncService } from "../../services/metrcItemsSyncService.js";
 import { MetrcItemCreateService } from "../../services/metrcItemCreateService.js";
 import { MetrcPackageCreateService } from "../../services/metrcPackageCreateService.js";
+import { MetrcPackageMutationService } from "../../services/metrcPackageMutationService.js";
 import { MetrcSandboxService } from "../../services/metrcSandboxService.js";
 import { MetrcPullService } from "../../services/metrcPullService.js";
 import { MetrcFacilitiesSyncService } from "../../services/metrcFacilitiesSyncService.js";
@@ -85,6 +86,19 @@ const metrcCreateTestPackageBody = z.object({
   note: z.string().optional().nullable(),
 });
 
+const metrcPackageMutationTestBody = z.object({
+  packageLabel: z.string().optional().nullable(),
+  packageId: z.string().optional().nullable(),
+  licenseNumber: z.string().optional().nullable(),
+  itemName: z.string().optional().nullable(),
+  quantity: z.coerce.number().optional().nullable(),
+  unitOfMeasure: z.string().optional().nullable(),
+  adjustmentReason: z.string().optional().nullable(),
+  adjustmentDate: z.string().optional().nullable(),
+  actualDate: z.string().optional().nullable(),
+  reasonNote: z.string().optional().nullable(),
+});
+
 const metrcCreateTestTransferBody = z.object({
   packageLabel: z.string().min(1),
   destinationFacilityLicense: z.string().min(1),
@@ -104,6 +118,7 @@ const metrcAvailablePackageTagsService = new MetrcAvailablePackageTagsService();
 const metrcItemsSyncService = new MetrcItemsSyncService();
 const metrcItemCreateService = new MetrcItemCreateService();
 const metrcPackageCreateService = new MetrcPackageCreateService();
+const metrcPackageMutationService = new MetrcPackageMutationService();
 const metrcSandboxService = new MetrcSandboxService();
 const metrcPullService = new MetrcPullService();
 const metrcFacilitiesSyncService = new MetrcFacilitiesSyncService();
@@ -524,6 +539,70 @@ metrcRouter.post(
       locationName: body.locationName ?? null,
       packagedDate: body.packagedDate,
       note: body.note ?? null,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.post(
+  "/packages/change-item-test",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcPackageMutationTestBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcPackageMutationTestBody>;
+    const result = await metrcPackageMutationService.changeItemTest({
+      companyId,
+      actorUserId: req.auth.userId,
+      ...body,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.post(
+  "/packages/adjust-test",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcPackageMutationTestBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcPackageMutationTestBody>;
+    const result = await metrcPackageMutationService.adjustTest({
+      companyId,
+      actorUserId: req.auth.userId,
+      ...body,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.post(
+  "/packages/finish-test",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcPackageMutationTestBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcPackageMutationTestBody>;
+    const result = await metrcPackageMutationService.finishTest({
+      companyId,
+      actorUserId: req.auth.userId,
+      ...body,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.post(
+  "/packages/unfinish-test",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcPackageMutationTestBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcPackageMutationTestBody>;
+    const result = await metrcPackageMutationService.unfinishTest({
+      companyId,
+      actorUserId: req.auth.userId,
+      ...body,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),
