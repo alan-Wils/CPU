@@ -22,6 +22,7 @@ import {
   type MetrcEvaluationPackageResolveKind,
   type ResolvedMetrcEvaluationPackage,
 } from "../lib/metrcPackageResolve.js";
+import { resolveUnfinishPackageForEvaluation } from "../lib/metrcPackageUnfinishResolve.js";
 import {
   buildFinishPackageIdempotentSpreadsheetFields,
   isMetrcPackageAlreadyFinishedMessage,
@@ -234,6 +235,12 @@ export class MetrcPackageMutationService {
       result: input.result,
     });
 
+    const evaluationPackage = {
+      packageLabel: input.pkg.packageLabel,
+      packageId: input.pkg.packageId,
+      licenseNumber: input.license,
+    };
+
     const responsePayload = attachSpreadsheetFieldsToResponse(
       {
         ok: true,
@@ -253,6 +260,7 @@ export class MetrcPackageMutationService {
         packageSource: input.pkg.source,
         isFinishedAfter: true,
         skippedMetrcCall: input.skippedMetrcCall,
+        evaluationPackage,
         ...input.evaluationMutationMeta,
       },
       spreadsheetFields,
@@ -384,13 +392,21 @@ export class MetrcPackageMutationService {
 
     let pkg: ResolvedMetrcEvaluationPackage;
     try {
-      pkg = await resolveMetrcEvaluationPackage({
-        companyId: input.companyId,
-        packageLabel: input.packageLabel,
-        packageId: input.packageId,
-        licenseNumber: input.licenseNumber ?? loaded.licenseNumber,
-        kind: input.kind,
-      });
+      pkg =
+        input.kind === "unfinish"
+          ? await resolveUnfinishPackageForEvaluation({
+              companyId: input.companyId,
+              packageLabel: input.packageLabel,
+              packageId: input.packageId,
+              licenseNumber: input.licenseNumber ?? loaded.licenseNumber,
+            })
+          : await resolveMetrcEvaluationPackage({
+              companyId: input.companyId,
+              packageLabel: input.packageLabel,
+              packageId: input.packageId,
+              licenseNumber: input.licenseNumber ?? loaded.licenseNumber,
+              kind: input.kind,
+            });
     } catch (err) {
       if (err instanceof MetrcEvaluationPackageNotFoundError) {
         return { ok: false, status: 400, message: err.message };
@@ -430,7 +446,7 @@ export class MetrcPackageMutationService {
     }
 
     let packageResolvedBeforeMutation: ResolvedMetrcEvaluationPackage | null = null;
-    if (input.kind === "adjust" || input.kind === "finish" || input.kind === "unfinish") {
+    if (input.kind === "adjust" || input.kind === "finish") {
       pkg = await this.refreshEvaluationPackageState({
         companyId: input.companyId,
         actorUserId: input.actorUserId,
@@ -546,7 +562,11 @@ export class MetrcPackageMutationService {
       };
     }
 
-    if (input.kind === "unfinish" && !pkg.isFinished) {
+    if (
+      input.kind === "unfinish" &&
+      !pkg.isFinished &&
+      pkg.source !== "from_package_finish_result"
+    ) {
       return {
         ok: false,
         status: 400,
@@ -784,6 +804,15 @@ export class MetrcPackageMutationService {
       responsePayload: responseData,
     });
 
+    const evaluationPackage =
+      input.kind === "finish"
+        ? {
+            packageLabel: pkg.packageLabel,
+            packageId: pkg.packageId,
+            licenseNumber: license,
+          }
+        : undefined;
+
     const responsePayload = attachSpreadsheetFieldsToResponse(
       {
         ok: true,
@@ -793,6 +822,7 @@ export class MetrcPackageMutationService {
         quantityAfter: pkg.quantity,
         unitOfMeasureAfter: pkg.unitOfMeasure,
         isFinishedAfter: pkg.isFinished,
+        ...(evaluationPackage ? { evaluationPackage } : {}),
         ...(input.kind === "adjust" ? { adjustAttempts } : {}),
         ...evaluationMutationMeta,
       },

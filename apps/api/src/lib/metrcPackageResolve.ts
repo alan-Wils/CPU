@@ -8,7 +8,6 @@ import {
   listEvaluationCreatedPackageRefs,
   type EvaluationCreatedPackageRef,
 } from "./metrcEvaluationCreatedPackages.js";
-import { listEvaluationFinishedPackageLabels } from "./metrcEvaluationFinishedPackages.js";
 import {
   isPackageFinished,
   isPackageOnHold,
@@ -39,6 +38,7 @@ export type ResolvedMetrcEvaluationPackage = {
   raw: Record<string, unknown>;
   source:
     | "evaluation_created"
+    | "from_package_finish_result"
     | "transferable_fallback"
     | "synced_label"
     | "synced_recent";
@@ -55,9 +55,6 @@ export class MetrcEvaluationPackageNotFoundError extends Error {
     this.name = "MetrcEvaluationPackageNotFoundError";
   }
 }
-
-const UNFINISH_NO_PACKAGE_MESSAGE =
-  "No finished evaluation package found. Run Finish Package first.";
 
 function readStringField(row: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
@@ -262,53 +259,6 @@ function candidateToResolved(
   };
 }
 
-function resolveUnfinishEvaluationPackage(input: {
-  companyId: string;
-  licenseNumber: string;
-  createdRefs: EvaluationCreatedPackageRef[];
-  candidates: PackageCandidate[];
-  finishedLabels: Set<string>;
-}): ResolvedMetrcEvaluationPackage {
-  for (const ref of input.createdRefs) {
-    const label = ref.packageLabel;
-    const finishedByLog = input.finishedLabels.has(label);
-    const candidate = input.candidates.find((row) => row.row.packageLabel === label);
-
-    if (candidate) {
-      const finishedByState = candidate.isFinished || finishedByLog;
-      if (!finishedByState) continue;
-
-      return candidateToResolved(candidate, {
-        licenseNumber: input.licenseNumber,
-        source: "evaluation_created",
-        selectedReason: "newest_finished_evaluation_created_package",
-        createdViaTest: true,
-        createdAt: ref.createdAt.toISOString(),
-        isFinishedOverride: true,
-      });
-    }
-
-    if (finishedByLog) {
-      return {
-        packageLabel: label,
-        packageId: null,
-        licenseNumber: input.licenseNumber || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
-        itemName: "",
-        quantity: 0,
-        unitOfMeasure: METRC_EVALUATION_DEFAULT_PACKAGE_UNIT,
-        isFinished: true,
-        raw: { Label: label, IsFinished: true, Quantity: 0 },
-        source: "evaluation_created",
-        selectedReason: "newest_finished_evaluation_created_package",
-        createdViaTest: true,
-        createdAt: ref.createdAt.toISOString(),
-      };
-    }
-  }
-
-  throw new MetrcEvaluationPackageNotFoundError(UNFINISH_NO_PACKAGE_MESSAGE);
-}
-
 export async function resolveMetrcEvaluationPackage(input: {
   companyId: string;
   packageLabel?: string | null;
@@ -317,6 +267,12 @@ export async function resolveMetrcEvaluationPackage(input: {
   kind?: MetrcEvaluationPackageResolveKind;
 }): Promise<ResolvedMetrcEvaluationPackage> {
   const kind = input.kind ?? "default";
+  if (kind === "unfinish") {
+    throw new Error(
+      "resolveMetrcEvaluationPackage does not support kind=unfinish; use resolveUnfinishPackageForEvaluation.",
+    );
+  }
+
   const explicitLabel = isStaleEvaluationDefaultLabel(input.packageLabel)
     ? ""
     : String(input.packageLabel || "").trim();
@@ -330,17 +286,6 @@ export async function resolveMetrcEvaluationPackage(input: {
   const candidates = rows
     .filter((row) => matchesLicense(row.licenseNumber, licenseNumber))
     .map((row) => buildCandidate(row, createdByLabel.get(row.packageLabel) ?? null));
-
-  if (kind === "unfinish") {
-    const finishedLabels = await listEvaluationFinishedPackageLabels(input.companyId);
-    return resolveUnfinishEvaluationPackage({
-      companyId: input.companyId,
-      licenseNumber,
-      createdRefs,
-      candidates,
-      finishedLabels,
-    });
-  }
 
   if (explicitLabel) {
     const match = candidates.find((candidate) => candidate.row.packageLabel === explicitLabel);

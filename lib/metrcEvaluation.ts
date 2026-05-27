@@ -243,6 +243,121 @@ export const METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_QUANTITY = 10;
 export const METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT = "Grams";
 export type MetrcSandboxCreateTaskId = (typeof METRC_SANDBOX_CREATE_TASK_IDS)[number];
 
+export type EvaluationFinishedPackageRef = {
+  packageLabel: string;
+  packageId: string;
+  licenseNumber: string;
+};
+
+function readEvaluationTrimmedString(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  return String(value).trim();
+}
+
+/** Package identity from a successful Finish Package evaluation result. */
+export function extractEvaluationPackageFromFinishPayload(
+  responsePayload: unknown,
+  requestPayload?: Record<string, unknown> | null,
+): EvaluationFinishedPackageRef | null {
+  const licenseFrom = (record: Record<string, unknown>): string =>
+    readEvaluationTrimmedString(record.licenseNumber) || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE;
+
+  const fromLabelFields = (
+    record: Record<string, unknown>,
+    packageLabel: string,
+  ): EvaluationFinishedPackageRef | null => {
+    if (!packageLabel) return null;
+    return {
+      packageLabel,
+      packageId: readEvaluationTrimmedString(record.packageId),
+      licenseNumber: licenseFrom(record),
+    };
+  };
+
+  const tryRoot = (root: unknown): EvaluationFinishedPackageRef | null => {
+    if (!root || typeof root !== "object") return null;
+    const record = root as Record<string, unknown>;
+
+    const topLabel = readEvaluationTrimmedString(record.packageLabel);
+    const fromTop = fromLabelFields(record, topLabel);
+    if (fromTop) return fromTop;
+
+    const spreadsheetFields = record.spreadsheetFields;
+    if (spreadsheetFields && typeof spreadsheetFields === "object") {
+      const tagNumber = readEvaluationTrimmedString(
+        (spreadsheetFields as { tagNumber?: unknown }).tagNumber,
+      );
+      const fromTag = fromLabelFields(
+        {
+          ...record,
+          packageId:
+            (spreadsheetFields as { packageId?: unknown }).packageId ?? record.packageId,
+          licenseNumber:
+            (spreadsheetFields as { licenseNumber?: unknown }).licenseNumber ??
+            record.licenseNumber,
+        },
+        tagNumber,
+      );
+      if (fromTag) return fromTag;
+    }
+
+    const body = record.body;
+    if (Array.isArray(body) && body[0] && typeof body[0] === "object") {
+      const label = readEvaluationTrimmedString(
+        (body[0] as { Label?: unknown; label?: unknown }).Label ??
+          (body[0] as { label?: unknown }).label,
+      );
+      const fromBody = fromLabelFields(record, label);
+      if (fromBody) return fromBody;
+    }
+
+    const evaluationPackage = record.evaluationPackage;
+    if (evaluationPackage && typeof evaluationPackage === "object") {
+      const pkg = evaluationPackage as Record<string, unknown>;
+      const fromEval = fromLabelFields(
+        {
+          packageId: pkg.packageId,
+          licenseNumber: pkg.licenseNumber ?? record.licenseNumber,
+        },
+        readEvaluationTrimmedString(pkg.packageLabel),
+      );
+      if (fromEval) return fromEval;
+    }
+
+    return null;
+  };
+
+  const fromResponse = tryRoot(responsePayload);
+  if (fromResponse) return fromResponse;
+
+  const nestedRequest =
+    responsePayload && typeof responsePayload === "object"
+      ? (responsePayload as Record<string, unknown>).requestPayload
+      : null;
+  if (nestedRequest && typeof nestedRequest === "object") {
+    const fromNested = tryRoot(nestedRequest);
+    if (fromNested) return fromNested;
+  }
+
+  if (!requestPayload) return null;
+  const fromRequest = tryRoot(requestPayload);
+  if (fromRequest) return fromRequest;
+
+  const body = (requestPayload as { body?: unknown }).body ?? requestPayload;
+  return tryRoot(body);
+}
+
+export function resolveUnfinishPackageFromEvaluationState(
+  state: MetrcEvaluationState,
+): EvaluationFinishedPackageRef | null {
+  const finishTask = state.tasks.package_finish;
+  if (finishTask.status !== "passed") return null;
+  return extractEvaluationPackageFromFinishPayload(
+    finishTask.responsePayload,
+    finishTask.requestPayload,
+  );
+}
+
 export const METRC_EVALUATION_DEFAULT_CREATE_STRAIN_REQUEST = {
   name: "NexBatch Test Strain",
   testingStatus: "None",
@@ -334,6 +449,7 @@ export function reconcileEvaluationState(state: MetrcEvaluationState): MetrcEval
 export function buildEvaluationCreateRequestBody(
   taskId: MetrcSandboxCreateTaskId,
   task: MetrcEvaluationTaskRecord,
+  state?: MetrcEvaluationState | null,
 ): Record<string, unknown> {
   if (taskId === "package_adjust") {
     const defaults: Record<string, unknown> = {
@@ -380,6 +496,51 @@ export function buildEvaluationCreateRequestBody(
     return defaults;
   }
 
+  if (taskId === "package_unfinish") {
+    const defaults: Record<string, unknown> = {
+      packageLabel: "",
+      packageId: "",
+      licenseNumber: METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
+      itemName: "",
+      adjustmentDate: new Date().toISOString().slice(0, 10),
+      actualDate: new Date().toISOString().slice(0, 10),
+      reasonNote: "NexBatch evaluation",
+    };
+    const fromFinish = state ? resolveUnfinishPackageFromEvaluationState(state) : null;
+    if (fromFinish) {
+      return {
+        ...defaults,
+        packageLabel: fromFinish.packageLabel,
+        packageId: fromFinish.packageId,
+        licenseNumber: fromFinish.licenseNumber,
+      };
+    }
+    return defaults;
+  }
+
+  if (taskId === "package_change_item" || taskId === "package_finish") {
+    const defaults: Record<string, unknown> = {
+      packageLabel: "",
+      packageId: "",
+      licenseNumber: METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
+      itemName: "",
+      adjustmentDate: new Date().toISOString().slice(0, 10),
+      actualDate: new Date().toISOString().slice(0, 10),
+      reasonNote: "NexBatch evaluation",
+    };
+    const stored = task.requestPayload;
+    if (stored && typeof stored === "object") {
+      const body = (stored as { body?: unknown }).body ?? stored;
+      if (body && typeof body === "object" && !Array.isArray(body)) {
+        const merged = { ...defaults, ...(body as Record<string, unknown>) };
+        merged.packageLabel = "";
+        merged.packageId = "";
+        return merged;
+      }
+    }
+    return defaults;
+  }
+
   const stored = task.requestPayload;
   if (stored && typeof stored === "object") {
     const body = (stored as { body?: unknown }).body ?? stored;
@@ -411,33 +572,6 @@ export function buildEvaluationCreateRequestBody(
       unitOfWeight: "Grams",
       actualDate: new Date().toISOString().slice(0, 10),
     };
-  }
-
-  if (
-    taskId === "package_change_item" ||
-    taskId === "package_finish" ||
-    taskId === "package_unfinish"
-  ) {
-    const defaults: Record<string, unknown> = {
-      packageLabel: "",
-      packageId: "",
-      licenseNumber: METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
-      itemName: "",
-      adjustmentDate: new Date().toISOString().slice(0, 10),
-      actualDate: new Date().toISOString().slice(0, 10),
-      reasonNote: "NexBatch evaluation",
-    };
-    const stored = task.requestPayload;
-    if (stored && typeof stored === "object") {
-      const body = (stored as { body?: unknown }).body ?? stored;
-      if (body && typeof body === "object" && !Array.isArray(body)) {
-        const merged = { ...defaults, ...(body as Record<string, unknown>) };
-        merged.packageLabel = "";
-        merged.packageId = "";
-        return merged;
-      }
-    }
-    return defaults;
   }
 
   if (taskId === "transfers") {

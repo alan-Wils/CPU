@@ -305,7 +305,7 @@ export default function MetrcEvaluationPage() {
           taskId === "package_finish" ||
           taskId === "package_unfinish" ||
           taskId === "transfers"
-            ? buildEvaluationCreateRequestBody(taskId, current.tasks[taskId])
+            ? buildEvaluationCreateRequestBody(taskId, current.tasks[taskId], current)
             : {};
         requestPayload = {
           ...requestPayload,
