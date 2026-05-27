@@ -14,10 +14,12 @@ describe("metrcEvaluationFinishPackageRef", () => {
     ).toBe(true);
   });
 
-  it("extracts label from evaluationPackage on finish response", () => {
+  it("extracts label from response packageLabel on finish response", () => {
     const ref = extractFinishPackageRefFromPayloads({
       responsePayload: {
         ok: true,
+        packageLabel: "AAA00090000196B000000007",
+        licenseNumber: "SF-SBX-CO-7-13402",
         evaluationPackage: {
           packageLabel: "AAA00090000196B000000007",
           packageId: "46907",
@@ -27,7 +29,7 @@ describe("metrcEvaluationFinishPackageRef", () => {
     });
     expect(ref).toEqual({
       packageLabel: "AAA00090000196B000000007",
-      packageId: "46907",
+      packageId: null,
       licenseNumber: "SF-SBX-CO-7-13402",
     });
   });

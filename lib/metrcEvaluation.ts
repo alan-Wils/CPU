@@ -249,89 +249,144 @@ export type EvaluationFinishedPackageRef = {
   licenseNumber: string;
 };
 
+export const LATEST_FINISH_RESULT_REASON = "latest_finish_result";
+
+export type LatestFinishedEvaluationPackage = {
+  packageLabel: string;
+  licenseNumber: string;
+  selectedReason: typeof LATEST_FINISH_RESULT_REASON;
+};
+
 function readEvaluationTrimmedString(value: unknown): string {
   if (value === undefined || value === null) return "";
   return String(value).trim();
 }
 
-function extractLabelFromFinishChecklistRoot(root: unknown): EvaluationFinishedPackageRef | null {
-  if (!root || typeof root !== "object") return null;
-  const record = root as Record<string, unknown>;
+function collectFinishChecklistResponseRoots(payload: unknown): Record<string, unknown>[] {
+  if (!payload || typeof payload !== "object") return [];
+  const record = payload as Record<string, unknown>;
+  const roots: Record<string, unknown>[] = [record];
+  if (record.responsePayload && typeof record.responsePayload === "object") {
+    roots.push(record.responsePayload as Record<string, unknown>);
+  }
+  return roots;
+}
 
-  const licenseFromRecord = (): string => {
-    const direct = readEvaluationTrimmedString(record.licenseNumber);
-    if (direct) return direct;
-    const spreadsheetFields = record.spreadsheetFields;
+function extractFinishLabelFromMetrcBody(body: unknown): string {
+  if (!Array.isArray(body) || !body[0] || typeof body[0] !== "object") return "";
+  const row = body[0] as { Label?: unknown; label?: unknown };
+  return readEvaluationTrimmedString(row.Label ?? row.label);
+}
+
+/** METRC mutation request nested inside a finish API response. */
+export function resolveFinishChecklistMetrcRequestPayload(
+  responsePayload: unknown,
+  evaluationRequestPayload?: Record<string, unknown> | null,
+): unknown {
+  if (responsePayload && typeof responsePayload === "object") {
+    const nested = (responsePayload as Record<string, unknown>).requestPayload;
+    if (nested) return nested;
+  }
+  return evaluationRequestPayload ?? null;
+}
+
+function extractFinishPackageLabel(
+  responsePayload: unknown,
+  requestPayload: unknown,
+): string {
+  const responseRoots = collectFinishChecklistResponseRoots(responsePayload);
+  const requestRoots = collectFinishChecklistResponseRoots(requestPayload);
+
+  for (const root of responseRoots) {
+    const label = readEvaluationTrimmedString(root.packageLabel);
+    if (label) return label;
+  }
+  for (const root of responseRoots) {
+    const label = readEvaluationTrimmedString(root.selectedPackageLabel);
+    if (label) return label;
+  }
+  for (const root of responseRoots) {
+    const spreadsheetFields = root.spreadsheetFields;
     if (spreadsheetFields && typeof spreadsheetFields === "object") {
-      const fromSheet = readEvaluationTrimmedString(
-        (spreadsheetFields as { licenseNumber?: unknown }).licenseNumber,
+      const label = readEvaluationTrimmedString(
+        (spreadsheetFields as { tagNumber?: unknown }).tagNumber,
       );
-      if (fromSheet) return fromSheet;
+      if (label) return label;
     }
-    const pkg = record.package;
+  }
+  for (const root of requestRoots) {
+    const label = extractFinishLabelFromMetrcBody(root.body);
+    if (label) return label;
+  }
+  for (const root of requestRoots) {
+    const pkg = root.package;
     if (pkg && typeof pkg === "object" && !Array.isArray(pkg)) {
-      const fromPkg = readEvaluationTrimmedString((pkg as { licenseNumber?: unknown }).licenseNumber);
-      if (fromPkg) return fromPkg;
+      const label = readEvaluationTrimmedString((pkg as { packageLabel?: unknown }).packageLabel);
+      if (label) return label;
     }
-    return METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE;
-  };
+  }
+  return "";
+}
 
-  const labelCandidates = [
-    readEvaluationTrimmedString(record.packageLabel),
-    readEvaluationTrimmedString(record.selectedPackageLabel),
-    record.spreadsheetFields && typeof record.spreadsheetFields === "object"
-      ? readEvaluationTrimmedString((record.spreadsheetFields as { tagNumber?: unknown }).tagNumber)
-      : "",
-    Array.isArray(record.body) && record.body[0] && typeof record.body[0] === "object"
-      ? readEvaluationTrimmedString(
-          (record.body[0] as { Label?: unknown; label?: unknown }).Label ??
-            (record.body[0] as { label?: unknown }).label,
-        )
-      : "",
-    record.package && typeof record.package === "object" && !Array.isArray(record.package)
-      ? readEvaluationTrimmedString((record.package as { packageLabel?: unknown }).packageLabel)
-      : "",
-    record.evaluationPackage && typeof record.evaluationPackage === "object"
-      ? readEvaluationTrimmedString((record.evaluationPackage as { packageLabel?: unknown }).packageLabel)
-      : "",
-  ];
+function extractFinishLicenseNumber(
+  responsePayload: unknown,
+  requestPayload: unknown,
+): string {
+  const responseRoots = collectFinishChecklistResponseRoots(responsePayload);
+  const requestRoots = collectFinishChecklistResponseRoots(requestPayload);
 
-  const packageLabel = labelCandidates.find((label) => label.length > 0) ?? "";
+  for (const root of responseRoots) {
+    const license = readEvaluationTrimmedString(root.licenseNumber);
+    if (license) return license;
+  }
+  for (const root of requestRoots) {
+    const license = readEvaluationTrimmedString(root.licenseNumber);
+    if (license) return license;
+  }
+  for (const root of requestRoots) {
+    const pkg = root.package;
+    if (pkg && typeof pkg === "object" && !Array.isArray(pkg)) {
+      const license = readEvaluationTrimmedString((pkg as { licenseNumber?: unknown }).licenseNumber);
+      if (license) return license;
+    }
+  }
+  return METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE;
+}
+
+/**
+ * Latest successful package_finish checklist result (id=package_finish, status=passed).
+ * Does not use generic package resolvers, sync, or DB lookup.
+ */
+export function resolveLatestFinishedEvaluationPackage(input: {
+  responsePayload?: unknown;
+  requestPayload?: unknown;
+}): LatestFinishedEvaluationPackage | null {
+  const metrcRequest = resolveFinishChecklistMetrcRequestPayload(
+    input.responsePayload,
+    input.requestPayload as Record<string, unknown> | null,
+  );
+  const packageLabel = extractFinishPackageLabel(input.responsePayload, metrcRequest);
   if (!packageLabel) return null;
 
   return {
     packageLabel,
-    packageId: readEvaluationTrimmedString(record.packageId),
-    licenseNumber: licenseFromRecord(),
+    licenseNumber: extractFinishLicenseNumber(input.responsePayload, metrcRequest),
+    selectedReason: LATEST_FINISH_RESULT_REASON,
   };
 }
 
-function extractFinishChecklistPackageRefFromPayloads(input: {
-  responsePayload?: unknown;
-  requestPayload?: Record<string, unknown> | null;
-}): EvaluationFinishedPackageRef | null {
-  const roots: unknown[] = [];
-
-  if (input.responsePayload && typeof input.responsePayload === "object") {
-    const response = input.responsePayload as Record<string, unknown>;
-    roots.push(response);
-    if (response.responsePayload) roots.push(response.responsePayload);
-    if (response.requestPayload) roots.push(response.requestPayload);
-  }
-
-  if (input.requestPayload && typeof input.requestPayload === "object") {
-    const request = input.requestPayload;
-    roots.push(request);
-    if (request.body) roots.push({ ...request, body: request.body });
-    if (request.package) roots.push(request);
-  }
-
-  for (const root of roots) {
-    const ref = extractLabelFromFinishChecklistRoot(root);
-    if (ref) return ref;
-  }
-
-  return null;
+function latestFinishedFromChecklistEntry(input: {
+  responsePayload: unknown;
+  requestPayload: Record<string, unknown> | null;
+}): LatestFinishedEvaluationPackage | null {
+  const metrcRequest = resolveFinishChecklistMetrcRequestPayload(
+    input.responsePayload,
+    input.requestPayload,
+  );
+  return resolveLatestFinishedEvaluationPackage({
+    responsePayload: input.responsePayload,
+    requestPayload: metrcRequest,
+  });
 }
 
 /** Package identity from a successful Finish Package evaluation result. */
@@ -339,7 +394,13 @@ export function extractEvaluationPackageFromFinishPayload(
   responsePayload: unknown,
   requestPayload?: Record<string, unknown> | null,
 ): EvaluationFinishedPackageRef | null {
-  return extractFinishChecklistPackageRefFromPayloads({ responsePayload, requestPayload });
+  const resolved = resolveLatestFinishedEvaluationPackage({ responsePayload, requestPayload });
+  if (!resolved) return null;
+  return {
+    packageLabel: resolved.packageLabel,
+    packageId: "",
+    licenseNumber: resolved.licenseNumber,
+  };
 }
 
 /** Latest passed package_finish checklist item (task record, then request history). */
@@ -348,20 +409,32 @@ export function resolveUnfinishPackageFromEvaluationState(
 ): EvaluationFinishedPackageRef | null {
   const finishTask = state.tasks.package_finish;
   if (finishTask.status === "passed") {
-    const fromTask = extractEvaluationPackageFromFinishPayload(
-      finishTask.responsePayload,
-      finishTask.requestPayload,
-    );
-    if (fromTask) return fromTask;
+    const fromTask = latestFinishedFromChecklistEntry({
+      responsePayload: finishTask.responsePayload,
+      requestPayload: finishTask.requestPayload,
+    });
+    if (fromTask) {
+      return {
+        packageLabel: fromTask.packageLabel,
+        packageId: "",
+        licenseNumber: fromTask.licenseNumber,
+      };
+    }
   }
 
   for (const entry of state.requestHistory) {
     if (entry.taskId !== "package_finish" || entry.status !== "success") continue;
-    const fromHistory = extractEvaluationPackageFromFinishPayload(
-      entry.responsePayload,
-      entry.requestPayload,
-    );
-    if (fromHistory) return fromHistory;
+    const fromHistory = latestFinishedFromChecklistEntry({
+      responsePayload: entry.responsePayload,
+      requestPayload: entry.requestPayload,
+    });
+    if (fromHistory) {
+      return {
+        packageLabel: fromHistory.packageLabel,
+        packageId: "",
+        licenseNumber: fromHistory.licenseNumber,
+      };
+    }
   }
 
   return null;
@@ -516,16 +589,39 @@ export function buildEvaluationCreateRequestBody(
       reasonNote: "NexBatch evaluation",
     };
     const finishTask = state?.tasks.package_finish;
-    const fromFinish = state ? resolveUnfinishPackageFromEvaluationState(state) : null;
+    const fromFinish =
+      finishTask?.status === "passed"
+        ? resolveLatestFinishedEvaluationPackage({
+            responsePayload: finishTask.responsePayload,
+            requestPayload: resolveFinishChecklistMetrcRequestPayload(
+              finishTask.responsePayload,
+              finishTask.requestPayload,
+            ),
+          })
+        : state
+          ? (() => {
+              const legacy = resolveUnfinishPackageFromEvaluationState(state);
+              return legacy
+                ? {
+                    packageLabel: legacy.packageLabel,
+                    licenseNumber: legacy.licenseNumber,
+                    selectedReason: LATEST_FINISH_RESULT_REASON as const,
+                  }
+                : null;
+            })()
+          : null;
     if (fromFinish) {
       return {
         ...defaults,
         packageLabel: fromFinish.packageLabel,
         selectedPackageLabel: fromFinish.packageLabel,
-        packageId: fromFinish.packageId,
+        packageId: "",
         licenseNumber: fromFinish.licenseNumber,
         finishChecklistResponse: finishTask?.responsePayload ?? null,
-        finishChecklistRequest: finishTask?.requestPayload ?? null,
+        finishChecklistRequest: resolveFinishChecklistMetrcRequestPayload(
+          finishTask?.responsePayload,
+          finishTask?.requestPayload ?? null,
+        ),
       };
     }
     return defaults;
