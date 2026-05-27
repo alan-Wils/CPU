@@ -310,6 +310,14 @@ type CreateTestPlantBatchResult = {
   metrcMessage?: string;
 };
 
+type MotherPlantPackageRequestDebug = {
+  licenseNumber: string;
+  authMode: string;
+  baseUrl: string;
+  endpoint: string;
+  payloadBody: unknown;
+};
+
 type MotherPlantPackageResult = {
   ok: boolean;
   status?: number;
@@ -317,10 +325,11 @@ type MotherPlantPackageResult = {
   credentialHint?: string;
   endpoint?: string;
   requestPayload?: unknown;
+  requestDebug?: MotherPlantPackageRequestDebug;
   responsePayload?: unknown;
   durationMs?: number;
   packageTag?: string;
-  plantBatchId?: number;
+  plantBatchName?: string;
   metrcMessage?: string;
 };
 
@@ -1997,9 +2006,14 @@ export default function MetrcSandboxPage() {
   }
 
   async function runCreateMotherPlantPackage() {
+    const selectedBatch =
+      (plantBatchesRows ?? []).find(
+        (batch) => batch.metrcPlantBatchId === motherPackagePlantBatchId,
+      ) ?? null;
+    const plantBatchName = selectedBatch?.name?.trim() || "";
     const plantBatchId = Number.parseInt(motherPackagePlantBatchId, 10);
     const count = Number.parseInt(motherPackageCount, 10);
-    if (!Number.isFinite(plantBatchId) || plantBatchId <= 0) {
+    if (!selectedBatch || !plantBatchName) {
       setStatusMsg({ tone: "error", text: "Select a source plant batch." });
       return;
     }
@@ -2018,11 +2032,13 @@ export default function MetrcSandboxPage() {
     setBusy("motherPlantPackage");
     setLastMotherPlantPackage(null);
     const requestBody = {
-      plantBatchId,
+      plantBatchName,
+      plantBatchId: Number.isFinite(plantBatchId) && plantBatchId > 0 ? plantBatchId : undefined,
       packageTag: motherPackageTag.trim(),
       count,
       actualDate: motherPackageDate,
-      locationName: selectedLocation?.name?.trim() || null,
+      locationName: selectedLocation?.name?.trim() || selectedBatch.locationName?.trim() || null,
+      itemName: "Immature Plants",
     };
     try {
       const res = await authFetch("/api/metrc/test/plantbatch-package-from-mother", {
@@ -3838,6 +3854,7 @@ export default function MetrcSandboxPage() {
                     endpoint:
                       lastMotherPlantPackage.endpoint ||
                       "/plantbatches/v2/packages/frommotherplant",
+                    requestDebug: lastMotherPlantPackage.requestDebug,
                     request: lastMotherPlantPackage.requestPayload,
                     response: lastMotherPlantPackage.responsePayload,
                   },

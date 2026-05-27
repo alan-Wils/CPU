@@ -167,7 +167,8 @@ const metrcCreateTestPlantBatchBody = z.object({
 });
 
 const metrcMotherPlantPackageBody = z.object({
-  plantBatchId: z.coerce.number().int().positive(),
+  plantBatchName: z.string().min(1),
+  plantBatchId: z.coerce.number().int().positive().optional(),
   packageTag: z.string().min(1),
   count: z.coerce.number().int().positive(),
   actualDate: z.string().min(1),
@@ -714,7 +715,8 @@ metrcRouter.post(
     const result = await metrcPlantBatchMotherPackageService.createPackageFromMotherPlant({
       companyId,
       actorUserId: req.auth.userId,
-      plantBatchId: body.plantBatchId,
+      plantBatchName: body.plantBatchName,
+      plantBatchId: body.plantBatchId ?? null,
       packageTag: body.packageTag,
       count: body.count,
       actualDate: body.actualDate,
