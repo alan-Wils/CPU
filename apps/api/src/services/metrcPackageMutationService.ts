@@ -64,6 +64,12 @@ export type MetrcPackageMutationInput = {
   reasonNote?: string | null;
 };
 
+export type MetrcEvaluationPackageRef = {
+  packageLabel: string;
+  packageId: string | null;
+  licenseNumber: string;
+};
+
 export type MetrcPackageMutationSuccess = {
   ok: true;
   status: number;
@@ -77,6 +83,16 @@ export type MetrcPackageMutationSuccess = {
   packageId: string | null;
   licenseNumber: string;
   spreadsheetFields: MetrcSpreadsheetFields;
+  evaluationPackage?: MetrcEvaluationPackageRef;
+  selectedPackageLabel?: string;
+  selectedReason?: string;
+  selectedPackageQuantity?: number;
+  selectedPackageUnit?: string;
+  selectedPackageLicense?: string;
+  selectedPackageFinished?: boolean;
+  createdViaTest?: boolean;
+  selectedPackageCreatedAt?: string | null;
+  packageSource?: string;
 };
 
 export type MetrcPackageMutationFailure = {
