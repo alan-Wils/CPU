@@ -249,7 +249,7 @@ export type EvaluationFinishedPackageRef = {
   licenseNumber: string;
 };
 
-export const LATEST_FINISH_RESULT_REASON = "latest_finish_result";
+export const LATEST_FINISH_RESULT_REASON = "latest_finish_result" as const;
 
 export type LatestFinishedEvaluationPackage = {
   packageLabel: string;
@@ -605,7 +605,7 @@ export function buildEvaluationCreateRequestBody(
                 ? {
                     packageLabel: legacy.packageLabel,
                     licenseNumber: legacy.licenseNumber,
-                    selectedReason: LATEST_FINISH_RESULT_REASON as const,
+                    selectedReason: LATEST_FINISH_RESULT_REASON,
                   }
                 : null;
             })()
