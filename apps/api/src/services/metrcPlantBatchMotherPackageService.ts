@@ -83,11 +83,8 @@ function licenseQuery(licenseNumber: string): string {
 function authModeLabel(mode: MetrcClientAuthMode, loaded: LoadedMetrcConfig): string {
   return describeMetrcAuthMode(mode, {
     environment: loaded.environment,
-    stateCode: loaded.stateCode,
-    apiBaseUrlOverride: loaded.apiBaseUrlOverride,
     vendorApiKey: loaded.vendorApiKey,
     userApiKey: loaded.userApiKey,
-    username: loaded.username,
     licenseNumber: loaded.licenseNumber,
   }).auth_mode;
 }
