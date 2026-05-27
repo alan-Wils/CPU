@@ -35,3 +35,21 @@ export function isPackageFinished(input: { raw?: Record<string, unknown> | null 
   const finishedDate = readStringField(raw, ["FinishedDate", "finishedDate"]);
   return Boolean(finishedDate);
 }
+
+export function isPackageOnHold(input: { raw?: Record<string, unknown> | null }): boolean {
+  const raw = input.raw;
+  if (!raw || typeof raw !== "object") return false;
+  return readBooleanField(raw, ["IsOnHold", "isOnHold", "OnHold", "onHold"], false);
+}
+
+export function isPackageTransferable(input: {
+  quantity: number;
+  isFinished?: boolean;
+  isOnHold?: boolean;
+  raw?: Record<string, unknown> | null;
+}): boolean {
+  if (isPackageQuantityEmpty(input.quantity)) return false;
+  if (input.isFinished ?? isPackageFinished({ raw: input.raw })) return false;
+  if (input.isOnHold ?? isPackageOnHold({ raw: input.raw })) return false;
+  return true;
+}

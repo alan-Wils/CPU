@@ -213,7 +213,7 @@ export const METRC_EVALUATION_TASKS: MetrcEvaluationTaskDefinition[] = [
     id: "transfers",
     label: "Transfers",
     description:
-      "POST sandbox outgoing transfer template using a synced package (POST /transfers/v2/templates/outgoing). Runnable here or from METRC Sandbox after packages exist.",
+      "POST sandbox outgoing transfer template using the most recent transferable synced package with quantity > 0 (POST /transfers/v2/templates/outgoing). Skips zeroed/finished/on-hold packages.",
     nexbatchPath: "/api/metrc/transfers/create-test",
     method: "POST",
     runnable: true,
@@ -415,6 +415,27 @@ export function buildEvaluationCreateRequestBody(
       actualDate: new Date().toISOString().slice(0, 10),
       reasonNote: "NexBatch evaluation",
     };
+  }
+
+  if (taskId === "transfers") {
+    const defaults: Record<string, unknown> = {
+      packageLabel: "",
+      destinationFacilityLicense: "",
+      transferDate: new Date().toISOString().slice(0, 10),
+      plannedRoute: "NexBatch sandbox evaluation — direct facility transfer.",
+      notes: "NexBatch Test Transfer",
+      transferTypeName: "",
+    };
+    const stored = task.requestPayload;
+    if (stored && typeof stored === "object") {
+      const body = (stored as { body?: unknown }).body ?? stored;
+      if (body && typeof body === "object" && !Array.isArray(body)) {
+        const merged = { ...defaults, ...(body as Record<string, unknown>) };
+        merged.packageLabel = "";
+        return merged;
+      }
+    }
+    return defaults;
   }
 
   return {

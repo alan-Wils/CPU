@@ -100,7 +100,7 @@ const metrcPackageMutationTestBody = z.object({
 });
 
 const metrcCreateTestTransferBody = z.object({
-  packageLabel: z.string().min(1),
+  packageLabel: z.string().optional().nullable(),
   destinationFacilityLicense: z.string().min(1),
   transferDate: z.string().min(1),
   plannedRoute: z.string().min(1),

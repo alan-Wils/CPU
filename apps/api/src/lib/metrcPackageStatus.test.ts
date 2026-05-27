@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isPackageFinished, isPackageQuantityEmpty } from "./metrcPackageStatus.js";
+import {
+  isPackageFinished,
+  isPackageOnHold,
+  isPackageQuantityEmpty,
+  isPackageTransferable,
+} from "./metrcPackageStatus.js";
 
 describe("metrcPackageStatus", () => {
   it("treats near-zero quantity as empty", () => {
@@ -12,5 +17,10 @@ describe("metrcPackageStatus", () => {
     expect(isPackageFinished({ raw: { IsFinished: true } })).toBe(true);
     expect(isPackageFinished({ raw: { FinishedDate: "2026-05-26" } })).toBe(true);
     expect(isPackageFinished({ raw: { IsFinished: false, FinishedDate: null } })).toBe(false);
+  });
+
+  it("detects on-hold packages", () => {
+    expect(isPackageOnHold({ raw: { IsOnHold: true } })).toBe(true);
+    expect(isPackageTransferable({ quantity: 1, raw: { IsOnHold: true } })).toBe(false);
   });
 });

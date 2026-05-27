@@ -4,6 +4,7 @@ import { MetrcClient, isMetrcClientFailure } from "../lib/metrcClient.js";
 import { loadCompanyMetrcConfig } from "../lib/metrcConfigLoader.js";
 import { buildMetrcCredentialHintFromLoaded } from "../lib/metrcCredentialDiagnostics.js";
 import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
+import { resolveTransferableMetrcPackage } from "../lib/metrcPackageTransferResolve.js";
 import { findMetrcPackageByLabel } from "../repositories/metrcPackageRepository.js";
 import {
   appendMetrcTransferRequestLog,
@@ -277,10 +278,7 @@ export class MetrcTransferCreateService {
       validationErrors.push("Active facility license is required.");
     }
 
-    const packageLabel = String(input.packageLabel || "").trim();
-    if (!packageLabel) {
-      validationErrors.push("Source package label is required.");
-    }
+    const preferredPackageLabel = String(input.packageLabel || "").trim();
 
     const destinationLicense = String(input.destinationFacilityLicense || "").trim();
     if (!destinationLicense) {
@@ -322,6 +320,53 @@ export class MetrcTransferCreateService {
       };
     }
 
+    const packageSelection = await resolveTransferableMetrcPackage({
+      companyId: input.companyId,
+      licenseNumber: sourceLicense,
+      preferredPackageLabel: preferredPackageLabel || null,
+    });
+
+    const packageSelectionMeta = packageSelection
+      ? {
+          selectedPackageLabel: packageSelection.packageLabel,
+          selectedQuantity: packageSelection.quantity,
+          selectedUnitOfMeasure: packageSelection.unitOfMeasure,
+          selectedLicenseNumber: packageSelection.licenseNumber,
+          selectionReason: packageSelection.selectionReason,
+          skippedPackages: packageSelection.skippedPackages,
+          requestedPackageLabel: preferredPackageLabel || null,
+        }
+      : {
+          selectedPackageLabel: null,
+          selectedQuantity: null,
+          selectedUnitOfMeasure: null,
+          selectedLicenseNumber: sourceLicense,
+          selectionReason: "none_found",
+          skippedPackages: [] as Array<{ label: string; reason: string; quantity: number }>,
+          requestedPackageLabel: preferredPackageLabel || null,
+        };
+
+    if (!packageSelection) {
+      return {
+        ok: false,
+        status: 400,
+        message:
+          "No transferable package found. Run Create Package first with a fresh package tag.",
+        validationErrors: ["No transferable package with quantity > 0."],
+        responsePayload: {
+          ok: false,
+          packageSelection: packageSelectionMeta,
+        },
+      };
+    }
+
+    const packageLabel = packageSelection.packageLabel;
+
+    logInfo("[METRC] transfer_package_selected", {
+      companyId: input.companyId,
+      ...packageSelectionMeta,
+    });
+
     const pkg = await findMetrcPackageByLabel(input.companyId, packageLabel);
     if (!pkg) {
       return {
@@ -329,6 +374,7 @@ export class MetrcTransferCreateService {
         status: 400,
         message: `Package "${packageLabel}" was not found. Sync packages or create a test package first.`,
         validationErrors: ["Unknown source package label."],
+        responsePayload: { packageSelection: packageSelectionMeta },
       };
     }
 
@@ -517,8 +563,13 @@ export class MetrcTransferCreateService {
             status: result.status,
             message: "Test transfer template submitted to METRC sandbox and transfers re-synced.",
             endpoint: lastEndpoint,
-            requestPayload: logPayload.requestPayload,
-            responsePayload: result.data,
+            requestPayload: { ...logPayload.requestPayload, packageSelection: packageSelectionMeta },
+            responsePayload: {
+              ...(typeof result.data === "object" && result.data !== null
+                ? (result.data as Record<string, unknown>)
+                : { metrcResponse: result.data }),
+              packageSelection: packageSelectionMeta,
+            },
             durationMs,
             metrcTransferId,
             transfersSynced,
