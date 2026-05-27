@@ -3,7 +3,6 @@ import { MetrcClient, isMetrcClientFailure } from "../lib/metrcClient.js";
 import { loadCompanyMetrcConfig } from "../lib/metrcConfigLoader.js";
 import { buildMetrcCredentialHintFromLoaded } from "../lib/metrcCredentialDiagnostics.js";
 import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
-import { METRC_EVALUATION_ADJUST_QUANTITY } from "../lib/metrcPackageEvaluationDefaults.js";
 import { fetchMetrcPackageAdjustmentReasons } from "./metrcPackageAdjustmentReasonsService.js";
 import type { MetrcPackageAdjustmentReasonsResult } from "./metrcPackageAdjustmentReasonsService.js";
 import {
@@ -13,8 +12,10 @@ import {
   buildMetrcPackageUnfinishBody,
 } from "../lib/metrcPackageMutationBodies.js";
 import {
+  resolveEvaluationAdjustQuantity,
   resolveMetrcEvaluationPackage,
   resolvePackageUnitOfMeasure,
+  type ResolvedMetrcEvaluationPackage,
 } from "../lib/metrcPackageResolve.js";
 import {
   attachSpreadsheetFieldsToResponse,
@@ -161,10 +162,7 @@ function buildRequestBody(
     case "change_item":
       return buildMetrcPackageChangeItemBody({ packageLabel: pkg.packageLabel, itemName });
     case "adjust": {
-      const quantity =
-        input.quantity != null && Number.isFinite(Number(input.quantity))
-          ? Number(input.quantity)
-          : METRC_EVALUATION_ADJUST_QUANTITY;
+      const quantity = resolveEvaluationAdjustQuantity(pkg);
       const unitOfMeasure = resolvePackageUnitOfMeasure({
         persistedUnitOfMeasure: pkg.unitOfMeasure,
         raw: pkg.raw,
@@ -224,7 +222,7 @@ export class MetrcPackageMutationService {
       };
     }
 
-    const pkg = await resolveMetrcEvaluationPackage({
+    let pkg = await resolveMetrcEvaluationPackage({
       companyId: input.companyId,
       packageLabel: input.packageLabel,
       packageId: input.packageId,
@@ -258,6 +256,27 @@ export class MetrcPackageMutationService {
         purpose: `package_${input.kind}_test`,
       });
       license = locationsRequest.params.licenseNumber;
+    }
+
+    let packageResolvedBeforeMutation: ResolvedMetrcEvaluationPackage | null = null;
+    if (input.kind === "finish" || input.kind === "unfinish") {
+      await this.packagesSyncService.syncMetrcPackages({
+        companyId: input.companyId,
+        actorUserId: input.actorUserId,
+      });
+      pkg = await resolveMetrcEvaluationPackage({
+        companyId: input.companyId,
+        packageLabel: input.packageLabel ?? pkg.packageLabel,
+        packageId: input.packageId ?? pkg.packageId,
+        licenseNumber: input.licenseNumber ?? pkg.licenseNumber ?? loaded.licenseNumber,
+      });
+      packageResolvedBeforeMutation = pkg;
+      logInfo("[METRC] package_mutation_reresolved_after_sync", {
+        companyId: input.companyId,
+        kind: input.kind,
+        packageLabel: pkg.packageLabel,
+        quantity: pkg.quantity,
+      });
     }
 
     let adjustmentReasonsResult: MetrcPackageAdjustmentReasonsResult | null = null;
@@ -309,8 +328,50 @@ export class MetrcPackageMutationService {
           }
         : null;
 
+    const adjustRow =
+      input.kind === "adjust"
+        ? ((requestBody as { Quantity?: number; UnitOfMeasure?: string; AdjustmentReason?: string }[])[0] ??
+          null)
+        : null;
+
+    const evaluationMutationMeta = {
+      ...(adjustmentReasonMeta ? { adjustmentReasonLookup: adjustmentReasonMeta } : {}),
+      ...(packageResolvedBeforeMutation
+        ? {
+            packageResolvedBeforeMutation: {
+              packageLabel: packageResolvedBeforeMutation.packageLabel,
+              quantity: packageResolvedBeforeMutation.quantity,
+              unitOfMeasure: packageResolvedBeforeMutation.unitOfMeasure,
+              source: packageResolvedBeforeMutation.source,
+            },
+          }
+        : {}),
+      ...(input.kind === "adjust"
+        ? {
+            packageAdjustResolution: {
+              quantityBefore: pkg.quantity,
+              adjustDelta: adjustRow?.Quantity ?? null,
+              targetQuantity: 0,
+            },
+          }
+        : {}),
+    };
+
+    if (input.kind === "finish" && pkg.quantity > 0) {
+      return {
+        ok: false,
+        status: 400,
+        message: `Package ${pkg.packageLabel} cannot be finished because quantity is ${pkg.quantity} ${pkg.unitOfMeasure || ""}. Run Adjust Package first to zero the package.`,
+        requestPayload: { package: pkg, ...evaluationMutationMeta },
+        responsePayload: {
+          ok: false,
+          message: `Package is not empty (quantity ${pkg.quantity}).`,
+          ...evaluationMutationMeta,
+        },
+      };
+    }
+
     if (input.kind === "adjust") {
-      const adjustRow = (requestBody as { UnitOfMeasure?: string; AdjustmentReason?: string }[])[0];
       const unitOfMeasure = String(adjustRow?.UnitOfMeasure || "").trim();
       const adjustmentReason = String(adjustRow?.AdjustmentReason || "").trim();
       if (!unitOfMeasure) {
@@ -319,7 +380,7 @@ export class MetrcPackageMutationService {
           status: 400,
           message:
             "Package unit of measure could not be resolved. Sync packages first so UnitOfWeight is available.",
-          requestPayload: { package: pkg, adjustmentReasonLookup: adjustmentReasonMeta },
+          requestPayload: { package: pkg, ...evaluationMutationMeta },
         };
       }
       if (!adjustmentReason) {
@@ -327,10 +388,12 @@ export class MetrcPackageMutationService {
           ok: false,
           status: 400,
           message: "No valid package adjustment reason found",
-          requestPayload: { package: pkg, adjustmentReasonLookup: adjustmentReasonMeta },
+          requestPayload: { package: pkg, ...evaluationMutationMeta },
         };
       }
     }
+
+    const mutationRequestExtras = { package: pkg, ...evaluationMutationMeta };
 
     const pathname = `${endpointForKind(input.kind)}${licenseQuery(license)}`;
     const startedAt = Date.now();
@@ -356,14 +419,9 @@ export class MetrcPackageMutationService {
         method: "PUT",
         endpoint: endpointKey,
         httpStatus: result.status,
-        requestPayload: {
-          pathname,
-          body: requestBody,
-          package: pkg,
-          adjustmentReasonLookup: adjustmentReasonMeta,
-        },
+        requestPayload: { pathname, body: requestBody, ...mutationRequestExtras },
         responsePayload: attachSpreadsheetFieldsToResponse(
-          { error: message, metrcMessage: result.metrcMessage, adjustmentReasonLookup: adjustmentReasonMeta },
+          { error: message, metrcMessage: result.metrcMessage, ...evaluationMutationMeta },
           spreadsheetFields,
         ),
         durationMs,
@@ -386,14 +444,9 @@ export class MetrcPackageMutationService {
             ? buildMetrcCredentialHintFromLoaded(loaded)
             : undefined,
         endpoint: endpointKey,
-        requestPayload: {
-          pathname,
-          body: requestBody,
-          package: pkg,
-          adjustmentReasonLookup: adjustmentReasonMeta,
-        },
+        requestPayload: { pathname, body: requestBody, ...mutationRequestExtras },
         responsePayload: attachSpreadsheetFieldsToResponse(
-          { error: message, metrcMessage: result.metrcMessage, adjustmentReasonLookup: adjustmentReasonMeta },
+          { error: message, metrcMessage: result.metrcMessage, ...evaluationMutationMeta },
           spreadsheetFields,
         ),
         metrcMessage: result.metrcMessage,
@@ -429,7 +482,7 @@ export class MetrcPackageMutationService {
         metrcResponse: responseData,
         packagesSynced,
         packageSource: pkg.source,
-        adjustmentReasonLookup: adjustmentReasonMeta,
+        ...evaluationMutationMeta,
       },
       spreadsheetFields,
     );
@@ -440,12 +493,7 @@ export class MetrcPackageMutationService {
       method: "PUT",
       endpoint: endpointKey,
       httpStatus: result.status,
-      requestPayload: {
-        pathname,
-        body: requestBody,
-        package: pkg,
-        adjustmentReasonLookup: adjustmentReasonMeta,
-      },
+      requestPayload: { pathname, body: requestBody, ...mutationRequestExtras },
       responsePayload,
       durationMs,
       actorUserId: input.actorUserId,
@@ -464,12 +512,7 @@ export class MetrcPackageMutationService {
       status: result.status,
       message: `${label} submitted to METRC sandbox and packages re-synced.`,
       endpoint: endpointKey,
-      requestPayload: {
-        pathname,
-        body: requestBody,
-        package: pkg,
-        adjustmentReasonLookup: adjustmentReasonMeta,
-      },
+      requestPayload: { pathname, body: requestBody, ...mutationRequestExtras },
       responsePayload,
       durationMs,
       packagesSynced,

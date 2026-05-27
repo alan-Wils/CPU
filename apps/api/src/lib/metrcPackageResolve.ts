@@ -1,4 +1,5 @@
 import {
+  METRC_EVALUATION_ADJUST_QUANTITY,
   METRC_EVALUATION_DEFAULT_PACKAGE_ID,
   METRC_EVALUATION_DEFAULT_PACKAGE_LABEL,
   METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
@@ -44,10 +45,51 @@ export type ResolvedMetrcEvaluationPackage = {
   packageId: string | null;
   licenseNumber: string;
   itemName: string;
+  quantity: number;
   unitOfMeasure: string;
   raw: Record<string, unknown>;
   source: "synced_recent" | "synced_label" | "fallback";
 };
+
+function readNumberField(row: Record<string, unknown>, keys: string[]): number {
+  for (const key of keys) {
+    const raw = row[key];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+    if (Number.isFinite(n)) return n;
+  }
+  return 0;
+}
+
+export function resolvePackageQuantity(input: {
+  persistedQuantity?: number | null;
+  raw?: Record<string, unknown> | null;
+}): number {
+  if (input.raw && typeof input.raw === "object") {
+    const fromRaw = readNumberField(input.raw, [
+      "Quantity",
+      "quantity",
+      "RemainingQuantity",
+      "remainingQuantity",
+    ]);
+    if (fromRaw !== 0) return fromRaw;
+  }
+  const persisted = Number(input.persistedQuantity);
+  return Number.isFinite(persisted) ? persisted : 0;
+}
+
+/** METRC adjust Quantity is a delta — negative current quantity zeroes the package for finish. */
+export function resolveEvaluationAdjustQuantity(pkg: {
+  quantity: number;
+  raw: Record<string, unknown>;
+}): number {
+  const current = resolvePackageQuantity({
+    persistedQuantity: pkg.quantity,
+    raw: pkg.raw,
+  });
+  if (current > 0) return -current;
+  return METRC_EVALUATION_ADJUST_QUANTITY;
+}
 
 function readPackageIdFromRaw(rawPayloadJson: string): string | null {
   try {
@@ -78,6 +120,7 @@ function rowToResolved(
     packageId: readPackageIdFromRaw(row.rawPayloadJson),
     licenseNumber: row.licenseNumber.trim() || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
     itemName: row.itemName.trim(),
+    quantity: resolvePackageQuantity({ persistedQuantity: row.quantity, raw }),
     unitOfMeasure: resolvePackageUnitOfMeasure({
       persistedUnitOfMeasure: row.unitOfMeasure,
       raw,
@@ -134,6 +177,7 @@ export async function resolveMetrcEvaluationPackage(input: {
     packageId: explicitId || METRC_EVALUATION_DEFAULT_PACKAGE_ID,
     licenseNumber: explicitLicense || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
     itemName: "",
+    quantity: 0,
     unitOfMeasure: METRC_EVALUATION_DEFAULT_PACKAGE_UNIT,
     raw: {},
     source: "fallback",

@@ -237,7 +237,7 @@ export const METRC_SANDBOX_CREATE_TASK_IDS = [
 export const METRC_EVALUATION_DEFAULT_PACKAGE_LABEL = "AAA00090000196B000000001";
 export const METRC_EVALUATION_DEFAULT_PACKAGE_ID = "46601";
 export const METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE = "SF-SBX-CO-7-13402";
-export const METRC_EVALUATION_ADJUST_QUANTITY = 0.01;
+export const METRC_EVALUATION_ADJUST_QUANTITY = 0;
 
 export const METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_QUANTITY = 10;
 export const METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT = "Grams";
@@ -350,6 +350,7 @@ export function buildEvaluationCreateRequestBody(
       if (body && typeof body === "object" && !Array.isArray(body)) {
         const merged = { ...defaults, ...(body as Record<string, unknown>) };
         delete merged.adjustmentReason;
+        merged.quantity = METRC_EVALUATION_ADJUST_QUANTITY;
         return merged;
       }
     }
