@@ -173,7 +173,7 @@ const metrcMotherPlantPackageBody = z.object({
   count: z.coerce.number().int().positive(),
   actualDate: z.string().min(1),
   locationName: z.string().optional().nullable(),
-  itemName: z.string().optional().nullable(),
+  itemName: z.string().min(1),
 });
 
 const metrcCreateTestHarvestBody = z.object({
@@ -721,7 +721,7 @@ metrcRouter.post(
       count: body.count,
       actualDate: body.actualDate,
       locationName: body.locationName ?? null,
-      itemName: body.itemName ?? null,
+      itemName: body.itemName,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),

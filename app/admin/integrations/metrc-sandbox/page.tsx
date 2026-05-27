@@ -197,11 +197,24 @@ const DEFAULT_TEST_ITEM_UOM = "Grams";
 const PACKAGE_ITEM_REQUIRED_MSG = "Sync or create an item before creating a package.";
 const DEFAULT_TEST_HARVEST_NAME = "NexBatch Test Harvest";
 const DEFAULT_PLANT_GROWTH_LOCATION_NAME = "SBX Default Location Type Location 1";
+const DEFAULT_SANDBOX_PACKAGE_ITEM_NAME = "SBX Bud allocated for extraction SBX Strain 1 Item";
 const METRC_HARVEST_TYPE_OPTIONS = ["Product", "WholePlant"] as const;
 const DEFAULT_STRAIN_INDICA_PCT = "50";
 const DEFAULT_STRAIN_SATIVA_PCT = "50";
 
 const METRC_STRAIN_TESTING_STATUSES = ["None", "InHouse", "ThirdParty"] as const;
+
+function resolveDefaultSandboxPackageItemId(items: MetrcItemRow[]): string | null {
+  if (!items.length) return null;
+  const preferred = DEFAULT_SANDBOX_PACKAGE_ITEM_NAME.trim().toLowerCase();
+  const exact = items.find((i) => i.itemName.trim().toLowerCase() === preferred);
+  if (exact) return exact.metrcItemId;
+  const partial = items.find((i) =>
+    i.itemName.trim().toLowerCase().includes("sbx bud allocated"),
+  );
+  if (partial) return partial.metrcItemId;
+  return items[0]!.metrcItemId;
+}
 
 function parseStrainPercentagePair(indicaRaw: string, sativaRaw: string): {
   valid: boolean;
@@ -929,6 +942,7 @@ export default function MetrcSandboxPage() {
     new Date().toISOString().slice(0, 10),
   );
   const [motherPackageLocationId, setMotherPackageLocationId] = useState("");
+  const [motherPackageItemId, setMotherPackageItemId] = useState("");
   const [lastMotherPlantPackage, setLastMotherPlantPackage] =
     useState<MotherPlantPackageResult | null>(null);
   const [lastHarvestsSync, setLastHarvestsSync] = useState<HarvestsSyncResult | null>(null);
@@ -1313,6 +1327,11 @@ export default function MetrcSandboxPage() {
     [itemsRows, createPackageItemId],
   );
 
+  const selectedMotherPackageItem = useMemo(
+    () => (itemsRows ?? []).find((i) => i.metrcItemId === motherPackageItemId) ?? null,
+    [itemsRows, motherPackageItemId],
+  );
+
   const selectedPackageLocation = useMemo(
     () =>
       packageCapableLocations.find((l) => l.metrcLocationId === createPackageLocationId) ?? null,
@@ -1356,6 +1375,20 @@ export default function MetrcSandboxPage() {
     createHarvestGrowthLocationId,
     createHarvestDryingLocationId,
   ]);
+
+  useEffect(() => {
+    if (!itemsLoaded || !itemsRows?.length) return;
+    const defaultItemId = resolveDefaultSandboxPackageItemId(itemsRows);
+    if (!defaultItemId) return;
+    if (!createPackageItemId.trim()) {
+      setCreatePackageItemId(defaultItemId);
+      const item = itemsRows.find((i) => i.metrcItemId === defaultItemId);
+      if (item?.unitOfMeasureName) setCreatePackageUnit(item.unitOfMeasureName);
+    }
+    if (!motherPackageItemId.trim()) {
+      setMotherPackageItemId(defaultItemId);
+    }
+  }, [itemsLoaded, itemsRows, createPackageItemId, motherPackageItemId]);
 
   useEffect(() => {
     if (!createHarvestPlantBatchId.trim()) {
@@ -2025,6 +2058,15 @@ export default function MetrcSandboxPage() {
       setStatusMsg({ tone: "error", text: "Quantity must be at least 1." });
       return;
     }
+    const selectedItem =
+      selectedMotherPackageItem ??
+      (itemsRows ?? []).find((i) => i.metrcItemId === motherPackageItemId) ??
+      null;
+    const itemName = selectedItem?.itemName?.trim() || "";
+    if (!itemName) {
+      setStatusMsg({ tone: "error", text: PACKAGE_ITEM_REQUIRED_MSG });
+      return;
+    }
 
     const selectedLocation =
       (locationsRows ?? []).find((l) => l.metrcLocationId === motherPackageLocationId) ?? null;
@@ -2038,7 +2080,7 @@ export default function MetrcSandboxPage() {
       count,
       actualDate: motherPackageDate,
       locationName: selectedLocation?.name?.trim() || selectedBatch.locationName?.trim() || null,
-      itemName: "Immature Plants",
+      itemName,
     };
     try {
       const res = await authFetch("/api/metrc/test/plantbatch-package-from-mother", {
@@ -2209,10 +2251,16 @@ export default function MetrcSandboxPage() {
       setItemsRows(json.items ?? []);
       setItemsLoaded(true);
       if (json.items?.length) {
-        const first = json.items[0]!;
-        if (!createPackageItemId.trim()) {
-          setCreatePackageItemId(first.metrcItemId);
-          if (first.unitOfMeasureName) setCreatePackageUnit(first.unitOfMeasureName);
+        const defaultItemId = resolveDefaultSandboxPackageItemId(json.items);
+        if (defaultItemId) {
+          if (!createPackageItemId.trim()) {
+            setCreatePackageItemId(defaultItemId);
+            const item = json.items.find((i) => i.metrcItemId === defaultItemId);
+            if (item?.unitOfMeasureName) setCreatePackageUnit(item.unitOfMeasureName);
+          }
+          if (!motherPackageItemId.trim()) {
+            setMotherPackageItemId(defaultItemId);
+          }
         }
       }
       const tone = json.noItemsForFacility ? "error" : "ok";
@@ -3686,6 +3734,11 @@ export default function MetrcSandboxPage() {
               METRC environment is not sandbox. Switch to sandbox in Company Config to enable creation.
             </p>
           ) : null}
+          {itemsLoaded && !(itemsRows?.length ?? 0) ? (
+            <p style={{ marginTop: 12, color: "#fbbf24", fontSize: 13 }}>
+              Sync METRC items first — an item is required for from-mother-plant packages.
+            </p>
+          ) : null}
           <div
             style={{
               display: "grid",
@@ -3716,6 +3769,31 @@ export default function MetrcSandboxPage() {
                     {batch.name || batch.metrcPlantBatchId}
                     {batch.strainName ? ` · ${batch.strainName}` : ""}
                     {batch.count != null ? ` · ${batch.count}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Item</span>
+              <select
+                value={motherPackageItemId}
+                onChange={(e) => setMotherPackageItemId(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                <option value="">Select item…</option>
+                {(itemsRows ?? []).map((item) => (
+                  <option key={item.metrcItemId} value={item.metrcItemId}>
+                    {item.itemName}
+                    {item.categoryName ? ` (${item.categoryName})` : ""}
                   </option>
                 ))}
               </select>
@@ -3808,7 +3886,11 @@ export default function MetrcSandboxPage() {
                 ...styles.btn,
                 ...styles.btnPrimary,
                 opacity:
-                  busy || !isSandboxEnvironment || !motherPackagePlantBatchId || !motherPackageTag.trim()
+                  busy ||
+                  !isSandboxEnvironment ||
+                  !motherPackagePlantBatchId ||
+                  !motherPackageItemId.trim() ||
+                  !motherPackageTag.trim()
                     ? 0.6
                     : 1,
               }}
@@ -3816,6 +3898,7 @@ export default function MetrcSandboxPage() {
                 !!busy ||
                 !isSandboxEnvironment ||
                 !motherPackagePlantBatchId ||
+                !motherPackageItemId.trim() ||
                 !motherPackageTag.trim() ||
                 Number.parseInt(motherPackageCount, 10) < 1
               }

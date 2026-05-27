@@ -1,5 +1,3 @@
-export const METRC_DEFAULT_MOTHER_PLANT_PACKAGE_ITEM = "Immature Plants";
-
 export const METRC_DEFAULT_MOTHER_PLANT_PACKAGE_NOTE =
   "NexBatch sandbox evaluation - package from mother plant batch.";
 
@@ -9,18 +7,19 @@ export function buildMetrcMotherPlantPackageBody(input: {
   count: number;
   actualDate: string;
   locationName?: string | null;
-  itemName?: string | null;
+  itemName: string;
   note?: string | null;
 }): unknown[] {
   const location = String(input.locationName || "").trim();
   const plantBatch = String(input.plantBatchName || "").trim();
+  const item = String(input.itemName || "").trim();
   return [
     {
       PlantBatch: plantBatch,
       Count: input.count,
       Tag: input.packageTag.trim(),
       Location: location || null,
-      Item: String(input.itemName || "").trim() || METRC_DEFAULT_MOTHER_PLANT_PACKAGE_ITEM,
+      Item: item,
       PatientLicenseNumber: null,
       Note: String(input.note || "").trim() || METRC_DEFAULT_MOTHER_PLANT_PACKAGE_NOTE,
       IsTradeSample: false,

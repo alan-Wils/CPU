@@ -43,7 +43,7 @@ export type MetrcMotherPlantPackageInput = {
   count: number;
   actualDate: string;
   locationName?: string | null;
-  itemName?: string | null;
+  itemName: string;
 };
 
 export type MetrcMotherPlantPackageSuccess = {
@@ -162,6 +162,15 @@ export class MetrcPlantBatchMotherPackageService {
         ok: false,
         status: 400,
         message: "Plant batch name is required for METRC from-mother-plant package creation.",
+      };
+    }
+
+    const itemName = String(input.itemName || "").trim();
+    if (!itemName) {
+      return {
+        ok: false,
+        status: 400,
+        message: "METRC item name is required for from-mother-plant package creation.",
       };
     }
 
