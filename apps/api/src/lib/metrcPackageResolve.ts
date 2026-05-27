@@ -92,6 +92,16 @@ export function resolvePackageQuantity(input: {
   return Number.isFinite(persisted) ? persisted : 0;
 }
 
+/** Prefer DB-synced quantity over stale raw METRC payload (e.g. after evaluation adjust to zero). */
+export function resolveSyncedPackageQuantity(input: {
+  persistedQuantity?: number | null;
+  raw?: Record<string, unknown> | null;
+}): number {
+  const persisted = Number(input.persistedQuantity);
+  if (Number.isFinite(persisted)) return persisted;
+  return resolvePackageQuantity(input);
+}
+
 /** METRC adjust Quantity is a delta — negative current quantity zeroes the package for finish. */
 export function resolveEvaluationAdjustQuantity(pkg: {
   quantity: number;

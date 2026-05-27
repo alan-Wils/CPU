@@ -1,3 +1,5 @@
+import { refreshEvaluationPackageFromMetrc } from "./metrcPackageLiveRefresh.js";
+import { listEvaluationMutationPackageLabels } from "./metrcEvaluationExcludedPackages.js";
 import {
   isPackageFinished,
   isPackageOnHold,
@@ -5,16 +7,18 @@ import {
   isPackageTransferable,
 } from "./metrcPackageStatus.js";
 import {
-  resolvePackageQuantity,
   resolvePackageUnitOfMeasure,
+  resolveSyncedPackageQuantity,
 } from "./metrcPackageResolve.js";
 import { listMetrcPackagesForCompany } from "../repositories/metrcPackageRepository.js";
+import type { MetrcClient } from "./metrcClient.js";
 
 export type TransferablePackageSkipReason =
   | "license_mismatch"
   | "zero_quantity"
   | "finished"
-  | "on_hold";
+  | "on_hold"
+  | "evaluation_mutation_excluded";
 
 export type SkippedTransferablePackage = {
   label: string;
@@ -28,7 +32,9 @@ export type TransferablePackageSelection = {
   licenseNumber: string;
   quantity: number;
   unitOfMeasure: string;
+  lastSyncedAt: string;
   selectionReason: string;
+  excludedPackageLabels: string[];
   skippedPackages: SkippedTransferablePackage[];
   raw: Record<string, unknown>;
 };
@@ -48,6 +54,7 @@ function readPackageIdFromRaw(rawPayloadJson: string): string | null {
 function evaluatePackageRow(
   row: Awaited<ReturnType<typeof listMetrcPackagesForCompany>>[number],
   licenseNumber: string,
+  excludedLabels: Set<string>,
 ): { transferable: TransferablePackageSelection | null; skipped: SkippedTransferablePackage | null } {
   const raw = (() => {
     try {
@@ -57,9 +64,16 @@ function evaluatePackageRow(
     }
   })();
 
-  const quantity = resolvePackageQuantity({ persistedQuantity: row.quantity, raw });
+  const quantity = resolveSyncedPackageQuantity({ persistedQuantity: row.quantity, raw });
   const license = row.licenseNumber.trim();
   const label = row.packageLabel;
+
+  if (excludedLabels.has(label)) {
+    return {
+      transferable: null,
+      skipped: { label, reason: "evaluation_mutation_excluded", quantity },
+    };
+  }
 
   if (licenseNumber && license.toLowerCase() !== licenseNumber.toLowerCase()) {
     return {
@@ -94,7 +108,9 @@ function evaluatePackageRow(
         persistedUnitOfMeasure: row.unitOfMeasure,
         raw,
       }),
+      lastSyncedAt: row.lastSyncedAt.toISOString(),
       selectionReason: "",
+      excludedPackageLabels: [],
       skippedPackages: [],
       raw,
     },
@@ -104,17 +120,23 @@ function evaluatePackageRow(
 
 /**
  * Pick a package suitable for METRC transfers (quantity > 0, active, same facility).
- * Skips evaluation mutation package when it has been zeroed out.
+ * Never selects packages used by evaluation adjust/finish/unfinish.
  */
 export async function resolveTransferableMetrcPackage(input: {
   companyId: string;
   licenseNumber: string;
-  preferredPackageLabel?: string | null;
+  excludedPackageLabels?: string[];
 }): Promise<TransferablePackageSelection | null> {
   const licenseNumber = String(input.licenseNumber || "").trim();
   if (!licenseNumber) return null;
 
-  const preferred = String(input.preferredPackageLabel || "").trim();
+  const excludedLabels = new Set(
+    (input.excludedPackageLabels?.length
+      ? input.excludedPackageLabels
+      : await listEvaluationMutationPackageLabels(input.companyId)
+    ).map((label) => String(label || "").trim()).filter(Boolean),
+  );
+
   const rows = await listMetrcPackagesForCompany(input.companyId);
   const sorted = [...rows].sort(
     (a, b) => b.lastSyncedAt.getTime() - a.lastSyncedAt.getTime(),
@@ -124,20 +146,9 @@ export async function resolveTransferableMetrcPackage(input: {
   const transferable: TransferablePackageSelection[] = [];
 
   for (const row of sorted) {
-    const evaluated = evaluatePackageRow(row, licenseNumber);
+    const evaluated = evaluatePackageRow(row, licenseNumber, excludedLabels);
     if (evaluated.skipped) skippedPackages.push(evaluated.skipped);
     if (evaluated.transferable) transferable.push(evaluated.transferable);
-  }
-
-  if (preferred) {
-    const preferredMatch = transferable.find((row) => row.packageLabel === preferred);
-    if (preferredMatch) {
-      return {
-        ...preferredMatch,
-        selectionReason: "preferred_label_transferable",
-        skippedPackages,
-      };
-    }
   }
 
   const best = transferable[0];
@@ -145,9 +156,68 @@ export async function resolveTransferableMetrcPackage(input: {
 
   return {
     ...best,
-    selectionReason: preferred
-      ? "most_recent_transferable_after_skipping_preferred"
-      : "most_recent_synced_transferable",
+    selectionReason: "most_recent_nonzero_active_package",
+    excludedPackageLabels: [...excludedLabels].sort(),
     skippedPackages,
+  };
+}
+
+export async function refreshTransferablePackageSelection(input: {
+  client: MetrcClient;
+  licenseNumber: string;
+  selection: TransferablePackageSelection;
+}): Promise<TransferablePackageSelection> {
+  const refreshed = await refreshEvaluationPackageFromMetrc({
+    client: input.client,
+    licenseNumber: input.licenseNumber,
+    pkg: {
+      packageLabel: input.selection.packageLabel,
+      packageId: input.selection.packageId,
+      licenseNumber: input.selection.licenseNumber,
+      itemName: "",
+      quantity: input.selection.quantity,
+      unitOfMeasure: input.selection.unitOfMeasure,
+      isFinished: isPackageFinished({ raw: input.selection.raw }),
+      raw: input.selection.raw,
+      source: "synced_label",
+    },
+  });
+
+  return {
+    ...input.selection,
+    quantity: refreshed.quantity,
+    unitOfMeasure: refreshed.unitOfMeasure,
+    raw: refreshed.raw,
+  };
+}
+
+export function buildTransferPackageSelectionMeta(
+  selection: TransferablePackageSelection | null,
+  sourceLicense: string,
+): Record<string, unknown> {
+  if (!selection) {
+    return {
+      selectedPackageLabel: null,
+      selectedPackageId: null,
+      selectedPackageQuantity: null,
+      selectedPackageUnit: null,
+      selectedPackageLicense: sourceLicense,
+      selectedPackageLastModified: null,
+      packageSelectionReason: "none_found",
+      excludedPackageLabels: [],
+      skippedPackages: [],
+    };
+  }
+
+  return {
+    selectedPackageLabel: selection.packageLabel,
+    selectedPackageId: selection.packageId,
+    selectedPackageQuantity: selection.quantity,
+    selectedPackageUnit: selection.unitOfMeasure,
+    selectedPackageLicense: selection.licenseNumber,
+    selectedPackageLastModified: selection.lastSyncedAt,
+    packageSelectionReason: selection.selectionReason,
+    excludedPackageLabels: selection.excludedPackageLabels,
+    skippedPackages: selection.skippedPackages,
   };
 }

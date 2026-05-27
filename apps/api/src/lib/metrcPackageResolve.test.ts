@@ -4,6 +4,7 @@ import {
   resolveEvaluationAdjustQuantity,
   resolvePackageQuantity,
   resolvePackageUnitOfMeasure,
+  resolveSyncedPackageQuantity,
 } from "./metrcPackageResolve.js";
 
 describe("resolvePackageUnitOfMeasure", () => {
@@ -38,6 +39,15 @@ describe("resolvePackageQuantity", () => {
   it("reads explicit zero quantity from raw METRC payload", () => {
     expect(resolvePackageQuantity({ persistedQuantity: 0.01, raw: { Quantity: 0 } })).toBe(0);
     expect(isPackageQuantityEmpty(0)).toBe(true);
+  });
+
+  it("resolveSyncedPackageQuantity prefers persisted zero over stale raw", () => {
+    expect(
+      resolveSyncedPackageQuantity({
+        persistedQuantity: 0,
+        raw: { Quantity: 10 },
+      }),
+    ).toBe(0);
   });
 });
 

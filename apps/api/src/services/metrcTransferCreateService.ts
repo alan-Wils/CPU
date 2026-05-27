@@ -4,8 +4,10 @@ import { MetrcClient, isMetrcClientFailure } from "../lib/metrcClient.js";
 import { loadCompanyMetrcConfig } from "../lib/metrcConfigLoader.js";
 import { buildMetrcCredentialHintFromLoaded } from "../lib/metrcCredentialDiagnostics.js";
 import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
-import { resolveTransferableMetrcPackage } from "../lib/metrcPackageTransferResolve.js";
+import { isPackageQuantityEmpty } from "../lib/metrcPackageStatus.js";
+import { METRC_EVALUATION_DEFAULT_PACKAGE_LABEL } from "../lib/metrcPackageEvaluationDefaults.js";
 import { findMetrcPackageByLabel } from "../repositories/metrcPackageRepository.js";
+import { MetrcTransferPackageSelectionService } from "./metrcTransferPackageSelectionService.js";
 import {
   appendMetrcTransferRequestLog,
   upsertMetrcTransfersForCompany,
@@ -240,6 +242,7 @@ function extractCreatedTransferId(response: unknown): string | null {
 export class MetrcTransferCreateService {
   transfersSyncService = new MetrcTransfersSyncService();
   transferTypesSyncService = new MetrcTransferTypesSyncService();
+  transferPackageSelectionService = new MetrcTransferPackageSelectionService();
 
   async createTestTransfer(
     input: MetrcCreateTestTransferInput,
@@ -277,8 +280,6 @@ export class MetrcTransferCreateService {
     if (!sourceLicense) {
       validationErrors.push("Active facility license is required.");
     }
-
-    const preferredPackageLabel = String(input.packageLabel || "").trim();
 
     const destinationLicense = String(input.destinationFacilityLicense || "").trim();
     if (!destinationLicense) {
@@ -320,38 +321,22 @@ export class MetrcTransferCreateService {
       };
     }
 
-    const packageSelection = await resolveTransferableMetrcPackage({
+    const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
+
+    const ensured = await this.transferPackageSelectionService.ensureTransferablePackageForEvaluation({
       companyId: input.companyId,
+      actorUserId: input.actorUserId,
       licenseNumber: sourceLicense,
-      preferredPackageLabel: preferredPackageLabel || null,
+      client,
     });
 
-    const packageSelectionMeta = packageSelection
-      ? {
-          selectedPackageLabel: packageSelection.packageLabel,
-          selectedQuantity: packageSelection.quantity,
-          selectedUnitOfMeasure: packageSelection.unitOfMeasure,
-          selectedLicenseNumber: packageSelection.licenseNumber,
-          selectionReason: packageSelection.selectionReason,
-          skippedPackages: packageSelection.skippedPackages,
-          requestedPackageLabel: preferredPackageLabel || null,
-        }
-      : {
-          selectedPackageLabel: null,
-          selectedQuantity: null,
-          selectedUnitOfMeasure: null,
-          selectedLicenseNumber: sourceLicense,
-          selectionReason: "none_found",
-          skippedPackages: [] as Array<{ label: string; reason: string; quantity: number }>,
-          requestedPackageLabel: preferredPackageLabel || null,
-        };
+    const packageSelectionMeta = ensured.packageSelection;
 
-    if (!packageSelection) {
+    if (ensured.ok === false) {
       return {
         ok: false,
         status: 400,
-        message:
-          "No transferable package found. Run Create Package first with a fresh package tag.",
+        message: ensured.message,
         validationErrors: ["No transferable package with quantity > 0."],
         responsePayload: {
           ok: false,
@@ -360,12 +345,24 @@ export class MetrcTransferCreateService {
       };
     }
 
+    const packageSelection = ensured.selection;
     const packageLabel = packageSelection.packageLabel;
 
-    logInfo("[METRC] transfer_package_selected", {
-      companyId: input.companyId,
-      ...packageSelectionMeta,
-    });
+    if (
+      packageLabel === METRC_EVALUATION_DEFAULT_PACKAGE_LABEL ||
+      isPackageQuantityEmpty(packageSelection.quantity)
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        message: `Package ${packageLabel} is not transferable (zero quantity or reserved for evaluation mutations).`,
+        validationErrors: ["Selected package is not transferable."],
+        responsePayload: {
+          ok: false,
+          packageSelection: packageSelectionMeta,
+        },
+      };
+    }
 
     const pkg = await findMetrcPackageByLabel(input.companyId, packageLabel);
     if (!pkg) {
@@ -447,7 +444,6 @@ export class MetrcTransferCreateService {
       grossUnitOfWeightName: grossUnit,
     };
 
-    const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
     const candidates = buildTransferTemplateCreatePathCandidates(sourceLicense);
     const startedAt = Date.now();
     let lastStatus = 502;
