@@ -4,8 +4,11 @@ import { MetrcClient, isMetrcClientFailure } from "../lib/metrcClient.js";
 import { loadCompanyMetrcConfig } from "../lib/metrcConfigLoader.js";
 import { buildMetrcCredentialHintFromLoaded } from "../lib/metrcCredentialDiagnostics.js";
 import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
-import { generateNextUnusedSandboxPackageTag } from "../lib/metrcPackageTagGenerator.js";
-import type { GeneratedSandboxPackageTag } from "../lib/metrcPackageTagGenerator.js";
+import {
+  MetrcPackageTagUnavailableError,
+  selectSandboxPackageTag,
+  type SelectedSandboxPackageTag,
+} from "../lib/metrcPackageTagGenerator.js";
 import {
   appendMetrcPackageRequestLog,
   findMetrcPackageByLabel,
@@ -40,8 +43,14 @@ export type MetrcCreateTestPackageSuccess = {
   packageLabel: string;
   packagesSynced: number;
   syncDiagnostics?: import("../lib/metrcPackageSyncDiagnostics.js").MetrcPackageSyncDiagnostics;
+  selectedPackageTag?: string;
+  tagSelectionSource?: SelectedSandboxPackageTag["tagSelectionSource"];
+  availableTagCount?: number;
+  excludedUsedTags?: string[];
+  /** @deprecated Use selectedPackageTag */
   generatedPackageTag?: string;
-  packageTagSource?: GeneratedSandboxPackageTag["packageTagSource"];
+  /** @deprecated Use tagSelectionSource */
+  packageTagSource?: string;
   previousPackageLabel?: string | null;
 };
 
@@ -223,14 +232,35 @@ export class MetrcPackageCreateService {
     }
 
     let packageTag = String(input.packageTag || "").trim();
-    let tagGeneration: GeneratedSandboxPackageTag | null = null;
+    let tagSelection: SelectedSandboxPackageTag | null = null;
 
-    if (!packageTag) {
-      tagGeneration = await generateNextUnusedSandboxPackageTag({
+    const resolvePackageTag = async (): Promise<string> => {
+      tagSelection = await selectSandboxPackageTag({
         companyId: input.companyId,
         licenseNumber: license,
       });
-      packageTag = tagGeneration.generatedPackageTag;
+      return tagSelection.selectedPackageTag;
+    };
+
+    try {
+      if (!packageTag) {
+        packageTag = await resolvePackageTag();
+      }
+    } catch (err) {
+      if (err instanceof MetrcPackageTagUnavailableError) {
+        return {
+          ok: false,
+          status: 400,
+          message: err.message,
+          responsePayload: {
+            selectedPackageTag: null,
+            tagSelectionSource: "available_metrc_tags",
+            availableTagCount: err.availableTagCount,
+            excludedUsedTags: err.excludedUsedTags,
+          },
+        };
+      }
+      throw err;
     }
 
     const metrcHarvestId = String(input.metrcHarvestId || "").trim();
@@ -270,11 +300,24 @@ export class MetrcPackageCreateService {
 
     const duplicate = await findMetrcPackageByLabel(input.companyId, packageTag);
     if (duplicate) {
-      tagGeneration = await generateNextUnusedSandboxPackageTag({
-        companyId: input.companyId,
-        licenseNumber: license,
-      });
-      packageTag = tagGeneration.generatedPackageTag;
+      try {
+        packageTag = await resolvePackageTag();
+      } catch (err) {
+        if (err instanceof MetrcPackageTagUnavailableError) {
+          return {
+            ok: false,
+            status: 400,
+            message: err.message,
+            responsePayload: {
+              selectedPackageTag: null,
+              tagSelectionSource: "available_metrc_tags",
+              availableTagCount: err.availableTagCount,
+              excludedUsedTags: err.excludedUsedTags,
+            },
+          };
+        }
+        throw err;
+      }
     }
 
     const item = await resolveItemForCreate(input.companyId, input);
@@ -383,11 +426,15 @@ export class MetrcPackageCreateService {
           packageLabel: packageTag,
           packagesSynced,
           syncDiagnostics: syncResult.syncDiagnostics,
-          ...(tagGeneration
+          ...(tagSelection
             ? {
-                generatedPackageTag: tagGeneration.generatedPackageTag,
-                packageTagSource: tagGeneration.packageTagSource,
-                previousPackageLabel: tagGeneration.previousPackageLabel,
+                selectedPackageTag: tagSelection.selectedPackageTag,
+                tagSelectionSource: tagSelection.tagSelectionSource,
+                availableTagCount: tagSelection.availableTagCount,
+                excludedUsedTags: tagSelection.excludedUsedTags,
+                generatedPackageTag: tagSelection.selectedPackageTag,
+                packageTagSource: tagSelection.tagSelectionSource,
+                previousPackageLabel: tagSelection.previousPackageLabel ?? null,
               }
             : {}),
         };

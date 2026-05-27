@@ -41,6 +41,7 @@ export class MetrcAvailablePackageTagsService {
   async fetchLabels(input: {
     companyId: string;
     limit: number;
+    licenseNumber?: string | null;
   }): Promise<MetrcAvailablePackageTagsResponse> {
     const max = Math.min(500, Math.max(1, input.limit));
     const configService = new ConfigService();
@@ -48,7 +49,7 @@ export class MetrcAvailablePackageTagsService {
     const companyRow = rows.find((r) => r.key === "company");
     const company = asRecord(companyRow?.value);
     const metrc = asRecord(company.metrc);
-    const licenseNumber = String(metrc.licenseNumber || "").trim();
+    const licenseNumber = String(input.licenseNumber ?? metrc.licenseNumber ?? "").trim();
     const baseUrlPre = resolveMetrcApiBaseUrl({
       stateCode: String(metrc.stateCode || ""),
       environment: metrc.environment === "sandbox" ? "sandbox" : "production",

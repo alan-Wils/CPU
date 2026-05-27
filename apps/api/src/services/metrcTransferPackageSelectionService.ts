@@ -10,7 +10,7 @@ import {
 } from "../lib/metrcPackageTransferResolve.js";
 import { listMetrcItemsForCompany } from "../repositories/metrcItemRepository.js";
 import { listMetrcHarvestsForCompany } from "../repositories/metrcHarvestRepository.js";
-import { generateNextUnusedSandboxPackageTag } from "../lib/metrcPackageTagGenerator.js";
+import { selectSandboxPackageTag } from "../lib/metrcPackageTagGenerator.js";
 import { MetrcPackageCreateService } from "./metrcPackageCreateService.js";
 import { MetrcPackagesSyncService } from "./metrcPackagesSyncService.js";
 
@@ -137,11 +137,11 @@ export class MetrcTransferPackageSelectionService {
 
     let packageTag: string;
     try {
-      const generated = await generateNextUnusedSandboxPackageTag({
+      const generated = await selectSandboxPackageTag({
         companyId: input.companyId,
         licenseNumber: input.licenseNumber,
       });
-      packageTag = generated.generatedPackageTag;
+      packageTag = generated.selectedPackageTag;
     } catch (err) {
       logWarn("[METRC] transfer_create_package_tag_generation_failed", {
         companyId: input.companyId,

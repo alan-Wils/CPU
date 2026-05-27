@@ -1,5 +1,38 @@
-import { describe, expect, it } from "vitest";
-import { incrementMetrcTag, pickLatestSandboxPackageLabel } from "./metrcPackageTagGenerator.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const {
+  listPackagesMock,
+  findPackageMock,
+  listCreatedLabelsMock,
+  fetchTagsMock,
+} = vi.hoisted(() => ({
+  listPackagesMock: vi.fn(),
+  findPackageMock: vi.fn(),
+  listCreatedLabelsMock: vi.fn(),
+  fetchTagsMock: vi.fn(),
+}));
+
+vi.mock("../repositories/metrcPackageRepository.js", () => ({
+  listMetrcPackagesForCompany: listPackagesMock,
+  findMetrcPackageByLabel: findPackageMock,
+}));
+
+vi.mock("./metrcEvaluationCreatedPackages.js", () => ({
+  listEvaluationCreatedPackageLabels: listCreatedLabelsMock,
+}));
+
+vi.mock("../services/metrcAvailablePackageTagsService.js", () => ({
+  MetrcAvailablePackageTagsService: class {
+    fetchLabels = fetchTagsMock;
+  },
+}));
+
+import {
+  incrementMetrcTag,
+  MetrcPackageTagUnavailableError,
+  pickLatestSandboxPackageLabel,
+  selectSandboxPackageTag,
+} from "./metrcPackageTagGenerator.js";
 
 describe("incrementMetrcTag", () => {
   it("increments zero-padded METRC suffix", () => {
@@ -37,18 +70,91 @@ describe("pickLatestSandboxPackageLabel", () => {
       "AAA00090000196B000000003",
     );
   });
+});
 
-  it("filters by license when provided", () => {
-    const mixed = [
-      ...rows,
+describe("selectSandboxPackageTag", () => {
+  beforeEach(() => {
+    listPackagesMock.mockReset();
+    listCreatedLabelsMock.mockReset();
+    fetchTagsMock.mockReset();
+    listPackagesMock.mockResolvedValue([
       {
-        packageLabel: "OTHER000000001",
-        licenseNumber: "OTHER-LIC",
-        lastSyncedAt: new Date("2026-05-27T12:00:00Z"),
+        packageLabel: "AAA00090000196B000000001",
+        licenseNumber: "SF-SBX-CO-7-13402",
+        lastSyncedAt: new Date(),
       },
-    ];
-    expect(pickLatestSandboxPackageLabel(mixed, "SF-SBX-CO-7-13402")).toBe(
-      "AAA00090000196B000000003",
-    );
+      {
+        packageLabel: "AAA00090000196B000000002",
+        licenseNumber: "SF-SBX-CO-7-13402",
+        lastSyncedAt: new Date(),
+      },
+    ]);
+    listCreatedLabelsMock.mockResolvedValue(["AAA00090000196B000000002"]);
+    fetchTagsMock.mockResolvedValue({
+      ok: true,
+      labels: [
+        "AAA00090000196B000000001",
+        "AAA00090000196B000000002",
+        "AAA00090000196B000000004",
+      ],
+      parsedCount: 3,
+      totalReturned: 3,
+      licenseNumber: "SF-SBX-CO-7-13402",
+      baseUrl: "https://sandbox-api-co.metrc.com",
+      authMode: "sandbox_basic_vendor_user",
+    });
+  });
+
+  it("selects first METRC-available tag not already used in NexBatch", async () => {
+    const selected = await selectSandboxPackageTag({
+      companyId: "c1",
+      licenseNumber: "SF-SBX-CO-7-13402",
+    });
+
+    expect(selected.selectedPackageTag).toBe("AAA00090000196B000000004");
+    expect(selected.tagSelectionSource).toBe("available_metrc_tags");
+    expect(selected.availableTagCount).toBe(3);
+    expect(selected.excludedUsedTags).toContain("AAA00090000196B000000001");
+    expect(selected.excludedUsedTags).toContain("AAA00090000196B000000002");
+  });
+
+  it("throws when METRC has no unused available tags", async () => {
+    fetchTagsMock.mockResolvedValue({
+      ok: true,
+      labels: ["AAA00090000196B000000001", "AAA00090000196B000000002"],
+      parsedCount: 2,
+      totalReturned: 2,
+      licenseNumber: "SF-SBX-CO-7-13402",
+      baseUrl: "https://sandbox-api-co.metrc.com",
+      authMode: "sandbox_basic_vendor_user",
+    });
+
+    await expect(
+      selectSandboxPackageTag({
+        companyId: "c1",
+        licenseNumber: "SF-SBX-CO-7-13402",
+      }),
+    ).rejects.toBeInstanceOf(MetrcPackageTagUnavailableError);
+  });
+
+  it("falls back to increment when tags endpoint is unavailable", async () => {
+    fetchTagsMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      message: "Not found",
+      baseUrl: "https://sandbox-api-co.metrc.com",
+      licenseNumber: "SF-SBX-CO-7-13402",
+      attemptedModes: [],
+      failures: [],
+    });
+    findPackageMock.mockResolvedValue(null);
+
+    const selected = await selectSandboxPackageTag({
+      companyId: "c1",
+      licenseNumber: "SF-SBX-CO-7-13402",
+    });
+
+    expect(selected.tagSelectionSource).toBe("incremented_fallback");
+    expect(selected.selectedPackageTag).toBe("AAA00090000196B000000003");
   });
 });

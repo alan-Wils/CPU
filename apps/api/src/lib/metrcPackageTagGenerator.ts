@@ -1,11 +1,28 @@
+import { listEvaluationCreatedPackageLabels } from "./metrcEvaluationCreatedPackages.js";
 import { METRC_EVALUATION_DEFAULT_PACKAGE_LABEL } from "./metrcPackageEvaluationDefaults.js";
 import {
   findMetrcPackageByLabel,
   listMetrcPackagesForCompany,
 } from "../repositories/metrcPackageRepository.js";
+import {
+  MetrcAvailablePackageTagsService,
+  type MetrcAvailablePackageTagsResponse,
+} from "../services/metrcAvailablePackageTagsService.js";
 
+export type MetrcPackageTagSelectionSource = "available_metrc_tags" | "incremented_fallback";
+
+export type SelectedSandboxPackageTag = {
+  selectedPackageTag: string;
+  tagSelectionSource: MetrcPackageTagSelectionSource;
+  availableTagCount: number;
+  excludedUsedTags: string[];
+  previousPackageLabel?: string | null;
+};
+
+/** @deprecated Use SelectedSandboxPackageTag */
 export type MetrcPackageTagSource = "incremented_from_latest_package" | "incremented_from_default_seed";
 
+/** @deprecated Use SelectedSandboxPackageTag */
 export type GeneratedSandboxPackageTag = {
   generatedPackageTag: string;
   packageTagSource: MetrcPackageTagSource;
@@ -13,6 +30,26 @@ export type GeneratedSandboxPackageTag = {
 };
 
 const MAX_TAG_COLLISION_ATTEMPTS = 500;
+
+export class MetrcPackageTagUnavailableError extends Error {
+  readonly licenseNumber: string;
+  readonly availableTagCount: number;
+  readonly excludedUsedTags: string[];
+
+  constructor(input: {
+    licenseNumber: string;
+    availableTagCount: number;
+    excludedUsedTags: string[];
+  }) {
+    super(
+      `No available package tags found for license ${input.licenseNumber}. Generate or assign package tags in METRC sandbox first.`,
+    );
+    this.name = "MetrcPackageTagUnavailableError";
+    this.licenseNumber = input.licenseNumber;
+    this.availableTagCount = input.availableTagCount;
+    this.excludedUsedTags = input.excludedUsedTags;
+  }
+}
 
 /** Increment trailing numeric suffix while preserving zero-padding and prefix. */
 export function incrementMetrcTag(label: string): string {
@@ -42,7 +79,8 @@ export function pickLatestSandboxPackageLabel(
 ): string | null {
   const filtered = rows.filter(
     (row) =>
-      String(row.packageLabel || "").trim().length > 0 && matchesSandboxLicense(row.licenseNumber, licenseNumber),
+      String(row.packageLabel || "").trim().length > 0 &&
+      matchesSandboxLicense(row.licenseNumber, licenseNumber),
   );
   if (!filtered.length) return null;
 
@@ -54,18 +92,50 @@ export function pickLatestSandboxPackageLabel(
   return sorted[0]?.packageLabel.trim() ?? null;
 }
 
-export async function generateNextUnusedSandboxPackageTag(input: {
+/** GET /tags/v2/package/available — package tags only (METRC inventory). */
+export async function getAvailablePackageTags(
+  companyId: string,
+  licenseNumber: string,
+  tagsService: MetrcAvailablePackageTagsService = new MetrcAvailablePackageTagsService(),
+): Promise<MetrcAvailablePackageTagsResponse> {
+  return tagsService.fetchLabels({
+    companyId,
+    licenseNumber,
+    limit: 500,
+  });
+}
+
+/** Tags already consumed in NexBatch (synced packages + prior evaluation create-test). */
+export async function collectExcludedUsedPackageTags(input: {
   companyId: string;
   licenseNumber?: string | null;
-}): Promise<GeneratedSandboxPackageTag> {
+}): Promise<Set<string>> {
+  const excluded = new Set<string>();
+
+  const rows = await listMetrcPackagesForCompany(input.companyId);
+  for (const row of rows) {
+    const label = String(row.packageLabel || "").trim();
+    if (!label) continue;
+    if (!matchesSandboxLicense(row.licenseNumber, input.licenseNumber)) continue;
+    excluded.add(label);
+  }
+
+  const evaluationLabels = await listEvaluationCreatedPackageLabels(input.companyId);
+  for (const label of evaluationLabels) {
+    if (label) excluded.add(label);
+  }
+
+  excluded.add(METRC_EVALUATION_DEFAULT_PACKAGE_LABEL);
+  return excluded;
+}
+
+async function generateIncrementedFallbackTag(input: {
+  companyId: string;
+  licenseNumber?: string | null;
+}): Promise<SelectedSandboxPackageTag> {
   const rows = await listMetrcPackagesForCompany(input.companyId);
   const latestLabel = pickLatestSandboxPackageLabel(rows, input.licenseNumber);
-
   const previousPackageLabel = latestLabel;
-  const packageTagSource: MetrcPackageTagSource = latestLabel
-    ? "incremented_from_latest_package"
-    : "incremented_from_default_seed";
-
   const seedLabel = latestLabel ?? METRC_EVALUATION_DEFAULT_PACKAGE_LABEL;
   let candidate = incrementMetrcTag(seedLabel);
 
@@ -73,8 +143,10 @@ export async function generateNextUnusedSandboxPackageTag(input: {
     const existing = await findMetrcPackageByLabel(input.companyId, candidate);
     if (!existing) {
       return {
-        generatedPackageTag: candidate,
-        packageTagSource,
+        selectedPackageTag: candidate,
+        tagSelectionSource: "incremented_fallback",
+        availableTagCount: 0,
+        excludedUsedTags: [],
         previousPackageLabel,
       };
     }
@@ -84,4 +156,87 @@ export async function generateNextUnusedSandboxPackageTag(input: {
   throw new Error(
     `Unable to allocate an unused sandbox package tag after ${MAX_TAG_COLLISION_ATTEMPTS} attempts.`,
   );
+}
+
+/**
+ * Pick a METRC-available package tag, excluding labels already used in NexBatch.
+ * Falls back to incrementing only when the METRC tags endpoint is unavailable (404).
+ */
+export async function selectSandboxPackageTag(input: {
+  companyId: string;
+  licenseNumber: string;
+  tagsService?: MetrcAvailablePackageTagsService;
+}): Promise<SelectedSandboxPackageTag> {
+  const licenseNumber = String(input.licenseNumber || "").trim();
+  if (!licenseNumber) {
+    throw new Error("Facility license number is required to select a package tag.");
+  }
+
+  const excluded = await collectExcludedUsedPackageTags({
+    companyId: input.companyId,
+    licenseNumber,
+  });
+  const excludedUsedTags = [...excluded].sort();
+
+  const tagsResult = await getAvailablePackageTags(
+    input.companyId,
+    licenseNumber,
+    input.tagsService,
+  );
+
+  if (tagsResult.ok === true) {
+    const available = tagsResult.labels.filter((label) => {
+      const normalized = String(label || "").trim();
+      return normalized && !excluded.has(normalized);
+    });
+
+    const selected = available[0];
+    if (!selected) {
+      throw new MetrcPackageTagUnavailableError({
+        licenseNumber,
+        availableTagCount: tagsResult.labels.length,
+        excludedUsedTags,
+      });
+    }
+
+    return {
+      selectedPackageTag: selected,
+      tagSelectionSource: "available_metrc_tags",
+      availableTagCount: tagsResult.labels.length,
+      excludedUsedTags,
+    };
+  }
+
+  if (tagsResult.status === 404) {
+    const fallback = await generateIncrementedFallbackTag({
+      companyId: input.companyId,
+      licenseNumber,
+    });
+    return {
+      ...fallback,
+      excludedUsedTags,
+    };
+  }
+
+  throw new Error(tagsResult.message || "Failed to fetch available METRC package tags.");
+}
+
+/** @deprecated Use selectSandboxPackageTag */
+export async function generateNextUnusedSandboxPackageTag(input: {
+  companyId: string;
+  licenseNumber?: string | null;
+}): Promise<GeneratedSandboxPackageTag> {
+  const licenseNumber = String(input.licenseNumber || "").trim();
+  const selected = await selectSandboxPackageTag({
+    companyId: input.companyId,
+    licenseNumber,
+  });
+  return {
+    generatedPackageTag: selected.selectedPackageTag,
+    packageTagSource:
+      selected.tagSelectionSource === "available_metrc_tags"
+        ? "incremented_from_latest_package"
+        : "incremented_from_default_seed",
+    previousPackageLabel: selected.previousPackageLabel ?? null,
+  };
 }
