@@ -4,6 +4,8 @@ import { MetrcClient, isMetrcClientFailure } from "../lib/metrcClient.js";
 import { loadCompanyMetrcConfig } from "../lib/metrcConfigLoader.js";
 import { buildMetrcCredentialHintFromLoaded } from "../lib/metrcCredentialDiagnostics.js";
 import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
+import { generateNextUnusedSandboxPackageTag } from "../lib/metrcPackageTagGenerator.js";
+import type { GeneratedSandboxPackageTag } from "../lib/metrcPackageTagGenerator.js";
 import {
   appendMetrcPackageRequestLog,
   findMetrcPackageByLabel,
@@ -37,6 +39,9 @@ export type MetrcCreateTestPackageSuccess = {
   durationMs: number;
   packageLabel: string;
   packagesSynced: number;
+  generatedPackageTag?: string;
+  packageTagSource?: GeneratedSandboxPackageTag["packageTagSource"];
+  previousPackageLabel?: string | null;
 };
 
 export type MetrcCreateTestPackageFailure = {
@@ -216,9 +221,15 @@ export class MetrcPackageCreateService {
       };
     }
 
-    const packageTag = String(input.packageTag || "").trim();
+    let packageTag = String(input.packageTag || "").trim();
+    let tagGeneration: GeneratedSandboxPackageTag | null = null;
+
     if (!packageTag) {
-      return { ok: false, status: 400, message: "Package tag / label is required." };
+      tagGeneration = await generateNextUnusedSandboxPackageTag({
+        companyId: input.companyId,
+        licenseNumber: license,
+      });
+      packageTag = tagGeneration.generatedPackageTag;
     }
 
     const metrcHarvestId = String(input.metrcHarvestId || "").trim();
@@ -258,13 +269,11 @@ export class MetrcPackageCreateService {
 
     const duplicate = await findMetrcPackageByLabel(input.companyId, packageTag);
     if (duplicate) {
-      return {
-        ok: false,
-        status: 409,
-        message: `Package label "${packageTag}" already exists in NexBatch. Use a different tag or sync packages.`,
-        requestPayload: { packageTag },
-        responsePayload: { existingPackageLabel: duplicate.packageLabel },
-      };
+      tagGeneration = await generateNextUnusedSandboxPackageTag({
+        companyId: input.companyId,
+        licenseNumber: license,
+      });
+      packageTag = tagGeneration.generatedPackageTag;
     }
 
     const item = await resolveItemForCreate(input.companyId, input);
@@ -346,6 +355,13 @@ export class MetrcPackageCreateService {
           durationMs,
           packageLabel: packageTag,
           packagesSynced,
+          ...(tagGeneration
+            ? {
+                generatedPackageTag: tagGeneration.generatedPackageTag,
+                packageTagSource: tagGeneration.packageTagSource,
+                previousPackageLabel: tagGeneration.previousPackageLabel,
+              }
+            : {}),
         };
       }
 

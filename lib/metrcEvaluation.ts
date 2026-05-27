@@ -357,6 +357,27 @@ export function buildEvaluationCreateRequestBody(
     return defaults;
   }
 
+  if (taskId === "create_package") {
+    const defaults: Record<string, unknown> = {
+      metrcHarvestId: "",
+      metrcItemId: "",
+      packageTag: "",
+      quantity: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_QUANTITY,
+      unitOfMeasure: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT,
+      packagedDate: new Date().toISOString().slice(0, 10),
+    };
+    const stored = task.requestPayload;
+    if (stored && typeof stored === "object") {
+      const body = (stored as { body?: unknown }).body ?? stored;
+      if (body && typeof body === "object" && !Array.isArray(body)) {
+        const merged = { ...defaults, ...(body as Record<string, unknown>) };
+        merged.packageTag = "";
+        return merged;
+      }
+    }
+    return defaults;
+  }
+
   const stored = task.requestPayload;
   if (stored && typeof stored === "object") {
     const body = (stored as { body?: unknown }).body ?? stored;
@@ -387,17 +408,6 @@ export function buildEvaluationCreateRequestBody(
       wetWeight: 100,
       unitOfWeight: "Grams",
       actualDate: new Date().toISOString().slice(0, 10),
-    };
-  }
-
-  if (taskId === "create_package") {
-    return {
-      metrcHarvestId: "",
-      metrcItemId: "",
-      packageTag: "",
-      quantity: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_QUANTITY,
-      unitOfMeasure: METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT,
-      packagedDate: new Date().toISOString().slice(0, 10),
     };
   }
 

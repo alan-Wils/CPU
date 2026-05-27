@@ -10,7 +10,7 @@ import {
 } from "../lib/metrcPackageTransferResolve.js";
 import { listMetrcItemsForCompany } from "../repositories/metrcItemRepository.js";
 import { listMetrcHarvestsForCompany } from "../repositories/metrcHarvestRepository.js";
-import { MetrcAvailablePackageTagsService } from "./metrcAvailablePackageTagsService.js";
+import { generateNextUnusedSandboxPackageTag } from "../lib/metrcPackageTagGenerator.js";
 import { MetrcPackageCreateService } from "./metrcPackageCreateService.js";
 import { MetrcPackagesSyncService } from "./metrcPackagesSyncService.js";
 
@@ -30,8 +30,6 @@ export type EnsureTransferablePackageResult =
 export class MetrcTransferPackageSelectionService {
   packagesSyncService = new MetrcPackagesSyncService();
   packageCreateService = new MetrcPackageCreateService();
-  packageTagsService = new MetrcAvailablePackageTagsService();
-
   async ensureTransferablePackageForEvaluation(input: {
     companyId: string;
     actorUserId: string;
@@ -137,19 +135,18 @@ export class MetrcTransferPackageSelectionService {
       return { ok: false };
     }
 
-    const tagsResult = await this.packageTagsService.fetchLabels({
-      companyId: input.companyId,
-      limit: 50,
-    });
-    if (tagsResult.ok !== true || !tagsResult.labels.length) {
-      logWarn("[METRC] transfer_create_package_no_tags", { companyId: input.companyId });
-      return { ok: false };
-    }
-
-    const excluded = new Set(await listEvaluationMutationPackageLabels(input.companyId));
-    const packageTag =
-      tagsResult.labels.find((label) => !excluded.has(label)) ?? tagsResult.labels[0];
-    if (!packageTag || excluded.has(packageTag)) {
+    let packageTag: string;
+    try {
+      const generated = await generateNextUnusedSandboxPackageTag({
+        companyId: input.companyId,
+        licenseNumber: input.licenseNumber,
+      });
+      packageTag = generated.generatedPackageTag;
+    } catch (err) {
+      logWarn("[METRC] transfer_create_package_tag_generation_failed", {
+        companyId: input.companyId,
+        message: err instanceof Error ? err.message : String(err),
+      });
       return { ok: false };
     }
 
