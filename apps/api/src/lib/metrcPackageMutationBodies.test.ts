@@ -22,14 +22,14 @@ describe("metrcPackageMutationBodies", () => {
       packageLabel: "AAA00090000196B000000001",
       quantity: 0,
       unitOfMeasure: "Kilograms",
-      adjustmentReason: "Entry Error",
+      adjustmentReason: "Inventory Adjustment",
       adjustmentDate: "2026-05-26",
     });
     expect(body[0]).toMatchObject({
       Label: "AAA00090000196B000000001",
       Quantity: 0,
       UnitOfMeasure: "Kilograms",
-      AdjustmentReason: "Entry Error",
+      AdjustmentReason: "Inventory Adjustment",
     });
   });
 

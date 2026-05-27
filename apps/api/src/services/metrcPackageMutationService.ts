@@ -3,9 +3,7 @@ import { MetrcClient, isMetrcClientFailure } from "../lib/metrcClient.js";
 import { loadCompanyMetrcConfig } from "../lib/metrcConfigLoader.js";
 import { buildMetrcCredentialHintFromLoaded } from "../lib/metrcCredentialDiagnostics.js";
 import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
-import {
-  METRC_EVALUATION_DEFAULT_ADJUSTMENT_REASON,
-} from "../lib/metrcPackageEvaluationDefaults.js";
+import { resolveMetrcPackageAdjustmentReason } from "../lib/metrcPackageEvaluationDefaults.js";
 import {
   buildMetrcPackageAdjustBody,
   buildMetrcPackageChangeItemBody,
@@ -172,8 +170,7 @@ function buildRequestBody(
         packageLabel: pkg.packageLabel,
         quantity,
         unitOfMeasure,
-        adjustmentReason:
-          String(input.adjustmentReason || "").trim() || METRC_EVALUATION_DEFAULT_ADJUSTMENT_REASON,
+        adjustmentReason: resolveMetrcPackageAdjustmentReason(input.adjustmentReason),
         adjustmentDate: String(input.adjustmentDate || "").trim() || todayYmd(),
         reasonNote: input.reasonNote ?? "NexBatch evaluation adjust",
       });

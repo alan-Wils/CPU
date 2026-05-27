@@ -237,6 +237,7 @@ export const METRC_SANDBOX_CREATE_TASK_IDS = [
 export const METRC_EVALUATION_DEFAULT_PACKAGE_LABEL = "AAA00090000196B000000001";
 export const METRC_EVALUATION_DEFAULT_PACKAGE_ID = "46601";
 export const METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE = "SF-SBX-CO-7-13402";
+export const METRC_EVALUATION_DEFAULT_PACKAGE_ADJUSTMENT_REASON = "Inventory Adjustment";
 
 export const METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_QUANTITY = 10;
 export const METRC_EVALUATION_DEFAULT_CREATE_PACKAGE_UNIT = "Grams";
@@ -334,6 +335,30 @@ export function buildEvaluationCreateRequestBody(
   taskId: MetrcSandboxCreateTaskId,
   task: MetrcEvaluationTaskRecord,
 ): Record<string, unknown> {
+  if (taskId === "package_adjust") {
+    const defaults: Record<string, unknown> = {
+      packageLabel: METRC_EVALUATION_DEFAULT_PACKAGE_LABEL,
+      packageId: METRC_EVALUATION_DEFAULT_PACKAGE_ID,
+      licenseNumber: METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
+      quantity: 0,
+      adjustmentReason: METRC_EVALUATION_DEFAULT_PACKAGE_ADJUSTMENT_REASON,
+      adjustmentDate: new Date().toISOString().slice(0, 10),
+      reasonNote: "NexBatch evaluation",
+    };
+    const stored = task.requestPayload;
+    if (stored && typeof stored === "object") {
+      const body = (stored as { body?: unknown }).body ?? stored;
+      if (body && typeof body === "object" && !Array.isArray(body)) {
+        return {
+          ...defaults,
+          ...(body as Record<string, unknown>),
+          adjustmentReason: METRC_EVALUATION_DEFAULT_PACKAGE_ADJUSTMENT_REASON,
+        };
+      }
+    }
+    return defaults;
+  }
+
   const stored = task.requestPayload;
   if (stored && typeof stored === "object") {
     const body = (stored as { body?: unknown }).body ?? stored;
@@ -378,18 +403,6 @@ export function buildEvaluationCreateRequestBody(
     };
   }
 
-  if (taskId === "package_adjust") {
-    return {
-      packageLabel: METRC_EVALUATION_DEFAULT_PACKAGE_LABEL,
-      packageId: METRC_EVALUATION_DEFAULT_PACKAGE_ID,
-      licenseNumber: METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
-      quantity: 0,
-      adjustmentReason: "Entry Error",
-      adjustmentDate: new Date().toISOString().slice(0, 10),
-      reasonNote: "NexBatch evaluation",
-    };
-  }
-
   if (
     taskId === "package_change_item" ||
     taskId === "package_finish" ||
@@ -400,7 +413,6 @@ export function buildEvaluationCreateRequestBody(
       packageId: METRC_EVALUATION_DEFAULT_PACKAGE_ID,
       licenseNumber: METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
       itemName: "",
-      adjustmentReason: "Entry Error",
       adjustmentDate: new Date().toISOString().slice(0, 10),
       actualDate: new Date().toISOString().slice(0, 10),
       reasonNote: "NexBatch evaluation",
