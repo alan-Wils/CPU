@@ -8,6 +8,7 @@ import {
   listEvaluationCreatedPackageRefs,
   type EvaluationCreatedPackageRef,
 } from "./metrcEvaluationCreatedPackages.js";
+import { listEvaluationFinishedPackageLabels } from "./metrcEvaluationFinishedPackages.js";
 import {
   isPackageFinished,
   isPackageOnHold,
@@ -54,6 +55,9 @@ export class MetrcEvaluationPackageNotFoundError extends Error {
     this.name = "MetrcEvaluationPackageNotFoundError";
   }
 }
+
+const UNFINISH_NO_PACKAGE_MESSAGE =
+  "No finished evaluation package found. Run Finish Package first.";
 
 function readStringField(row: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
@@ -232,8 +236,10 @@ function candidateToResolved(
     createdViaTest: boolean;
     createdAt: string | null;
     explicitPackageId?: string | null;
+    isFinishedOverride?: boolean;
   },
 ): ResolvedMetrcEvaluationPackage {
+  const isFinished = input.isFinishedOverride ?? candidate.isFinished;
   return {
     packageLabel: candidate.row.packageLabel,
     packageId: input.explicitPackageId ?? readPackageIdFromRaw(candidate.row.rawPayloadJson),
@@ -247,13 +253,60 @@ function candidateToResolved(
       persistedUnitOfMeasure: candidate.row.unitOfMeasure,
       raw: candidate.raw,
     }),
-    isFinished: candidate.isFinished,
-    raw: candidate.raw,
+    isFinished,
+    raw: isFinished ? { ...candidate.raw, IsFinished: true } : candidate.raw,
     source: input.source,
     selectedReason: input.selectedReason,
     createdViaTest: input.createdViaTest,
     createdAt: input.createdAt,
   };
+}
+
+function resolveUnfinishEvaluationPackage(input: {
+  companyId: string;
+  licenseNumber: string;
+  createdRefs: EvaluationCreatedPackageRef[];
+  candidates: PackageCandidate[];
+  finishedLabels: Set<string>;
+}): ResolvedMetrcEvaluationPackage {
+  for (const ref of input.createdRefs) {
+    const label = ref.packageLabel;
+    const finishedByLog = input.finishedLabels.has(label);
+    const candidate = input.candidates.find((row) => row.row.packageLabel === label);
+
+    if (candidate) {
+      const finishedByState = candidate.isFinished || finishedByLog;
+      if (!finishedByState) continue;
+
+      return candidateToResolved(candidate, {
+        licenseNumber: input.licenseNumber,
+        source: "evaluation_created",
+        selectedReason: "newest_finished_evaluation_created_package",
+        createdViaTest: true,
+        createdAt: ref.createdAt.toISOString(),
+        isFinishedOverride: true,
+      });
+    }
+
+    if (finishedByLog) {
+      return {
+        packageLabel: label,
+        packageId: null,
+        licenseNumber: input.licenseNumber || METRC_EVALUATION_DEFAULT_PACKAGE_LICENSE,
+        itemName: "",
+        quantity: 0,
+        unitOfMeasure: METRC_EVALUATION_DEFAULT_PACKAGE_UNIT,
+        isFinished: true,
+        raw: { Label: label, IsFinished: true, Quantity: 0 },
+        source: "evaluation_created",
+        selectedReason: "newest_finished_evaluation_created_package",
+        createdViaTest: true,
+        createdAt: ref.createdAt.toISOString(),
+      };
+    }
+  }
+
+  throw new MetrcEvaluationPackageNotFoundError(UNFINISH_NO_PACKAGE_MESSAGE);
 }
 
 export async function resolveMetrcEvaluationPackage(input: {
@@ -277,6 +330,17 @@ export async function resolveMetrcEvaluationPackage(input: {
   const candidates = rows
     .filter((row) => matchesLicense(row.licenseNumber, licenseNumber))
     .map((row) => buildCandidate(row, createdByLabel.get(row.packageLabel) ?? null));
+
+  if (kind === "unfinish") {
+    const finishedLabels = await listEvaluationFinishedPackageLabels(input.companyId);
+    return resolveUnfinishEvaluationPackage({
+      companyId: input.companyId,
+      licenseNumber,
+      createdRefs,
+      candidates,
+      finishedLabels,
+    });
+  }
 
   if (explicitLabel) {
     const match = candidates.find((candidate) => candidate.row.packageLabel === explicitLabel);
@@ -356,6 +420,7 @@ export function buildEvaluationPackageSelectionDiagnostics(
     selectedPackageQuantity: pkg.quantity,
     selectedPackageUnit: pkg.unitOfMeasure,
     selectedPackageLicense: pkg.licenseNumber,
+    selectedPackageFinished: pkg.isFinished,
     createdViaTest: pkg.createdViaTest,
     selectedPackageCreatedAt: pkg.createdAt,
     packageSource: pkg.source,
