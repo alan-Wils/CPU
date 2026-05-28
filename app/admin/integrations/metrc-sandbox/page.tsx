@@ -1485,7 +1485,10 @@ export default function MetrcSandboxPage() {
         selectedMotherPackageLocation?.name?.trim() ||
         selectedMotherSourcePlant?.locationName?.trim() ||
         null,
-      license: selectedMotherSourcePlant?.licenseNumber?.trim() || meta?.licenseNumber || "—",
+      license:
+        selectedMotherSourcePlant?.licenseNumber?.trim() ||
+        meta?.metrcLicenseNumberDisplay?.trim() ||
+        "—",
     };
   }, [
     selectedMotherPackageItem,
@@ -1493,7 +1496,7 @@ export default function MetrcSandboxPage() {
     motherPackageTag,
     selectedMotherSourcePlant,
     selectedMotherPackageLocation,
-    meta?.licenseNumber,
+    meta?.metrcLicenseNumberDisplay,
   ]);
 
   const selectedPlantBatchPackageItem = useMemo(
