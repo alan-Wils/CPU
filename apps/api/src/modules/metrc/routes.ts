@@ -24,6 +24,7 @@ import { MetrcPlantBatchMotherPackageService } from "../../services/metrcPlantBa
 import { MetrcPlantBatchPackageService } from "../../services/metrcPlantBatchPackageService.js";
 import { MetrcPlantBatchGrowthPhaseSandboxService } from "../../services/metrcPlantBatchGrowthPhaseSandboxService.js";
 import { MetrcPlantBatchDestroySandboxService } from "../../services/metrcPlantBatchDestroySandboxService.js";
+import { MetrcPlantBatchWasteReasonsService } from "../../services/metrcPlantBatchWasteReasonsService.js";
 import { MetrcHarvestsSyncService } from "../../services/metrcHarvestsSyncService.js";
 import { MetrcPlantsSyncService } from "../../services/metrcPlantsSyncService.js";
 import {
@@ -139,6 +140,7 @@ const metrcPlantBatchMotherPackageService = new MetrcPlantBatchMotherPackageServ
 const metrcPlantBatchPackageService = new MetrcPlantBatchPackageService();
 const metrcPlantBatchGrowthPhaseSandboxService = new MetrcPlantBatchGrowthPhaseSandboxService();
 const metrcPlantBatchDestroySandboxService = new MetrcPlantBatchDestroySandboxService();
+const metrcPlantBatchWasteReasonsService = new MetrcPlantBatchWasteReasonsService();
 const metrcHarvestsSyncService = new MetrcHarvestsSyncService();
 const metrcPlantsSyncService = new MetrcPlantsSyncService();
 const metrcHarvestCreateService = new MetrcHarvestCreateService();
@@ -808,6 +810,20 @@ metrcRouter.post(
       locationName: body.locationName ?? null,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.get(
+  "/plantbatch-waste-reasons",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const licenseNumber = String(req.query.licenseNumber || "").trim() || undefined;
+    const result = await metrcPlantBatchWasteReasonsService.fetchWasteReasons({
+      companyId,
+      licenseNumber,
+    });
+    res.status(result.ok ? 200 : result.status).json(result);
   }),
 );
 

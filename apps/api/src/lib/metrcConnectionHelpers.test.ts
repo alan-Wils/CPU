@@ -3,6 +3,7 @@ import {
   extractMetrcApiErrorSummary,
   messageForMetrcHttpFailure,
   parseLocationsPayload,
+  parseMetrcPlantBatchWasteReasonNames,
   parsePlantTagLabelsFromAvailableResponse,
   toSampleLocation,
 } from "./metrcConnectionHelpers.js";
@@ -52,6 +53,25 @@ describe("parsePlantTagLabelsFromAvailableResponse", () => {
     expect(
       parsePlantTagLabelsFromAvailableResponse([{ Label: "A" }, { Label: "A" }, { Label: "B" }]),
     ).toEqual(["A", "B"]);
+  });
+});
+
+describe("parseMetrcPlantBatchWasteReasonNames", () => {
+  it("parses bare array with Name", () => {
+    expect(
+      parseMetrcPlantBatchWasteReasonNames([
+        { Name: "Contamination" },
+        { Name: "Disease" },
+      ]),
+    ).toEqual(["Contamination", "Disease"]);
+  });
+
+  it("parses Data wrapper and string entries", () => {
+    expect(
+      parseMetrcPlantBatchWasteReasonNames({
+        Data: [{ Name: "Pruning" }, "Other"],
+      }),
+    ).toEqual(["Pruning", "Other"]);
   });
 });
 

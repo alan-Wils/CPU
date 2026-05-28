@@ -203,15 +203,6 @@ const DEFAULT_SANDBOX_PLANT_BATCH_PACKAGE_ITEM_NAME =
 const DEFAULT_PLANT_BATCH_PACKAGE_NOTE =
   "NexBatch sandbox evaluation - plant batch package.";
 const METRC_PLANT_BATCH_GROWTH_PHASE_OPTIONS = ["Vegetative", "Flowering"] as const;
-const METRC_PLANT_BATCH_WASTE_REASON_OPTIONS = [
-  "Contamination",
-  "Disease",
-  "Nutrient Deficiency",
-  "Pest Infestation",
-  "Mother Plant Destruction",
-  "Pruning",
-  "Other",
-] as const;
 const METRC_PLANT_BATCH_WASTE_METHOD_OPTIONS = [
   "Compost",
   "Mulch",
@@ -1018,7 +1009,11 @@ export default function MetrcSandboxPage() {
   const [destroyPlantBatchDate, setDestroyPlantBatchDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
-  const [destroyPlantBatchWasteReason, setDestroyPlantBatchWasteReason] = useState("Contamination");
+  const [destroyPlantBatchWasteReason, setDestroyPlantBatchWasteReason] = useState("");
+  const [destroyPlantBatchWasteReasons, setDestroyPlantBatchWasteReasons] = useState<string[]>([]);
+  const [destroyPlantBatchWasteReasonsHint, setDestroyPlantBatchWasteReasonsHint] = useState<
+    string | null
+  >(null);
   const [destroyPlantBatchWasteMethod, setDestroyPlantBatchWasteMethod] = useState("");
   const [destroyPlantBatchWasteWeight, setDestroyPlantBatchWasteWeight] = useState("");
   const [destroyPlantBatchWasteUom, setDestroyPlantBatchWasteUom] = useState("");
@@ -2419,6 +2414,54 @@ export default function MetrcSandboxPage() {
     }
   }
 
+  async function fetchPlantBatchWasteReasons() {
+    setBusy("destroyWasteReasons");
+    setDestroyPlantBatchWasteReasonsHint(null);
+    try {
+      const res = await authFetch("/api/metrc/plantbatch-waste-reasons");
+      const json = (await res.json()) as {
+        ok?: boolean;
+        reasons?: string[];
+        parsedCount?: number;
+        message?: string;
+        licenseNumber?: string;
+        endpoint?: string;
+      };
+      if (!res.ok || !json.ok) {
+        setDestroyPlantBatchWasteReasons([]);
+        setDestroyPlantBatchWasteReason("");
+        setDestroyPlantBatchWasteReasonsHint(
+          String(json.message || "Could not fetch plant batch waste reasons from METRC."),
+        );
+        return;
+      }
+      const reasons = (json.reasons ?? []).map((r) => String(r || "").trim()).filter(Boolean);
+      setDestroyPlantBatchWasteReasons(reasons);
+      if (reasons.length === 0) {
+        setDestroyPlantBatchWasteReason("");
+        setDestroyPlantBatchWasteReasonsHint(
+          typeof json.parsedCount === "number" && json.parsedCount === 0
+            ? "METRC returned no plant batch waste reasons for this license."
+            : "No waste reasons returned — check METRC sandbox configuration.",
+        );
+        return;
+      }
+      if (!destroyPlantBatchWasteReason.trim() || !reasons.includes(destroyPlantBatchWasteReason.trim())) {
+        setDestroyPlantBatchWasteReason("");
+      }
+      const licenseNote = json.licenseNumber ? ` License: ${json.licenseNumber}.` : "";
+      setDestroyPlantBatchWasteReasonsHint(
+        `Select a waste reason (${reasons.length} available from ${json.endpoint || "GET /plantbatches/v2/waste/reasons"}).${licenseNote}`,
+      );
+    } catch {
+      setDestroyPlantBatchWasteReasons([]);
+      setDestroyPlantBatchWasteReason("");
+      setDestroyPlantBatchWasteReasonsHint("Waste reasons fetch failed — try again.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function runDestroyPlantBatch() {
     const selectedBatch =
       (plantBatchesRows ?? []).find(
@@ -2439,7 +2482,20 @@ export default function MetrcSandboxPage() {
     const wasteReasonName = destroyPlantBatchWasteReason.trim();
     const reasonNote = destroyPlantBatchReasonNote.trim();
     if (!wasteReasonName) {
-      setStatusMsg({ tone: "error", text: "Waste reason is required." });
+      setStatusMsg({
+        tone: "error",
+        text: "Fetch plant batch waste reasons and select a waste reason.",
+      });
+      return;
+    }
+    if (
+      destroyPlantBatchWasteReasons.length > 0 &&
+      !destroyPlantBatchWasteReasons.includes(wasteReasonName)
+    ) {
+      setStatusMsg({
+        tone: "error",
+        text: "Waste reason must be selected from the fetched METRC waste reasons list.",
+      });
       return;
     }
     if (!reasonNote) {
@@ -4917,28 +4973,48 @@ export default function MetrcSandboxPage() {
                 }}
               />
             </label>
-            <label style={{ fontSize: 13 }}>
+            <label style={{ fontSize: 13, gridColumn: destroyPlantBatchWasteReasons.length > 0 ? "1 / -1" : undefined }}>
               <span style={{ color: "#94a3b8" }}>Waste reason</span>
-              <select
-                value={destroyPlantBatchWasteReason}
-                onChange={(e) => setDestroyPlantBatchWasteReason(e.target.value)}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  marginTop: 4,
-                  padding: "8px 10px",
-                  borderRadius: 8,
-                  border: "1px solid #475569",
-                  background: "#0f172a",
-                  color: "#e2e8f0",
-                }}
-              >
-                {METRC_PLANT_BATCH_WASTE_REASON_OPTIONS.map((reason) => (
-                  <option key={reason} value={reason}>
-                    {reason}
-                  </option>
-                ))}
-              </select>
+              {destroyPlantBatchWasteReasons.length > 0 ? (
+                <select
+                  value={destroyPlantBatchWasteReason}
+                  onChange={(e) => setDestroyPlantBatchWasteReason(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                  }}
+                >
+                  <option value="">Select waste reason…</option>
+                  {destroyPlantBatchWasteReasons.map((reason) => (
+                    <option key={reason} value={reason}>
+                      {reason}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value=""
+                  readOnly
+                  placeholder="Fetch plant batch waste reasons, then select"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#64748b",
+                  }}
+                />
+              )}
             </label>
             <label style={{ fontSize: 13 }}>
               <span style={{ color: "#94a3b8" }}>Waste method (optional)</span>
@@ -5032,6 +5108,14 @@ export default function MetrcSandboxPage() {
           <div style={{ ...styles.row, marginTop: 12 }}>
             <button
               type="button"
+              style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+              disabled={!!busy || !isSandboxEnvironment}
+              onClick={() => void fetchPlantBatchWasteReasons()}
+            >
+              {busy === "destroyWasteReasons" ? "Fetching…" : "Fetch plant batch waste reasons"}
+            </button>
+            <button
+              type="button"
               style={{
                 ...styles.btn,
                 ...styles.btnPrimary,
@@ -5057,6 +5141,18 @@ export default function MetrcSandboxPage() {
               {busy === "destroyPlantBatch" ? "Destroying…" : "Destroy Plant Batch"}
             </button>
           </div>
+          {destroyPlantBatchWasteReasonsHint ? (
+            <p style={{ marginTop: 8, fontSize: 12, color: "#94a3b8" }}>
+              {destroyPlantBatchWasteReasonsHint}
+            </p>
+          ) : null}
+          {destroyPlantBatchWasteReasons.length > 0 ? (
+            <p style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
+              {destroyPlantBatchWasteReasons.length} waste reason
+              {destroyPlantBatchWasteReasons.length === 1 ? "" : "s"} loaded from{" "}
+              <code style={{ color: "#cbd5e1" }}>GET /plantbatches/v2/waste/reasons</code>.
+            </p>
+          ) : null}
           {lastDestroyPlantBatch ? (
             <div
               style={{
