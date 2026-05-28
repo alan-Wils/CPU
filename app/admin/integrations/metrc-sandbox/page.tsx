@@ -987,6 +987,14 @@ export default function MetrcSandboxPage() {
   const [growthPhasePlantTagsHint, setGrowthPhasePlantTagsHint] = useState<string | null>(null);
   const [lastGrowthPhaseChange, setLastGrowthPhaseChange] =
     useState<MotherPlantPackageResult | null>(null);
+  const [destroyPlantBatchId, setDestroyPlantBatchId] = useState("");
+  const [destroyPlantBatchCount, setDestroyPlantBatchCount] = useState("1");
+  const [destroyPlantBatchDate, setDestroyPlantBatchDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [destroyPlantBatchNote, setDestroyPlantBatchNote] = useState("");
+  const [lastDestroyPlantBatch, setLastDestroyPlantBatch] =
+    useState<MotherPlantPackageResult | null>(null);
   const [lastHarvestsSync, setLastHarvestsSync] = useState<HarvestsSyncResult | null>(null);
   const [harvestsRows, setHarvestsRows] = useState<MetrcHarvestRow[] | null>(null);
   const [harvestsLoaded, setHarvestsLoaded] = useState(false);
@@ -2374,6 +2382,63 @@ export default function MetrcSandboxPage() {
         tone: "error",
         text: "Change plant batch growth phase failed — network error.",
       });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runDestroyPlantBatch() {
+    const selectedBatch =
+      (plantBatchesRows ?? []).find(
+        (batch) => batch.metrcPlantBatchId === destroyPlantBatchId,
+      ) ?? null;
+    const plantBatchName = selectedBatch?.name?.trim() || "";
+    const plantBatchId = Number.parseInt(destroyPlantBatchId, 10);
+    const count = Number.parseInt(destroyPlantBatchCount, 10);
+    if (!selectedBatch || !plantBatchName) {
+      setStatusMsg({ tone: "error", text: "Select a source plant batch." });
+      return;
+    }
+    if (!Number.isFinite(count) || count < 1) {
+      setStatusMsg({ tone: "error", text: "Destroy count must be at least 1." });
+      return;
+    }
+
+    setBusy("destroyPlantBatch");
+    setLastDestroyPlantBatch(null);
+    const requestBody = {
+      plantBatchName,
+      plantBatchId: Number.isFinite(plantBatchId) && plantBatchId > 0 ? plantBatchId : undefined,
+      count,
+      actualDate: destroyPlantBatchDate,
+      note: destroyPlantBatchNote.trim() || null,
+    };
+    try {
+      const res = await authFetch("/api/metrc/test/plantbatch-destroy", {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+      });
+      const json = (await res.json()) as MotherPlantPackageResult;
+      setLastDestroyPlantBatch(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Destroy plant batch failed."),
+        });
+        return;
+      }
+      setStatusMsg({
+        tone: "ok",
+        text: String(json.message || `Plant batch '${plantBatchName}' destroyed in METRC sandbox.`),
+      });
+      await runPlantBatchesSync();
+      await loadSyncedPlantBatches();
+      await loadMeta();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Destroy plant batch failed — network error." });
     } finally {
       setBusy(null);
     }
@@ -4712,6 +4777,168 @@ export default function MetrcSandboxPage() {
                     requestDebug: lastGrowthPhaseChange.requestDebug,
                     request: lastGrowthPhaseChange.requestPayload,
                     response: lastGrowthPhaseChange.responsePayload,
+                  },
+                  null,
+                  2,
+                )}
+              </pre>
+            </div>
+          ) : null}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Destroy plant batch</h2>
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8" }}>
+            Sandbox only. Destroys plants from a synced METRC plant batch using{" "}
+            <code style={{ color: "#cbd5e1" }}>DELETE /plantbatches/v2/</code> for METRC Generic
+            Evaluation Plant Batches Step 5.
+          </p>
+          {!isSandboxEnvironment && !loadingMeta ? (
+            <p style={{ marginTop: 12, color: "#f87171", fontSize: 13 }}>
+              METRC environment is not sandbox. Switch to sandbox in Company Config to enable destroy.
+            </p>
+          ) : null}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+              gap: 12,
+              marginTop: 14,
+            }}
+          >
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Source plant batch</span>
+              <select
+                value={destroyPlantBatchId}
+                onChange={(e) => setDestroyPlantBatchId(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                <option value="">Select plant batch…</option>
+                {(plantBatchesRows ?? []).map((batch) => (
+                  <option key={batch.metrcPlantBatchId} value={batch.metrcPlantBatchId}>
+                    {batch.name || batch.metrcPlantBatchId}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Destroy count</span>
+              <input
+                type="number"
+                min={1}
+                value={destroyPlantBatchCount}
+                onChange={(e) => setDestroyPlantBatchCount(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Actual date</span>
+              <input
+                type="date"
+                value={destroyPlantBatchDate}
+                onChange={(e) => setDestroyPlantBatchDate(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13, gridColumn: "1 / -1" }}>
+              <span style={{ color: "#94a3b8" }}>Note (optional)</span>
+              <input
+                type="text"
+                value={destroyPlantBatchNote}
+                onChange={(e) => setDestroyPlantBatchNote(e.target.value)}
+                placeholder="Optional note"
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+          </div>
+          <div style={{ ...styles.row, marginTop: 12 }}>
+            <button
+              type="button"
+              style={{
+                ...styles.btn,
+                ...styles.btnPrimary,
+                opacity:
+                  busy || !isSandboxEnvironment || !destroyPlantBatchId ? 0.6 : 1,
+              }}
+              disabled={
+                !!busy ||
+                !isSandboxEnvironment ||
+                !destroyPlantBatchId ||
+                Number.parseInt(destroyPlantBatchCount, 10) < 1
+              }
+              onClick={() => void runDestroyPlantBatch()}
+            >
+              {busy === "destroyPlantBatch" ? "Destroying…" : "Destroy Plant Batch"}
+            </button>
+          </div>
+          {lastDestroyPlantBatch ? (
+            <div
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid #334155",
+                background: "rgba(2, 6, 23, 0.8)",
+                fontSize: 12,
+                color: "#94a3b8",
+              }}
+            >
+              <strong style={{ color: lastDestroyPlantBatch.ok ? "#4ade80" : "#f87171" }}>
+                Last destroy attempt ({lastDestroyPlantBatch.status ?? "—"})
+              </strong>
+              <pre
+                style={{
+                  marginTop: 8,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "ui-monospace, monospace",
+                  color: "#cbd5e1",
+                }}
+              >
+                {JSON.stringify(
+                  {
+                    message: lastDestroyPlantBatch.message,
+                    status: lastDestroyPlantBatch.status,
+                    endpoint: lastDestroyPlantBatch.endpoint || "DELETE /plantbatches/v2/",
+                    requestDebug: lastDestroyPlantBatch.requestDebug,
+                    request: lastDestroyPlantBatch.requestPayload,
+                    response: lastDestroyPlantBatch.responsePayload,
                   },
                   null,
                   2,

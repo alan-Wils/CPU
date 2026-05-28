@@ -23,6 +23,7 @@ import { MetrcPlantBatchCreateService } from "../../services/metrcPlantBatchCrea
 import { MetrcPlantBatchMotherPackageService } from "../../services/metrcPlantBatchMotherPackageService.js";
 import { MetrcPlantBatchPackageService } from "../../services/metrcPlantBatchPackageService.js";
 import { MetrcPlantBatchGrowthPhaseSandboxService } from "../../services/metrcPlantBatchGrowthPhaseSandboxService.js";
+import { MetrcPlantBatchDestroySandboxService } from "../../services/metrcPlantBatchDestroySandboxService.js";
 import { MetrcHarvestsSyncService } from "../../services/metrcHarvestsSyncService.js";
 import { MetrcPlantsSyncService } from "../../services/metrcPlantsSyncService.js";
 import {
@@ -137,6 +138,7 @@ const metrcPlantBatchCreateService = new MetrcPlantBatchCreateService();
 const metrcPlantBatchMotherPackageService = new MetrcPlantBatchMotherPackageService();
 const metrcPlantBatchPackageService = new MetrcPlantBatchPackageService();
 const metrcPlantBatchGrowthPhaseSandboxService = new MetrcPlantBatchGrowthPhaseSandboxService();
+const metrcPlantBatchDestroySandboxService = new MetrcPlantBatchDestroySandboxService();
 const metrcHarvestsSyncService = new MetrcHarvestsSyncService();
 const metrcPlantsSyncService = new MetrcPlantsSyncService();
 const metrcHarvestCreateService = new MetrcHarvestCreateService();
@@ -199,6 +201,14 @@ const metrcPlantBatchGrowthPhaseBody = z.object({
   startingTag: z.string().min(1),
   growthDate: z.string().min(1),
   locationName: z.string().optional().nullable(),
+});
+
+const metrcPlantBatchDestroyBody = z.object({
+  plantBatchName: z.string().min(1),
+  plantBatchId: z.coerce.number().int().positive().optional(),
+  count: z.coerce.number().int().positive(),
+  actualDate: z.string().min(1),
+  note: z.string().optional().nullable(),
 });
 
 const metrcCreateTestHarvestBody = z.object({
@@ -792,6 +802,26 @@ metrcRouter.post(
       startingTag: body.startingTag,
       growthDate: body.growthDate,
       locationName: body.locationName ?? null,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.post(
+  "/test/plantbatch-destroy",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcPlantBatchDestroyBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcPlantBatchDestroyBody>;
+    const result = await metrcPlantBatchDestroySandboxService.destroyPlantBatch({
+      companyId,
+      actorUserId: req.auth.userId,
+      plantBatchName: body.plantBatchName,
+      plantBatchId: body.plantBatchId ?? null,
+      count: body.count,
+      actualDate: body.actualDate,
+      note: body.note ?? null,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),
