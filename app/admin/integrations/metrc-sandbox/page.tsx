@@ -982,7 +982,7 @@ export default function MetrcSandboxPage() {
     new Date().toISOString().slice(0, 10),
   );
   const [growthPhaseLocationId, setGrowthPhaseLocationId] = useState("");
-  const [growthPhaseNote, setGrowthPhaseNote] = useState("");
+  const [growthPhaseStartingTag, setGrowthPhaseStartingTag] = useState("");
   const [lastGrowthPhaseChange, setLastGrowthPhaseChange] =
     useState<MotherPlantPackageResult | null>(null);
   const [lastHarvestsSync, setLastHarvestsSync] = useState<HarvestsSyncResult | null>(null);
@@ -2255,6 +2255,10 @@ export default function MetrcSandboxPage() {
       setStatusMsg({ tone: "error", text: "Count must be at least 1." });
       return;
     }
+    if (!growthPhaseStartingTag.trim()) {
+      setStatusMsg({ tone: "error", text: "Starting plant tag is required." });
+      return;
+    }
     const growthPhase = METRC_PLANT_BATCH_GROWTH_PHASE_OPTIONS.includes(
       growthPhaseSelection as (typeof METRC_PLANT_BATCH_GROWTH_PHASE_OPTIONS)[number],
     )
@@ -2271,9 +2275,9 @@ export default function MetrcSandboxPage() {
       plantBatchId: Number.isFinite(plantBatchId) && plantBatchId > 0 ? plantBatchId : undefined,
       growthPhase,
       count,
-      actualDate: growthPhaseDate,
+      startingTag: growthPhaseStartingTag.trim(),
+      growthDate: growthPhaseDate,
       locationName: selectedLocation?.name?.trim() || selectedBatch.locationName?.trim() || null,
-      note: growthPhaseNote.trim() || null,
     };
     try {
       const res = await authFetch("/api/metrc/test/plantbatch-growthphase", {
@@ -4478,7 +4482,26 @@ export default function MetrcSandboxPage() {
               />
             </label>
             <label style={{ fontSize: 13 }}>
-              <span style={{ color: "#94a3b8" }}>Actual date</span>
+              <span style={{ color: "#94a3b8" }}>Starting plant tag</span>
+              <input
+                type="text"
+                value={growthPhaseStartingTag}
+                onChange={(e) => setGrowthPhaseStartingTag(e.target.value)}
+                placeholder="Enter unused METRC plant tag"
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Growth date</span>
               <input
                 type="date"
                 value={growthPhaseDate}
@@ -4519,25 +4542,6 @@ export default function MetrcSandboxPage() {
                 ))}
               </select>
             </label>
-            <label style={{ fontSize: 13, gridColumn: "1 / -1" }}>
-              <span style={{ color: "#94a3b8" }}>Note (optional)</span>
-              <input
-                type="text"
-                value={growthPhaseNote}
-                onChange={(e) => setGrowthPhaseNote(e.target.value)}
-                placeholder="Optional note"
-                style={{
-                  display: "block",
-                  width: "100%",
-                  marginTop: 4,
-                  padding: "8px 10px",
-                  borderRadius: 8,
-                  border: "1px solid #475569",
-                  background: "#0f172a",
-                  color: "#e2e8f0",
-                }}
-              />
-            </label>
           </div>
           <div style={{ ...styles.row, marginTop: 12 }}>
             <button
@@ -4546,12 +4550,18 @@ export default function MetrcSandboxPage() {
                 ...styles.btn,
                 ...styles.btnPrimary,
                 opacity:
-                  busy || !isSandboxEnvironment || !growthPhasePlantBatchId ? 0.6 : 1,
+                  busy ||
+                  !isSandboxEnvironment ||
+                  !growthPhasePlantBatchId ||
+                  !growthPhaseStartingTag.trim()
+                    ? 0.6
+                    : 1,
               }}
               disabled={
                 !!busy ||
                 !isSandboxEnvironment ||
                 !growthPhasePlantBatchId ||
+                !growthPhaseStartingTag.trim() ||
                 Number.parseInt(growthPhaseCount, 10) < 1
               }
               onClick={() => void runChangePlantBatchGrowthPhase()}

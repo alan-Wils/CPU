@@ -2,42 +2,43 @@ import { describe, expect, it } from "vitest";
 import { buildMetrcPlantBatchGrowthPhaseBody } from "./metrcPlantBatchGrowthPhaseBodies.js";
 
 describe("buildMetrcPlantBatchGrowthPhaseBody", () => {
-  it("builds METRC evaluation growth phase payload", () => {
+  it("builds documented METRC growth phase payload with StartingTag", () => {
     const body = buildMetrcPlantBatchGrowthPhaseBody({
       plantBatchName: "AAA00080000196B000009999",
       growthPhase: "Flowering",
       count: 2,
-      actualDate: "2026-05-27",
+      startingTag: "AAA00010000196B000000042",
+      growthDate: "2026-05-28",
+      locationName: "SBX Default Location Type Location 1",
     });
 
     expect(body).toEqual([
       {
         Name: "AAA00080000196B000009999",
-        GrowthPhase: "Flowering",
+        CountPerPlant: null,
         Count: 2,
-        GrowthDate: "2026-05-27",
+        StartingTag: "AAA00010000196B000000042",
+        GrowthPhase: "Flowering",
+        NewLocation: "SBX Default Location Type Location 1",
+        NewSublocation: null,
+        GrowthDate: "2026-05-28",
+        PatientLicenseNumber: null,
       },
     ]);
     expect(body[0]).not.toHaveProperty("ActualDate");
     expect(body[0]).not.toHaveProperty("ChangeDate");
+    expect(body[0]).not.toHaveProperty("Note");
   });
 
-  it("includes optional location and note when provided", () => {
+  it("uses null NewLocation when location is omitted", () => {
     const body = buildMetrcPlantBatchGrowthPhaseBody({
       plantBatchName: "AAA00080000196B000009999",
       growthPhase: "Vegetative",
       count: 1,
-      actualDate: "2026-05-27",
-      locationName: "SBX Default Location Type Location 1",
-      note: "Evaluation note.",
+      startingTag: "AAA00010000196B000000043",
+      growthDate: "2026-05-28",
     });
 
-    expect(body[0]).toMatchObject({
-      GrowthDate: "2026-05-27",
-      NewLocation: "SBX Default Location Type Location 1",
-      Note: "Evaluation note.",
-    });
-    expect(body[0]).not.toHaveProperty("ActualDate");
-    expect(body[0]).not.toHaveProperty("ChangeDate");
+    expect((body[0] as { NewLocation: unknown }).NewLocation).toBeNull();
   });
 });

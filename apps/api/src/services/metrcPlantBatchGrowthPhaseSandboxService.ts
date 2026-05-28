@@ -44,9 +44,9 @@ export type MetrcPlantBatchGrowthPhaseSandboxInput = {
   plantBatchId?: number | null;
   growthPhase: MetrcPlantBatchGrowthPhaseName;
   count: number;
-  actualDate: string;
+  startingTag: string;
+  growthDate: string;
   locationName?: string | null;
-  note?: string | null;
 };
 
 export type MetrcPlantBatchGrowthPhaseSandboxSuccess = {
@@ -182,6 +182,24 @@ export class MetrcPlantBatchGrowthPhaseSandboxService {
       };
     }
 
+    const startingTag = String(input.startingTag || "").trim();
+    if (!startingTag) {
+      return {
+        ok: false,
+        status: 400,
+        message: "Starting plant tag is required for METRC growth phase changes.",
+      };
+    }
+
+    const growthDate = String(input.growthDate || "").trim();
+    if (!growthDate) {
+      return {
+        ok: false,
+        status: 400,
+        message: "Growth date is required for METRC growth phase changes.",
+      };
+    }
+
     let license = String(plantBatch?.licenseNumber || loaded.licenseNumber || "").trim();
     if (!license) {
       return {
@@ -220,9 +238,9 @@ export class MetrcPlantBatchGrowthPhaseSandboxService {
       plantBatchName,
       growthPhase,
       count: input.count,
-      actualDate: input.actualDate,
+      startingTag,
+      growthDate,
       locationName,
-      note: input.note ?? null,
     });
 
     const pathname = `${GROWTH_PHASE_ENDPOINT}${licenseQuery(license)}`;

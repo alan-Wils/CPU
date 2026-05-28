@@ -196,9 +196,9 @@ const metrcPlantBatchGrowthPhaseBody = z.object({
   plantBatchId: z.coerce.number().int().positive().optional(),
   growthPhase: z.enum(["Vegetative", "Flowering"]),
   count: z.coerce.number().int().positive(),
-  actualDate: z.string().min(1),
+  startingTag: z.string().min(1),
+  growthDate: z.string().min(1),
   locationName: z.string().optional().nullable(),
-  note: z.string().optional().nullable(),
 });
 
 const metrcCreateTestHarvestBody = z.object({
@@ -789,9 +789,9 @@ metrcRouter.post(
       plantBatchId: body.plantBatchId ?? null,
       growthPhase: body.growthPhase,
       count: body.count,
-      actualDate: body.actualDate,
+      startingTag: body.startingTag,
+      growthDate: body.growthDate,
       locationName: body.locationName ?? null,
-      note: body.note ?? null,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),
