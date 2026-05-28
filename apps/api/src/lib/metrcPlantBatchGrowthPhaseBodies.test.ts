@@ -15,10 +15,11 @@ describe("buildMetrcPlantBatchGrowthPhaseBody", () => {
         Name: "AAA00080000196B000009999",
         GrowthPhase: "Flowering",
         Count: 2,
-        ChangeDate: "2026-05-27",
+        GrowthDate: "2026-05-27",
       },
     ]);
     expect(body[0]).not.toHaveProperty("ActualDate");
+    expect(body[0]).not.toHaveProperty("ChangeDate");
   });
 
   it("includes optional location and note when provided", () => {
@@ -32,10 +33,11 @@ describe("buildMetrcPlantBatchGrowthPhaseBody", () => {
     });
 
     expect(body[0]).toMatchObject({
-      ChangeDate: "2026-05-27",
+      GrowthDate: "2026-05-27",
       NewLocation: "SBX Default Location Type Location 1",
       Note: "Evaluation note.",
     });
     expect(body[0]).not.toHaveProperty("ActualDate");
+    expect(body[0]).not.toHaveProperty("ChangeDate");
   });
 });
