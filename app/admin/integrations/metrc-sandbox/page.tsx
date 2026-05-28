@@ -983,6 +983,8 @@ export default function MetrcSandboxPage() {
   );
   const [growthPhaseLocationId, setGrowthPhaseLocationId] = useState("");
   const [growthPhaseStartingTag, setGrowthPhaseStartingTag] = useState("");
+  const [growthPhaseAvailableTags, setGrowthPhaseAvailableTags] = useState<string[]>([]);
+  const [growthPhasePlantTagsHint, setGrowthPhasePlantTagsHint] = useState<string | null>(null);
   const [lastGrowthPhaseChange, setLastGrowthPhaseChange] =
     useState<MotherPlantPackageResult | null>(null);
   const [lastHarvestsSync, setLastHarvestsSync] = useState<HarvestsSyncResult | null>(null);
@@ -2239,6 +2241,57 @@ export default function MetrcSandboxPage() {
     }
   }
 
+  async function fetchAvailablePlantTagsForGrowthPhase() {
+    setBusy("growthPhasePlantTags");
+    setGrowthPhasePlantTagsHint(null);
+    try {
+      const count = Number.parseInt(growthPhaseCount, 10);
+      const lim = Math.min(
+        500,
+        Math.max(20, Number.isFinite(count) && count >= 1 ? count + 10 : 120),
+      );
+      const res = await authFetch(`/api/metrc/available-plant-tags?limit=${lim}`);
+      const json = (await res.json()) as {
+        ok?: boolean;
+        labels?: string[];
+        parsedCount?: number;
+        message?: string;
+        licenseNumber?: string;
+        authMode?: string;
+      };
+      if (!res.ok || !json.ok) {
+        setGrowthPhaseAvailableTags([]);
+        setGrowthPhasePlantTagsHint(
+          String(json.message || "Could not fetch plant tags from METRC."),
+        );
+        return;
+      }
+      const labels = (json.labels ?? []).map((label) => String(label || "").trim()).filter(Boolean);
+      setGrowthPhaseAvailableTags(labels);
+      if (labels.length === 0) {
+        setGrowthPhaseStartingTag("");
+        setGrowthPhasePlantTagsHint(
+          typeof json.parsedCount === "number" && json.parsedCount === 0
+            ? "METRC returned no available plant tags for this license. Request plant tags in METRC sandbox."
+            : "No plant tags returned — fetch again or check METRC tag inventory.",
+        );
+        return;
+      }
+      if (!growthPhaseStartingTag.trim() || !labels.includes(growthPhaseStartingTag.trim())) {
+        setGrowthPhaseStartingTag("");
+      }
+      const licenseNote = json.licenseNumber ? ` License: ${json.licenseNumber}.` : "";
+      setGrowthPhasePlantTagsHint(
+        `Select a starting plant tag (${labels.length} available).${licenseNote}`,
+      );
+    } catch {
+      setGrowthPhaseAvailableTags([]);
+      setGrowthPhasePlantTagsHint("Plant tag fetch failed — try again.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function runChangePlantBatchGrowthPhase() {
     const selectedBatch =
       (plantBatchesRows ?? []).find(
@@ -2256,7 +2309,20 @@ export default function MetrcSandboxPage() {
       return;
     }
     if (!growthPhaseStartingTag.trim()) {
-      setStatusMsg({ tone: "error", text: "Starting plant tag is required." });
+      setStatusMsg({
+        tone: "error",
+        text: "Fetch available plant tags and select a starting tag.",
+      });
+      return;
+    }
+    if (
+      growthPhaseAvailableTags.length > 0 &&
+      !growthPhaseAvailableTags.includes(growthPhaseStartingTag.trim())
+    ) {
+      setStatusMsg({
+        tone: "error",
+        text: "Starting tag must be selected from the fetched METRC available plant tags list.",
+      });
       return;
     }
     const growthPhase = METRC_PLANT_BATCH_GROWTH_PHASE_OPTIONS.includes(
@@ -4481,24 +4547,51 @@ export default function MetrcSandboxPage() {
                 }}
               />
             </label>
-            <label style={{ fontSize: 13 }}>
+            <label style={{ fontSize: 13, gridColumn: growthPhaseAvailableTags.length > 0 ? "1 / -1" : undefined }}>
               <span style={{ color: "#94a3b8" }}>Starting plant tag</span>
-              <input
-                type="text"
-                value={growthPhaseStartingTag}
-                onChange={(e) => setGrowthPhaseStartingTag(e.target.value)}
-                placeholder="Enter unused METRC plant tag"
-                style={{
-                  display: "block",
-                  width: "100%",
-                  marginTop: 4,
-                  padding: "8px 10px",
-                  borderRadius: 8,
-                  border: "1px solid #475569",
-                  background: "#0f172a",
-                  color: "#e2e8f0",
-                }}
-              />
+              {growthPhaseAvailableTags.length > 0 ? (
+                <select
+                  value={growthPhaseStartingTag}
+                  onChange={(e) => setGrowthPhaseStartingTag(e.target.value)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                    fontFamily: "ui-monospace, monospace",
+                    fontSize: 12,
+                  }}
+                >
+                  <option value="">Select available plant tag…</option>
+                  {growthPhaseAvailableTags.map((tag) => (
+                    <option key={tag} value={tag}>
+                      {tag}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={growthPhaseStartingTag}
+                  onChange={(e) => setGrowthPhaseStartingTag(e.target.value)}
+                  placeholder="Fetch available plant tags, then select"
+                  disabled
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    marginTop: 4,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #475569",
+                    background: "#0f172a",
+                    color: "#64748b",
+                  }}
+                />
+              )}
             </label>
             <label style={{ fontSize: 13 }}>
               <span style={{ color: "#94a3b8" }}>Growth date</span>
@@ -4546,6 +4639,14 @@ export default function MetrcSandboxPage() {
           <div style={{ ...styles.row, marginTop: 12 }}>
             <button
               type="button"
+              style={{ ...styles.btn, opacity: busy ? 0.6 : 1 }}
+              disabled={!!busy || !isSandboxEnvironment}
+              onClick={() => void fetchAvailablePlantTagsForGrowthPhase()}
+            >
+              {busy === "growthPhasePlantTags" ? "Fetching…" : "Fetch available plant tags"}
+            </button>
+            <button
+              type="button"
               style={{
                 ...styles.btn,
                 ...styles.btnPrimary,
@@ -4569,6 +4670,16 @@ export default function MetrcSandboxPage() {
               {busy === "plantBatchGrowthPhase" ? "Submitting…" : "Change Growth Phase"}
             </button>
           </div>
+          {growthPhasePlantTagsHint ? (
+            <p style={{ marginTop: 8, fontSize: 12, color: "#94a3b8" }}>{growthPhasePlantTagsHint}</p>
+          ) : null}
+          {growthPhaseAvailableTags.length > 0 ? (
+            <p style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
+              {growthPhaseAvailableTags.length} unused METRC plant tag
+              {growthPhaseAvailableTags.length === 1 ? "" : "s"} loaded from{" "}
+              <code style={{ color: "#cbd5e1" }}>GET /tags/v2/plant/available</code>.
+            </p>
+          ) : null}
           {lastGrowthPhaseChange ? (
             <div
               style={{
