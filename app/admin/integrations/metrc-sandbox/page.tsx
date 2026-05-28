@@ -202,6 +202,7 @@ const DEFAULT_SANDBOX_PLANT_BATCH_PACKAGE_ITEM_NAME =
   "SBX Immature Plants SBX Strain 2 Item";
 const DEFAULT_PLANT_BATCH_PACKAGE_NOTE =
   "NexBatch sandbox evaluation - plant batch package.";
+const METRC_PLANT_BATCH_GROWTH_PHASE_OPTIONS = ["Vegetative", "Flowering"] as const;
 const METRC_HARVEST_TYPE_OPTIONS = ["Product", "WholePlant"] as const;
 const DEFAULT_STRAIN_INDICA_PCT = "50";
 const DEFAULT_STRAIN_SATIVA_PCT = "50";
@@ -973,6 +974,16 @@ export default function MetrcSandboxPage() {
     DEFAULT_PLANT_BATCH_PACKAGE_NOTE,
   );
   const [lastPlantBatchPackage, setLastPlantBatchPackage] =
+    useState<MotherPlantPackageResult | null>(null);
+  const [growthPhasePlantBatchId, setGrowthPhasePlantBatchId] = useState("");
+  const [growthPhaseSelection, setGrowthPhaseSelection] = useState<string>("Flowering");
+  const [growthPhaseCount, setGrowthPhaseCount] = useState("2");
+  const [growthPhaseDate, setGrowthPhaseDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [growthPhaseLocationId, setGrowthPhaseLocationId] = useState("");
+  const [growthPhaseNote, setGrowthPhaseNote] = useState("");
+  const [lastGrowthPhaseChange, setLastGrowthPhaseChange] =
     useState<MotherPlantPackageResult | null>(null);
   const [lastHarvestsSync, setLastHarvestsSync] = useState<HarvestsSyncResult | null>(null);
   const [harvestsRows, setHarvestsRows] = useState<MetrcHarvestRow[] | null>(null);
@@ -2223,6 +2234,76 @@ export default function MetrcSandboxPage() {
       await loadMeta();
     } catch {
       setStatusMsg({ tone: "error", text: "Create plant batch package failed — network error." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runChangePlantBatchGrowthPhase() {
+    const selectedBatch =
+      (plantBatchesRows ?? []).find(
+        (batch) => batch.metrcPlantBatchId === growthPhasePlantBatchId,
+      ) ?? null;
+    const plantBatchName = selectedBatch?.name?.trim() || "";
+    const plantBatchId = Number.parseInt(growthPhasePlantBatchId, 10);
+    const count = Number.parseInt(growthPhaseCount, 10);
+    if (!selectedBatch || !plantBatchName) {
+      setStatusMsg({ tone: "error", text: "Select a source plant batch." });
+      return;
+    }
+    if (!Number.isFinite(count) || count < 1) {
+      setStatusMsg({ tone: "error", text: "Count must be at least 1." });
+      return;
+    }
+    const growthPhase = METRC_PLANT_BATCH_GROWTH_PHASE_OPTIONS.includes(
+      growthPhaseSelection as (typeof METRC_PLANT_BATCH_GROWTH_PHASE_OPTIONS)[number],
+    )
+      ? growthPhaseSelection
+      : "Flowering";
+
+    const selectedLocation =
+      packageCapableLocations.find((l) => l.metrcLocationId === growthPhaseLocationId) ?? null;
+
+    setBusy("plantBatchGrowthPhase");
+    setLastGrowthPhaseChange(null);
+    const requestBody = {
+      plantBatchName,
+      plantBatchId: Number.isFinite(plantBatchId) && plantBatchId > 0 ? plantBatchId : undefined,
+      growthPhase,
+      count,
+      actualDate: growthPhaseDate,
+      locationName: selectedLocation?.name?.trim() || selectedBatch.locationName?.trim() || null,
+      note: growthPhaseNote.trim() || null,
+    };
+    try {
+      const res = await authFetch("/api/metrc/test/plantbatch-growthphase", {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+      });
+      const json = (await res.json()) as MotherPlantPackageResult;
+      setLastGrowthPhaseChange(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Change plant batch growth phase failed."),
+        });
+        return;
+      }
+      setStatusMsg({
+        tone: "ok",
+        text: String(json.message || "Plant batch growth phase changed in METRC sandbox."),
+      });
+      await runPlantBatchesSync();
+      await loadSyncedPlantBatches();
+      await loadMeta();
+    } catch {
+      setStatusMsg({
+        tone: "error",
+        text: "Change plant batch growth phase failed — network error.",
+      });
     } finally {
       setBusy(null);
     }
@@ -4301,6 +4382,215 @@ export default function MetrcSandboxPage() {
                     requestDebug: lastPlantBatchPackage.requestDebug,
                     request: lastPlantBatchPackage.requestPayload,
                     response: lastPlantBatchPackage.responsePayload,
+                  },
+                  null,
+                  2,
+                )}
+              </pre>
+            </div>
+          ) : null}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Change plant batch growth phase</h2>
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8" }}>
+            Sandbox only. Changes growth phase for a synced METRC plant batch using{" "}
+            <code style={{ color: "#cbd5e1" }}>POST /plantbatches/v2/growthphase</code> for METRC
+            Generic Evaluation Plant Batches Step 4.
+          </p>
+          {!isSandboxEnvironment && !loadingMeta ? (
+            <p style={{ marginTop: 12, color: "#f87171", fontSize: 13 }}>
+              METRC environment is not sandbox. Switch to sandbox in Company Config to enable changes.
+            </p>
+          ) : null}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+              gap: 12,
+              marginTop: 14,
+            }}
+          >
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Source plant batch</span>
+              <select
+                value={growthPhasePlantBatchId}
+                onChange={(e) => setGrowthPhasePlantBatchId(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                <option value="">Select plant batch…</option>
+                {(plantBatchesRows ?? []).map((batch) => (
+                  <option key={batch.metrcPlantBatchId} value={batch.metrcPlantBatchId}>
+                    {batch.name || batch.metrcPlantBatchId}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Growth phase</span>
+              <select
+                value={growthPhaseSelection}
+                onChange={(e) => setGrowthPhaseSelection(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                {METRC_PLANT_BATCH_GROWTH_PHASE_OPTIONS.map((phase) => (
+                  <option key={phase} value={phase}>
+                    {phase}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Count</span>
+              <input
+                type="number"
+                min={1}
+                value={growthPhaseCount}
+                onChange={(e) => setGrowthPhaseCount(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Actual date</span>
+              <input
+                type="date"
+                value={growthPhaseDate}
+                onChange={(e) => setGrowthPhaseDate(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Location (optional, package-valid)</span>
+              <select
+                value={growthPhaseLocationId}
+                onChange={(e) => setGrowthPhaseLocationId(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                <option value="">METRC default</option>
+                {packageCapableLocations.map((loc) => (
+                  <option key={loc.metrcLocationId} value={loc.metrcLocationId}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 13, gridColumn: "1 / -1" }}>
+              <span style={{ color: "#94a3b8" }}>Note (optional)</span>
+              <input
+                type="text"
+                value={growthPhaseNote}
+                onChange={(e) => setGrowthPhaseNote(e.target.value)}
+                placeholder="Optional note"
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+          </div>
+          <div style={{ ...styles.row, marginTop: 12 }}>
+            <button
+              type="button"
+              style={{
+                ...styles.btn,
+                ...styles.btnPrimary,
+                opacity:
+                  busy || !isSandboxEnvironment || !growthPhasePlantBatchId ? 0.6 : 1,
+              }}
+              disabled={
+                !!busy ||
+                !isSandboxEnvironment ||
+                !growthPhasePlantBatchId ||
+                Number.parseInt(growthPhaseCount, 10) < 1
+              }
+              onClick={() => void runChangePlantBatchGrowthPhase()}
+            >
+              {busy === "plantBatchGrowthPhase" ? "Submitting…" : "Change Growth Phase"}
+            </button>
+          </div>
+          {lastGrowthPhaseChange ? (
+            <div
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid #334155",
+                background: "rgba(2, 6, 23, 0.8)",
+                fontSize: 12,
+                color: "#94a3b8",
+              }}
+            >
+              <strong style={{ color: lastGrowthPhaseChange.ok ? "#4ade80" : "#f87171" }}>
+                Last change attempt ({lastGrowthPhaseChange.status ?? "—"})
+              </strong>
+              <pre
+                style={{
+                  marginTop: 8,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "ui-monospace, monospace",
+                  color: "#cbd5e1",
+                }}
+              >
+                {JSON.stringify(
+                  {
+                    message: lastGrowthPhaseChange.message,
+                    endpoint:
+                      lastGrowthPhaseChange.endpoint || "/plantbatches/v2/growthphase",
+                    requestDebug: lastGrowthPhaseChange.requestDebug,
+                    request: lastGrowthPhaseChange.requestPayload,
+                    response: lastGrowthPhaseChange.responsePayload,
                   },
                   null,
                   2,

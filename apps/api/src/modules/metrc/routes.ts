@@ -22,6 +22,7 @@ import { MetrcPlantBatchesSyncService } from "../../services/metrcPlantBatchesSy
 import { MetrcPlantBatchCreateService } from "../../services/metrcPlantBatchCreateService.js";
 import { MetrcPlantBatchMotherPackageService } from "../../services/metrcPlantBatchMotherPackageService.js";
 import { MetrcPlantBatchPackageService } from "../../services/metrcPlantBatchPackageService.js";
+import { MetrcPlantBatchGrowthPhaseSandboxService } from "../../services/metrcPlantBatchGrowthPhaseSandboxService.js";
 import { MetrcHarvestsSyncService } from "../../services/metrcHarvestsSyncService.js";
 import { MetrcPlantsSyncService } from "../../services/metrcPlantsSyncService.js";
 import {
@@ -135,6 +136,7 @@ const metrcPlantBatchesSyncService = new MetrcPlantBatchesSyncService();
 const metrcPlantBatchCreateService = new MetrcPlantBatchCreateService();
 const metrcPlantBatchMotherPackageService = new MetrcPlantBatchMotherPackageService();
 const metrcPlantBatchPackageService = new MetrcPlantBatchPackageService();
+const metrcPlantBatchGrowthPhaseSandboxService = new MetrcPlantBatchGrowthPhaseSandboxService();
 const metrcHarvestsSyncService = new MetrcHarvestsSyncService();
 const metrcPlantsSyncService = new MetrcPlantsSyncService();
 const metrcHarvestCreateService = new MetrcHarvestCreateService();
@@ -186,6 +188,16 @@ const metrcPlantBatchPackageBody = z.object({
   actualDate: z.string().min(1),
   locationName: z.string().optional().nullable(),
   itemName: z.string().min(1),
+  note: z.string().optional().nullable(),
+});
+
+const metrcPlantBatchGrowthPhaseBody = z.object({
+  plantBatchName: z.string().min(1),
+  plantBatchId: z.coerce.number().int().positive().optional(),
+  growthPhase: z.enum(["Vegetative", "Flowering"]),
+  count: z.coerce.number().int().positive(),
+  actualDate: z.string().min(1),
+  locationName: z.string().optional().nullable(),
   note: z.string().optional().nullable(),
 });
 
@@ -757,6 +769,28 @@ metrcRouter.post(
       actualDate: body.actualDate,
       locationName: body.locationName ?? null,
       itemName: body.itemName,
+      note: body.note ?? null,
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
+  }),
+);
+
+metrcRouter.post(
+  "/test/plantbatch-growthphase",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcPlantBatchGrowthPhaseBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcPlantBatchGrowthPhaseBody>;
+    const result = await metrcPlantBatchGrowthPhaseSandboxService.changePlantBatchGrowthPhase({
+      companyId,
+      actorUserId: req.auth.userId,
+      plantBatchName: body.plantBatchName,
+      plantBatchId: body.plantBatchId ?? null,
+      growthPhase: body.growthPhase,
+      count: body.count,
+      actualDate: body.actualDate,
+      locationName: body.locationName ?? null,
       note: body.note ?? null,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
