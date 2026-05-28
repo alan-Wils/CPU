@@ -823,7 +823,7 @@ metrcRouter.get(
       companyId,
       licenseNumber,
     });
-    res.status(result.ok ? 200 : result.status).json(result);
+    res.status(200).json(result);
   }),
 );
 
