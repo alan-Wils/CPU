@@ -32,7 +32,7 @@ export const EXTRACTION_UI_STAGE_META: Record<
   },
   testing: {
     label: "Testing / Finishing",
-    helper: "Lab testing, finish batch, and packaging handoff.",
+    helper: "Name and finish batch, lab testing, then packaging handoff.",
   },
 };
 

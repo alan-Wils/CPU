@@ -194,8 +194,8 @@ const extractionTasks = [
   "Finish Decarb",
   "Adding Terps",
   "End Purge",
-  "Testing",
   "Finish Batch",
+  "Testing",
 ];
 
 const optionalRepeatableTasks = ["Whip", "Adding Terps", "Print Batch Label", "Print Batch Sheet"];
@@ -1323,8 +1323,8 @@ export default function Extraction() {
     if (!hasCompletedTask(batch, "Run Extraction")) return "Run Extraction";
     if (!hasCompletedTask(batch, "Start Purge")) return "Start Purge";
     if (!hasCompletedTask(batch, "End Purge")) return "End Purge";
-    if (getTestingStatus(batch) !== "Test Passed") return "Testing";
     if (!hasCompletedTask(batch, "Finish Batch")) return "Finish Batch";
+    if (getTestingStatus(batch) !== "Test Passed") return "Testing";
     return "Complete";
   }
 
@@ -1369,10 +1369,13 @@ export default function Extraction() {
     }
 
     if (task === "End Purge") return purgeStarted && !purgeEnded;
-    if (task === "Testing") return purgeEnded && !finished;
 
     if (task === "Finish Batch") {
-      return getTestingStatus(batch) === "Test Passed" && !finished;
+      return purgeEnded && !finished;
+    }
+
+    if (task === "Testing") {
+      return finished && getTestingStatus(batch) !== "Test Passed";
     }
 
     if (task === "Combine Batches") {
@@ -1567,6 +1570,76 @@ export default function Extraction() {
       nextId = `${baseId}-${count}`;
     }
     return nextId;
+  }
+
+  async function sendExtractionBatchToPackaging(batch: any, loggedAt: string) {
+    const oilGrams =
+      num(batch.finalOilGrams) || num(batch.taskData?.["Finish Batch"]?.finalOilGrams);
+    const terpGrams =
+      num(batch.extraTerpsGrams) || num(batch.taskData?.["Finish Batch"]?.extraTerpsGrams);
+
+    batch.finalOilGrams = oilGrams;
+    batch.extraTerpsGrams = terpGrams;
+    batch.totalFinalGrams = num(oilGrams) + num(terpGrams);
+    batch.yieldPercentage = getYieldPercentage(batch);
+    batch.status = "Finished - Sent To Packaging";
+
+    const alreadyInPackaging = s.packagingBatches.some(
+      (b: any) =>
+        String(b.extractionBatchId || "") === String(batch.id) ||
+        String(b.sourceBatchId || "") === String(batch.id) ||
+        b.id === batch.id
+    );
+
+    if (alreadyInPackaging) return;
+
+    const productLabel = String(batch.productType || "").trim();
+    const displayName = String(batch.name || "").trim();
+    const useCreativeProductionId =
+      displayName.length > 0 && displayName !== productLabel;
+    const productionLotBase = useCreativeProductionId
+      ? makeMarketBatchCode(displayName, `P-${getDateCode()}`)
+      : String(batch.id);
+    const packagingLotId = useCreativeProductionId
+      ? makeUniquePackagingLotId(productionLotBase)
+      : batch.id;
+    if (useCreativeProductionId) {
+      batch.productionPackagingLotId = packagingLotId;
+      batch.marketBatchCode = packagingLotId;
+    }
+
+    const packagingBatch = {
+      id: packagingLotId,
+      name: batch.name,
+      type: batch.productType,
+      productType: batch.productType,
+      source: batch.source,
+      marketBatchCode: batch.marketBatchCode,
+      sourceBlendLabel: batch.sourceBlendLabel,
+      extractionSources: Array.isArray(batch.sources) ? batch.sources : [],
+      sourceBatchId: batch.id,
+      extractionBatchId: batch.id,
+      finalOilGrams: oilGrams,
+      extraTerpsGrams: terpGrams,
+      totalFinalGrams: batch.totalFinalGrams,
+      packageableGrams: num(oilGrams),
+      yieldPercentage: batch.yieldPercentage,
+      status: "Ready For Packaging",
+      createdAt: loggedAt,
+    };
+
+    s.packagingBatches.unshift(packagingBatch);
+
+    try {
+      await createPackagingBatch(packagingBatch);
+    } catch (error) {
+      console.error("Could not create packaging real table batch:", error);
+      showNotice(
+        "Packaging Save Warning",
+        "The batch was sent to packaging locally, but it did not save to the real PackagingBatch table.",
+        "The backup sync will still try to save the current store."
+      );
+    }
   }
 
   function updateSourceInput(index: number, key: string, value: string) {
@@ -3690,70 +3763,13 @@ export default function Extraction() {
         }
         selectedExt.marketBatchCode = finishMarketCode;
       }
-      selectedExt.status = "Finished - Sent To Packaging";
+      selectedExt.status = "Ready For Testing";
       selectedExt.finalOilGrams = finalOilGrams;
       selectedExt.extraTerpsGrams = extraTerpsGrams;
       selectedExt.totalFinalGrams = num(finalOilGrams) + num(extraTerpsGrams);
       selectedExt.yieldPercentage = getYieldPercentage(selectedExt);
-
-      const alreadyInPackaging = s.packagingBatches.some(
-        (b: any) =>
-          String(b.extractionBatchId || "") === String(selectedExt.id) ||
-          String(b.sourceBatchId || "") === String(selectedExt.id) ||
-          b.id === selectedExt.id
-      );
-
-      if (!alreadyInPackaging) {
-        const productLabel = String(selectedExt.productType || "").trim();
-        const displayName = String(selectedExt.name || "").trim();
-        const useCreativeProductionId =
-          displayName.length > 0 && displayName !== productLabel;
-        const productionLotBase = useCreativeProductionId
-          ? makeMarketBatchCode(displayName, `P-${getDateCode()}`)
-          : String(selectedExt.id);
-        const packagingLotId = useCreativeProductionId
-          ? makeUniquePackagingLotId(productionLotBase)
-          : selectedExt.id;
-        if (useCreativeProductionId) {
-          selectedExt.productionPackagingLotId = packagingLotId;
-          selectedExt.marketBatchCode = packagingLotId;
-        }
-
-        const packagingBatch = {
-          id: packagingLotId,
-          name: selectedExt.name,
-          type: selectedExt.productType,
-          productType: selectedExt.productType,
-          source: selectedExt.source,
-          marketBatchCode: selectedExt.marketBatchCode,
-          sourceBlendLabel: selectedExt.sourceBlendLabel,
-          extractionSources: Array.isArray(selectedExt.sources)
-            ? selectedExt.sources
-            : [],
-          sourceBatchId: selectedExt.id,
-          extractionBatchId: selectedExt.id,
-          finalOilGrams,
-          extraTerpsGrams,
-          totalFinalGrams: selectedExt.totalFinalGrams,
-          packageableGrams: num(finalOilGrams),
-          yieldPercentage: selectedExt.yieldPercentage,
-          status: "Ready For Packaging",
-          createdAt: loggedAt,
-        };
-
-        s.packagingBatches.unshift(packagingBatch);
-
-        try {
-          await createPackagingBatch(packagingBatch);
-        } catch (error) {
-          console.error("Could not create packaging real table batch:", error);
-          showNotice(
-            "Packaging Save Warning",
-            "The batch was sent to packaging locally, but it did not save to the real PackagingBatch table.",
-            "The backup sync will still try to save the current store."
-          );
-        }
-      }
+    } else if (selectedTask === "Testing" && testingStatus === "Test Passed") {
+      await sendExtractionBatchToPackaging(selectedExt, loggedAt);
     } else {
       const nextTask = getNextAllowedTask(selectedExt);
 
@@ -4343,7 +4359,7 @@ export default function Extraction() {
             <div style={{ flex: "1 1 280px" }}>
               <h2 style={{ margin: 0 }}>Extraction Batches</h2>
               <p style={{ color: "#94a3b8", margin: "6px 0 0" }}>
-                {`Required path: Pack Socks Start ${ARROW_RIGHT} Pack Socks Stop ${ARROW_RIGHT} Run Extraction ${ARROW_RIGHT} Start Purge ${ARROW_RIGHT} End Purge ${ARROW_RIGHT} Testing Passed ${ARROW_RIGHT} Finish Batch. Print Batch Label and Print Batch Sheet (2 pages: process reference + MIP sample plan) are available anytime. Optional tasks (Whip, Adding Terps, etc.) can be logged while purge is active.`}
+                {`Required path: Pack Socks Start ${ARROW_RIGHT} Pack Socks Stop ${ARROW_RIGHT} Run Extraction ${ARROW_RIGHT} Start Purge ${ARROW_RIGHT} End Purge ${ARROW_RIGHT} Finish Batch ${ARROW_RIGHT} Testing Passed. Print Batch Label and Print Batch Sheet (2 pages: process reference + MIP sample plan) are available anytime. Optional tasks (Whip, Adding Terps, etc.) can be logged while purge is active.`}
               </p>
             </div>
 
@@ -5755,7 +5771,8 @@ export default function Extraction() {
                     </p>
 
                     <p style={{ color: "#94a3b8" }}>
-                      This will finish the extraction batch and send it to packaging.
+                      This names the batch and saves final weights. Log Testing next; the batch
+                      is sent to packaging once testing passes.
                     </p>
 
                     <p style={{ color: "#cbd5e1", fontSize: 14 }}>
