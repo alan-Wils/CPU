@@ -444,6 +444,17 @@ type LabTestRecordResult = {
     endpoint: string;
     payloadBody: unknown;
   };
+  authEvidence?: {
+    endpoint: string;
+    finalLicenseNumber: string;
+    authMode: string;
+    baseUrl: string;
+    exactPayload: unknown;
+    selectedPackageLabel: string;
+    packageFacilityLicense: string | null;
+    labTestTypesSourceLicense: string;
+    sameAuthUsedByEndpoints: string[];
+  };
   responsePayload?: unknown;
   durationMs?: number;
   metrcMessage?: string;
@@ -1112,6 +1123,7 @@ export default function MetrcSandboxPage() {
     useState<MotherPlantPackageResult | null>(null);
   const [labTestTypeNames, setLabTestTypeNames] = useState<string[]>([]);
   const [labTestTypesHint, setLabTestTypesHint] = useState<string | null>(null);
+  const [labTestTypesSourceLicense, setLabTestTypesSourceLicense] = useState("");
   const [labResultPackageLabel, setLabResultPackageLabel] = useState("");
   const [labResultDate, setLabResultDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [labResultRows, setLabResultRows] = useState<LabResultBuilderRow[]>([
@@ -2708,10 +2720,13 @@ export default function MetrcSandboxPage() {
       const json = (await res.json()) as LabTestTypesResult;
       if (!res.ok || !json.ok) {
         setLabTestTypeNames([]);
+        setLabTestTypesSourceLicense("");
         setLabTestTypesHint(String(json.message || "Could not fetch METRC lab test types."));
         return;
       }
       const names = (json.labTestTypes ?? []).map((name) => String(name || "").trim()).filter(Boolean);
+      const sourceLicense = String(json.licenseNumber || "").trim();
+      setLabTestTypesSourceLicense(sourceLicense);
       setLabTestTypeNames(names);
       setLabResultRows((prev) =>
         prev.map((row) =>
@@ -2729,10 +2744,11 @@ export default function MetrcSandboxPage() {
         return;
       }
       setLabTestTypesHint(
-        `Loaded ${names.length} lab test type name(s) from ${json.endpoint || "GET /labtests/v2/types"} for license ${json.licenseNumber || METRC_LAB_TEST_LICENSE}.`,
+        `Loaded ${names.length} lab test type name(s) from ${json.endpoint || "GET /labtests/v2/types"} for license ${sourceLicense || METRC_LAB_TEST_LICENSE}.`,
       );
     } catch {
       setLabTestTypeNames([]);
+      setLabTestTypesSourceLicense("");
       setLabTestTypesHint("Lab test type sync failed — try again.");
     } finally {
       setBusy(null);
@@ -4787,6 +4803,29 @@ export default function MetrcSandboxPage() {
                   {
                     message: lastLabTestRecord.message,
                     endpoint: lastLabTestRecord.endpoint || "/labtests/v2/record",
+                    authDiagnostics:
+                      lastLabTestRecord.authEvidence ??
+                      (lastLabTestRecord.requestDebug
+                        ? {
+                            endpoint: "/labtests/v2/record",
+                            finalLicenseNumber:
+                              lastLabTestRecord.requestDebug.licenseNumber || METRC_LAB_TEST_LICENSE,
+                            authMode: lastLabTestRecord.requestDebug.authMode,
+                            baseUrl: lastLabTestRecord.requestDebug.baseUrl,
+                            exactPayload: lastLabTestRecord.requestDebug.payloadBody,
+                            selectedPackageLabel: labResultPackageLabel.trim() || null,
+                            packageFacilityLicense: null,
+                            labTestTypesSourceLicense:
+                              labTestTypesSourceLicense || METRC_LAB_TEST_LICENSE,
+                            sameAuthUsedByEndpoints: [
+                              "GET /labtests/v2/types",
+                              "POST /plantbatches/v2/plantings",
+                              "POST /plantbatches/v2/packages",
+                              "POST /plantbatches/v2/growthphase",
+                              "DELETE /plantbatches/v2/",
+                            ],
+                          }
+                        : undefined),
                     requestDebug: lastLabTestRecord.requestDebug,
                     request: lastLabTestRecord.requestPayload,
                     response: lastLabTestRecord.responsePayload,

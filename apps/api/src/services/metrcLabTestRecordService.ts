@@ -12,11 +12,21 @@ import {
 } from "../lib/metrcCredentialDiagnostics.js";
 import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
 import { resolveMetrcApiBaseUrl } from "../lib/metrcResolveBaseUrl.js";
+import { findMetrcPackageByLabel } from "../repositories/metrcPackageRepository.js";
 import { METRC_COLORADO_SANDBOX_LICENSE } from "./metrcLabTestTypesService.js";
 
 const LAB_TEST_RECORD_ENDPOINT = "/labtests/v2/record";
+const METRC_LAB_TEST_401_MESSAGE =
+  "METRC returned 401 for documented lab test record payload using same working sandbox auth/license. Contact METRC to enable/verify lab result write permission.";
 const METRC_AUTH_PERMISSION_MESSAGE =
   "METRC rejected this endpoint for the current sandbox credentials/facility. This is an authorization/permission issue, not a form input issue.";
+const SAME_AUTH_COMPARABLE_LAB_TEST_ENDPOINTS = [
+  "GET /labtests/v2/types",
+  "POST /plantbatches/v2/plantings",
+  "POST /plantbatches/v2/packages",
+  "POST /plantbatches/v2/growthphase",
+  "DELETE /plantbatches/v2/",
+] as const;
 
 export type MetrcLabTestRecordResultInput = {
   labTestTypeName: string;
@@ -31,6 +41,18 @@ export type MetrcLabTestRecordRequestDebug = {
   baseUrl: string;
   endpoint: string;
   payloadBody: unknown;
+};
+
+export type MetrcLabTestRecordAuthEvidence = {
+  endpoint: string;
+  finalLicenseNumber: string;
+  authMode: string;
+  baseUrl: string;
+  exactPayload: unknown;
+  selectedPackageLabel: string;
+  packageFacilityLicense: string | null;
+  labTestTypesSourceLicense: string;
+  sameAuthUsedByEndpoints: readonly string[];
 };
 
 export type MetrcLabTestRecordInput = {
@@ -59,6 +81,7 @@ export type MetrcLabTestRecordFailure = {
   endpoint?: string;
   requestPayload?: { pathname: string; body: unknown; requestDebug: MetrcLabTestRecordRequestDebug };
   requestDebug?: MetrcLabTestRecordRequestDebug;
+  authEvidence?: MetrcLabTestRecordAuthEvidence;
   responsePayload?: unknown;
   metrcMessage?: string;
 };
@@ -143,6 +166,8 @@ export class MetrcLabTestRecordService {
     }
 
     const licenseNumber = METRC_COLORADO_SANDBOX_LICENSE;
+    const syncedPackage = await findMetrcPackageByLabel(input.companyId, packageLabel);
+    const packageFacilityLicense = String(syncedPackage?.licenseNumber || "").trim() || null;
     const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
     const baseUrl =
       client.baseUrl ||
@@ -184,9 +209,25 @@ export class MetrcLabTestRecordService {
 
     if (isMetrcClientFailure(result)) {
       const isAuthDenied = result.status === 401 || result.status === 403;
-      const message = isAuthDenied
-        ? METRC_AUTH_PERMISSION_MESSAGE
-        : metrcPullFailureMessage(result.status, result.metrcMessage || result.message);
+      const message =
+        result.status === 401
+          ? METRC_LAB_TEST_401_MESSAGE
+          : isAuthDenied
+            ? METRC_AUTH_PERMISSION_MESSAGE
+            : metrcPullFailureMessage(result.status, result.metrcMessage || result.message);
+      const authEvidence: MetrcLabTestRecordAuthEvidence | undefined = isAuthDenied
+        ? {
+            endpoint: LAB_TEST_RECORD_ENDPOINT,
+            finalLicenseNumber: licenseNumber,
+            authMode,
+            baseUrl,
+            exactPayload: body,
+            selectedPackageLabel: packageLabel,
+            packageFacilityLicense,
+            labTestTypesSourceLicense: METRC_COLORADO_SANDBOX_LICENSE,
+            sameAuthUsedByEndpoints: SAME_AUTH_COMPARABLE_LAB_TEST_ENDPOINTS,
+          }
+        : undefined;
       if (isAuthDenied) {
         logMetrcCredentialDiagnostics({
           companyId: input.companyId,
@@ -201,6 +242,7 @@ export class MetrcLabTestRecordService {
         status: result.status,
         message,
         requestDebug,
+        authEvidence,
       });
       return {
         ok: false,
@@ -210,6 +252,7 @@ export class MetrcLabTestRecordService {
         endpoint: LAB_TEST_RECORD_ENDPOINT,
         requestPayload,
         requestDebug,
+        authEvidence,
         responsePayload: result,
         metrcMessage: result.metrcMessage,
       };
