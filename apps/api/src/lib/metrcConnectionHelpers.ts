@@ -90,6 +90,40 @@ export function parseMetrcPlantBatchWasteReasonNames(bodyJson: unknown): string[
   return out;
 }
 
+/**
+ * Lab test type names from GET /labtests/v2/types (bare array, `Data`, or string list).
+ */
+export function parseMetrcLabTestTypeNames(bodyJson: unknown): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: unknown) => {
+    const s = typeof value === "string" ? value.trim() : String(value ?? "").trim();
+    if (!s || seen.has(s)) return;
+    seen.add(s);
+    out.push(s);
+  };
+  const processItems = (items: unknown[]) => {
+    for (const item of items) {
+      if (typeof item === "string") {
+        push(item);
+        continue;
+      }
+      if (item && typeof item === "object") {
+        const row = item as Record<string, unknown>;
+        push(row.Name ?? row.name ?? row.LabTestTypeName ?? row.labTestTypeName);
+      }
+    }
+  };
+  if (Array.isArray(bodyJson)) {
+    processItems(bodyJson);
+    return out;
+  }
+  if (bodyJson && typeof bodyJson === "object" && Array.isArray((bodyJson as { Data?: unknown }).Data)) {
+    processItems((bodyJson as { Data: unknown[] }).Data);
+  }
+  return out;
+}
+
 export type MetrcSampleLocation = {
   id: string | number;
   name: string;

@@ -220,6 +220,8 @@ const METRC_PLANT_BATCH_WASTE_UOM_OPTIONS = [
 ] as const;
 const DEFAULT_DESTROY_PLANT_BATCH_REASON_NOTE =
   "NexBatch sandbox evaluation destroy test";
+const DEFAULT_LAB_RESULT_NOTES = "NexBatch sandbox evaluation";
+const METRC_LAB_TEST_LICENSE = "SF-SBX-CO-7-13402";
 const METRC_HARVEST_TYPE_OPTIONS = ["Product", "WholePlant"] as const;
 const DEFAULT_STRAIN_INDICA_PCT = "50";
 const DEFAULT_STRAIN_SATIVA_PCT = "50";
@@ -407,6 +409,43 @@ type MotherPlantPackageResult = {
   durationMs?: number;
   packageTag?: string;
   sourcePlantLabel?: string;
+  metrcMessage?: string;
+};
+
+type LabTestTypesResult = {
+  ok: boolean;
+  status?: number;
+  message?: string;
+  labTestTypes?: string[];
+  parsedCount?: number;
+  licenseNumber?: string;
+  endpoint?: string;
+};
+
+type LabResultBuilderRow = {
+  id: string;
+  labTestTypeName: string;
+  quantity: string;
+  passed: boolean;
+  notes: string;
+};
+
+type LabTestRecordResult = {
+  ok: boolean;
+  status?: number;
+  message?: string;
+  credentialHint?: string;
+  endpoint?: string;
+  requestPayload?: unknown;
+  requestDebug?: {
+    licenseNumber: string;
+    authMode: string;
+    baseUrl: string;
+    endpoint: string;
+    payloadBody: unknown;
+  };
+  responsePayload?: unknown;
+  durationMs?: number;
   metrcMessage?: string;
 };
 
@@ -1071,6 +1110,20 @@ export default function MetrcSandboxPage() {
   );
   const [lastDestroyPlantBatch, setLastDestroyPlantBatch] =
     useState<MotherPlantPackageResult | null>(null);
+  const [labTestTypeNames, setLabTestTypeNames] = useState<string[]>([]);
+  const [labTestTypesHint, setLabTestTypesHint] = useState<string | null>(null);
+  const [labResultPackageLabel, setLabResultPackageLabel] = useState("");
+  const [labResultDate, setLabResultDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [labResultRows, setLabResultRows] = useState<LabResultBuilderRow[]>([
+    {
+      id: "row-1",
+      labTestTypeName: "",
+      quantity: "1",
+      passed: true,
+      notes: DEFAULT_LAB_RESULT_NOTES,
+    },
+  ]);
+  const [lastLabTestRecord, setLastLabTestRecord] = useState<LabTestRecordResult | null>(null);
   const [lastHarvestsSync, setLastHarvestsSync] = useState<HarvestsSyncResult | null>(null);
   const [harvestsRows, setHarvestsRows] = useState<MetrcHarvestRow[] | null>(null);
   const [harvestsLoaded, setHarvestsLoaded] = useState(false);
@@ -2616,6 +2669,151 @@ export default function MetrcSandboxPage() {
       setDestroyPlantBatchWasteReasons([]);
       setDestroyPlantBatchWasteReason("");
       setDestroyPlantBatchWasteReasonsHint("Waste reasons fetch failed — try again.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function addLabResultRow() {
+    setLabResultRows((prev) => [
+      ...prev,
+      {
+        id: `row-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        labTestTypeName: "",
+        quantity: "1",
+        passed: true,
+        notes: DEFAULT_LAB_RESULT_NOTES,
+      },
+    ]);
+  }
+
+  function updateLabResultRow(
+    rowId: string,
+    patch: Partial<Pick<LabResultBuilderRow, "labTestTypeName" | "quantity" | "passed" | "notes">>,
+  ) {
+    setLabResultRows((prev) =>
+      prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)),
+    );
+  }
+
+  function removeLabResultRow(rowId: string) {
+    setLabResultRows((prev) => (prev.length <= 1 ? prev : prev.filter((row) => row.id !== rowId)));
+  }
+
+  async function runSyncLabTestTypes() {
+    setBusy("labTestTypes");
+    setLabTestTypesHint(null);
+    try {
+      const res = await authFetch("/api/metrc/labtest-types");
+      const json = (await res.json()) as LabTestTypesResult;
+      if (!res.ok || !json.ok) {
+        setLabTestTypeNames([]);
+        setLabTestTypesHint(String(json.message || "Could not fetch METRC lab test types."));
+        return;
+      }
+      const names = (json.labTestTypes ?? []).map((name) => String(name || "").trim()).filter(Boolean);
+      setLabTestTypeNames(names);
+      setLabResultRows((prev) =>
+        prev.map((row) =>
+          row.labTestTypeName && names.includes(row.labTestTypeName)
+            ? row
+            : { ...row, labTestTypeName: "" },
+        ),
+      );
+      if (names.length === 0) {
+        setLabTestTypesHint(
+          typeof json.parsedCount === "number" && json.parsedCount === 0
+            ? "METRC returned no lab test types for this license."
+            : "No lab test types returned — check METRC sandbox configuration.",
+        );
+        return;
+      }
+      setLabTestTypesHint(
+        `Loaded ${names.length} lab test type name(s) from ${json.endpoint || "GET /labtests/v2/types"} for license ${json.licenseNumber || METRC_LAB_TEST_LICENSE}.`,
+      );
+    } catch {
+      setLabTestTypeNames([]);
+      setLabTestTypesHint("Lab test type sync failed — try again.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runRecordLabTestResult() {
+    const packageLabel = labResultPackageLabel.trim();
+    if (!packageLabel) {
+      setStatusMsg({ tone: "error", text: "Select a synced package tag." });
+      return;
+    }
+    if (!labResultDate.trim()) {
+      setStatusMsg({ tone: "error", text: "Result date is required." });
+      return;
+    }
+    if (!labTestTypeNames.length) {
+      setStatusMsg({
+        tone: "error",
+        text: "Sync lab test types first. Lab test type names must come from METRC /labtests/v2/types.",
+      });
+      return;
+    }
+
+    const results = labResultRows
+      .map((row) => {
+        const quantity = Number.parseFloat(row.quantity);
+        return {
+          labTestTypeName: row.labTestTypeName.trim(),
+          quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+          passed: row.passed,
+          notes: row.notes.trim() || null,
+        };
+      })
+      .filter((row) => row.labTestTypeName);
+
+    if (!results.length) {
+      setStatusMsg({ tone: "error", text: "Add at least one lab result row with a test type name." });
+      return;
+    }
+    if (results.some((row) => !labTestTypeNames.includes(row.labTestTypeName))) {
+      setStatusMsg({
+        tone: "error",
+        text: "Each Lab Test Type Name must be selected from synced METRC lab test types.",
+      });
+      return;
+    }
+
+    const requestBody = {
+      packageLabel,
+      resultDate: `${labResultDate.trim()}T00:00:00Z`,
+      results,
+    };
+
+    setBusy("labTestRecord");
+    setLastLabTestRecord(null);
+    try {
+      const res = await authFetch("/api/metrc/test/labtests-record", {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+      });
+      const json = (await res.json()) as LabTestRecordResult;
+      setLastLabTestRecord(json);
+      if (!res.ok || !json.ok) {
+        setStatusMsg({
+          tone: "error",
+          text:
+            json.credentialHint ||
+            json.metrcMessage ||
+            String(json.message || "Record lab test result failed."),
+        });
+        return;
+      }
+      setStatusMsg({
+        tone: "ok",
+        text: String(json.message || "Lab test result recorded in METRC sandbox."),
+      });
+      await runPackagesSync();
+      await loadSyncedPackages();
+    } catch {
+      setStatusMsg({ tone: "error", text: "Record lab test result failed — network error." });
     } finally {
       setBusy(null);
     }
@@ -4314,6 +4512,284 @@ export default function MetrcSandboxPage() {
                     endpoint: lastCreatePlantBatch.endpoint,
                     request: lastCreatePlantBatch.requestPayload,
                     response: lastCreatePlantBatch.responsePayload,
+                  },
+                  null,
+                  2,
+                )}
+              </pre>
+            </div>
+          ) : null}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>METRC Lab Results</h2>
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8" }}>
+            Sandbox only. Syncs lab test types from{" "}
+            <code style={{ color: "#cbd5e1" }}>GET /labtests/v2/types</code> and records package
+            lab results with <code style={{ color: "#cbd5e1" }}>POST /labtests/v2/record</code>{" "}
+            using license <code style={{ color: "#cbd5e1" }}>{METRC_LAB_TEST_LICENSE}</code>.
+          </p>
+          {!isSandboxEnvironment && !loadingMeta ? (
+            <p style={{ marginTop: 12, color: "#f87171", fontSize: 13 }}>
+              METRC environment is not sandbox. Switch to sandbox in Company Config to enable lab
+              result testing.
+            </p>
+          ) : null}
+          {packagesLoaded && !(packagesRows?.length ?? 0) ? (
+            <p style={{ marginTop: 12, color: "#fbbf24", fontSize: 13 }}>
+              Sync METRC packages first — select the package tag from synced packages.
+            </p>
+          ) : null}
+          <div style={{ ...styles.row, marginTop: 12 }}>
+            <button
+              type="button"
+              style={styles.btn}
+              disabled={!!busy}
+              onClick={() => void runSyncLabTestTypes()}
+            >
+              {busy === "labTestTypes" ? "Syncing…" : "Sync Lab Test Types"}
+            </button>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+              gap: 12,
+              marginTop: 14,
+            }}
+          >
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Package tag</span>
+              <select
+                value={labResultPackageLabel}
+                onChange={(e) => setLabResultPackageLabel(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                <option value="">Select package tag…</option>
+                {(packagesRows ?? []).map((pkg) => (
+                  <option key={pkg.packageLabel} value={pkg.packageLabel}>
+                    {pkg.packageLabel} {pkg.itemName ? `- ${pkg.itemName}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Result date</span>
+              <input
+                type="date"
+                value={labResultDate}
+                onChange={(e) => setLabResultDate(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+          </div>
+          <div style={{ marginTop: 14 }}>
+            <strong style={{ color: "#e2e8f0", fontSize: 13 }}>Lab test results</strong>
+            <div style={{ marginTop: 8, display: "grid", gap: 10 }}>
+              {labResultRows.map((row, index) => (
+                <div
+                  key={row.id}
+                  style={{
+                    border: "1px solid #334155",
+                    borderRadius: 10,
+                    padding: 10,
+                    background: "rgba(15, 23, 42, 0.6)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+                      gap: 10,
+                    }}
+                  >
+                    <label style={{ fontSize: 13 }}>
+                      <span style={{ color: "#94a3b8" }}>Lab Test Type Name</span>
+                      <select
+                        value={row.labTestTypeName}
+                        onChange={(e) =>
+                          updateLabResultRow(row.id, { labTestTypeName: e.target.value })
+                        }
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          marginTop: 4,
+                          padding: "8px 10px",
+                          borderRadius: 8,
+                          border: "1px solid #475569",
+                          background: "#0f172a",
+                          color: "#e2e8f0",
+                        }}
+                      >
+                        <option value="">
+                          {labTestTypeNames.length ? "Select lab test type…" : "Sync lab test types first…"}
+                        </option>
+                        {labTestTypeNames.map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={{ fontSize: 13 }}>
+                      <span style={{ color: "#94a3b8" }}>Quantity</span>
+                      <input
+                        type="number"
+                        min={0.000001}
+                        step="any"
+                        value={row.quantity}
+                        onChange={(e) => updateLabResultRow(row.id, { quantity: e.target.value })}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          marginTop: 4,
+                          padding: "8px 10px",
+                          borderRadius: 8,
+                          border: "1px solid #475569",
+                          background: "#0f172a",
+                          color: "#e2e8f0",
+                        }}
+                      />
+                    </label>
+                    <label style={{ fontSize: 13 }}>
+                      <span style={{ color: "#94a3b8" }}>Passed</span>
+                      <select
+                        value={row.passed ? "true" : "false"}
+                        onChange={(e) => updateLabResultRow(row.id, { passed: e.target.value === "true" })}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          marginTop: 4,
+                          padding: "8px 10px",
+                          borderRadius: 8,
+                          border: "1px solid #475569",
+                          background: "#0f172a",
+                          color: "#e2e8f0",
+                        }}
+                      >
+                        <option value="true">true</option>
+                        <option value="false">false</option>
+                      </select>
+                    </label>
+                    <label style={{ fontSize: 13, gridColumn: "1 / -1" }}>
+                      <span style={{ color: "#94a3b8" }}>Notes (optional)</span>
+                      <input
+                        type="text"
+                        value={row.notes}
+                        onChange={(e) => updateLabResultRow(row.id, { notes: e.target.value })}
+                        placeholder={DEFAULT_LAB_RESULT_NOTES}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          marginTop: 4,
+                          padding: "8px 10px",
+                          borderRadius: 8,
+                          border: "1px solid #475569",
+                          background: "#0f172a",
+                          color: "#e2e8f0",
+                        }}
+                      />
+                    </label>
+                  </div>
+                  <div style={{ ...styles.row, marginTop: 8 }}>
+                    <span style={{ fontSize: 12, color: "#94a3b8" }}>Result #{index + 1}</span>
+                    <button
+                      type="button"
+                      style={styles.btn}
+                      disabled={labResultRows.length <= 1}
+                      onClick={() => removeLabResultRow(row.id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ ...styles.row, marginTop: 10 }}>
+              <button type="button" style={styles.btn} onClick={addLabResultRow} disabled={!!busy}>
+                Add Lab Result
+              </button>
+            </div>
+          </div>
+          {labTestTypesHint ? (
+            <p style={{ marginTop: 8, fontSize: 12, color: "#94a3b8" }}>{labTestTypesHint}</p>
+          ) : null}
+          <div style={{ ...styles.row, marginTop: 12 }}>
+            <button
+              type="button"
+              style={{
+                ...styles.btn,
+                ...styles.btnPrimary,
+                opacity:
+                  busy ||
+                  !isSandboxEnvironment ||
+                  !labResultPackageLabel.trim() ||
+                  !labResultDate.trim() ||
+                  !labTestTypeNames.length
+                    ? 0.6
+                    : 1,
+              }}
+              disabled={
+                !!busy ||
+                !isSandboxEnvironment ||
+                !labResultPackageLabel.trim() ||
+                !labResultDate.trim() ||
+                !labTestTypeNames.length
+              }
+              onClick={() => void runRecordLabTestResult()}
+            >
+              {busy === "labTestRecord" ? "Recording…" : "Record Lab Test Result"}
+            </button>
+          </div>
+          {lastLabTestRecord ? (
+            <div
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid #334155",
+                background: "rgba(2, 6, 23, 0.8)",
+                fontSize: 12,
+                color: "#94a3b8",
+              }}
+            >
+              <strong style={{ color: lastLabTestRecord.ok ? "#4ade80" : "#f87171" }}>
+                Last lab result attempt ({lastLabTestRecord.status ?? "—"})
+              </strong>
+              <pre
+                style={{
+                  marginTop: 8,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "ui-monospace, monospace",
+                  color: "#cbd5e1",
+                }}
+              >
+                {JSON.stringify(
+                  {
+                    message: lastLabTestRecord.message,
+                    endpoint: lastLabTestRecord.endpoint || "/labtests/v2/record",
+                    requestDebug: lastLabTestRecord.requestDebug,
+                    request: lastLabTestRecord.requestPayload,
+                    response: lastLabTestRecord.responsePayload,
                   },
                   null,
                   2,

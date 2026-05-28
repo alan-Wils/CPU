@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractMetrcApiErrorSummary,
   messageForMetrcHttpFailure,
+  parseMetrcLabTestTypeNames,
   parseLocationsPayload,
   parseMetrcPlantBatchWasteReasonNames,
   parsePlantTagLabelsFromAvailableResponse,
@@ -72,6 +73,25 @@ describe("parseMetrcPlantBatchWasteReasonNames", () => {
         Data: [{ Name: "Pruning" }, "Other"],
       }),
     ).toEqual(["Pruning", "Other"]);
+  });
+});
+
+describe("parseMetrcLabTestTypeNames", () => {
+  it("parses bare array with Name", () => {
+    expect(
+      parseMetrcLabTestTypeNames([
+        { Name: "Moisture Content" },
+        { Name: "Water Activity" },
+      ]),
+    ).toEqual(["Moisture Content", "Water Activity"]);
+  });
+
+  it("parses Data wrapper and string entries", () => {
+    expect(
+      parseMetrcLabTestTypeNames({
+        Data: [{ Name: "THC" }, "CBD"],
+      }),
+    ).toEqual(["THC", "CBD"]);
   });
 });
 

@@ -25,6 +25,11 @@ import { MetrcPlantBatchPackageService } from "../../services/metrcPlantBatchPac
 import { MetrcPlantBatchGrowthPhaseSandboxService } from "../../services/metrcPlantBatchGrowthPhaseSandboxService.js";
 import { MetrcPlantBatchDestroySandboxService } from "../../services/metrcPlantBatchDestroySandboxService.js";
 import { MetrcPlantBatchWasteReasonsService } from "../../services/metrcPlantBatchWasteReasonsService.js";
+import {
+  METRC_COLORADO_SANDBOX_LICENSE,
+  MetrcLabTestTypesService,
+} from "../../services/metrcLabTestTypesService.js";
+import { MetrcLabTestRecordService } from "../../services/metrcLabTestRecordService.js";
 import { MetrcHarvestsSyncService } from "../../services/metrcHarvestsSyncService.js";
 import { MetrcPlantsSyncService } from "../../services/metrcPlantsSyncService.js";
 import {
@@ -141,6 +146,8 @@ const metrcPlantBatchPackageService = new MetrcPlantBatchPackageService();
 const metrcPlantBatchGrowthPhaseSandboxService = new MetrcPlantBatchGrowthPhaseSandboxService();
 const metrcPlantBatchDestroySandboxService = new MetrcPlantBatchDestroySandboxService();
 const metrcPlantBatchWasteReasonsService = new MetrcPlantBatchWasteReasonsService();
+const metrcLabTestTypesService = new MetrcLabTestTypesService();
+const metrcLabTestRecordService = new MetrcLabTestRecordService();
 const metrcHarvestsSyncService = new MetrcHarvestsSyncService();
 const metrcPlantsSyncService = new MetrcPlantsSyncService();
 const metrcHarvestCreateService = new MetrcHarvestCreateService();
@@ -214,6 +221,21 @@ const metrcPlantBatchDestroyBody = z.object({
   wasteMethodName: z.string().optional().nullable(),
   wasteWeight: z.coerce.number().positive().optional().nullable(),
   wasteUnitOfMeasureName: z.string().optional().nullable(),
+});
+
+const metrcLabTestRecordBody = z.object({
+  packageLabel: z.string().min(1),
+  resultDate: z.string().min(1),
+  results: z
+    .array(
+      z.object({
+        labTestTypeName: z.string().min(1),
+        quantity: z.coerce.number().positive().optional(),
+        passed: z.boolean().optional(),
+        notes: z.string().optional().nullable(),
+      }),
+    )
+    .min(1),
 });
 
 const metrcCreateTestHarvestBody = z.object({
@@ -822,6 +844,41 @@ metrcRouter.get(
       licenseNumber,
     });
     res.status(200).json(result);
+  }),
+);
+
+metrcRouter.get(
+  "/labtest-types",
+  requireRole([...metrcAdminRoles]),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const result = await metrcLabTestTypesService.fetchLabTestTypes({
+      companyId,
+      licenseNumber: METRC_COLORADO_SANDBOX_LICENSE,
+    });
+    res.status(200).json(result);
+  }),
+);
+
+metrcRouter.post(
+  "/test/labtests-record",
+  requireRole([...metrcAdminRoles]),
+  validate({ body: metrcLabTestRecordBody }),
+  asyncHandler(async (req, res) => {
+    const companyId = getScopedCompanyId(req);
+    const body = req.body as z.infer<typeof metrcLabTestRecordBody>;
+    const result = await metrcLabTestRecordService.record({
+      companyId,
+      packageLabel: body.packageLabel,
+      resultDate: body.resultDate,
+      results: body.results.map((row) => ({
+        labTestTypeName: row.labTestTypeName,
+        quantity: row.quantity ?? 1,
+        passed: row.passed ?? true,
+        notes: row.notes ?? null,
+      })),
+    });
+    res.status(httpStatusForMetrcAction(result)).json(result);
   }),
 );
 
