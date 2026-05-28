@@ -4,6 +4,7 @@ import {
   hasCompletedExtractionTask,
   type ExtractionUiStageKey,
 } from "@/lib/extractionBatchUiStage";
+import { gramsToLbs, lbsToGrams } from "@/lib/weightUnits";
 
 export type ExtractionCombineWeightUnit = "lbs" | "grams";
 
@@ -284,12 +285,66 @@ function extractionBatchBiomassFromSourceRows(batch: any): number {
 export function extractionBatchBiomassLbs(batch: any): number {
   const direct = num(batch?.totalBiomassUsed);
   if (direct > 0) return direct;
-  const amt = String(batch?.amount ?? "");
-  const match = amt.match(/([\d.]+)/);
-  if (match && num(match[1]) > 0) return num(match[1]);
+  const inputG = num(batch?.inputGrams);
+  if (inputG > 0) return gramsToLbs(inputG);
+  const amtRaw = String(batch?.amount ?? "").trim();
+  if (amtRaw) {
+    const amt = amtRaw.replace(/,/g, "");
+    const match = amt.match(/([\d.]+)/);
+    const parsed = match ? num(match[1]) : 0;
+    if (parsed > 0) {
+      if (/\bg\b/i.test(amtRaw)) return gramsToLbs(parsed);
+      return parsed;
+    }
+  }
   const fromSources = extractionBatchBiomassFromSourceRows(batch);
   if (fromSources > 0) return fromSources;
   return extractionBatchPreparedBiomassLbs(batch);
+}
+
+/** Biomass on file in grams (for combine UI and card display). */
+export function extractionBatchBiomassGrams(batch: any): number {
+  return lbsToGrams(extractionBatchBiomassLbs(batch));
+}
+
+/** Grams used when combining: extracted oil after Run Extraction, else biomass. */
+export function extractionCombineWeightGramsForBatch(batch: any, usesOilGrams: boolean): number {
+  return usesOilGrams ? extractionBatchOilGrams(batch) : extractionBatchBiomassGrams(batch);
+}
+
+/** Sum survivor + partner weights for a combine (from on-file batch fields). */
+export function sumExtractionCombineWeightGrams(
+  survivor: any,
+  partner: any,
+  usesOilGrams: boolean,
+): { survivorGrams: number; partnerGrams: number; totalGrams: number } {
+  const survivorGrams = extractionCombineWeightGramsForBatch(survivor, usesOilGrams);
+  const partnerGrams = extractionCombineWeightGramsForBatch(partner, usesOilGrams);
+  const totalGrams = +(survivorGrams + partnerGrams).toFixed(2);
+  return { survivorGrams, partnerGrams, totalGrams };
+}
+
+/** Persist combined survivor totals after merge (oil and biomass when applicable). */
+export function applyExtractionSurvivorCombinedTotals(
+  survivor: any,
+  partner: any,
+  totalGrams: number,
+  usesOilGrams: boolean,
+): void {
+  const combinedBiomassLbs =
+    extractionBatchBiomassLbs(survivor) + extractionBatchBiomassLbs(partner);
+
+  if (usesOilGrams) {
+    setExtractionBatchCombinedOilGrams(survivor, totalGrams);
+    if (combinedBiomassLbs > 0) {
+      setExtractionBatchTotalBiomassLbs(survivor, combinedBiomassLbs);
+    }
+    return;
+  }
+  setExtractionBatchTotalBiomassLbs(
+    survivor,
+    combinedBiomassLbs > 0 ? combinedBiomassLbs : gramsToLbs(totalGrams),
+  );
 }
 
 /** Source rows for UI when legacy batches only stored comma-separated `source` ids. */

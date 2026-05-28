@@ -120,9 +120,12 @@ import {
   ensureExtractionBatchMaterialTotals,
   resolveExtractionBatchSourceRows,
   resolveAbsorbedForUncombine,
+  applyExtractionSurvivorCombinedTotals,
+  extractionCombineWeightGramsForBatch,
   setExtractionBatchCombinedOilGrams,
   setExtractionBatchTotalBiomassLbs,
   subtractExtractionSourceRows,
+  sumExtractionCombineWeightGrams,
 } from "@/lib/extractionMergeHelpers";
 import {
   buildFinishDecarbYieldTaskFields,
@@ -652,26 +655,18 @@ export default function Extraction() {
 
   useEffect(() => {
     if (selectedTask !== "Combine Batches" || !selectedExt) return;
-    if (extractionCombineUsesOilGrams(selectedExt)) {
-      const grams = extractionBatchOilGrams(selectedExt);
-      setCombineSurvivorLbs(grams > 0 ? String(grams) : "");
-      return;
-    }
-    const lbs = extractionBatchBiomassLbs(selectedExt);
-    setCombineSurvivorLbs(lbsToGramsInputString(lbs));
+    const usesOil = extractionCombineUsesOilGrams(selectedExt);
+    const grams = extractionCombineWeightGramsForBatch(selectedExt, usesOil);
+    setCombineSurvivorLbs(grams > 0 ? String(Math.round(grams)) : "");
   }, [selectedTask, selectedExt?.id]);
 
   useEffect(() => {
     if (selectedTask !== "Combine Batches" || !combinePartnerBatchId.trim()) return;
     const partner = s.extractionBatches.find((b: any) => b?.id === combinePartnerBatchId.trim());
     if (!partner) return;
-    if (selectedExt && extractionCombineUsesOilGrams(selectedExt)) {
-      const grams = extractionBatchOilGrams(partner);
-      setCombinePartnerLbs(grams > 0 ? String(grams) : "");
-      return;
-    }
-    const lbs = extractionBatchBiomassLbs(partner);
-    setCombinePartnerLbs(lbsToGramsInputString(lbs));
+    const usesOil = Boolean(selectedExt && extractionCombineUsesOilGrams(selectedExt));
+    const grams = extractionCombineWeightGramsForBatch(partner, usesOil);
+    setCombinePartnerLbs(grams > 0 ? String(Math.round(grams)) : "");
   }, [selectedTask, combinePartnerBatchId, selectedExt?.id]);
 
   useEffect(() => {
@@ -862,17 +857,11 @@ export default function Extraction() {
     setViewBatch(null);
     setSelectedExt(survivor);
     setCombinePartnerBatchId(String(partner.id || ""));
-    if (extractionCombineUsesOilGrams(survivor)) {
-      const survivorOil = extractionBatchOilGrams(survivor);
-      const partnerOil = extractionBatchOilGrams(partner);
-      setCombineSurvivorLbs(survivorOil > 0 ? String(survivorOil) : "");
-      setCombinePartnerLbs(partnerOil > 0 ? String(partnerOil) : "");
-    } else {
-      const survivorLbs = extractionBatchBiomassLbs(survivor);
-      const partnerLbs = extractionBatchBiomassLbs(partner);
-      setCombineSurvivorLbs(survivorLbs > 0 ? String(survivorLbs) : "");
-      setCombinePartnerLbs(partnerLbs > 0 ? String(partnerLbs) : "");
-    }
+    const usesOil = extractionCombineUsesOilGrams(survivor);
+    const survivorG = extractionCombineWeightGramsForBatch(survivor, usesOil);
+    const partnerG = extractionCombineWeightGramsForBatch(partner, usesOil);
+    setCombineSurvivorLbs(survivorG > 0 ? String(Math.round(survivorG)) : "");
+    setCombinePartnerLbs(partnerG > 0 ? String(Math.round(partnerG)) : "");
     setCombineNotes("");
     setSelectedTask("Combine Batches");
     setShowTaskModal(true);
@@ -3497,9 +3486,16 @@ export default function Extraction() {
       }
 
       const usesOilGrams = extractionCombineUsesOilGrams(selectedExt);
-      const priorSurvivorWeight = num(combineSurvivorLbs);
-      const priorPartnerWeight = num(combinePartnerLbs);
-      const combinedWeight = +(priorSurvivorWeight + priorPartnerWeight).toFixed(2);
+      const onFile = sumExtractionCombineWeightGrams(selectedExt, partner, usesOilGrams);
+      const survivorInput = num(combineSurvivorLbs);
+      const partnerInput = num(combinePartnerLbs);
+      const priorSurvivorWeight =
+        survivorInput > 0 ? survivorInput : onFile.survivorGrams;
+      const priorPartnerWeight = partnerInput > 0 ? partnerInput : onFile.partnerGrams;
+      const combinedWeight =
+        onFile.totalGrams > 0
+          ? onFile.totalGrams
+          : +(priorSurvivorWeight + priorPartnerWeight).toFixed(2);
       const notes = combineNotes.trim();
       const survivorId = selectedExt.id;
       const partnerId = partner.id;
@@ -3516,8 +3512,14 @@ export default function Extraction() {
       let survivorOutput: string;
       let partnerOutput: string;
 
+      applyExtractionSurvivorCombinedTotals(
+        selectedExt,
+        partner,
+        combinedWeight,
+        usesOilGrams,
+      );
+
       if (usesOilGrams) {
-        setExtractionBatchCombinedOilGrams(selectedExt, combinedWeight);
         survivorOutput = `Merged ${partnerId} (${priorPartnerWeight} g oil) into ${survivorId} \u2014 total extracted oil now ${combinedWeight} g${
           notes ? `. Notes: ${notes}` : ""
         }`;
@@ -3538,7 +3540,6 @@ export default function Extraction() {
         };
       } else {
         const combinedLbs = gramsInputToLbs(combinedWeight);
-        setExtractionBatchTotalBiomassLbs(selectedExt, combinedLbs);
         survivorOutput = `Merged ${partnerId} (${Math.round(priorPartnerWeight)} g) into ${survivorId} \u2014 total biomass now ${Math.round(combinedWeight)} g${
           notes ? `. Notes: ${notes}` : ""
         }`;
@@ -4900,8 +4901,8 @@ export default function Extraction() {
                     <p style={{ color: "#94a3b8", margin: 0, lineHeight: 1.5 }}>
                       Merge another active extraction batch in the same workflow stage into this survivor.
                       {combineUsesOilGrams
-                        ? " Enter the total extracted oil weight (g) for each batch; source rows are linked and the partner is marked complete."
-                        : " Enter the total biomass weight (lbs) for each batch; source rows are linked and the partner is marked complete."}
+                        ? " Totals are summed from each batch\u2019s extracted oil (g). Adjust if needed; biomass used is also combined on the survivor."
+                        : " Totals are summed from each batch\u2019s biomass used (g). Adjust if needed; the partner is marked complete."}
                     </p>
                     <input
                       style={inputStyle}
@@ -4961,8 +4962,11 @@ export default function Extraction() {
                       <p style={{ color: "#cbd5e1", margin: 0, fontSize: 13 }}>
                         Combined total:{" "}
                         <b>
-                          {(num(combineSurvivorLbs) + num(combinePartnerLbs)).toFixed(2)}{" "}
-                          {combineUsesOilGrams ? "g" : "lbs"}
+                          {Math.round(num(combineSurvivorLbs) + num(combinePartnerLbs)).toLocaleString()}{" "}
+                          g
+                          {!combineUsesOilGrams
+                            ? ` (${gramsInputToLbs(num(combineSurvivorLbs) + num(combinePartnerLbs)).toFixed(2)} lbs on file)`
+                            : ""}
                         </b>
                       </p>
                     ) : null}

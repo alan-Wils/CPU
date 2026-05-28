@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyExtractionSurvivorCombinedTotals,
+  extractionBatchBiomassGrams,
   extractionBatchBiomassLbs,
   extractionBatchOilGrams,
   extractionCombineUsesOilGrams,
+  extractionCombineWeightGramsForBatch,
+  sumExtractionCombineWeightGrams,
   findExtractionCombineMergeDataForPair,
   filterActiveExtractionBatches,
   findMergedExtractionPartnerBatch,
@@ -226,6 +230,43 @@ describe("extractionMergeHelpers", () => {
   it("extractionBatchBiomassLbs reads totalBiomassUsed or amount string", () => {
     expect(extractionBatchBiomassLbs({ totalBiomassUsed: 42 })).toBe(42);
     expect(extractionBatchBiomassLbs({ amount: "12.5 lbs" })).toBe(12.5);
+  });
+
+  it("extractionBatchBiomassLbs parses comma grams in amount when totalBiomassUsed missing", () => {
+    expect(
+      extractionBatchBiomassLbs({ amount: "19,822 g" }),
+    ).toBeCloseTo(19822 / 453.592, 2);
+  });
+
+  it("extractionBatchBiomassLbs falls back to inputGrams", () => {
+    expect(extractionBatchBiomassLbs({ inputGrams: 4535.92 })).toBeCloseTo(10, 2);
+  });
+
+  it("sumExtractionCombineWeightGrams adds biomass from both batches", () => {
+    const survivor = { totalBiomassUsed: 43.7 };
+    const partner = { totalBiomassUsed: 48.65 };
+    const { totalGrams } = sumExtractionCombineWeightGrams(survivor, partner, false);
+    expect(totalGrams).toBeCloseTo(41889, 0);
+  });
+
+  it("sumExtractionCombineWeightGrams adds oil after Run Extraction", () => {
+    const survivor = { finalOilGrams: 100, completedTasks: ["Run Extraction"] };
+    const partner = { finalOilGrams: 250, completedTasks: ["Run Extraction"] };
+    expect(sumExtractionCombineWeightGrams(survivor, partner, true).totalGrams).toBe(350);
+  });
+
+  it("applyExtractionSurvivorCombinedTotals sets combined biomass on survivor", () => {
+    const survivor: any = { totalBiomassUsed: 43.7 };
+    const partner: any = { totalBiomassUsed: 48.65 };
+    const { totalGrams } = sumExtractionCombineWeightGrams(survivor, partner, false);
+    applyExtractionSurvivorCombinedTotals(survivor, partner, totalGrams, false);
+    expect(extractionBatchBiomassGrams(survivor)).toBe(totalGrams);
+  });
+
+  it("extractionCombineWeightGramsForBatch uses oil when post-extraction", () => {
+    const batch = { finalOilGrams: 88, totalBiomassUsed: 40, completedTasks: ["Run Extraction"] };
+    expect(extractionCombineWeightGramsForBatch(batch, true)).toBe(88);
+    expect(extractionCombineWeightGramsForBatch(batch, false)).toBeGreaterThan(0);
   });
 
   it("extractionBatchBiomassLbs falls back to Pack Socks Stop prepared lbs", () => {
