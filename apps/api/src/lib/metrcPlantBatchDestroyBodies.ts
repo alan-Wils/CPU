@@ -6,7 +6,7 @@ export function buildMetrcPlantBatchDestroyBody(input: {
 }): unknown[] {
   const name = String(input.plantBatchName || "").trim();
   const entry: Record<string, unknown> = {
-    Name: name,
+    PlantBatch: name,
     Count: input.count,
     ActualDate: input.actualDate,
   };
