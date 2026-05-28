@@ -13,10 +13,7 @@ import {
 import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
 import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
 import { buildMetrcMotherPlantPackageBody } from "../lib/metrcPlantBatchMotherPackageBodies.js";
-import {
-  isMetrcMotherSourceGrowthPhase,
-  parseMetrcPlantApiId,
-} from "../lib/metrcMotherSourcePlants.js";
+import { isMetrcMotherSourceGrowthPhase } from "../lib/metrcMotherSourcePlants.js";
 import { isMetrcSandboxPlaceholderLicense } from "../lib/metrcOperationalStatus.js";
 import { resolveMetrcApiBaseUrl } from "../lib/metrcResolveBaseUrl.js";
 import { appendMetrcPlantBatchRequestLog } from "../repositories/metrcPlantBatchRepository.js";
@@ -47,7 +44,6 @@ export type MetrcMotherPlantPackageInput = {
   companyId: string;
   actorUserId: string;
   sourcePlantLabel: string;
-  metrcPlantId?: number | null;
   packageTag: string;
   count: number;
   actualDate: string;
@@ -192,19 +188,6 @@ export class MetrcPlantBatchMotherPackageService {
       };
     }
 
-    const metrcPlantId =
-      (input.metrcPlantId != null && input.metrcPlantId > 0
-        ? input.metrcPlantId
-        : parseMetrcPlantApiId(plant.metrcPlantId)) ?? null;
-    if (metrcPlantId == null) {
-      return {
-        ok: false,
-        status: 400,
-        message:
-          "Synced plant is missing a numeric METRC plant Id. Re-sync plants and select the label again.",
-      };
-    }
-
     let license = String(plant.licenseNumber || loaded.licenseNumber || "").trim();
     if (!license) {
       return {
@@ -248,7 +231,7 @@ export class MetrcPlantBatchMotherPackageService {
     }
 
     const requestBody = buildMetrcMotherPlantPackageBody({
-      metrcPlantId,
+      sourcePlantLabel: plant.label,
       packageTag: input.packageTag,
       count: input.count,
       actualDate: input.actualDate,

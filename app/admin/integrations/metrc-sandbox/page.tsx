@@ -2248,7 +2248,6 @@ export default function MetrcSandboxPage() {
 
   async function runCreateMotherPlantPackage() {
     const sourcePlantLabel = selectedMotherSourcePlant?.label?.trim() || "";
-    const metrcPlantId = Number.parseInt(selectedMotherSourcePlant?.metrcPlantId ?? "", 10);
     const count = Number.parseInt(motherPackageCount, 10);
     if (!selectedMotherSourcePlant || !sourcePlantLabel) {
       setStatusMsg({
@@ -2279,7 +2278,6 @@ export default function MetrcSandboxPage() {
     setLastMotherPlantPackage(null);
     const requestBody = {
       sourcePlantLabel,
-      metrcPlantId: Number.isFinite(metrcPlantId) && metrcPlantId > 0 ? metrcPlantId : undefined,
       packageTag: motherPackageTag.trim(),
       count,
       actualDate: motherPackageDate,

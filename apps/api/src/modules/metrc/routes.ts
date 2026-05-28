@@ -176,7 +176,6 @@ const metrcCreateTestPlantBatchBody = z.object({
 
 const metrcMotherPlantPackageBody = z.object({
   sourcePlantLabel: z.string().min(1),
-  metrcPlantId: z.coerce.number().int().positive().optional(),
   packageTag: z.string().min(1),
   count: z.coerce.number().int().positive(),
   actualDate: z.string().min(1),
@@ -757,7 +756,6 @@ metrcRouter.post(
       companyId,
       actorUserId: req.auth.userId,
       sourcePlantLabel: body.sourcePlantLabel,
-      metrcPlantId: body.metrcPlantId ?? null,
       packageTag: body.packageTag,
       count: body.count,
       actualDate: body.actualDate,
