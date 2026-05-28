@@ -74,6 +74,14 @@ export async function listMetrcPlantsForCompany(companyId: string, metrcPlantBat
   });
 }
 
+export async function findMetrcPlantByLabel(companyId: string, label: string) {
+  const trimmed = String(label || "").trim();
+  if (!trimmed) return null;
+  return prisma.metrcPlant.findFirst({
+    where: { companyId, label: trimmed },
+  });
+}
+
 export async function listMetrcPlantsForPlantBatch(companyId: string, plantBatch: {
   metrcPlantBatchId: string;
   name: string;

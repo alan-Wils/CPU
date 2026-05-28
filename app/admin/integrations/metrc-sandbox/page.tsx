@@ -357,8 +357,16 @@ type CreateTestPlantBatchResult = {
   metrcMessage?: string;
 };
 
-type MotherPlantPackageRequestDebug = {
-  licenseNumber: string;
+type MotherPlantPackageDebug = {
+  sourcePlantLabel: string;
+  sourcePlantGrowthPhase: string;
+  packageTag: string;
+  item: string;
+  location: string | null;
+  license: string;
+};
+
+type MotherPlantPackageRequestDebug = MotherPlantPackageDebug & {
   authMode: string;
   baseUrl: string;
   endpoint: string;
@@ -373,12 +381,25 @@ type MotherPlantPackageResult = {
   endpoint?: string;
   requestPayload?: unknown;
   requestDebug?: MotherPlantPackageRequestDebug;
+  debug?: MotherPlantPackageDebug;
   responsePayload?: unknown;
   durationMs?: number;
   packageTag?: string;
-  plantBatchName?: string;
+  sourcePlantLabel?: string;
   metrcMessage?: string;
 };
+
+function isMotherSourcePlant(plant: MetrcPlantRow): boolean {
+  if (!plant.active) return false;
+  const phase = plant.growthPhase.trim().toLowerCase();
+  if (!phase || phase.includes("immatur") || phase.includes("clone")) return false;
+  return (
+    phase.includes("veg") ||
+    phase.includes("flower") ||
+    phase === "mother" ||
+    phase === "motherplant"
+  );
+}
 
 type MetrcHarvestRow = {
   metrcHarvestId: string;
@@ -422,6 +443,7 @@ type MetrcPlantRow = {
   strainName: string;
   growthPhase: string;
   locationName: string;
+  licenseNumber?: string;
   active: boolean;
 };
 
@@ -969,8 +991,13 @@ export default function MetrcSandboxPage() {
   const [lastCreatePlantBatch, setLastCreatePlantBatch] = useState<CreateTestPlantBatchResult | null>(
     null,
   );
-  const [motherPackagePlantBatchId, setMotherPackagePlantBatchId] = useState("");
+  const [motherSourcePlantsRows, setMotherSourcePlantsRows] = useState<MetrcPlantRow[] | null>(
+    null,
+  );
+  const [motherSourcePlantsLoaded, setMotherSourcePlantsLoaded] = useState(false);
+  const [motherPackageSourcePlantLabel, setMotherPackageSourcePlantLabel] = useState("");
   const [motherPackageTag, setMotherPackageTag] = useState("");
+  const [motherPackageTagsHint, setMotherPackageTagsHint] = useState<string | null>(null);
   const [motherPackageCount, setMotherPackageCount] = useState("3");
   const [motherPackageDate, setMotherPackageDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
@@ -1271,6 +1298,25 @@ export default function MetrcSandboxPage() {
     }
   }, []);
 
+  const loadMotherSourcePlants = useCallback(async () => {
+    setMotherSourcePlantsLoaded(false);
+    try {
+      const res = await authFetch("/api/metrc/plants/persisted");
+      if (!res.ok) {
+        setMotherSourcePlantsRows([]);
+        return;
+      }
+      const json = (await res.json()) as { ok?: boolean; plants?: MetrcPlantRow[] };
+      const plants = (json.plants ?? []).filter(isMotherSourcePlant);
+      setMotherSourcePlantsRows(plants);
+      setMotherPackageSourcePlantLabel((current) => current.trim() || plants[0]?.label || "");
+    } catch {
+      setMotherSourcePlantsRows([]);
+    } finally {
+      setMotherSourcePlantsLoaded(true);
+    }
+  }, []);
+
   const loadBatchPlants = useCallback(async (metrcPlantBatchId: string) => {
     const batchId = metrcPlantBatchId.trim();
     if (!batchId) {
@@ -1408,6 +1454,47 @@ export default function MetrcSandboxPage() {
     () => (itemsRows ?? []).find((i) => i.metrcItemId === motherPackageItemId) ?? null,
     [itemsRows, motherPackageItemId],
   );
+
+  const motherEligiblePlants = useMemo(
+    () => (motherSourcePlantsRows ?? []).filter(isMotherSourcePlant),
+    [motherSourcePlantsRows],
+  );
+
+  const selectedMotherSourcePlant = useMemo(
+    () =>
+      motherEligiblePlants.find((p) => p.label === motherPackageSourcePlantLabel) ?? null,
+    [motherEligiblePlants, motherPackageSourcePlantLabel],
+  );
+
+  const selectedMotherPackageLocation = useMemo(
+    () => (locationsRows ?? []).find((l) => l.metrcLocationId === motherPackageLocationId) ?? null,
+    [locationsRows, motherPackageLocationId],
+  );
+
+  const motherPackageDebugPreview = useMemo((): MotherPlantPackageDebug | null => {
+    const itemName = selectedMotherPackageItem?.itemName?.trim() || "";
+    if (!motherPackageSourcePlantLabel.trim() || !itemName || !motherPackageTag.trim()) {
+      return null;
+    }
+    return {
+      sourcePlantLabel: selectedMotherSourcePlant?.label ?? motherPackageSourcePlantLabel.trim(),
+      sourcePlantGrowthPhase: selectedMotherSourcePlant?.growthPhase ?? "—",
+      packageTag: motherPackageTag.trim(),
+      item: itemName,
+      location:
+        selectedMotherPackageLocation?.name?.trim() ||
+        selectedMotherSourcePlant?.locationName?.trim() ||
+        null,
+      license: selectedMotherSourcePlant?.licenseNumber?.trim() || meta?.licenseNumber || "—",
+    };
+  }, [
+    selectedMotherPackageItem,
+    motherPackageSourcePlantLabel,
+    motherPackageTag,
+    selectedMotherSourcePlant,
+    selectedMotherPackageLocation,
+    meta?.licenseNumber,
+  ]);
 
   const selectedPlantBatchPackageItem = useMemo(
     () => (itemsRows ?? []).find((i) => i.metrcItemId === plantBatchPackageItemId) ?? null,
@@ -2124,16 +2211,47 @@ export default function MetrcSandboxPage() {
     }
   }
 
+  async function fetchMotherPackageTag() {
+    setBusy("motherPackageTags");
+    setMotherPackageTagsHint(null);
+    try {
+      const res = await authFetch("/api/metrc/available-package-tags?limit=20");
+      const json = (await res.json()) as {
+        ok?: boolean;
+        labels?: string[];
+        message?: string;
+      };
+      if (!res.ok || !json.ok) {
+        setMotherPackageTagsHint(String(json.message || "Could not fetch package tags from METRC."));
+        return;
+      }
+      const first = json.labels?.[0];
+      if (first) {
+        setMotherPackageTag(first);
+        setMotherPackageTagsHint(
+          json.labels && json.labels.length > 1
+            ? `Filled first package tag (${json.labels.length} available). Edit before submit.`
+            : "Filled first available package tag. Edit before submit.",
+        );
+      } else {
+        setMotherPackageTagsHint("No package tags returned — enter a tag manually.");
+      }
+    } catch {
+      setMotherPackageTagsHint("Package tag fetch failed — enter a tag manually.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function runCreateMotherPlantPackage() {
-    const selectedBatch =
-      (plantBatchesRows ?? []).find(
-        (batch) => batch.metrcPlantBatchId === motherPackagePlantBatchId,
-      ) ?? null;
-    const plantBatchName = selectedBatch?.name?.trim() || "";
-    const plantBatchId = Number.parseInt(motherPackagePlantBatchId, 10);
+    const sourcePlantLabel = selectedMotherSourcePlant?.label?.trim() || "";
+    const metrcPlantId = Number.parseInt(selectedMotherSourcePlant?.metrcPlantId ?? "", 10);
     const count = Number.parseInt(motherPackageCount, 10);
-    if (!selectedBatch || !plantBatchName) {
-      setStatusMsg({ tone: "error", text: "Select a source plant batch." });
+    if (!selectedMotherSourcePlant || !sourcePlantLabel) {
+      setStatusMsg({
+        tone: "error",
+        text: "Select a synced vegetative or flowering mother plant label.",
+      });
       return;
     }
     if (!motherPackageTag.trim()) {
@@ -2154,18 +2272,18 @@ export default function MetrcSandboxPage() {
       return;
     }
 
-    const selectedLocation =
-      (locationsRows ?? []).find((l) => l.metrcLocationId === motherPackageLocationId) ?? null;
-
     setBusy("motherPlantPackage");
     setLastMotherPlantPackage(null);
     const requestBody = {
-      plantBatchName,
-      plantBatchId: Number.isFinite(plantBatchId) && plantBatchId > 0 ? plantBatchId : undefined,
+      sourcePlantLabel,
+      metrcPlantId: Number.isFinite(metrcPlantId) && metrcPlantId > 0 ? metrcPlantId : undefined,
       packageTag: motherPackageTag.trim(),
       count,
       actualDate: motherPackageDate,
-      locationName: selectedLocation?.name?.trim() || selectedBatch.locationName?.trim() || null,
+      locationName:
+        selectedMotherPackageLocation?.name?.trim() ||
+        selectedMotherSourcePlant.locationName?.trim() ||
+        null,
       itemName,
     };
     try {
@@ -2567,6 +2685,7 @@ export default function MetrcSandboxPage() {
         tone: "ok",
         text: `Synced ${json.count ?? 0} METRC plant tag(s).`,
       });
+      await loadMotherSourcePlants();
       if (createHarvestPlantBatchId.trim()) {
         await loadBatchPlants(createHarvestPlantBatchId);
       }
@@ -4166,9 +4285,10 @@ export default function MetrcSandboxPage() {
         <section style={styles.card}>
           <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Create package from mother plant</h2>
           <p style={{ margin: "8px 0 0", fontSize: 13, color: "#94a3b8" }}>
-            Sandbox only. Creates a package from an existing METRC plant batch using{" "}
-            <code style={{ color: "#cbd5e1" }}>POST /plantbatches/v2/packages/frommotherplant</code>{" "}
-            for METRC evaluation/testing.
+            Sandbox only. Creates an immature plant package from a synced vegetative or flowering
+            mother plant using{" "}
+            <code style={{ color: "#cbd5e1" }}>POST /plantbatches/v2/packages/frommotherplant</code>.
+            Do not use immature plant batch names as the source — pick a tagged veg/flower plant.
           </p>
           {!isSandboxEnvironment && !loadingMeta ? (
             <p style={{ marginTop: 12, color: "#f87171", fontSize: 13 }}>
@@ -4180,6 +4300,30 @@ export default function MetrcSandboxPage() {
               Sync METRC items first — an item is required for from-mother-plant packages.
             </p>
           ) : null}
+          {motherSourcePlantsLoaded && motherEligiblePlants.length === 0 ? (
+            <p style={{ marginTop: 12, color: "#fbbf24", fontSize: 13 }}>
+              No vegetative or flowering plants in NexBatch yet. Run Sync METRC Plants, then reload
+              mother plant options.
+            </p>
+          ) : null}
+          <div style={{ ...styles.row, marginTop: 12 }}>
+            <button
+              type="button"
+              style={styles.btn}
+              disabled={!!busy}
+              onClick={() => void loadMotherSourcePlants()}
+            >
+              {motherSourcePlantsLoaded ? "Reload mother plants" : "Load mother plants"}
+            </button>
+            <button
+              type="button"
+              style={styles.btn}
+              disabled={!!busy}
+              onClick={() => void runSyncPlants()}
+            >
+              {busy === "plants" ? "Syncing plants…" : "Sync METRC plants"}
+            </button>
+          </div>
           <div
             style={{
               display: "grid",
@@ -4189,10 +4333,10 @@ export default function MetrcSandboxPage() {
             }}
           >
             <label style={{ fontSize: 13 }}>
-              <span style={{ color: "#94a3b8" }}>Source plant batch</span>
+              <span style={{ color: "#94a3b8" }}>Source plant (veg / flower)</span>
               <select
-                value={motherPackagePlantBatchId}
-                onChange={(e) => setMotherPackagePlantBatchId(e.target.value)}
+                value={motherPackageSourcePlantLabel}
+                onChange={(e) => setMotherPackageSourcePlantLabel(e.target.value)}
                 style={{
                   display: "block",
                   width: "100%",
@@ -4204,12 +4348,12 @@ export default function MetrcSandboxPage() {
                   color: "#e2e8f0",
                 }}
               >
-                <option value="">Select plant batch…</option>
-                {(plantBatchesRows ?? []).map((batch) => (
-                  <option key={batch.metrcPlantBatchId} value={batch.metrcPlantBatchId}>
-                    {batch.name || batch.metrcPlantBatchId}
-                    {batch.strainName ? ` · ${batch.strainName}` : ""}
-                    {batch.count != null ? ` · ${batch.count}` : ""}
+                <option value="">Select plant label…</option>
+                {motherEligiblePlants.map((plant) => (
+                  <option key={plant.label} value={plant.label}>
+                    {plant.label}
+                    {plant.growthPhase ? ` · ${plant.growthPhase}` : ""}
+                    {plant.strainName ? ` · ${plant.strainName}` : ""}
                   </option>
                 ))}
               </select>
@@ -4240,12 +4384,12 @@ export default function MetrcSandboxPage() {
               </select>
             </label>
             <label style={{ fontSize: 13 }}>
-              <span style={{ color: "#94a3b8" }}>Package tag / label</span>
+              <span style={{ color: "#94a3b8" }}>Package tag</span>
               <input
                 type="text"
                 value={motherPackageTag}
                 onChange={(e) => setMotherPackageTag(e.target.value)}
-                placeholder="Enter unused METRC package tag"
+                placeholder="METRC package tag (not a plant tag)"
                 style={{
                   display: "block",
                   width: "100%",
@@ -4320,7 +4464,43 @@ export default function MetrcSandboxPage() {
               </select>
             </label>
           </div>
+          {motherPackageTagsHint ? (
+            <p style={{ marginTop: 8, fontSize: 12, color: "#94a3b8" }}>{motherPackageTagsHint}</p>
+          ) : null}
+          {motherPackageDebugPreview ? (
+            <div
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid #334155",
+                background: "rgba(15, 23, 42, 0.6)",
+                fontSize: 12,
+                color: "#cbd5e1",
+              }}
+            >
+              <strong style={{ color: "#e2e8f0" }}>Request preview</strong>
+              <pre
+                style={{
+                  marginTop: 8,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "ui-monospace, monospace",
+                }}
+              >
+                {JSON.stringify(motherPackageDebugPreview, null, 2)}
+              </pre>
+            </div>
+          ) : null}
           <div style={{ ...styles.row, marginTop: 12 }}>
+            <button
+              type="button"
+              style={styles.btn}
+              disabled={!!busy}
+              onClick={() => void fetchMotherPackageTag()}
+            >
+              {busy === "motherPackageTags" ? "Fetching…" : "Fetch available package tag"}
+            </button>
             <button
               type="button"
               style={{
@@ -4329,7 +4509,7 @@ export default function MetrcSandboxPage() {
                 opacity:
                   busy ||
                   !isSandboxEnvironment ||
-                  !motherPackagePlantBatchId ||
+                  !motherPackageSourcePlantLabel ||
                   !motherPackageItemId.trim() ||
                   !motherPackageTag.trim()
                     ? 0.6
@@ -4338,7 +4518,7 @@ export default function MetrcSandboxPage() {
               disabled={
                 !!busy ||
                 !isSandboxEnvironment ||
-                !motherPackagePlantBatchId ||
+                !motherPackageSourcePlantLabel ||
                 !motherPackageItemId.trim() ||
                 !motherPackageTag.trim() ||
                 Number.parseInt(motherPackageCount, 10) < 1
@@ -4378,6 +4558,8 @@ export default function MetrcSandboxPage() {
                     endpoint:
                       lastMotherPlantPackage.endpoint ||
                       "/plantbatches/v2/packages/frommotherplant",
+                    debug:
+                      lastMotherPlantPackage.debug ?? lastMotherPlantPackage.requestDebug,
                     requestDebug: lastMotherPlantPackage.requestDebug,
                     request: lastMotherPlantPackage.requestPayload,
                     response: lastMotherPlantPackage.responsePayload,

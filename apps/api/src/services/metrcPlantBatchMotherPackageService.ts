@@ -13,21 +13,30 @@ import {
 import { metrcPullFailureMessage } from "../lib/metrcEndpoints.js";
 import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
 import { buildMetrcMotherPlantPackageBody } from "../lib/metrcPlantBatchMotherPackageBodies.js";
+import {
+  isMetrcMotherSourceGrowthPhase,
+  parseMetrcPlantApiId,
+} from "../lib/metrcMotherSourcePlants.js";
 import { isMetrcSandboxPlaceholderLicense } from "../lib/metrcOperationalStatus.js";
 import { resolveMetrcApiBaseUrl } from "../lib/metrcResolveBaseUrl.js";
-import {
-  appendMetrcPlantBatchRequestLog,
-  findMetrcPlantBatchByMetrcId,
-  findMetrcPlantBatchByName,
-} from "../repositories/metrcPlantBatchRepository.js";
+import { appendMetrcPlantBatchRequestLog } from "../repositories/metrcPlantBatchRepository.js";
+import { findMetrcPlantByLabel } from "../repositories/metrcPlantRepository.js";
 
 const MOTHER_PLANT_PACKAGE_ENDPOINT = "/plantbatches/v2/packages/frommotherplant";
 
 const METRC_AUTH_PERMISSION_MESSAGE =
   "METRC rejected this endpoint for the current sandbox credentials/facility. This is an authorization/permission issue, not a form input issue.";
 
-export type MetrcMotherPlantRequestDebug = {
-  licenseNumber: string;
+export type MetrcMotherPlantPackageDebug = {
+  sourcePlantLabel: string;
+  sourcePlantGrowthPhase: string;
+  packageTag: string;
+  item: string;
+  location: string | null;
+  license: string;
+};
+
+export type MetrcMotherPlantRequestDebug = MetrcMotherPlantPackageDebug & {
   authMode: string;
   baseUrl: string;
   endpoint: string;
@@ -37,8 +46,8 @@ export type MetrcMotherPlantRequestDebug = {
 export type MetrcMotherPlantPackageInput = {
   companyId: string;
   actorUserId: string;
-  plantBatchName: string;
-  plantBatchId?: number | null;
+  sourcePlantLabel: string;
+  metrcPlantId?: number | null;
   packageTag: string;
   count: number;
   actualDate: string;
@@ -53,10 +62,11 @@ export type MetrcMotherPlantPackageSuccess = {
   endpoint: string;
   requestPayload: { pathname: string; body: unknown; requestDebug: MetrcMotherPlantRequestDebug };
   requestDebug: MetrcMotherPlantRequestDebug;
+  debug: MetrcMotherPlantPackageDebug;
   responsePayload: unknown;
   durationMs: number;
   packageTag: string;
-  plantBatchName: string;
+  sourcePlantLabel: string;
 };
 
 export type MetrcMotherPlantPackageFailure = {
@@ -67,6 +77,7 @@ export type MetrcMotherPlantPackageFailure = {
   endpoint?: string;
   requestPayload?: { pathname: string; body: unknown; requestDebug: MetrcMotherPlantRequestDebug };
   requestDebug?: MetrcMotherPlantRequestDebug;
+  debug?: MetrcMotherPlantPackageDebug;
   responsePayload?: unknown;
   metrcMessage?: string;
 };
@@ -94,9 +105,10 @@ function buildRequestDebug(input: {
   authMode: string;
   baseUrl: string;
   payloadBody: unknown;
+  debug: MetrcMotherPlantPackageDebug;
 }): MetrcMotherPlantRequestDebug {
   return {
-    licenseNumber: input.licenseNumber,
+    ...input.debug,
     authMode: input.authMode,
     baseUrl: input.baseUrl,
     endpoint: MOTHER_PLANT_PACKAGE_ENDPOINT,
@@ -108,10 +120,10 @@ export class MetrcPlantBatchMotherPackageService {
   async createPackageFromMotherPlant(
     input: MetrcMotherPlantPackageInput,
   ): Promise<MetrcMotherPlantPackageResponse> {
+    const sourcePlantLabel = String(input.sourcePlantLabel || "").trim();
     logInfo("[METRC] plant_batch_mother_package_start", {
       companyId: input.companyId,
-      plantBatchName: input.plantBatchName,
-      plantBatchId: input.plantBatchId ?? null,
+      sourcePlantLabel,
       packageTag: input.packageTag,
     });
 
@@ -137,31 +149,11 @@ export class MetrcPlantBatchMotherPackageService {
       };
     }
 
-    const plantBatchFromId =
-      input.plantBatchId != null && input.plantBatchId > 0
-        ? await findMetrcPlantBatchByMetrcId(input.companyId, String(input.plantBatchId))
-        : null;
-    const plantBatchFromName = await findMetrcPlantBatchByName(
-      input.companyId,
-      input.plantBatchName,
-    );
-    const plantBatch = plantBatchFromId ?? (plantBatchFromName
-      ? await findMetrcPlantBatchByMetrcId(
-          input.companyId,
-          plantBatchFromName.metrcPlantBatchId,
-        )
-      : null);
-
-    const plantBatchName =
-      plantBatch?.name?.trim() ||
-      input.plantBatchName.trim() ||
-      plantBatchFromName?.name?.trim() ||
-      "";
-    if (!plantBatchName) {
+    if (!sourcePlantLabel) {
       return {
         ok: false,
         status: 400,
-        message: "Plant batch name is required for METRC from-mother-plant package creation.",
+        message: "A synced vegetative or flowering mother plant label is required.",
       };
     }
 
@@ -174,16 +166,65 @@ export class MetrcPlantBatchMotherPackageService {
       };
     }
 
-    let license = String(
-      plantBatch?.licenseNumber || loaded.licenseNumber || "",
-    ).trim();
+    const plant = await findMetrcPlantByLabel(input.companyId, sourcePlantLabel);
+    if (!plant) {
+      return {
+        ok: false,
+        status: 400,
+        message:
+          "Selected plant was not found in synced METRC plants. Run Sync METRC Plants, then choose a vegetative or flowering plant label.",
+      };
+    }
+
+    if (!plant.active) {
+      return {
+        ok: false,
+        status: 400,
+        message: "Selected mother plant is inactive in METRC. Choose an active plant label.",
+      };
+    }
+
+    if (!isMetrcMotherSourceGrowthPhase(plant.growthPhase)) {
+      return {
+        ok: false,
+        status: 400,
+        message: `Plant '${sourcePlantLabel}' is '${plant.growthPhase || "unknown"}' and cannot be used as a mother source. Choose a vegetative or flowering plant label.`,
+      };
+    }
+
+    const metrcPlantId =
+      (input.metrcPlantId != null && input.metrcPlantId > 0
+        ? input.metrcPlantId
+        : parseMetrcPlantApiId(plant.metrcPlantId)) ?? null;
+    if (metrcPlantId == null) {
+      return {
+        ok: false,
+        status: 400,
+        message:
+          "Synced plant is missing a numeric METRC plant Id. Re-sync plants and select the label again.",
+      };
+    }
+
+    let license = String(plant.licenseNumber || loaded.licenseNumber || "").trim();
     if (!license) {
       return {
         ok: false,
         status: 400,
-        message: "Facility license number is required for METRC plant batch package creation.",
+        message: "Facility license number is required for METRC mother plant package creation.",
       };
     }
+
+    const locationName =
+      String(input.locationName || "").trim() || plant.locationName?.trim() || null;
+
+    const debug: MetrcMotherPlantPackageDebug = {
+      sourcePlantLabel: plant.label,
+      sourcePlantGrowthPhase: plant.growthPhase,
+      packageTag: input.packageTag.trim(),
+      item: itemName,
+      location: locationName,
+      license,
+    };
 
     const client = MetrcClient.fromLoadedConfig(loaded, input.companyId);
     const baseUrl =
@@ -203,20 +244,16 @@ export class MetrcPlantBatchMotherPackageService {
         purpose: "plant_batch_mother_package_test",
       });
       license = locationsRequest.params.licenseNumber;
+      debug.license = license;
     }
 
-    const locationName =
-      String(input.locationName || "").trim() ||
-      plantBatch?.locationName?.trim() ||
-      null;
-
     const requestBody = buildMetrcMotherPlantPackageBody({
-      plantBatchName,
+      metrcPlantId,
       packageTag: input.packageTag,
       count: input.count,
       actualDate: input.actualDate,
       locationName,
-      itemName: input.itemName,
+      itemName,
     });
 
     const pathname = `${MOTHER_PLANT_PACKAGE_ENDPOINT}${licenseQuery(license)}`;
@@ -239,6 +276,7 @@ export class MetrcPlantBatchMotherPackageService {
       authMode,
       baseUrl,
       payloadBody: requestBody,
+      debug,
     });
     const requestPayload = { pathname, body: requestBody, requestDebug };
 
@@ -281,6 +319,7 @@ export class MetrcPlantBatchMotherPackageService {
         endpoint: endpointKey,
         requestPayload,
         requestDebug,
+        debug,
         responsePayload: result,
         metrcMessage: result.metrcMessage,
       };
@@ -300,7 +339,7 @@ export class MetrcPlantBatchMotherPackageService {
 
     logInfo("[METRC] plant_batch_mother_package_success", {
       companyId: input.companyId,
-      plantBatchName,
+      sourcePlantLabel: plant.label,
       packageTag: input.packageTag,
       status: result.status,
       durationMs,
@@ -314,10 +353,11 @@ export class MetrcPlantBatchMotherPackageService {
       endpoint: endpointKey,
       requestPayload,
       requestDebug,
+      debug,
       responsePayload: result.data,
       durationMs,
       packageTag: input.packageTag.trim(),
-      plantBatchName,
+      sourcePlantLabel: plant.label,
     };
   }
 }

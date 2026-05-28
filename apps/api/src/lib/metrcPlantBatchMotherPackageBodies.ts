@@ -1,8 +1,8 @@
 export const METRC_DEFAULT_MOTHER_PLANT_PACKAGE_NOTE =
-  "NexBatch sandbox evaluation - package from mother plant batch.";
+  "NexBatch sandbox evaluation - package from mother plant.";
 
 export function buildMetrcMotherPlantPackageBody(input: {
-  plantBatchName: string;
+  metrcPlantId: number;
   packageTag: string;
   count: number;
   actualDate: string;
@@ -11,11 +11,11 @@ export function buildMetrcMotherPlantPackageBody(input: {
   note?: string | null;
 }): unknown[] {
   const location = String(input.locationName || "").trim();
-  const plantBatch = String(input.plantBatchName || "").trim();
   const item = String(input.itemName || "").trim();
   return [
     {
-      PlantBatch: plantBatch,
+      Id: input.metrcPlantId,
+      PlantBatch: null,
       Count: input.count,
       Tag: input.packageTag.trim(),
       Location: location || null,
