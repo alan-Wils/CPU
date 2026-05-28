@@ -16,21 +16,54 @@ import { buildMetrcMotherPlantPackageBody } from "../lib/metrcPlantBatchMotherPa
 import { isMetrcMotherSourceGrowthPhase } from "../lib/metrcMotherSourcePlants.js";
 import { isMetrcSandboxPlaceholderLicense } from "../lib/metrcOperationalStatus.js";
 import { resolveMetrcApiBaseUrl } from "../lib/metrcResolveBaseUrl.js";
+import { findMetrcItemByName } from "../repositories/metrcItemRepository.js";
+import { findMetrcLocationByName } from "../repositories/metrcLocationRepository.js";
 import { appendMetrcPlantBatchRequestLog } from "../repositories/metrcPlantBatchRepository.js";
 import { findMetrcPlantByLabel } from "../repositories/metrcPlantRepository.js";
 
 const MOTHER_PLANT_PACKAGE_ENDPOINT = "/plantbatches/v2/packages/frommotherplant";
 
+const METRC_FROMMOTHERPLANT_401_MESSAGE =
+  "METRC returned 401 for documented frommotherplant payload using same working sandbox auth/license. Contact METRC to enable/verify this endpoint permission.";
+
 const METRC_AUTH_PERMISSION_MESSAGE =
   "METRC rejected this endpoint for the current sandbox credentials/facility. This is an authorization/permission issue, not a form input issue.";
+
+const SAME_AUTH_COMPARABLE_PLANT_BATCH_ENDPOINTS = [
+  "POST /plantbatches/v2/plantings",
+  "POST /plantbatches/v2/packages",
+  "POST /plantbatches/v2/growthphase",
+  "DELETE /plantbatches/v2/",
+] as const;
 
 export type MetrcMotherPlantPackageDebug = {
   sourcePlantLabel: string;
   sourcePlantGrowthPhase: string;
+  sourceFacilityLicense: string;
   packageTag: string;
+  tagSourceFacilityLicense: string;
   item: string;
+  itemFacilityLicense: string | null;
   location: string | null;
+  locationFacilityLicense: string | null;
+  finalLicenseNumber: string;
+  /** @deprecated Use finalLicenseNumber */
   license: string;
+};
+
+export type MetrcMotherPlantPackageAuthEvidence = {
+  endpoint: string;
+  finalLicenseNumber: string;
+  authMode: string;
+  exactPayload: unknown;
+  tagSourceFacilityLicense: string;
+  sourcePlantLabel: string;
+  sourceFacilityLicense: string;
+  item: string;
+  itemFacilityLicense: string | null;
+  location: string | null;
+  locationFacilityLicense: string | null;
+  sameAuthUsedByEndpoints: readonly string[];
 };
 
 export type MetrcMotherPlantRequestDebug = MetrcMotherPlantPackageDebug & {
@@ -74,6 +107,7 @@ export type MetrcMotherPlantPackageFailure = {
   requestPayload?: { pathname: string; body: unknown; requestDebug: MetrcMotherPlantRequestDebug };
   requestDebug?: MetrcMotherPlantRequestDebug;
   debug?: MetrcMotherPlantPackageDebug;
+  authEvidence?: MetrcMotherPlantPackageAuthEvidence;
   responsePayload?: unknown;
   metrcMessage?: string;
 };
@@ -200,12 +234,25 @@ export class MetrcPlantBatchMotherPackageService {
     const locationName =
       String(input.locationName || "").trim() || plant.locationName?.trim() || null;
 
+    const configLicense = String(loaded.licenseNumber || "").trim();
+    const sourceFacilityLicense = String(plant.licenseNumber || configLicense || "").trim();
+    const syncedItem = await findMetrcItemByName(input.companyId, itemName);
+    const syncedLocation = locationName
+      ? await findMetrcLocationByName(input.companyId, locationName)
+      : null;
+
     const debug: MetrcMotherPlantPackageDebug = {
       sourcePlantLabel: plant.label,
       sourcePlantGrowthPhase: plant.growthPhase,
+      sourceFacilityLicense,
       packageTag: input.packageTag.trim(),
+      tagSourceFacilityLicense: configLicense || license,
       item: itemName,
+      itemFacilityLicense: syncedItem?.licenseNumber?.trim() || configLicense || null,
       location: locationName,
+      locationFacilityLicense:
+        syncedLocation?.licenseNumber?.trim() || sourceFacilityLicense || null,
+      finalLicenseNumber: license,
       license,
     };
 
@@ -227,6 +274,7 @@ export class MetrcPlantBatchMotherPackageService {
         purpose: "plant_batch_mother_package_test",
       });
       license = locationsRequest.params.licenseNumber;
+      debug.finalLicenseNumber = license;
       debug.license = license;
     }
 
@@ -265,9 +313,28 @@ export class MetrcPlantBatchMotherPackageService {
 
     if (isMetrcClientFailure(result)) {
       const isAuthDenied = result.status === 401 || result.status === 403;
-      const message = isAuthDenied
-        ? METRC_AUTH_PERMISSION_MESSAGE
-        : metrcPullFailureMessage(result.status, result.metrcMessage || result.message);
+      const message =
+        result.status === 401
+          ? METRC_FROMMOTHERPLANT_401_MESSAGE
+          : isAuthDenied
+            ? METRC_AUTH_PERMISSION_MESSAGE
+            : metrcPullFailureMessage(result.status, result.metrcMessage || result.message);
+      const authEvidence: MetrcMotherPlantPackageAuthEvidence | undefined = isAuthDenied
+        ? {
+            endpoint: endpointKey,
+            finalLicenseNumber: license,
+            authMode,
+            exactPayload: requestBody,
+            tagSourceFacilityLicense: debug.tagSourceFacilityLicense,
+            sourcePlantLabel: debug.sourcePlantLabel,
+            sourceFacilityLicense: debug.sourceFacilityLicense,
+            item: debug.item,
+            itemFacilityLicense: debug.itemFacilityLicense,
+            location: debug.location,
+            locationFacilityLicense: debug.locationFacilityLicense,
+            sameAuthUsedByEndpoints: SAME_AUTH_COMPARABLE_PLANT_BATCH_ENDPOINTS,
+          }
+        : undefined;
       if (isAuthDenied) {
         logMetrcCredentialDiagnostics({
           companyId: input.companyId,
@@ -293,6 +360,7 @@ export class MetrcPlantBatchMotherPackageService {
         status: result.status,
         message,
         requestDebug,
+        authEvidence,
       });
       return {
         ok: false,
@@ -303,6 +371,7 @@ export class MetrcPlantBatchMotherPackageService {
         requestPayload,
         requestDebug,
         debug,
+        authEvidence,
         responsePayload: result,
         metrcMessage: result.metrcMessage,
       };

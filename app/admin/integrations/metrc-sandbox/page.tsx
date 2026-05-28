@@ -360,10 +360,30 @@ type CreateTestPlantBatchResult = {
 type MotherPlantPackageDebug = {
   sourcePlantLabel: string;
   sourcePlantGrowthPhase: string;
+  sourceFacilityLicense: string;
   packageTag: string;
+  tagSourceFacilityLicense: string;
   item: string;
+  itemFacilityLicense: string | null;
   location: string | null;
+  locationFacilityLicense: string | null;
+  finalLicenseNumber: string;
   license: string;
+};
+
+type MotherPlantPackageAuthEvidence = {
+  endpoint: string;
+  finalLicenseNumber: string;
+  authMode: string;
+  exactPayload: unknown;
+  tagSourceFacilityLicense: string;
+  sourcePlantLabel: string;
+  sourceFacilityLicense: string;
+  item: string;
+  itemFacilityLicense: string | null;
+  location: string | null;
+  locationFacilityLicense: string | null;
+  sameAuthUsedByEndpoints: string[];
 };
 
 type MotherPlantPackageRequestDebug = MotherPlantPackageDebug & {
@@ -382,6 +402,7 @@ type MotherPlantPackageResult = {
   requestPayload?: unknown;
   requestDebug?: MotherPlantPackageRequestDebug;
   debug?: MotherPlantPackageDebug;
+  authEvidence?: MotherPlantPackageAuthEvidence;
   responsePayload?: unknown;
   durationMs?: number;
   packageTag?: string;
@@ -997,6 +1018,7 @@ export default function MetrcSandboxPage() {
   const [motherSourcePlantsLoaded, setMotherSourcePlantsLoaded] = useState(false);
   const [motherPackageSourcePlantLabel, setMotherPackageSourcePlantLabel] = useState("");
   const [motherPackageTag, setMotherPackageTag] = useState("");
+  const [motherPackageTagSourceLicense, setMotherPackageTagSourceLicense] = useState("");
   const [motherPackageTagsHint, setMotherPackageTagsHint] = useState<string | null>(null);
   const [motherPackageCount, setMotherPackageCount] = useState("3");
   const [motherPackageDate, setMotherPackageDate] = useState(() =>
@@ -1476,24 +1498,36 @@ export default function MetrcSandboxPage() {
     if (!motherPackageSourcePlantLabel.trim() || !itemName || !motherPackageTag.trim()) {
       return null;
     }
+    const sourceFacilityLicense =
+      selectedMotherSourcePlant?.licenseNumber?.trim() ||
+      meta?.metrcLicenseNumberDisplay?.trim() ||
+      "—";
+    const tagSourceFacilityLicense =
+      motherPackageTagSourceLicense.trim() ||
+      meta?.metrcLicenseNumberDisplay?.trim() ||
+      "—";
+    const finalLicenseNumber = sourceFacilityLicense;
     return {
       sourcePlantLabel: selectedMotherSourcePlant?.label ?? motherPackageSourcePlantLabel.trim(),
       sourcePlantGrowthPhase: selectedMotherSourcePlant?.growthPhase ?? "—",
+      sourceFacilityLicense,
       packageTag: motherPackageTag.trim(),
+      tagSourceFacilityLicense,
       item: itemName,
+      itemFacilityLicense: selectedMotherPackageItem?.licenseNumber?.trim() || null,
       location:
         selectedMotherPackageLocation?.name?.trim() ||
         selectedMotherSourcePlant?.locationName?.trim() ||
         null,
-      license:
-        selectedMotherSourcePlant?.licenseNumber?.trim() ||
-        meta?.metrcLicenseNumberDisplay?.trim() ||
-        "—",
+      locationFacilityLicense: selectedMotherPackageLocation?.licenseNumber?.trim() || null,
+      finalLicenseNumber,
+      license: finalLicenseNumber,
     };
   }, [
     selectedMotherPackageItem,
     motherPackageSourcePlantLabel,
     motherPackageTag,
+    motherPackageTagSourceLicense,
     selectedMotherSourcePlant,
     selectedMotherPackageLocation,
     meta?.metrcLicenseNumberDisplay,
@@ -2223,18 +2257,24 @@ export default function MetrcSandboxPage() {
         ok?: boolean;
         labels?: string[];
         message?: string;
+        licenseNumber?: string;
       };
       if (!res.ok || !json.ok) {
+        setMotherPackageTagSourceLicense("");
         setMotherPackageTagsHint(String(json.message || "Could not fetch package tags from METRC."));
         return;
+      }
+      const tagLicense = String(json.licenseNumber || "").trim();
+      if (tagLicense) {
+        setMotherPackageTagSourceLicense(tagLicense);
       }
       const first = json.labels?.[0];
       if (first) {
         setMotherPackageTag(first);
         setMotherPackageTagsHint(
           json.labels && json.labels.length > 1
-            ? `Filled first package tag (${json.labels.length} available). Edit before submit.`
-            : "Filled first available package tag. Edit before submit.",
+            ? `Filled first package tag (${json.labels.length} available${tagLicense ? `, license ${tagLicense}` : ""}). Edit before submit.`
+            : `Filled first available package tag${tagLicense ? ` (license ${tagLicense})` : ""}. Edit before submit.`,
         );
       } else {
         setMotherPackageTagsHint("No package tags returned — enter a tag manually.");
@@ -4561,6 +4601,7 @@ export default function MetrcSandboxPage() {
                       "/plantbatches/v2/packages/frommotherplant",
                     debug:
                       lastMotherPlantPackage.debug ?? lastMotherPlantPackage.requestDebug,
+                    authEvidence: lastMotherPlantPackage.authEvidence,
                     requestDebug: lastMotherPlantPackage.requestDebug,
                     request: lastMotherPlantPackage.requestPayload,
                     response: lastMotherPlantPackage.responsePayload,

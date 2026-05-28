@@ -13,20 +13,18 @@ export function buildMetrcMotherPlantPackageBody(input: {
   const location = String(input.locationName || "").trim();
   const plantBatch = String(input.sourcePlantLabel || "").trim();
   const item = String(input.itemName || "").trim();
-  return [
-    {
-      Id: null,
-      PlantBatch: plantBatch,
-      Count: input.count,
-      Tag: input.packageTag.trim(),
-      Location: location || null,
-      Sublocation: null,
-      Item: item,
-      PatientLicenseNumber: null,
-      Note: String(input.note || "").trim() || METRC_DEFAULT_MOTHER_PLANT_PACKAGE_NOTE,
-      IsTradeSample: false,
-      IsDonation: false,
-      ActualDate: input.actualDate,
-    },
-  ];
+  const row: Record<string, unknown> = {
+    PlantBatch: plantBatch,
+    Count: input.count,
+    Tag: input.packageTag.trim(),
+    Item: item,
+    Note: String(input.note || "").trim() || METRC_DEFAULT_MOTHER_PLANT_PACKAGE_NOTE,
+    IsTradeSample: false,
+    IsDonation: false,
+    ActualDate: input.actualDate,
+  };
+  if (location) {
+    row.Location = location;
+  }
+  return [row];
 }
