@@ -41,7 +41,11 @@ export type MetrcPlantBatchDestroySandboxInput = {
   plantBatchId?: number | null;
   count: number;
   actualDate: string;
-  note?: string | null;
+  wasteReasonName: string;
+  reasonNote: string;
+  wasteMethodName?: string | null;
+  wasteWeight?: number | null;
+  wasteUnitOfMeasureName?: string | null;
 };
 
 export type MetrcPlantBatchDestroySandboxSuccess = {
@@ -180,6 +184,24 @@ export class MetrcPlantBatchDestroySandboxService {
       };
     }
 
+    const wasteReasonName = String(input.wasteReasonName || "").trim();
+    if (!wasteReasonName) {
+      return {
+        ok: false,
+        status: 400,
+        message: "Waste reason is required for METRC plant batch destroy.",
+      };
+    }
+
+    const reasonNote = String(input.reasonNote || "").trim();
+    if (!reasonNote) {
+      return {
+        ok: false,
+        status: 400,
+        message: "Reason note is required for METRC plant batch destroy.",
+      };
+    }
+
     let license = String(plantBatch?.licenseNumber || loaded.licenseNumber || "").trim();
     if (!license) {
       return {
@@ -213,7 +235,11 @@ export class MetrcPlantBatchDestroySandboxService {
       plantBatchName,
       count: input.count,
       actualDate,
-      note: input.note ?? null,
+      wasteReasonName,
+      reasonNote,
+      wasteMethodName: input.wasteMethodName ?? null,
+      wasteWeight: input.wasteWeight ?? null,
+      wasteUnitOfMeasureName: input.wasteUnitOfMeasureName ?? null,
     });
 
     const pathname = `/plantbatches/v2/${licenseQuery(license)}`;

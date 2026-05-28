@@ -203,6 +203,32 @@ const DEFAULT_SANDBOX_PLANT_BATCH_PACKAGE_ITEM_NAME =
 const DEFAULT_PLANT_BATCH_PACKAGE_NOTE =
   "NexBatch sandbox evaluation - plant batch package.";
 const METRC_PLANT_BATCH_GROWTH_PHASE_OPTIONS = ["Vegetative", "Flowering"] as const;
+const METRC_PLANT_BATCH_WASTE_REASON_OPTIONS = [
+  "Contamination",
+  "Disease",
+  "Nutrient Deficiency",
+  "Pest Infestation",
+  "Mother Plant Destruction",
+  "Pruning",
+  "Other",
+] as const;
+const METRC_PLANT_BATCH_WASTE_METHOD_OPTIONS = [
+  "Compost",
+  "Mulch",
+  "Self-Haul",
+  "Waste Disposal Transfer",
+  "Grinding with Compostable Material",
+  "Grinding with Non-Compostable Material",
+  "Other",
+] as const;
+const METRC_PLANT_BATCH_WASTE_UOM_OPTIONS = [
+  "Grams",
+  "Kilograms",
+  "Ounces",
+  "Pounds",
+] as const;
+const DEFAULT_DESTROY_PLANT_BATCH_REASON_NOTE =
+  "NexBatch sandbox evaluation destroy test";
 const METRC_HARVEST_TYPE_OPTIONS = ["Product", "WholePlant"] as const;
 const DEFAULT_STRAIN_INDICA_PCT = "50";
 const DEFAULT_STRAIN_SATIVA_PCT = "50";
@@ -992,7 +1018,13 @@ export default function MetrcSandboxPage() {
   const [destroyPlantBatchDate, setDestroyPlantBatchDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
-  const [destroyPlantBatchNote, setDestroyPlantBatchNote] = useState("");
+  const [destroyPlantBatchWasteReason, setDestroyPlantBatchWasteReason] = useState("Contamination");
+  const [destroyPlantBatchWasteMethod, setDestroyPlantBatchWasteMethod] = useState("");
+  const [destroyPlantBatchWasteWeight, setDestroyPlantBatchWasteWeight] = useState("");
+  const [destroyPlantBatchWasteUom, setDestroyPlantBatchWasteUom] = useState("");
+  const [destroyPlantBatchReasonNote, setDestroyPlantBatchReasonNote] = useState(
+    DEFAULT_DESTROY_PLANT_BATCH_REASON_NOTE,
+  );
   const [lastDestroyPlantBatch, setLastDestroyPlantBatch] =
     useState<MotherPlantPackageResult | null>(null);
   const [lastHarvestsSync, setLastHarvestsSync] = useState<HarvestsSyncResult | null>(null);
@@ -2404,6 +2436,20 @@ export default function MetrcSandboxPage() {
       return;
     }
 
+    const wasteReasonName = destroyPlantBatchWasteReason.trim();
+    const reasonNote = destroyPlantBatchReasonNote.trim();
+    if (!wasteReasonName) {
+      setStatusMsg({ tone: "error", text: "Waste reason is required." });
+      return;
+    }
+    if (!reasonNote) {
+      setStatusMsg({ tone: "error", text: "Reason note is required." });
+      return;
+    }
+    const wasteWeight = Number.parseFloat(destroyPlantBatchWasteWeight);
+    const wasteMethodName = destroyPlantBatchWasteMethod.trim() || null;
+    const wasteUnitOfMeasureName = destroyPlantBatchWasteUom.trim() || null;
+
     setBusy("destroyPlantBatch");
     setLastDestroyPlantBatch(null);
     const requestBody = {
@@ -2411,7 +2457,11 @@ export default function MetrcSandboxPage() {
       plantBatchId: Number.isFinite(plantBatchId) && plantBatchId > 0 ? plantBatchId : undefined,
       count,
       actualDate: destroyPlantBatchDate,
-      note: destroyPlantBatchNote.trim() || null,
+      wasteReasonName,
+      reasonNote,
+      wasteMethodName,
+      wasteWeight: Number.isFinite(wasteWeight) && wasteWeight > 0 ? wasteWeight : null,
+      wasteUnitOfMeasureName,
     };
     try {
       const res = await authFetch("/api/metrc/test/plantbatch-destroy", {
@@ -4867,13 +4917,105 @@ export default function MetrcSandboxPage() {
                 }}
               />
             </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Waste reason</span>
+              <select
+                value={destroyPlantBatchWasteReason}
+                onChange={(e) => setDestroyPlantBatchWasteReason(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                {METRC_PLANT_BATCH_WASTE_REASON_OPTIONS.map((reason) => (
+                  <option key={reason} value={reason}>
+                    {reason}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Waste method (optional)</span>
+              <select
+                value={destroyPlantBatchWasteMethod}
+                onChange={(e) => setDestroyPlantBatchWasteMethod(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                <option value="">METRC default</option>
+                {METRC_PLANT_BATCH_WASTE_METHOD_OPTIONS.map((method) => (
+                  <option key={method} value={method}>
+                    {method}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Waste weight (optional)</span>
+              <input
+                type="number"
+                min={0}
+                step="any"
+                value={destroyPlantBatchWasteWeight}
+                onChange={(e) => setDestroyPlantBatchWasteWeight(e.target.value)}
+                placeholder="e.g. 12.5"
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ color: "#94a3b8" }}>Waste unit of measure (optional)</span>
+              <select
+                value={destroyPlantBatchWasteUom}
+                onChange={(e) => setDestroyPlantBatchWasteUom(e.target.value)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #475569",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                }}
+              >
+                <option value="">None</option>
+                {METRC_PLANT_BATCH_WASTE_UOM_OPTIONS.map((uom) => (
+                  <option key={uom} value={uom}>
+                    {uom}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label style={{ fontSize: 13, gridColumn: "1 / -1" }}>
-              <span style={{ color: "#94a3b8" }}>Note (optional)</span>
+              <span style={{ color: "#94a3b8" }}>Reason note</span>
               <input
                 type="text"
-                value={destroyPlantBatchNote}
-                onChange={(e) => setDestroyPlantBatchNote(e.target.value)}
-                placeholder="Optional note"
+                value={destroyPlantBatchReasonNote}
+                onChange={(e) => setDestroyPlantBatchReasonNote(e.target.value)}
+                placeholder="Required destruction explanation"
                 style={{
                   display: "block",
                   width: "100%",
@@ -4894,12 +5036,20 @@ export default function MetrcSandboxPage() {
                 ...styles.btn,
                 ...styles.btnPrimary,
                 opacity:
-                  busy || !isSandboxEnvironment || !destroyPlantBatchId ? 0.6 : 1,
+                  busy ||
+                  !isSandboxEnvironment ||
+                  !destroyPlantBatchId ||
+                  !destroyPlantBatchWasteReason.trim() ||
+                  !destroyPlantBatchReasonNote.trim()
+                    ? 0.6
+                    : 1,
               }}
               disabled={
                 !!busy ||
                 !isSandboxEnvironment ||
                 !destroyPlantBatchId ||
+                !destroyPlantBatchWasteReason.trim() ||
+                !destroyPlantBatchReasonNote.trim() ||
                 Number.parseInt(destroyPlantBatchCount, 10) < 1
               }
               onClick={() => void runDestroyPlantBatch()}

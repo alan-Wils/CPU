@@ -208,7 +208,11 @@ const metrcPlantBatchDestroyBody = z.object({
   plantBatchId: z.coerce.number().int().positive().optional(),
   count: z.coerce.number().int().positive(),
   actualDate: z.string().min(1),
-  note: z.string().optional().nullable(),
+  wasteReasonName: z.string().min(1),
+  reasonNote: z.string().min(1),
+  wasteMethodName: z.string().optional().nullable(),
+  wasteWeight: z.coerce.number().positive().optional().nullable(),
+  wasteUnitOfMeasureName: z.string().optional().nullable(),
 });
 
 const metrcCreateTestHarvestBody = z.object({
@@ -821,7 +825,11 @@ metrcRouter.post(
       plantBatchId: body.plantBatchId ?? null,
       count: body.count,
       actualDate: body.actualDate,
-      note: body.note ?? null,
+      wasteReasonName: body.wasteReasonName,
+      reasonNote: body.reasonNote,
+      wasteMethodName: body.wasteMethodName ?? null,
+      wasteWeight: body.wasteWeight ?? null,
+      wasteUnitOfMeasureName: body.wasteUnitOfMeasureName ?? null,
     });
     res.status(httpStatusForMetrcAction(result)).json(result);
   }),
