@@ -13,7 +13,7 @@ export function buildMetrcPlantBatchGrowthPhaseBody(input: {
     Name: name,
     GrowthPhase: input.growthPhase,
     Count: input.count,
-    ActualDate: input.actualDate,
+    ChangeDate: input.actualDate,
   };
   const location = String(input.locationName || "").trim();
   if (location) {
