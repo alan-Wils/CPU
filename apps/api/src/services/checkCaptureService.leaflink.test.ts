@@ -151,6 +151,42 @@ describe("CheckCaptureService LeafLink sync", () => {
     ).rejects.toMatchObject({ code: "CHECK_LEAFLINK_DUPLICATE_ORDER" } satisfies Partial<AppError>);
   });
 
+  it("requires override note when allowAmountOverride is set", async () => {
+    vi.spyOn(prisma.checkCapture, "findFirst").mockResolvedValue({
+      id: "c1",
+      checkDate: null,
+      checkNumber: null,
+      amount: 90,
+      payerName: "Acme",
+      invoiceNumber: "INV-1",
+      leaflinkPaymentId: null,
+    } as any);
+    ((service as any).leafLinkOrdersService.findOpenPaymentCandidatesForCheck as any).mockResolvedValue([
+      {
+        leafLinkKey: "ll1",
+        orderId: "o1",
+        orderNumber: "INV-1",
+        customerName: "Acme",
+        total: 100,
+        outstandingBalance: 100,
+        status: "Submitted",
+        paymentStatus: "Unpaid",
+        deliveryDate: null,
+        lineItems: [],
+        score: 100,
+        matchedBy: ["invoice_exact"],
+        markedPaidInLeafLink: false,
+      },
+    ]);
+    await expect(
+      service.markLeafLinkInvoicePaid("co1", "u1", "c1", {
+        orderNumber: "INV-1",
+        paymentAmount: 90,
+        allowAmountOverride: true,
+      }),
+    ).rejects.toMatchObject({ code: "CHECK_OVERRIDE_NOTE_REQUIRED" } satisfies Partial<AppError>);
+  });
+
   it("blocks amount mismatch without override", async () => {
     vi.spyOn(prisma.checkCapture, "findFirst").mockResolvedValue({
       id: "c1",

@@ -18,6 +18,7 @@ import {
     parsePostedPaymentsJson,
     type LeafLinkPostedPaymentRow,
 } from "../lib/leaflinkPostedPayments.js";
+import { buildLeafLinkCpuPaymentNote } from "../lib/leafLinkPaymentAmount.js";
 import { AuditService } from "./auditService.js";
 import { findRecentLeafLinkStoredOrdersForCompany } from "./leafLinkOrdersStorePrimitives.js";
 import {
@@ -28,6 +29,7 @@ import {
 
 export type CashLeafLinkMatchResult = {
     cashEntryId: string;
+    loggedPaymentAmount: number | null;
     exactMatches: LeafLinkPaymentMatchCandidateDto[];
     possibleMatches: LeafLinkPaymentMatchCandidateDto[];
     linkedOrders: LeafLinkPaymentMatchCandidateDto[];
@@ -531,6 +533,7 @@ export class CashLogService {
         }
         return {
             cashEntryId: entry.id,
+            loggedPaymentAmount: entryAmt,
             exactMatches,
             possibleMatches,
             linkedOrders,
@@ -546,6 +549,7 @@ export class CashLogService {
             orderNumber?: string;
             allowAmountOverride?: boolean;
             paymentAmount?: number;
+            overrideNote?: string;
         },
     ) {
         const entry = await prisma.cashLogEntry.findFirst({
@@ -586,18 +590,34 @@ export class CashLogService {
         const payAmtRaw =
             typeof input.paymentAmount === "number" && Number.isFinite(input.paymentAmount)
                 ? input.paymentAmount
-                : expectedBalance;
+                : cashAmt;
         const payAmt = typeof payAmtRaw === "number" && Number.isFinite(payAmtRaw) ? payAmtRaw : NaN;
         if (!Number.isFinite(payAmt) || payAmt <= 0) {
             throw new AppError("Payment amount is invalid.", 400, "CASH_PAYMENT_AMOUNT_INVALID");
         }
-        const amountMatches = sameMoneyCash(expectedBalance, payAmt) || sameMoneyCash(selected.total, payAmt);
+        const amountMatches =
+            sameMoneyCash(expectedBalance, payAmt) || sameMoneyCash(selected.total, payAmt);
         if (!amountMatches && !input.allowAmountOverride) {
             throw new AppError("Payment amount does not match invoice balance.", 409, "CASH_AMOUNT_MISMATCH");
+        }
+        if (!amountMatches && input.allowAmountOverride) {
+            const overrideNote = String(input.overrideNote || "").trim();
+            if (overrideNote.length < 3) {
+                throw new AppError(
+                    "Explain why the payment amount differs from the invoice balance.",
+                    400,
+                    "CASH_OVERRIDE_NOTE_REQUIRED",
+                );
+            }
         }
         const paymentDateIso = entry.entryDate
             ? new Date(entry.entryDate).toISOString().slice(0, 10)
             : new Date().toISOString().slice(0, 10);
+        const paymentNote = buildLeafLinkCpuPaymentNote(
+            `CPU cash log ${entry.id}`,
+            !amountMatches,
+            input.overrideNote,
+        );
         try {
             const posted = await this.leafLinkOrdersService.postOrderPayment(companyId, {
                 orderNumber: selected.orderNumber,
@@ -605,7 +625,7 @@ export class CashLogService {
                 amount: payAmt,
                 paymentDateIso,
                 reference: entry.invoiceNumber ?? null,
-                note: `CPU cash log ${entry.id}`,
+                note: paymentNote,
                 paymentMethod: "Cash",
             });
             const row: LeafLinkPostedPaymentRow = {
@@ -632,7 +652,11 @@ export class CashLogService {
                 before: { entryId: entry.id },
                 after: {
                     orderNumber: selected.orderNumber,
-                    amount: payAmt,
+                    loggedAmount: cashAmt,
+                    paymentAmount: payAmt,
+                    invoiceBalance: expectedBalance,
+                    amountMatches,
+                    overrideNote: amountMatches ? null : String(input.overrideNote || "").trim() || null,
                     paymentId: posted.paymentId,
                     result: posted.paymentStatus,
                 },

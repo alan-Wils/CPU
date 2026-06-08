@@ -22,6 +22,10 @@ import {
 } from "../lib/leaflinkPostedPayments.js";
 import { findRecentLeafLinkStoredOrdersForCompany } from "./leafLinkOrdersStorePrimitives.js";
 import {
+    buildLeafLinkCpuPaymentNote,
+    leafLinkPaymentMatchesInvoice,
+} from "../lib/leafLinkPaymentAmount.js";
+import {
     LeafLinkOrdersService,
     type LeafLinkPaymentMatchCandidateDto,
     summarizeLeafLinkInvoiceFromStoredRows,
@@ -205,6 +209,7 @@ function sameMoney(a, b) {
 }
 export type CheckLeafLinkMatchResult = {
     checkId: string;
+    loggedPaymentAmount: number | null;
     exactMatches: LeafLinkPaymentMatchCandidateDto[];
     possibleMatches: LeafLinkPaymentMatchCandidateDto[];
     /** All invoice-related matches from synced orders, including already-paid (for UI status). */
@@ -510,6 +515,7 @@ export class CheckCaptureService {
         }
         return {
             checkId: check.id,
+            loggedPaymentAmount: checkAmount,
             exactMatches,
             possibleMatches,
             linkedOrders
@@ -553,16 +559,31 @@ export class CheckCaptureService {
         const expectedBalance = selected.outstandingBalance ?? selected.total;
         const payAmtRaw = typeof input.paymentAmount === "number" && Number.isFinite(input.paymentAmount)
             ? input.paymentAmount
-            : expectedBalance;
+            : amount;
         const payAmt = typeof payAmtRaw === "number" && Number.isFinite(payAmtRaw) ? payAmtRaw : NaN;
         if (!Number.isFinite(payAmt) || payAmt <= 0) {
             throw new AppError("Payment amount is invalid.", 400, "CHECK_PAYMENT_AMOUNT_INVALID");
         }
-        const amountMatches = sameMoney(expectedBalance, payAmt) || sameMoney(selected.total, payAmt);
+        const amountMatches = leafLinkPaymentMatchesInvoice(payAmt, expectedBalance, selected.total);
         if (!amountMatches && !input.allowAmountOverride) {
             throw new AppError("Payment amount does not match invoice balance.", 409, "CHECK_AMOUNT_MISMATCH");
         }
+        if (!amountMatches && input.allowAmountOverride) {
+            const overrideNote = String(input.overrideNote || "").trim();
+            if (overrideNote.length < 3) {
+                throw new AppError(
+                    "Explain why the payment amount differs from the invoice balance.",
+                    400,
+                    "CHECK_OVERRIDE_NOTE_REQUIRED",
+                );
+            }
+        }
         const paymentDateIso = check.checkDate ? new Date(check.checkDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+        const paymentNote = buildLeafLinkCpuPaymentNote(
+            `CPU check capture ${check.id}`,
+            !amountMatches,
+            input.overrideNote,
+        );
         try {
             const posted = await this.leafLinkOrdersService.postOrderPayment(companyId, {
                 orderNumber: selected.orderNumber,
@@ -570,7 +591,7 @@ export class CheckCaptureService {
                 amount: payAmt,
                 paymentDateIso,
                 reference: check.checkNumber ?? check.invoiceNumber ?? null,
-                note: `CPU check capture ${check.id}`,
+                note: paymentNote,
                 paymentMethod: "Check",
             });
             const row: LeafLinkPostedPaymentRow = {
@@ -606,7 +627,11 @@ export class CheckCaptureService {
                 },
                 after: {
                     orderNumber: selected.orderNumber,
-                    amount,
+                    loggedAmount: amount,
+                    paymentAmount: payAmt,
+                    invoiceBalance: expectedBalance,
+                    amountMatches,
+                    overrideNote: amountMatches ? null : String(input.overrideNote || "").trim() || null,
                     paymentId: posted.paymentId,
                     result: posted.paymentStatus
                 }
