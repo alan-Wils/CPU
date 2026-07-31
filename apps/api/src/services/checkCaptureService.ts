@@ -609,7 +609,8 @@ export class CheckCaptureService {
                     leaflinkPaymentId: posted.paymentId,
                     leaflinkPaymentStatus: posted.paymentStatus,
                     leaflinkMatchedAt: new Date(),
-                    leaflinkPaidAt: new Date(),
+                    /** Only mark the check “paid in LeafLink” when the posted amount covers the invoice balance. */
+                    ...(amountMatches ? { leaflinkPaidAt: new Date() } : {}),
                     leaflinkPostedPayments: mergedJson as import("@prisma/client").Prisma.InputJsonValue,
                     leaflinkPaymentResponseJson: JSON.stringify(posted.rawResponse),
                     paymentSyncStatus: "payment_posted",

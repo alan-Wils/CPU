@@ -49,4 +49,25 @@ describe("resolveLeafLinkOrderTotalUsdFromStoredPayload", () => {
     };
     expect(resolveLeafLinkOrderTotalUsdFromStoredPayload(row, null)).toBe(512.25);
   });
+
+  it("normalizeOrder keeps order total separate from remaining payment_balance", () => {
+    const o = normalizeOrder({
+      ...LEAFLINK_ORDER_RECEIVED_ROW,
+      total: { amount: 1000, currency: "USD" },
+      payment_balance: 250,
+      paid: false,
+    });
+    expect(o.total).toBe(1000);
+    expect(o.outstandingBalance).toBe(250);
+  });
+
+  it("normalizeOrder reads $0 outstanding when fully paid down", () => {
+    const o = normalizeOrder({
+      ...LEAFLINK_ORDER_RECEIVED_ROW,
+      total: { amount: 1000, currency: "USD" },
+      payment_balance: 0,
+      paid: false,
+    });
+    expect(o.outstandingBalance).toBe(0);
+  });
 });

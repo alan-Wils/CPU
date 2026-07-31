@@ -80,20 +80,44 @@ function firstPositiveMoneyInRecord(rec: Record<string, unknown>, keys: readonly
   return null;
 }
 
+/** First finite money field including $0 (needed for fully paid outstanding balance). */
+function firstNonNegativeMoneyInRecord(rec: Record<string, unknown>, keys: readonly string[]): number | null {
+  for (const k of keys) {
+    const m = moneyAmount(rec[k]);
+    if (m != null && Number.isFinite(m) && m >= 0) return m;
+  }
+  return null;
+}
+
 const LEAFLINK_ORDER_TOTAL_FIELDS = [
   "total",
   "grand_total",
   "final_total",
   "order_total",
   "total_amount",
-  /** LeafLink orders-received: outstanding balance, often mirrors order total when unpaid. */
-  "payment_balance",
-  "paymentBalance",
   "invoice_total",
-  "amount_due",
   "order_amount",
   "total_cost",
   "amount",
+  /**
+   * Fallback only when LeafLink omits a true order total (some list rows). Prefer dedicated
+   * outstanding fields via {@link LEAFLINK_ORDER_OUTSTANDING_FIELDS} for payment matching.
+   */
+  "payment_balance",
+  "paymentBalance",
+  "amount_due",
+] as const;
+
+/** Remaining balance on unpaid / partially paid orders (LeafLink orders-received). */
+const LEAFLINK_ORDER_OUTSTANDING_FIELDS = [
+  "payment_balance",
+  "paymentBalance",
+  "amount_due",
+  "amountDue",
+  "balance_due",
+  "balanceDue",
+  "outstanding_balance",
+  "outstandingBalance",
 ] as const;
 
 const LEAFLINK_ORDER_SUBTOTAL_FIELDS = [
@@ -144,6 +168,11 @@ export type LeafLinkOrderSummaryDto = {
   shippingAmount: number | null;
   paymentTerm: string | null;
   paid: boolean;
+  /**
+   * Remaining amount owed when LeafLink exposes `payment_balance` / `amount_due`.
+   * Null when not present on the payload (callers should fall back to {@link total}).
+   */
+  outstandingBalance: number | null;
   shipDate: string | null;
   deliveryPreferences: string | null;
   shippingDetails: string | null;
@@ -1132,6 +1161,9 @@ export function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
   const total =
     firstPositiveMoneyInRecord(row, LEAFLINK_ORDER_TOTAL_FIELDS)
     ?? firstPositiveMoneyInRecord(nestedOrder, LEAFLINK_ORDER_TOTAL_FIELDS);
+  const outstandingBalance =
+    firstNonNegativeMoneyInRecord(row, LEAFLINK_ORDER_OUTSTANDING_FIELDS)
+    ?? firstNonNegativeMoneyInRecord(nestedOrder, LEAFLINK_ORDER_OUTSTANDING_FIELDS);
   const taxAmount = typeof row.tax_amount === "number" ? row.tax_amount : moneyAmount(row.tax_amount);
   const finalTaxAmt = moneyAmount(row.final_tax);
   const ship = row.shipping_charge;
@@ -1183,6 +1215,7 @@ export function normalizeOrder(raw: unknown): LeafLinkOrderSummaryDto {
     shippingAmount,
     paymentTerm: cleanString(row.payment_term) || null,
     paid,
+    outstandingBalance,
     shipDate: cleanString(row.ship_date) || null,
     deliveryPreferences: cleanString(row.delivery_preferences) || null,
     shippingDetails: cleanString(row.shipping_details) || null,
@@ -1251,7 +1284,12 @@ function collectLeafLinkPaymentCandidatesFromDbRows(
     const orderNumber = cleanString(summary.orderNumber || summary.shortNumber || summary.id);
     const customerName = cleanString(summary.customerName);
     const total = typeof summary.total === "number" ? summary.total : orderTotalMoney(summary);
-    const outstandingBalance = paid ? 0 : total;
+    /** Prefer LeafLink remaining balance; fall back to order total only when unpaid and balance missing. */
+    const outstandingBalance = paid
+      ? 0
+      : typeof summary.outstandingBalance === "number" && Number.isFinite(summary.outstandingBalance)
+        ? summary.outstandingBalance
+        : total;
     const matchedBySet = new Set<string>();
     let score = 0;
 

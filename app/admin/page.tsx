@@ -4341,7 +4341,8 @@ export default function AdminPage() {
                 </button>
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: 12, lineHeight: 1.5, fontSize: 13 }}>
-                Select the invoice/order to mark paid. This action updates LeafLink and does not run automatically.
+                Select the invoice/order, then post a LeafLink <strong>order payment</strong> for the logged check
+                amount. This creates a payment record in LeafLink — it does not only flip a paid flag.
               </p>
               {leafLinkMatchChoices.map((m) => (
                 <label
@@ -4367,8 +4368,9 @@ export default function AdminPage() {
                       <div><strong>Order:</strong> {m.orderNumber}</div>
                       <div><strong>Customer:</strong> {m.customerName || "—"}</div>
                       <div>
-                        <strong>Total:</strong> {String(m.total)} | <strong>Outstanding:</strong>{" "}
-                        {m.outstandingBalance == null ? "—" : String(m.outstandingBalance)}
+                        <strong>Order total:</strong> {formatUsdLeafLink(m.total)} |{" "}
+                        <strong>Balance owed:</strong>{" "}
+                        {m.outstandingBalance == null ? "—" : formatUsdLeafLink(m.outstandingBalance)}
                       </div>
                       <div>
                         <strong>Status:</strong> {m.status || "—"} | <strong>Payment:</strong> {m.paymentStatus || "—"}
@@ -4478,7 +4480,7 @@ export default function AdminPage() {
                     cursor: leafLinkPostingPayment ? "wait" : "pointer",
                   }}
                 >
-                  {leafLinkPostingPayment ? "Posting…" : "Mark Paid in LeafLink"}
+                  {leafLinkPostingPayment ? "Posting…" : "Post payment to LeafLink"}
                 </button>
                 <button type="button" onClick={() => setLeafLinkMatchModalOpen(false)} style={modalButtonStyle}>
                   Cancel
@@ -4692,12 +4694,16 @@ export default function AdminPage() {
             >
               <div style={{ ...modalStyle, maxWidth: 560 }}>
                 <h2 id="leaflink-payment-prompt-title" style={{ marginTop: 0, marginBottom: 10 }}>
-                  Post payment to LeafLink?
+                  Post LeafLink payment?
                 </h2>
                 <p style={{ color: "#cbd5e1", marginTop: 0, lineHeight: 1.6 }}>
                   LeafLink order {leafLinkPaymentPrompt.candidate.orderNumber} (
                   {leafLinkPaymentPrompt.candidate.customerName || "customer"}) — payment status:{" "}
                   {leafLinkPaymentPrompt.candidate.paymentStatus || "Unpaid"}.
+                </p>
+                <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: 0, lineHeight: 1.5, fontSize: 13 }}>
+                  This creates a real LeafLink order payment for the logged amount (not just marking the invoice
+                  paid).
                 </p>
                 <div
                   style={{
@@ -4772,7 +4778,7 @@ export default function AdminPage() {
                     }
                     onClick={() => closeLeafLinkPaymentApplyDialog(true)}
                   >
-                    Post payment
+                    Post {formatUsdLeafLink(leafLinkPaymentPrompt.loggedAmount)} payment
                   </button>
                 </div>
               </div>

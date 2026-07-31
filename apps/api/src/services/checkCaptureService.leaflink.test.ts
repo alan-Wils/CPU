@@ -257,6 +257,71 @@ describe("CheckCaptureService LeafLink sync", () => {
     });
     const out = await service.markLeafLinkInvoicePaid("co1", "u1", "c1", { orderNumber: "INV-1" });
     expect(out.ok).toBe(true);
-    expect(updateSpy).toHaveBeenCalled();
+    expect((service as any).leafLinkOrdersService.postOrderPayment).toHaveBeenCalledWith(
+      "co1",
+      expect.objectContaining({
+        orderNumber: "INV-1",
+        amount: 100,
+        paymentMethod: "Check",
+      }),
+    );
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          leaflinkPaidAt: expect.any(Date),
+          paymentSyncStatus: "payment_posted",
+        }),
+      }),
+    );
+  });
+
+  it("posts partial payment amount without marking check fully paid in LeafLink", async () => {
+    vi.spyOn(prisma.checkCapture, "findFirst").mockResolvedValue({
+      id: "c1",
+      checkDate: new Date("2026-05-01T00:00:00.000Z"),
+      checkNumber: "1001",
+      amount: 40,
+      payerName: "Acme",
+      invoiceNumber: "INV-1",
+      leaflinkPaymentId: null,
+      leaflinkPostedPayments: null,
+    } as any);
+    const updateSpy = vi.spyOn(prisma.checkCapture, "update").mockResolvedValue({ id: "c1" } as any);
+    ((service as any).leafLinkOrdersService.findOpenPaymentCandidatesForCheck as any).mockResolvedValue([
+      {
+        leafLinkKey: "ll1",
+        orderId: "o1",
+        orderNumber: "INV-1",
+        customerName: "Acme",
+        total: 100,
+        outstandingBalance: 100,
+        status: "Submitted",
+        paymentStatus: "Unpaid",
+        deliveryDate: null,
+        lineItems: [],
+        score: 100,
+        matchedBy: ["invoice_exact"],
+        markedPaidInLeafLink: false,
+      },
+    ]);
+    ((service as any).leafLinkOrdersService.postOrderPayment as any).mockResolvedValue({
+      paymentId: "p-partial",
+      paymentStatus: "posted",
+      rawResponse: { id: "p-partial" },
+    });
+    const out = await service.markLeafLinkInvoicePaid("co1", "u1", "c1", {
+      orderNumber: "INV-1",
+      paymentAmount: 40,
+      allowAmountOverride: true,
+      overrideNote: "Partial payment on account",
+    });
+    expect(out.ok).toBe(true);
+    expect((service as any).leafLinkOrdersService.postOrderPayment).toHaveBeenCalledWith(
+      "co1",
+      expect.objectContaining({ amount: 40 }),
+    );
+    const data = updateSpy.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+    expect(data.paymentSyncStatus).toBe("payment_posted");
+    expect(data.leaflinkPaidAt).toBeUndefined();
   });
 });
