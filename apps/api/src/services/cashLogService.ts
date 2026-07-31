@@ -23,6 +23,7 @@ import { AuditService } from "./auditService.js";
 import { findRecentLeafLinkStoredOrdersForCompany } from "./leafLinkOrdersStorePrimitives.js";
 import {
     LeafLinkOrdersService,
+    assertSelectedOrderMatchesInvoiceNumber,
     type LeafLinkPaymentMatchCandidateDto,
     summarizeLeafLinkInvoiceFromStoredRows,
 } from "./leafLinkOrdersService.js";
@@ -33,6 +34,7 @@ export type CashLeafLinkMatchResult = {
     exactMatches: LeafLinkPaymentMatchCandidateDto[];
     possibleMatches: LeafLinkPaymentMatchCandidateDto[];
     linkedOrders: LeafLinkPaymentMatchCandidateDto[];
+    alreadyPostedOrderNumbers: string[];
 };
 
 function extForReceiptMime(mimeType: string) {
@@ -512,6 +514,7 @@ export class CashLogService {
                 amount: true,
                 payeeCompany: true,
                 invoiceNumber: true,
+                leaflinkPostedPayments: true,
             },
         });
         if (!entry || entry.direction !== "INCOMING") {
@@ -533,10 +536,13 @@ export class CashLogService {
                 matchInput,
             );
         }
-        const candidates = linkedOrders.filter((c) => !c.markedPaidInLeafLink);
-        const strongInvoice = (c: LeafLinkPaymentMatchCandidateDto) =>
-            c.matchedBy.includes("invoice_exact") || c.matchedBy.includes("invoice_last4");
-        const exactMatches = candidates.filter((c) => strongInvoice(c));
+        const alreadyPosted = parsePostedPaymentsJson(entry.leaflinkPostedPayments);
+        const notPostedYet = (c: LeafLinkPaymentMatchCandidateDto) =>
+            !hasPostedOrderNumber(alreadyPosted, c.orderNumber) &&
+            !hasPostedOrderNumber(alreadyPosted, c.orderId) &&
+            !hasPostedOrderNumber(alreadyPosted, c.leafLinkKey);
+        const candidates = linkedOrders.filter((c) => !c.markedPaidInLeafLink && notPostedYet(c));
+        const exactMatches = candidates.filter((c) => c.matchedBy.includes("invoice_exact"));
         const payeeNeedle = String(entry.payeeCompany || "").trim().toLowerCase();
         const entryAmt = typeof entry.amount === "number" ? entry.amount : null;
         const hasInvoiceTokens = Boolean(String(entry.invoiceNumber || "").trim());
@@ -551,11 +557,13 @@ export class CashLogService {
                 entryAmt == null
                     ? false
                     : sameMoneyCash(c.total, entryAmt) || sameMoneyCash(c.outstandingBalance ?? c.total, entryAmt);
-            const invoicePartial = hasInvoiceTokens ? c.matchedBy.includes("invoice_partial") : false;
-            return Boolean(invoicePartial || (nameOk && amountOk));
+            const invoicePartial = hasInvoiceTokens
+                ? c.matchedBy.includes("invoice_partial") || c.matchedBy.includes("invoice_last4")
+                : false;
+            if (hasInvoiceTokens) return Boolean(invoicePartial);
+            return Boolean(nameOk && amountOk);
         });
         if (exactMatches.length === 1) {
-            const chosen = exactMatches[0];
             await prisma.cashLogEntry.update({
                 where: { id: entry.id },
                 data: {
@@ -570,6 +578,7 @@ export class CashLogService {
             exactMatches,
             possibleMatches,
             linkedOrders,
+            alreadyPostedOrderNumbers: alreadyPosted.map((p) => p.orderNumber),
         };
     }
 
@@ -616,7 +625,10 @@ export class CashLogService {
         if (!selected) {
             throw new AppError("Selected LeafLink order was not found or is not open.", 404, "LEAFLINK_ORDER_NOT_OPEN");
         }
-        if (hasPostedOrderNumber(postedBefore, selected.orderNumber)) {
+        assertSelectedOrderMatchesInvoiceNumber(entry.invoiceNumber, selected);
+        if (hasPostedOrderNumber(postedBefore, selected.orderNumber) ||
+            hasPostedOrderNumber(postedBefore, selected.orderId) ||
+            hasPostedOrderNumber(postedBefore, selected.leafLinkKey)) {
             throw new AppError("A LeafLink payment for this order was already posted from this cash entry.", 409, "CASH_LEAF_DUPLICATE_ORDER");
         }
         const expectedBalance = selected.outstandingBalance ?? selected.total;

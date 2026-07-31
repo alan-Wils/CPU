@@ -54,7 +54,13 @@ export function hasPostedOrderNumber(
   orderNumber: string,
 ): boolean {
   const want = String(orderNumber ?? "").trim().toLowerCase();
-  if (!want)
-    return false;
-  return posted.some((p) => String(p.orderNumber ?? "").trim().toLowerCase() === want);
+  if (!want) return false;
+  const wantKey = want.replace(/[^a-z0-9]/g, "");
+  return posted.some((p) => {
+    const have = String(p.orderNumber ?? "").trim().toLowerCase();
+    if (!have) return false;
+    if (have === want) return true;
+    const haveKey = have.replace(/[^a-z0-9]/g, "");
+    return Boolean(wantKey && haveKey && wantKey === haveKey);
+  });
 }

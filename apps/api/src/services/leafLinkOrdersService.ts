@@ -354,10 +354,108 @@ function invoiceDigitsOnly(s: string): string {
   return String(s || "").replace(/\D/g, "");
 }
 
-/** Last `n` digits from the order # / id string (for matching invoice stubs to e.g. …9511). */
+/** Normalize invoice / order refs for exact compare (e.g. d83a9862). */
+export function normalizeInvoiceOrderKey(raw: string | undefined | null): string {
+  return String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^#/, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/** Last `n` digits from the order # / id string (for matching short stubs only). */
 function orderTailDigits(orderNumber: string, n: number): string {
   const d = invoiceDigitsOnly(orderNumber);
   return d.length >= n ? d.slice(-n) : d;
+}
+
+/**
+ * True when the typed token is a short stub (e.g. last-4 digits).
+ * Full invoice codes like `d83a9862` must match the whole order number — not last4.
+ */
+export function isShortInvoiceStubToken(tok: string): boolean {
+  const key = normalizeInvoiceOrderKey(tok);
+  if (!key) return false;
+  if (key.length <= 4) return true;
+  const digits = invoiceDigitsOnly(tok);
+  return digits.length > 0 && digits.length <= 4 && digits === key;
+}
+
+/**
+ * Classify how a typed invoice token relates to a LeafLink order.
+ * Full codes like `d83a9862` only return exact (never last4).
+ */
+export function classifyInvoiceTokenMatch(
+  token: string,
+  orderIdentityKeys: string[],
+  orderNumberForTail: string,
+): "invoice_exact" | "invoice_last4" | "invoice_partial" | null {
+  const tok = String(token || "").trim();
+  if (!tok) return null;
+  const normTok = normalizeInvoiceOrderKey(tok);
+  if (!normTok) return null;
+  const orderKeys = orderIdentityKeys.map((k) => normalizeInvoiceOrderKey(k)).filter(Boolean);
+  if (orderKeys.some((k) => k === normTok)) return "invoice_exact";
+  if (isShortInvoiceStubToken(tok)) {
+    const tokDigits = invoiceDigitsOnly(tok);
+    const ordTail4 = orderTailDigits(orderNumberForTail, 4);
+    if (tokDigits.length >= 4 && ordTail4.length >= 4 && tokDigits.slice(-4) === ordTail4) {
+      return "invoice_last4";
+    }
+    if (orderKeys.some((k) => k.includes(normTok) || normTok.includes(k))) {
+      return "invoice_partial";
+    }
+  } else if (normTok.length <= 5) {
+    if (orderKeys.some((k) => k.includes(normTok) || normTok.includes(k))) {
+      return "invoice_partial";
+    }
+  }
+  return null;
+}
+
+/**
+ * When an invoice number is present on a check/cash row, the selected LeafLink order must
+ * match it (full code exact, or short stub last-4). Blocks payee/amount-only wrong posts
+ * like applying invoice 9849 onto order d83a9947.
+ */
+export function assertSelectedOrderMatchesInvoiceNumber(
+  invoiceNumber: string | null | undefined,
+  selected: { orderNumber: string; orderId?: string | null; leafLinkKey?: string | null },
+): void {
+  const tokens = splitInvoiceNumberTokens(invoiceNumber ?? undefined);
+  if (!tokens.length) return;
+
+  const orderKeys = [selected.orderNumber, selected.orderId, selected.leafLinkKey]
+    .map((v) => String(v || "").trim())
+    .filter(Boolean);
+  const orderNumber = String(selected.orderNumber || "").trim();
+
+  let hadExact = false;
+  let hadLast4 = false;
+  for (const tok of tokens) {
+    const kind = classifyInvoiceTokenMatch(tok, orderKeys, orderNumber);
+    if (kind === "invoice_exact") hadExact = true;
+    if (kind === "invoice_last4") hadLast4 = true;
+  }
+
+  if (hadExact) return;
+
+  const hasFullCodeToken = tokens.some((t) => !isShortInvoiceStubToken(t));
+  if (hasFullCodeToken) {
+    throw new AppError(
+      `Selected LeafLink order ${orderNumber || "(unknown)"} does not match the full invoice number on this entry (${tokens.join(", ")}). Use the exact order code (e.g. d83a9849).`,
+      409,
+      "LEAFLINK_INVOICE_ORDER_MISMATCH",
+    );
+  }
+
+  if (hadLast4) return;
+
+  throw new AppError(
+    `Selected LeafLink order ${orderNumber || "(unknown)"} does not match invoice ${tokens.join(", ")} on this entry. Wrong-order posts are blocked.`,
+    409,
+    "LEAFLINK_INVOICE_ORDER_MISMATCH",
+  );
 }
 
 function leafLinkOrdersFullSyncMaxPages(): number {
@@ -1294,24 +1392,21 @@ function collectLeafLinkPaymentCandidatesFromDbRows(
     let score = 0;
 
     if (invoiceTokens.length > 0) {
+      const orderKeys = [
+        orderNumber,
+        summary.shortNumber,
+        summary.id,
+        cleanString(row.leafLinkKey),
+      ].filter(Boolean);
       for (const rawTok of invoiceTokens) {
-        const tok = cleanString(rawTok);
-        if (!tok) continue;
-        const ordLower = orderNumber.toLowerCase();
-        const tokLower = tok.toLowerCase();
-        const tokDigits = invoiceDigitsOnly(tok);
-        const ordTail4 = orderTailDigits(orderNumber, 4);
-        const normOrd = ordLower.replace(/^#/, "");
-        const normTok = tokLower.replace(/^#/, "");
-        if (normOrd === normTok || ordLower === tokLower) {
+        const kind = classifyInvoiceTokenMatch(rawTok, orderKeys, orderNumber);
+        if (kind === "invoice_exact") {
           matchedBySet.add("invoice_exact");
           score += 100;
-        }
-        else if (tokDigits.length >= 4 && ordTail4.length >= 4 && tokDigits.slice(-4) === ordTail4) {
+        } else if (kind === "invoice_last4") {
           matchedBySet.add("invoice_last4");
-          score += 95;
-        }
-        else if (normOrd.includes(normTok) || normTok.includes(normOrd)) {
+          score += 50;
+        } else if (kind === "invoice_partial") {
           matchedBySet.add("invoice_partial");
           score += 40;
         }

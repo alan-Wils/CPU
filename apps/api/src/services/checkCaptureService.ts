@@ -27,6 +27,7 @@ import {
 } from "../lib/leafLinkPaymentAmount.js";
 import {
     LeafLinkOrdersService,
+    assertSelectedOrderMatchesInvoiceNumber,
     type LeafLinkPaymentMatchCandidateDto,
     summarizeLeafLinkInvoiceFromStoredRows,
 } from "./leafLinkOrdersService.js";
@@ -214,6 +215,7 @@ export type CheckLeafLinkMatchResult = {
     possibleMatches: LeafLinkPaymentMatchCandidateDto[];
     /** All invoice-related matches from synced orders, including already-paid (for UI status). */
     linkedOrders: LeafLinkPaymentMatchCandidateDto[];
+    alreadyPostedOrderNumbers: string[];
 };
 export class CheckCaptureService {
     leafLinkOrdersService = new LeafLinkOrdersService();
@@ -466,7 +468,9 @@ export class CheckCaptureService {
                 amount: true,
                 payerName: true,
                 invoiceNumber: true,
-                leaflinkPaymentId: true
+                leaflinkPaymentId: true,
+                leaflinkOrderNumber: true,
+                leaflinkPostedPayments: true,
             }
         });
         if (!check) {
@@ -482,13 +486,17 @@ export class CheckCaptureService {
         if (!linkedOrders.length && refresh) {
             linkedOrders = await this.leafLinkOrdersService.findPaymentMatchCandidatesIncludingPaidForCheck(companyId, matchInput);
         }
-        const candidates = linkedOrders.filter((c) => !c.markedPaidInLeafLink);
+        const alreadyPosted = mergePostedPaymentsFromCheckCapture(check);
+        const notPostedYet = (c: LeafLinkPaymentMatchCandidateDto) =>
+            !hasPostedOrderNumber(alreadyPosted, c.orderNumber) &&
+            !hasPostedOrderNumber(alreadyPosted, c.orderId) &&
+            !hasPostedOrderNumber(alreadyPosted, c.leafLinkKey);
+        const candidates = linkedOrders.filter((c) => !c.markedPaidInLeafLink && notPostedYet(c));
         const hasInvoiceTokens = Boolean(normalizeText(check.invoiceNumber));
         const payeeNeedle = normalizeText(check.payerName);
         const checkAmount = typeof check.amount === "number" ? check.amount : null;
-        const strongInvoice = (c: LeafLinkPaymentMatchCandidateDto) =>
-            c.matchedBy.includes("invoice_exact") || c.matchedBy.includes("invoice_last4");
-        const exactMatches = candidates.filter((c) => strongInvoice(c));
+        /** Full invoice code match only — last4 stubs are possible matches, not exact. */
+        const exactMatches = candidates.filter((c) => c.matchedBy.includes("invoice_exact"));
         const possibleMatches = candidates.filter((c) => {
             if (exactMatches.find((x) => x.orderNumber === c.orderNumber))
                 return false;
@@ -497,8 +505,12 @@ export class CheckCaptureService {
                 return false;
             const nameOk = payeeNeedle ? normalizeText(c.customerName).includes(payeeNeedle) : false;
             const amountOk = checkAmount == null ? false : (sameMoney(c.total, checkAmount) || sameMoney(c.outstandingBalance, checkAmount));
-            const invoicePartial = hasInvoiceTokens ? c.matchedBy.includes("invoice_partial") : false;
-            return Boolean(invoicePartial || (nameOk && amountOk));
+            const invoicePartial = hasInvoiceTokens
+                ? c.matchedBy.includes("invoice_partial") || c.matchedBy.includes("invoice_last4")
+                : false;
+            /** When an invoice # is present, never offer payee/amount-only candidates (caused 9849→9947 wrong posts). */
+            if (hasInvoiceTokens) return Boolean(invoicePartial);
+            return Boolean(nameOk && amountOk);
         });
         if (exactMatches.length === 1) {
             const chosen = exactMatches[0];
@@ -518,7 +530,8 @@ export class CheckCaptureService {
             loggedPaymentAmount: checkAmount,
             exactMatches,
             possibleMatches,
-            linkedOrders
+            linkedOrders,
+            alreadyPostedOrderNumbers: alreadyPosted.map((p) => p.orderNumber),
         };
     }
     async markLeafLinkInvoicePaid(companyId, actorUserId, checkId, input) {
@@ -553,7 +566,10 @@ export class CheckCaptureService {
         if (!selected) {
             throw new AppError("Selected LeafLink order was not found or is not open.", 404, "LEAFLINK_ORDER_NOT_OPEN");
         }
-        if (hasPostedOrderNumber(postedBefore, selected.orderNumber)) {
+        assertSelectedOrderMatchesInvoiceNumber(check.invoiceNumber, selected);
+        if (hasPostedOrderNumber(postedBefore, selected.orderNumber) ||
+            hasPostedOrderNumber(postedBefore, selected.orderId) ||
+            hasPostedOrderNumber(postedBefore, selected.leafLinkKey)) {
             throw new AppError("A LeafLink payment for this order was already posted from this check.", 409, "CHECK_LEAFLINK_DUPLICATE_ORDER");
         }
         const expectedBalance = selected.outstandingBalance ?? selected.total;
