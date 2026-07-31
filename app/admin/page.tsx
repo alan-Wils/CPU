@@ -855,11 +855,15 @@ export default function AdminPage() {
         setLeafLinkToast({
           message: `No matching LeafLink invoice found for the invoice number on this ${noun}.`,
         });
-      } else if (list.length === 0) {
+        return;
+      }
+      if (list.length === 0) {
         setLeafLinkToast({
           message: "LeafLink matched order(s) are already marked paid — nothing to post.",
         });
-      } else if (loggedAmount == null || loggedAmount <= 0) {
+        return;
+      }
+      if (loggedAmount == null || loggedAmount <= 0) {
         setLeafLinkToast({
           message: `Saved ${noun} is missing a payment amount — cannot post to LeafLink.`,
         });
