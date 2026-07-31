@@ -106,7 +106,7 @@ cashLogRouter.post("/", requireRole([...cashLogWriteRoles]), validate({ body: ca
         payeeCompany: req.body.payeeCompany,
         invoiceNumber: req.body.invoiceNumber,
         department: req.body.department,
-        receiptImageUrl: req.body.receiptImageUrl
+        receiptImageUrls: req.body.receiptImageUrls
     });
     res.status(201).json(saved);
 }));

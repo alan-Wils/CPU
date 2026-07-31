@@ -399,6 +399,8 @@ type CashLogRow = {
   department?: CashLogDepartment | null;
   memo?: string | null;
   entryDate?: string | null;
+  receiptImageUrls?: string[] | null;
+  /** @deprecated Prefer receiptImageUrls — kept for older API responses. */
   receiptImageUrl?: string | null;
   createdAt: string;
   leaflinkPostedPayments?: unknown;
@@ -514,6 +516,27 @@ async function readImageFileForCheckUpload(file: File): Promise<{
   return { mimeType, dataBase64: stripped };
 }
 
+const MAX_CASH_RECEIPT_IMAGES = 10;
+
+function normalizeCashReceiptUrls(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .filter((u): u is string => typeof u === "string" && u.trim().length > 0)
+      .map((u) => u.trim())
+      .slice(0, MAX_CASH_RECEIPT_IMAGES);
+  }
+  if (typeof value === "string" && value.trim()) {
+    return [value.trim()];
+  }
+  return [];
+}
+
+function cashRowReceiptUrls(row: { receiptImageUrls?: unknown; receiptImageUrl?: unknown }): string[] {
+  const fromArray = normalizeCashReceiptUrls(row.receiptImageUrls);
+  if (fromArray.length) return fromArray;
+  return normalizeCashReceiptUrls(row.receiptImageUrl);
+}
+
 function canEditTargetUser(currentRole: string, targetRole: string) {
   const c = normalizePlatformRole(currentRole);
   const t = normalizePlatformRole(targetRole);
@@ -599,7 +622,7 @@ export default function AdminPage() {
   const [cashDepartment, setCashDepartment] = useState<CashLogDepartment>("GENERAL");
   const [cashMemo, setCashMemo] = useState("");
   const cashReceiptInputRef = useRef<HTMLInputElement | null>(null);
-  const [cashReceiptImageUrl, setCashReceiptImageUrl] = useState("");
+  const [cashReceiptImageUrls, setCashReceiptImageUrls] = useState<string[]>([]);
   const [cashReceiptFileKey, setCashReceiptFileKey] = useState(0);
   const [cashReceiptUploading, setCashReceiptUploading] = useState(false);
   const [cashEntryDate, setCashEntryDate] = useState("");
@@ -649,8 +672,7 @@ export default function AdminPage() {
   const [editCashDepartment, setEditCashDepartment] = useState<CashLogDepartment>("GENERAL");
   const [editCashMemo, setEditCashMemo] = useState("");
   const [editCashEntryDate, setEditCashEntryDate] = useState("");
-  const [editCashRemoveReceipt, setEditCashRemoveReceipt] = useState(false);
-  const [editCashNewReceiptUrl, setEditCashNewReceiptUrl] = useState("");
+  const [editCashReceiptUrls, setEditCashReceiptUrls] = useState<string[]>([]);
   const [editCashReceiptUploading, setEditCashReceiptUploading] = useState(false);
   const [editCashSaving, setEditCashSaving] = useState(false);
   const [editCashError, setEditCashError] = useState("");
@@ -1156,35 +1178,50 @@ export default function AdminPage() {
   }
 
   async function handleCashReceiptFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
     if (!canManageUsers(currentUser?.role || "")) return;
     const cid = checksCompanyId();
     if (!cid) {
       setCashFormError("Select a company context before attaching a receipt.");
       return;
     }
+    const remaining = MAX_CASH_RECEIPT_IMAGES - cashReceiptImageUrls.length;
+    if (remaining <= 0) {
+      setCashFormError(`You can attach up to ${MAX_CASH_RECEIPT_IMAGES} receipt photos.`);
+      if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
+      return;
+    }
     setCashFormError("");
     setCashReceiptUploading(true);
     try {
-      const payload = await readImageFileForCheckUpload(file);
-      const uploaded = await apiRequest<{ imageUrl: string }>(
-        withCompanyQuery("/api/cash-log/upload-receipt", cid),
-        {
-          method: "POST",
-          companyId: cid,
-          body: {
-            mimeType: payload.mimeType,
-            dataBase64: payload.dataBase64,
-            fileName: file.name,
+      const uploadedUrls: string[] = [];
+      for (const file of files.slice(0, remaining)) {
+        const payload = await readImageFileForCheckUpload(file);
+        const uploaded = await apiRequest<{ imageUrl: string }>(
+          withCompanyQuery("/api/cash-log/upload-receipt", cid),
+          {
+            method: "POST",
+            companyId: cid,
+            body: {
+              mimeType: payload.mimeType,
+              dataBase64: payload.dataBase64,
+              fileName: file.name,
+            },
           },
-        },
-      );
-      setCashReceiptImageUrl(uploaded.imageUrl);
+        );
+        uploadedUrls.push(uploaded.imageUrl);
+      }
+      setCashReceiptImageUrls((prev) => [...prev, ...uploadedUrls].slice(0, MAX_CASH_RECEIPT_IMAGES));
+      if (files.length > remaining) {
+        setCashFormError(`Only ${MAX_CASH_RECEIPT_IMAGES} receipt photos are allowed; extra files were skipped.`);
+      }
     } catch (err: any) {
       setCashFormError(err?.message || "Could not upload receipt.");
     } finally {
       setCashReceiptUploading(false);
+      if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
+      setCashReceiptFileKey((k) => k + 1);
     }
   }
 
@@ -1234,8 +1271,8 @@ export default function AdminPage() {
         body.entryDate = cashEntryDate.trim()
           ? new Date(`${cashEntryDate.trim()}T12:00:00.000Z`).toISOString()
           : undefined;
-        if (cashReceiptImageUrl.trim()) {
-          body.receiptImageUrl = cashReceiptImageUrl.trim();
+        if (cashReceiptImageUrls.length) {
+          body.receiptImageUrls = cashReceiptImageUrls;
         }
       }
       const savedCash = await apiRequest<CashLogRow>(withCompanyQuery("/api/cash-log", cid), {
@@ -1249,7 +1286,7 @@ export default function AdminPage() {
       setCashInvoiceNumber("");
       setCashDepartment("GENERAL");
       setCashMemo("");
-      setCashReceiptImageUrl("");
+      setCashReceiptImageUrls([]);
       if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
       setCashReceiptFileKey((k) => k + 1);
       setCashEntryDate("");
@@ -1570,36 +1607,50 @@ export default function AdminPage() {
   }
 
   async function handleEditCashReceiptFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file || !cashBeingEdited || cashBeingEdited.direction !== "OUTGOING") return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length || !cashBeingEdited || cashBeingEdited.direction !== "OUTGOING") return;
     if (!canManageUsers(currentUser?.role || "")) return;
     const cid = checksCompanyId();
     if (!cid) {
       setEditCashError("Select a company context before attaching a receipt.");
       return;
     }
+    const remaining = MAX_CASH_RECEIPT_IMAGES - editCashReceiptUrls.length;
+    if (remaining <= 0) {
+      setEditCashError(`You can attach up to ${MAX_CASH_RECEIPT_IMAGES} receipt photos.`);
+      if (editCashReceiptInputRef.current) editCashReceiptInputRef.current.value = "";
+      return;
+    }
     setEditCashError("");
     setEditCashReceiptUploading(true);
     try {
-      const payload = await readImageFileForCheckUpload(file);
-      const uploaded = await apiRequest<{ imageUrl: string }>(
-        withCompanyQuery("/api/cash-log/upload-receipt", cid),
-        {
-          method: "POST",
-          companyId: cid,
-          body: {
-            mimeType: payload.mimeType,
-            dataBase64: payload.dataBase64,
-            fileName: file.name,
+      const uploadedUrls: string[] = [];
+      for (const file of files.slice(0, remaining)) {
+        const payload = await readImageFileForCheckUpload(file);
+        const uploaded = await apiRequest<{ imageUrl: string }>(
+          withCompanyQuery("/api/cash-log/upload-receipt", cid),
+          {
+            method: "POST",
+            companyId: cid,
+            body: {
+              mimeType: payload.mimeType,
+              dataBase64: payload.dataBase64,
+              fileName: file.name,
+            },
           },
-        },
-      );
-      setEditCashNewReceiptUrl(uploaded.imageUrl);
-      setEditCashRemoveReceipt(false);
+        );
+        uploadedUrls.push(uploaded.imageUrl);
+      }
+      setEditCashReceiptUrls((prev) => [...prev, ...uploadedUrls].slice(0, MAX_CASH_RECEIPT_IMAGES));
+      if (files.length > remaining) {
+        setEditCashError(`Only ${MAX_CASH_RECEIPT_IMAGES} receipt photos are allowed; extra files were skipped.`);
+      }
     } catch (err: any) {
       setEditCashError(err?.message || "Could not upload receipt.");
     } finally {
       setEditCashReceiptUploading(false);
+      if (editCashReceiptInputRef.current) editCashReceiptInputRef.current.value = "";
+      setEditCashFieldKey((k) => k + 1);
     }
   }
 
@@ -1641,11 +1692,7 @@ export default function AdminPage() {
       body.entryDate = editCashEntryDate.trim()
         ? new Date(`${editCashEntryDate.trim()}T12:00:00.000Z`).toISOString()
         : null;
-      if (editCashRemoveReceipt) {
-        body.receiptImageUrl = null;
-      } else if (editCashNewReceiptUrl.trim()) {
-        body.receiptImageUrl = editCashNewReceiptUrl.trim();
-      }
+      body.receiptImageUrls = editCashReceiptUrls;
     }
 
     setEditCashSaving(true);
@@ -1860,8 +1907,7 @@ export default function AdminPage() {
     setEditCashMemo(cashBeingEdited.memo || "");
     const ed = cashBeingEdited.entryDate;
     setEditCashEntryDate(ed ? String(ed).slice(0, 10) : "");
-    setEditCashRemoveReceipt(false);
-    setEditCashNewReceiptUrl("");
+    setEditCashReceiptUrls(cashRowReceiptUrls(cashBeingEdited));
     setEditCashError("");
     setEditCashFieldKey((k) => k + 1);
   }, [cashBeingEdited]);
@@ -3077,7 +3123,7 @@ export default function AdminPage() {
                       onClick={() => {
                         setCashFormError("");
                         setCashFormSuccess("");
-                        setCashReceiptImageUrl("");
+                        setCashReceiptImageUrls([]);
                         if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
                         setCashReceiptFileKey((k) => k + 1);
                         setCashLogOpen(true);
@@ -3585,7 +3631,7 @@ export default function AdminPage() {
                       const v = e.target.value as "INCOMING" | "OUTGOING";
                       setCashDirection(v);
                       if (v === "INCOMING") {
-                        setCashReceiptImageUrl("");
+                        setCashReceiptImageUrls([]);
                         if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
                         setCashReceiptFileKey((k) => k + 1);
                       }
@@ -3688,49 +3734,62 @@ export default function AdminPage() {
                     </label>
                     <div style={{ gridColumn: "1 / -1" }}>
                       <div style={{ ...labelStyle, marginBottom: 0 }}>
-                        Receipt photo (optional)
+                        Receipt photos (optional)
                         <input
                           key={cashReceiptFileKey}
                           ref={cashReceiptInputRef}
                           type="file"
                           accept="image/jpeg,image/jpg,image/png,image/webp"
                           capture="environment"
-                          disabled={cashReceiptUploading || cashSaving}
+                          multiple
+                          disabled={
+                            cashReceiptUploading ||
+                            cashSaving ||
+                            cashReceiptImageUrls.length >= MAX_CASH_RECEIPT_IMAGES
+                          }
                           onChange={(e) => void handleCashReceiptFileChange(e)}
                           style={{ ...inputStyle, padding: "8px 10px" }}
                         />
                         <div style={{ color: "#64748b", fontSize: 12, marginTop: 6, fontWeight: 600 }}>
-                          Use your camera or photo library. JPEG, PNG, or WebP.
+                          Add up to {MAX_CASH_RECEIPT_IMAGES} photos from camera or library. JPEG, PNG, or WebP.
                           {cashReceiptUploading ? " Uploading…" : null}
+                          {cashReceiptImageUrls.length
+                            ? ` ${cashReceiptImageUrls.length}/${MAX_CASH_RECEIPT_IMAGES} attached.`
+                            : null}
                         </div>
-                        {cashReceiptImageUrl ? (
-                          <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-                            <a
-                              href={cashReceiptImageUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{ color: "#38bdf8", fontWeight: 800, fontSize: 14 }}
-                            >
-                              Preview receipt
-                            </a>
-                            <button
-                              type="button"
-                              disabled={cashSaving}
-                              onClick={() => {
-                                setCashReceiptImageUrl("");
-                                if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
-                                setCashReceiptFileKey((k) => k + 1);
-                              }}
-                              style={{
-                                ...smallButtonStyle,
-                                background: "rgba(51, 65, 85, 0.6)",
-                                border: "1px solid rgba(148, 163, 184, 0.35)",
-                                color: "#e2e8f0",
-                                cursor: cashSaving ? "not-allowed" : "pointer",
-                              }}
-                            >
-                              Remove receipt
-                            </button>
+                        {cashReceiptImageUrls.length ? (
+                          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                            {cashReceiptImageUrls.map((url, idx) => (
+                              <div
+                                key={url}
+                                style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}
+                              >
+                                <a
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: "#38bdf8", fontWeight: 800, fontSize: 14 }}
+                                >
+                                  Preview receipt {idx + 1}
+                                </a>
+                                <button
+                                  type="button"
+                                  disabled={cashSaving || cashReceiptUploading}
+                                  onClick={() => {
+                                    setCashReceiptImageUrls((prev) => prev.filter((u) => u !== url));
+                                  }}
+                                  style={{
+                                    ...smallButtonStyle,
+                                    background: "rgba(51, 65, 85, 0.6)",
+                                    border: "1px solid rgba(148, 163, 184, 0.35)",
+                                    color: "#e2e8f0",
+                                    cursor: cashSaving || cashReceiptUploading ? "not-allowed" : "pointer",
+                                  }}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
                           </div>
                         ) : null}
                       </div>
@@ -3871,7 +3930,7 @@ export default function AdminPage() {
                         <th style={checkThStyle}>Dept</th>
                         <th style={checkThStyle}>Entry date</th>
                         <th style={checkThStyle}>Memo</th>
-                        <th style={checkThStyle}>Receipt</th>
+                        <th style={checkThStyle}>Receipts</th>
                         <th style={checkThStyle}>Actions</th>
                       </tr>
                     </thead>
@@ -3905,18 +3964,25 @@ export default function AdminPage() {
                             </td>
                             <td style={checkTdStyle}>{row.memo || "—"}</td>
                             <td style={checkTdStyle}>
-                              {row.receiptImageUrl ? (
-                                <a
-                                  href={row.receiptImageUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{ color: "#38bdf8", fontWeight: 800 }}
-                                >
-                                  View
-                                </a>
-                              ) : (
-                                "—"
-                              )}
+                              {(() => {
+                                const urls = cashRowReceiptUrls(row);
+                                if (!urls.length) return "—";
+                                return (
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                    {urls.map((url, idx) => (
+                                      <a
+                                        key={url}
+                                        href={url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        style={{ color: "#38bdf8", fontWeight: 800 }}
+                                      >
+                                        {urls.length === 1 ? "View" : `View ${idx + 1}`}
+                                      </a>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
                             </td>
                             <td style={checkTdStyle}>
                               {canManageUsers(currentUser?.role || "") ? (
@@ -4519,8 +4585,8 @@ export default function AdminPage() {
                 </button>
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.5, fontSize: 13 }}>
-                Amount and labels update the row. Outgoing rows can swap the receipt photo; the old receipt file is removed
-                from storage when you save a replacement.
+                Amount and labels update the row. Outgoing rows can add or remove receipt photos; removed files are deleted
+                from storage when you save.
               </p>
               {editCashError ? (
                 <div style={{ ...messageStyle, background: "rgba(127, 29, 29, 0.58)", color: "#fecaca", marginBottom: 12 }}>
@@ -4586,67 +4652,70 @@ export default function AdminPage() {
                       />
                     </label>
                     <div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 8 }}>
-                        {cashBeingEdited.receiptImageUrl && !editCashRemoveReceipt ? (
-                          <a
-                            href={
-                              editCashNewReceiptUrl.trim()
-                                ? editCashNewReceiptUrl.trim()
-                                : cashBeingEdited.receiptImageUrl
-                            }
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: "#38bdf8", fontWeight: 800, fontSize: 13 }}
-                          >
-                            {editCashNewReceiptUrl.trim() ? "Preview new receipt (unsaved)" : "Current receipt"}
-                          </a>
+                      <div style={{ marginBottom: 8 }}>
+                        {editCashReceiptUrls.length ? (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {editCashReceiptUrls.map((url, idx) => (
+                              <div
+                                key={url}
+                                style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}
+                              >
+                                <a
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: "#38bdf8", fontWeight: 800, fontSize: 13 }}
+                                >
+                                  Receipt {idx + 1}
+                                </a>
+                                <button
+                                  type="button"
+                                  disabled={editCashSaving || editCashReceiptUploading}
+                                  onClick={() => {
+                                    setEditCashReceiptUrls((prev) => prev.filter((u) => u !== url));
+                                  }}
+                                  style={{
+                                    ...smallButtonStyle,
+                                    background: "rgba(51, 65, 85, 0.6)",
+                                    border: "1px solid rgba(148, 163, 184, 0.35)",
+                                    color: "#e2e8f0",
+                                    cursor:
+                                      editCashSaving || editCashReceiptUploading ? "not-allowed" : "pointer",
+                                  }}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
+                          </div>
                         ) : (
-                          <span style={{ color: "#64748b", fontSize: 13 }}>
-                            {editCashRemoveReceipt ? "Receipt will be cleared on save." : "No receipt on file"}
-                          </span>
+                          <span style={{ color: "#64748b", fontSize: 13 }}>No receipts on file</span>
                         )}
                       </div>
                       <label style={{ ...labelStyle, marginBottom: 0 }}>
-                        New receipt photo (optional)
+                        Add receipt photos (optional)
                         <input
                           key={`ec-cr-${editCashFieldKey}`}
                           ref={editCashReceiptInputRef}
                           type="file"
                           accept="image/jpeg,image/jpg,image/png,image/webp"
                           capture="environment"
-                          disabled={editCashReceiptUploading || editCashSaving || editCashRemoveReceipt}
+                          multiple
+                          disabled={
+                            editCashReceiptUploading ||
+                            editCashSaving ||
+                            editCashReceiptUrls.length >= MAX_CASH_RECEIPT_IMAGES
+                          }
                           onChange={(e) => void handleEditCashReceiptFileChange(e)}
                           style={{ ...inputStyle, padding: "8px 10px" }}
                         />
-                        {editCashReceiptUploading ? (
-                          <div style={{ fontSize: 12, marginTop: 6, color: "#94a3b8" }}>Uploading…</div>
-                        ) : null}
-                      </label>
-                      <label
-                        style={{
-                          ...labelStyle,
-                          marginBottom: 0,
-                          marginTop: 8,
-                          cursor: "pointer",
-                          display: "flex",
-                          gap: 8,
-                          alignItems: "center",
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={editCashRemoveReceipt}
-                          disabled={editCashSaving || editCashReceiptUploading}
-                          onChange={(e) => {
-                            setEditCashRemoveReceipt(e.target.checked);
-                            if (e.target.checked) {
-                              setEditCashNewReceiptUrl("");
-                              if (editCashReceiptInputRef.current) editCashReceiptInputRef.current.value = "";
-                              setEditCashFieldKey((k) => k + 1);
-                            }
-                          }}
-                        />
-                        Remove receipt from record
+                        <div style={{ fontSize: 12, marginTop: 6, color: "#94a3b8" }}>
+                          Up to {MAX_CASH_RECEIPT_IMAGES} photos.
+                          {editCashReceiptUrls.length
+                            ? ` ${editCashReceiptUrls.length}/${MAX_CASH_RECEIPT_IMAGES} attached.`
+                            : null}
+                          {editCashReceiptUploading ? " Uploading…" : null}
+                        </div>
                       </label>
                     </div>
                   </>

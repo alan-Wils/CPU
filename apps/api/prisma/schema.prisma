@@ -1719,8 +1719,8 @@ model CashLogEntry {
   department      CashLogDepartment?
   memo            String?
   entryDate       DateTime?
-  /// Outgoing only: optional receipt image (`/uploads/cash-receipts/...`).
-  receiptImageUrl String?
+  /// Outgoing only: optional receipt image URLs (`["/uploads/cash-receipts/..."]`).
+  receiptImageUrls Json?
   /// Successful LeafLink posts when incoming cash is applied to orders (`[{ orderNumber, paymentId, amount, postedAt }]`).
   leaflinkPostedPayments Json?
   /// Mirrors check capture: not_matched | matched | payment_posted | failed

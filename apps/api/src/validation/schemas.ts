@@ -357,6 +357,8 @@ export const checkLeafLinkMarkPaidSchema = z.object({
 export const cashLeafLinkMatchSchema = checkLeafLinkMatchSchema;
 export const cashLeafLinkMarkPaidSchema = checkLeafLinkMarkPaidSchema;
 const cashLogDepartmentSchema = z.enum(["CULTIVATION", "EXTRACTION", "PACKAGING", "GENERAL"]);
+const cashReceiptImageUrlSchema = z.string().url().max(2000);
+const cashReceiptImageUrlsSchema = z.array(cashReceiptImageUrlSchema).max(10);
 export const cashLogCreateSchema = z
     .object({
         direction: z.enum(["INCOMING", "OUTGOING"]),
@@ -366,8 +368,8 @@ export const cashLogCreateSchema = z
         payeeCompany: z.string().max(200).optional(),
         invoiceNumber: z.string().max(4000).optional(),
         department: cashLogDepartmentSchema.optional(),
-        /** Outgoing only: URL from POST /cash-log/upload-receipt. */
-        receiptImageUrl: z.string().url().max(2000).optional()
+        /** Outgoing only: URLs from POST /cash-log/upload-receipt. */
+        receiptImageUrls: cashReceiptImageUrlsSchema.optional()
     })
     .superRefine((data, ctx) => {
         if (data.direction === "INCOMING") {
@@ -386,11 +388,11 @@ export const cashLogCreateSchema = z
                     path: ["entryDate"]
                 });
             }
-            if (data.receiptImageUrl) {
+            if (data.receiptImageUrls?.length) {
                 ctx.addIssue({
                     code: z.ZodIssueCode.custom,
-                    message: "receiptImageUrl is only allowed for outgoing cash",
-                    path: ["receiptImageUrl"]
+                    message: "receiptImageUrls is only allowed for outgoing cash",
+                    path: ["receiptImageUrls"]
                 });
             }
         }
@@ -410,7 +412,7 @@ export const cashLogUpdateSchema = z
         invoiceNumber: z.string().max(4000).optional().nullable(),
         department: cashLogDepartmentSchema.optional().nullable(),
         entryDate: z.coerce.date().optional().nullable(),
-        receiptImageUrl: z.union([z.string().url().max(2000), z.null()]).optional()
+        receiptImageUrls: z.union([cashReceiptImageUrlsSchema, z.null()]).optional()
     })
     .superRefine((data, ctx) => {
         const n = Object.entries(data).filter(([, v]) => v !== undefined).length;

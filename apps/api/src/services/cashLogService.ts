@@ -94,6 +94,28 @@ function csvEscape(value: unknown) {
     return s;
 }
 
+/** Max receipt photos per outgoing cash log entry. */
+export const MAX_CASH_RECEIPT_IMAGES = 10;
+
+export function normalizeReceiptImageUrls(value: unknown): string[] {
+    if (Array.isArray(value)) {
+        return value
+            .filter((u): u is string => typeof u === "string" && u.trim().length > 0)
+            .map((u) => u.trim())
+            .slice(0, MAX_CASH_RECEIPT_IMAGES);
+    }
+    if (typeof value === "string" && value.trim()) {
+        return [value.trim()];
+    }
+    return [];
+}
+
+async function removeStoredUploads(urls: string[]) {
+    for (const url of urls) {
+        await removeStoredUpload(url);
+    }
+}
+
 const PAY_TOLERANCE = 0.01;
 function sameMoneyCash(a: number, b: number) {
     return Math.abs(Number(a || 0) - Number(b || 0)) <= PAY_TOLERANCE;
@@ -160,9 +182,10 @@ export class CashLogService {
         payeeCompany?: string | null;
         invoiceNumber?: string | null;
         department?: "CULTIVATION" | "EXTRACTION" | "PACKAGING" | "GENERAL" | null;
-        receiptImageUrl?: string | null;
+        receiptImageUrls?: string[] | null;
     }) {
         const incoming = input.direction === "INCOMING";
+        const receiptUrls = !incoming ? normalizeReceiptImageUrls(input.receiptImageUrls) : [];
         const row = await prisma.cashLogEntry.create({
             data: {
                 companyId: input.companyId,
@@ -176,9 +199,7 @@ export class CashLogService {
                     ? (String(input.invoiceNumber || "").trim() || undefined)
                     : undefined,
                 department: !incoming ? input.department ?? undefined : undefined,
-                receiptImageUrl: !incoming && input.receiptImageUrl
-                    ? String(input.receiptImageUrl).trim() || undefined
-                    : undefined
+                receiptImageUrls: receiptUrls.length ? receiptUrls : undefined
             },
             select: {
                 id: true,
@@ -191,7 +212,7 @@ export class CashLogService {
                 department: true,
                 memo: true,
                 entryDate: true,
-                receiptImageUrl: true,
+                receiptImageUrls: true,
                 createdAt: true,
                 updatedAt: true
             }
@@ -204,7 +225,10 @@ export class CashLogService {
             queryCount: 1,
             metadata: { table: "cash_log_entry", op: "insert" },
         });
-        return row;
+        return {
+            ...row,
+            receiptImageUrls: normalizeReceiptImageUrls(row.receiptImageUrls),
+        };
     }
     async updateById(companyId: string, id: string, patch: {
         amount?: number;
@@ -213,7 +237,7 @@ export class CashLogService {
         invoiceNumber?: string | null;
         department?: "CULTIVATION" | "EXTRACTION" | "PACKAGING" | "GENERAL" | null;
         entryDate?: Date | null;
-        receiptImageUrl?: string | null;
+        receiptImageUrls?: string[] | null;
     }) {
         const row = await prisma.cashLogEntry.findFirst({
             where: {
@@ -223,7 +247,7 @@ export class CashLogService {
             select: {
                 id: true,
                 direction: true,
-                receiptImageUrl: true
+                receiptImageUrls: true
             }
         });
         if (!row) {
@@ -231,8 +255,8 @@ export class CashLogService {
         }
         const incoming = row.direction === "INCOMING";
         if (incoming) {
-            if (patch.receiptImageUrl !== undefined) {
-                throw new AppError("Receipt image only applies to outgoing cash entries.", 400, "CASH_LOG_RECEIPT_NOT_ALLOWED");
+            if (patch.receiptImageUrls !== undefined) {
+                throw new AppError("Receipt images only apply to outgoing cash entries.", 400, "CASH_LOG_RECEIPT_NOT_ALLOWED");
             }
             if (patch.department !== undefined) {
                 throw new AppError("Department only applies to outgoing cash entries.", 400, "CASH_LOG_DEPARTMENT_NOT_ALLOWED");
@@ -243,12 +267,13 @@ export class CashLogService {
                 throw new AppError("Payee company and invoice number only apply to incoming cash entries.", 400, "CASH_LOG_INCOMING_FIELDS_NOT_ALLOWED");
             }
         }
-        if (!incoming && patch.receiptImageUrl !== undefined) {
-            const oldR = row.receiptImageUrl;
-            const newR = patch.receiptImageUrl;
-            if (oldR && oldR !== newR) {
-                await removeStoredUpload(oldR);
-            }
+        if (!incoming && patch.receiptImageUrls !== undefined) {
+            const oldUrls = normalizeReceiptImageUrls(row.receiptImageUrls);
+            const newUrls = patch.receiptImageUrls === null
+                ? []
+                : normalizeReceiptImageUrls(patch.receiptImageUrls);
+            const removed = oldUrls.filter((u) => !newUrls.includes(u));
+            await removeStoredUploads(removed);
         }
         const data: Record<string, unknown> = {};
         if (patch.amount !== undefined)
@@ -268,8 +293,12 @@ export class CashLogService {
                 data.department = patch.department;
             if (patch.entryDate !== undefined)
                 data.entryDate = patch.entryDate;
-            if (patch.receiptImageUrl !== undefined)
-                data.receiptImageUrl = patch.receiptImageUrl ? String(patch.receiptImageUrl).trim() || null : null;
+            if (patch.receiptImageUrls !== undefined) {
+                const next = patch.receiptImageUrls === null
+                    ? []
+                    : normalizeReceiptImageUrls(patch.receiptImageUrls);
+                data.receiptImageUrls = next.length ? next : null;
+            }
         }
         const updated = await prisma.cashLogEntry.update({
             where: {
@@ -287,7 +316,7 @@ export class CashLogService {
                 department: true,
                 memo: true,
                 entryDate: true,
-                receiptImageUrl: true,
+                receiptImageUrls: true,
                 createdAt: true,
                 updatedAt: true
             }
@@ -300,7 +329,10 @@ export class CashLogService {
             queryCount: 1,
             metadata: { table: "cash_log_entry", op: "update" },
         });
-        return updated;
+        return {
+            ...updated,
+            receiptImageUrls: normalizeReceiptImageUrls(updated.receiptImageUrls),
+        };
     }
     async list(companyId: string, take = 100, opts?: {
         from?: string;
@@ -325,7 +357,7 @@ export class CashLogService {
                 department: true,
                 memo: true,
                 entryDate: true,
-                receiptImageUrl: true,
+                receiptImageUrls: true,
                 createdAt: true,
                 updatedAt: true,
                 leaflinkPostedPayments: true,
@@ -344,6 +376,7 @@ export class CashLogService {
         const storedScan = await findRecentLeafLinkStoredOrdersForCompany(companyId, 4000);
         return rows.map((r) => ({
             ...r,
+            receiptImageUrls: normalizeReceiptImageUrls(r.receiptImageUrls),
             leafLinkInvoiceStatus:
                 r.direction === "INCOMING"
                     ? summarizeLeafLinkInvoiceFromStoredRows(storedScan, {
@@ -378,7 +411,7 @@ export class CashLogService {
                 department: true,
                 memo: true,
                 entryDate: true,
-                receiptImageUrl: true,
+                receiptImageUrls: true,
                 createdAt: true,
                 leaflinkPaymentSyncStatus: true,
                 leaflinkPaymentSyncError: true,
@@ -407,7 +440,7 @@ export class CashLogService {
                 department: true,
                 memo: true,
                 entryDate: true,
-                receiptImageUrl: true,
+                receiptImageUrls: true,
                 createdAt: true
             }
         });
@@ -422,7 +455,7 @@ export class CashLogService {
         memo: string | null;
         entryDate: Date | null;
         createdAt: Date;
-        receiptImageUrl: string | null;
+        receiptImageUrls?: unknown;
     }>) {
         const header = [
             "id",
@@ -434,7 +467,7 @@ export class CashLogService {
             "invoiceNumber",
             "department",
             "memo",
-            "receiptImageUrl"
+            "receiptImageUrls"
         ];
         const lines = [header.join(",")];
         for (const r of rows) {
@@ -448,7 +481,7 @@ export class CashLogService {
                 csvEscape(r.invoiceNumber),
                 csvEscape(r.department),
                 csvEscape(r.memo),
-                csvEscape(r.receiptImageUrl)
+                csvEscape(normalizeReceiptImageUrls(r.receiptImageUrls).join(" | "))
             ].join(","));
         }
         return lines.join("\r\n");
@@ -457,12 +490,12 @@ export class CashLogService {
     async deleteById(companyId: string, id: string) {
         const row = await prisma.cashLogEntry.findFirst({
             where: { id, companyId },
-            select: { id: true, receiptImageUrl: true }
+            select: { id: true, receiptImageUrls: true }
         });
         if (!row) {
             throw new AppError("Cash log entry not found.", 404, "CASH_LOG_NOT_FOUND");
         }
-        await removeStoredUpload(row.receiptImageUrl);
+        await removeStoredUploads(normalizeReceiptImageUrls(row.receiptImageUrls));
         await prisma.cashLogEntry.delete({ where: { id: row.id } });
     }
 
