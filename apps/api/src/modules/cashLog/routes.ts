@@ -29,12 +29,14 @@ const listQuerySchema = z.object({
     take: z.coerce.number().int().positive().max(500).optional(),
     from: isoDate.optional(),
     to: isoDate.optional(),
-    direction: z.enum(["INCOMING", "OUTGOING"]).optional()
+    direction: z.enum(["INCOMING", "OUTGOING"]).optional(),
+    payee: z.string().trim().max(200).optional()
 });
 const exportQuerySchema = z.object({
     from: isoDate,
     to: isoDate,
-    direction: z.enum(["INCOMING", "OUTGOING"]).optional()
+    direction: z.enum(["INCOMING", "OUTGOING"]).optional(),
+    payee: z.string().trim().max(200).optional()
 });
 const cashLogIdParam = z.object({ id: z.string().cuid() });
 
@@ -51,7 +53,8 @@ cashLogRouter.get("/export", requireRole([...cashLogReadRoles]), validate({ quer
     const direction = req.query.direction === "INCOMING" || req.query.direction === "OUTGOING"
         ? req.query.direction
         : undefined;
-    const rows = await service.listForExport(companyId, { from, to, direction });
+    const payee = typeof req.query.payee === "string" ? req.query.payee : undefined;
+    const rows = await service.listForExport(companyId, { from, to, direction, payee });
     const csv = service.rowsToCsv(rows);
     const safeFrom = from.replace(/[^\d-]/g, "");
     const safeTo = to.replace(/[^\d-]/g, "");
@@ -71,7 +74,8 @@ cashLogRouter.get("/", requireRole([...cashLogReadRoles]), validate({ query: lis
     const direction = req.query.direction === "INCOMING" || req.query.direction === "OUTGOING"
         ? req.query.direction
         : undefined;
-    const rows = await service.list(companyId, take, { from, to, direction });
+    const payee = typeof req.query?.payee === "string" ? req.query.payee : undefined;
+    const rows = await service.list(companyId, take, { from, to, direction, payee });
     res.json({ rows });
 }));
 

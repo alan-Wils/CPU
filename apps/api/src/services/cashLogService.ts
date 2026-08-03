@@ -340,13 +340,18 @@ export class CashLogService {
         from?: string;
         to?: string;
         direction?: "INCOMING" | "OUTGOING";
+        payee?: string;
     }) {
         const range = buildUtcDayRange(opts);
+        const payee = String(opts?.payee || "").trim();
         const rows = await prisma.cashLogEntry.findMany({
             where: {
                 companyId,
                 ...(opts?.direction ? { direction: opts.direction } : {}),
-                ...(range ? whereEntryDateOrLegacyCreated(range) : {})
+                ...(range ? whereEntryDateOrLegacyCreated(range) : {}),
+                ...(payee
+                    ? { payeeCompany: { contains: payee, mode: "insensitive" } }
+                    : {})
             },
             orderBy: { createdAt: "desc" },
             take: Math.min(Math.max(take, 1), 500),
@@ -421,16 +426,25 @@ export class CashLogService {
         });
     }
 
-    async listForExport(companyId: string, opts: { from: string; to: string; direction?: "INCOMING" | "OUTGOING" }) {
+    async listForExport(companyId: string, opts: {
+        from: string;
+        to: string;
+        direction?: "INCOMING" | "OUTGOING";
+        payee?: string;
+    }) {
         const range = buildUtcDayRange(opts);
         if (!range) {
             throw new AppError("Export requires `from` and `to` query parameters (YYYY-MM-DD)", 400, "CASH_LOG_EXPORT_RANGE_REQUIRED");
         }
+        const payee = String(opts.payee || "").trim();
         return prisma.cashLogEntry.findMany({
             where: {
                 companyId,
                 ...(opts.direction ? { direction: opts.direction } : {}),
-                ...whereEntryDateOrLegacyCreated(range)
+                ...whereEntryDateOrLegacyCreated(range),
+                ...(payee
+                    ? { payeeCompany: { contains: payee, mode: "insensitive" } }
+                    : {})
             },
             orderBy: { createdAt: "desc" },
             select: {

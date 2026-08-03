@@ -660,6 +660,7 @@ export default function AdminPage() {
   const [checkListError, setCheckListError] = useState("");
   const [checkFilterFrom, setCheckFilterFrom] = useState(defaultCheckFilterFrom);
   const [checkFilterTo, setCheckFilterTo] = useState(defaultCheckFilterTo);
+  const [checkFilterPayee, setCheckFilterPayee] = useState("");
   const [checkPayee, setCheckPayee] = useState("");
   const [checkTotal, setCheckTotal] = useState("");
   const [checkInvoice, setCheckInvoice] = useState("");
@@ -676,6 +677,7 @@ export default function AdminPage() {
   const [cashListError, setCashListError] = useState("");
   const [cashFilterFrom, setCashFilterFrom] = useState(defaultCheckFilterFrom);
   const [cashFilterTo, setCashFilterTo] = useState(defaultCheckFilterTo);
+  const [cashFilterPayee, setCashFilterPayee] = useState("");
   const [cashDirection, setCashDirection] = useState<"INCOMING" | "OUTGOING">("INCOMING");
   const [cashAmount, setCashAmount] = useState("");
   const [cashPayeeCompany, setCashPayeeCompany] = useState("");
@@ -711,6 +713,11 @@ export default function AdminPage() {
   const [leafLinkMatchError, setLeafLinkMatchError] = useState("");
   const [leafLinkMatchChoices, setLeafLinkMatchChoices] = useState<CheckLeafLinkMatchCandidate[]>([]);
   const [leafLinkMatchModalOpen, setLeafLinkMatchModalOpen] = useState(false);
+  const [leafLinkMatchSession, setLeafLinkMatchSession] = useState<{
+    kind: "check" | "cash";
+    entryId: string;
+    loggedAmount: number;
+  } | null>(null);
   const [leafLinkSelectedOrderNumbers, setLeafLinkSelectedOrderNumbers] = useState<string[]>([]);
   const [leafLinkPostingPayment, setLeafLinkPostingPayment] = useState(false);
   const [leafLinkManualOverrideNote, setLeafLinkManualOverrideNote] = useState("");
@@ -810,6 +817,39 @@ export default function AdminPage() {
       String((company as { id?: string } | null)?.id || "").trim() ||
       String(getAuthCompany()?.id || "").trim()
     );
+  }
+
+  function closeLeafLinkInvoiceMatchPicker() {
+    setLeafLinkMatchModalOpen(false);
+    setLeafLinkMatchSession(null);
+    setLeafLinkMatchChoices([]);
+    setLeafLinkSelectedOrderNumbers([]);
+    setLeafLinkManualOverrideNote("");
+    setLeafLinkMatchError("");
+  }
+
+  function openLeafLinkInvoiceMatchPicker(input: {
+    kind: "check" | "cash";
+    entryId: string;
+    loggedAmount: number;
+    candidates: CheckLeafLinkMatchCandidate[];
+  }) {
+    if (!input.candidates.length) return;
+    const allBuilt = buildLeafLinkPaymentSplits(input.loggedAmount, input.candidates);
+    setLeafLinkMatchSession({
+      kind: input.kind,
+      entryId: input.entryId,
+      loggedAmount: input.loggedAmount,
+    });
+    setLeafLinkMatchChoices(input.candidates);
+    setLeafLinkSelectedOrderNumbers(
+      allBuilt.ok && allBuilt.totalsMatch
+        ? input.candidates.map((c) => c.orderNumber)
+        : [input.candidates[0].orderNumber],
+    );
+    setLeafLinkManualOverrideNote("");
+    setLeafLinkMatchError("");
+    setLeafLinkMatchModalOpen(true);
   }
 
   function showLeafLinkPaymentApplyDialog(input: {
@@ -982,22 +1022,24 @@ export default function AdminPage() {
         return;
       }
 
-      const built = buildLeafLinkPaymentSplits(loggedAmount, list);
-      if (!built.ok) {
+      if (list.length > 1) {
+        /** Always let the user pick which invoices to pay when several match. */
+        openLeafLinkInvoiceMatchPicker({
+          kind,
+          entryId,
+          loggedAmount,
+          candidates: list,
+        });
         setLeafLinkToast({
-          message:
-            list.length > 1
-              ? `Multiple invoices found (${formatUsdLeafLink(
-                  roundLeafLinkMoney(list.reduce((s, c) => s + leafLinkOrderOwedAmount(c), 0)),
-                )} owed vs ${formatUsdLeafLink(loggedAmount)} logged). Open the entry and use Find LeafLink Invoice to choose which to pay.`
-              : built.error,
+          message: `Multiple LeafLink invoices matched this ${noun}. Select which to mark paid.`,
         });
         return;
       }
 
-      if (list.length > 1 && !built.totalsMatch) {
+      const built = buildLeafLinkPaymentSplits(loggedAmount, list);
+      if (!built.ok) {
         setLeafLinkToast({
-          message: `Multiple invoices found totaling ${formatUsdLeafLink(built.totalOwed)} vs logged ${formatUsdLeafLink(loggedAmount)}. Open the entry and use Find LeafLink Invoice to select invoices.`,
+          message: built.error,
         });
         return;
       }
@@ -1063,6 +1105,7 @@ export default function AdminPage() {
       const q = new URLSearchParams();
       if (checkFilterFrom.trim()) q.set("from", checkFilterFrom.trim());
       if (checkFilterTo.trim()) q.set("to", checkFilterTo.trim());
+      if (checkFilterPayee.trim()) q.set("payee", checkFilterPayee.trim());
       q.set("take", "200");
       const path = withCompanyQuery(`/api/checks?${q.toString()}`, cid);
       const data = await apiRequest<{ rows?: CheckCaptureRow[] }>(path, { companyId: cid });
@@ -1197,10 +1240,9 @@ export default function AdminPage() {
     setCheckExporting(true);
     try {
       const token = getAuthToken();
-      const path = withCompanyQuery(
-        `/api/checks/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
-        cid,
-      );
+      const exportQs = new URLSearchParams({ from, to });
+      if (checkFilterPayee.trim()) exportQs.set("payee", checkFilterPayee.trim());
+      const path = withCompanyQuery(`/api/checks/export?${exportQs.toString()}`, cid);
       const headers: Record<string, string> = {};
       if (token) headers.Authorization = `Bearer ${token}`;
       if (cid) headers["X-Company-Id"] = cid;
@@ -1295,6 +1337,7 @@ export default function AdminPage() {
       const q = new URLSearchParams();
       if (cashFilterFrom.trim()) q.set("from", cashFilterFrom.trim());
       if (cashFilterTo.trim()) q.set("to", cashFilterTo.trim());
+      if (cashFilterPayee.trim()) q.set("payee", cashFilterPayee.trim());
       if (cashHistoryDirection !== "ALL") q.set("direction", cashHistoryDirection);
       q.set("take", "200");
       const path = withCompanyQuery(`/api/cash-log?${q.toString()}`, cid);
@@ -1460,6 +1503,7 @@ export default function AdminPage() {
         to,
       });
       if (cashHistoryDirection !== "ALL") exportQs.set("direction", cashHistoryDirection);
+      if (cashFilterPayee.trim()) exportQs.set("payee", cashFilterPayee.trim());
       const path = withCompanyQuery(`/api/cash-log/export?${exportQs.toString()}`, cid);
       const headers: Record<string, string> = {};
       if (token) headers.Authorization = `Bearer ${token}`;
@@ -1655,6 +1699,14 @@ export default function AdminPage() {
       setEditCheckError("Select a company context before matching.");
       return;
     }
+    const loggedAmount =
+      typeof checkBeingEdited.amount === "number" && Number.isFinite(checkBeingEdited.amount)
+        ? checkBeingEdited.amount
+        : NaN;
+    if (!Number.isFinite(loggedAmount) || loggedAmount <= 0) {
+      setEditCheckError("Check amount is required before matching LeafLink invoices.");
+      return;
+    }
     setLeafLinkMatchLoading(true);
     setLeafLinkMatchError("");
     setLeafLinkMatchChoices([]);
@@ -1695,25 +1747,12 @@ export default function AdminPage() {
         });
         return;
       }
-      setLeafLinkMatchChoices(combined);
-      setLeafLinkSelectedOrderNumbers(
-        combined.length
-          ? (() => {
-              const logged =
-                typeof checkBeingEdited.amount === "number" && Number.isFinite(checkBeingEdited.amount)
-                  ? checkBeingEdited.amount
-                  : null;
-              if (logged == null) return [combined[0].orderNumber];
-              const allBuilt = buildLeafLinkPaymentSplits(logged, combined);
-              if (allBuilt.ok && allBuilt.totalsMatch) {
-                return combined.map((c) => c.orderNumber);
-              }
-              return [combined[0].orderNumber];
-            })()
-          : [],
-      );
-      setLeafLinkManualOverrideNote("");
-      setLeafLinkMatchModalOpen(true);
+      openLeafLinkInvoiceMatchPicker({
+        kind: "check",
+        entryId: checkBeingEdited.id,
+        loggedAmount,
+        candidates: combined,
+      });
     } catch (e: any) {
       setLeafLinkMatchError(e?.message || "Could not search LeafLink invoices.");
     } finally {
@@ -1721,17 +1760,17 @@ export default function AdminPage() {
     }
   }
 
-  async function markLeafLinkInvoicePaidForCheck() {
-    if (!checkBeingEdited || leafLinkSelectedOrderNumbers.length === 0) return;
+  async function markLeafLinkInvoicePaidFromMatchModal() {
+    const session = leafLinkMatchSession;
+    if (!session || leafLinkSelectedOrderNumbers.length === 0) return;
     if (leafLinkPostingPayment || leafLinkPostingLockRef.current) return;
     const cid = checksCompanyId();
     if (!cid) return;
-    const loggedAmount =
-      typeof checkBeingEdited.amount === "number" && Number.isFinite(checkBeingEdited.amount)
-        ? checkBeingEdited.amount
-        : NaN;
+    const loggedAmount = session.loggedAmount;
     if (!Number.isFinite(loggedAmount) || loggedAmount <= 0) {
-      setLeafLinkMatchError("Check amount is required before posting to LeafLink.");
+      setLeafLinkMatchError(
+        `${session.kind === "check" ? "Check" : "Cash"} amount is required before posting to LeafLink.`,
+      );
       return;
     }
     const selected = leafLinkMatchChoices.filter((x) =>
@@ -1750,34 +1789,44 @@ export default function AdminPage() {
     if (!built.totalsMatch && overrideNote.length < 3) {
       setLeafLinkMatchError(
         built.splits.length > 1
-          ? "Logged check amount differs from the combined invoice balances. Enter a short note explaining why before posting."
-          : "Logged check amount differs from the invoice balance. Enter a short note explaining why before posting.",
+          ? "Logged amount differs from the combined invoice balances. Enter a short note explaining why before posting."
+          : "Logged amount differs from the invoice balance. Enter a short note explaining why before posting.",
       );
       return;
     }
     setLeafLinkPostingPayment(true);
     setLeafLinkMatchError("");
-    const editedId = checkBeingEdited.id;
+    const editedId = session.entryId;
+    const kind = session.kind;
     try {
       await postLeafLinkPaymentSplits({
-        kind: "check",
-        entryId: checkBeingEdited.id,
+        kind,
+        entryId: editedId,
         splits: built.splits,
         totalsMatch: built.totalsMatch,
         overrideNote: !built.totalsMatch ? overrideNote : undefined,
       });
       showPaymentAppliedToast();
-      setLeafLinkMatchModalOpen(false);
-      setLeafLinkManualOverrideNote("");
-      setLeafLinkSelectedOrderNumbers([]);
-      setCheckFormSuccess(
-        built.splits.length > 1
-          ? `Posted ${built.splits.length} LeafLink payments successfully.`
-          : "LeafLink payment posted successfully.",
-      );
-      const rows = await loadCheckCaptures();
-      const fresh = rows.find((r) => r.id === editedId);
-      if (fresh) setCheckBeingEdited(fresh);
+      closeLeafLinkInvoiceMatchPicker();
+      if (kind === "check") {
+        setCheckFormSuccess(
+          built.splits.length > 1
+            ? `Posted ${built.splits.length} LeafLink payments successfully.`
+            : "LeafLink payment posted successfully.",
+        );
+        const rows = await loadCheckCaptures();
+        const fresh = rows.find((r) => r.id === editedId);
+        if (fresh && checkBeingEdited?.id === editedId) setCheckBeingEdited(fresh);
+      } else {
+        setCashFormSuccess(
+          built.splits.length > 1
+            ? `Posted ${built.splits.length} LeafLink payments successfully.`
+            : "LeafLink payment posted successfully.",
+        );
+        const rows = await loadCashEntries();
+        const fresh = rows.find((r) => r.id === editedId);
+        if (fresh && cashBeingEdited?.id === editedId) setCashBeingEdited(fresh);
+      }
     } catch (e: any) {
       setLeafLinkMatchError(e?.message || "Could not post payment to LeafLink.");
     } finally {
@@ -2082,6 +2131,7 @@ export default function AdminPage() {
     setLeafLinkMatchChoices([]);
     setLeafLinkSelectedOrderNumbers([]);
     setLeafLinkMatchModalOpen(false);
+    setLeafLinkMatchSession(null);
     setEditCheckFieldKey((k) => k + 1);
   }, [checkBeingEdited]);
 
@@ -3540,21 +3590,37 @@ export default function AdminPage() {
                       }}
                     >
                       <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
-                        From (YYYY-MM-DD)
+                        From
                         <input
+                          type="date"
                           value={checkFilterFrom}
                           onChange={(e) => setCheckFilterFrom(e.target.value)}
-                          placeholder="2026-01-01"
                           style={inputStyle}
                         />
                       </label>
                       <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
-                        To (YYYY-MM-DD)
+                        To
                         <input
+                          type="date"
                           value={checkFilterTo}
                           onChange={(e) => setCheckFilterTo(e.target.value)}
-                          placeholder="2026-12-31"
                           style={inputStyle}
+                        />
+                      </label>
+                      <label style={{ ...labelStyle, minWidth: 200, marginBottom: 0 }}>
+                        Payee
+                        <input
+                          value={checkFilterPayee}
+                          onChange={(e) => setCheckFilterPayee(e.target.value)}
+                          placeholder="Search payee name"
+                          style={inputStyle}
+                          autoComplete="off"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void loadCheckCaptures();
+                            }
+                          }}
                         />
                       </label>
                       <button
@@ -4028,19 +4094,37 @@ export default function AdminPage() {
                   }}
                 >
                   <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
-                    From (YYYY-MM-DD)
+                    From
                     <input
+                      type="date"
                       value={cashFilterFrom}
                       onChange={(e) => setCashFilterFrom(e.target.value)}
                       style={{ ...inputStyle }}
                     />
                   </label>
                   <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
-                    To (YYYY-MM-DD)
+                    To
                     <input
+                      type="date"
                       value={cashFilterTo}
                       onChange={(e) => setCashFilterTo(e.target.value)}
                       style={{ ...inputStyle }}
+                    />
+                  </label>
+                  <label style={{ ...labelStyle, minWidth: 200, marginBottom: 0 }}>
+                    Payee
+                    <input
+                      value={cashFilterPayee}
+                      onChange={(e) => setCashFilterPayee(e.target.value)}
+                      placeholder="Search payee company"
+                      style={{ ...inputStyle }}
+                      autoComplete="off"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void loadCashEntries();
+                        }
+                      }}
                     />
                   </label>
                   <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
@@ -4584,19 +4668,20 @@ export default function AdminPage() {
           </div>
         ) : null}
 
-        {leafLinkMatchModalOpen && checkBeingEdited ? (
-          <div style={{ ...modalOverlayStyle, zIndex: 1180 }}>
+        {leafLinkMatchModalOpen && leafLinkMatchSession ? (
+          <div style={{ ...modalOverlayStyle, zIndex: 2147482900 }}>
             <div style={{ ...modalStyle, maxWidth: 760, width: "100%", maxHeight: "92vh", overflowY: "auto" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 12 }}>
                 <h2 style={{ ...sectionTitleStyle, marginBottom: 0 }}>Confirm LeafLink invoice match</h2>
-                <button type="button" onClick={() => setLeafLinkMatchModalOpen(false)} style={{ ...modalButtonStyle }}>
+                <button type="button" onClick={() => closeLeafLinkInvoiceMatchPicker()} style={{ ...modalButtonStyle }}>
                   Close
                 </button>
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: 12, lineHeight: 1.5, fontSize: 13 }}>
-                Select one or more invoices that match the <strong>full</strong> invoice number on the check
-                (e.g. <code>d83a9849</code>). When multiple are selected, each gets its own LeafLink payment for
-                its balance owed. Wrong-order posts (e.g. applying 9849 onto 9947) are blocked.
+                Select one or more invoices that match the <strong>full</strong> invoice number on this{" "}
+                {leafLinkMatchSession.kind} (e.g. <code>d83a9849</code>). When multiple are selected, each gets
+                its own LeafLink payment for its balance owed. Wrong-order posts (e.g. applying 9849 onto 9947)
+                are blocked.
               </p>
               {leafLinkMatchChoices.map((m) => {
                 const selected = leafLinkSelectedOrderNumbers.includes(m.orderNumber);
@@ -4646,18 +4731,16 @@ export default function AdminPage() {
                 );
               })}
               {(() => {
-                const loggedAmount =
-                  typeof checkBeingEdited.amount === "number" && Number.isFinite(checkBeingEdited.amount)
-                    ? checkBeingEdited.amount
-                    : null;
+                const loggedAmount = leafLinkMatchSession.loggedAmount;
                 const selected = leafLinkMatchChoices.filter((x) =>
                   leafLinkSelectedOrderNumbers.includes(x.orderNumber),
                 );
                 const built =
-                  loggedAmount != null && selected.length > 0
+                  Number.isFinite(loggedAmount) && selected.length > 0
                     ? buildLeafLinkPaymentSplits(loggedAmount, selected)
                     : null;
                 const mismatch = Boolean(built && built.ok && !built.totalsMatch);
+                const amountLabel = leafLinkMatchSession.kind === "check" ? "check" : "cash";
                 return (
                   <div style={{ marginTop: 8, marginBottom: 12 }}>
                     <div
@@ -4672,8 +4755,8 @@ export default function AdminPage() {
                       }}
                     >
                       <div>
-                        <strong>Logged check amount:</strong>{" "}
-                        {loggedAmount != null ? formatUsdLeafLink(loggedAmount) : "—"}
+                        <strong>Logged {amountLabel} amount:</strong>{" "}
+                        {Number.isFinite(loggedAmount) ? formatUsdLeafLink(loggedAmount) : "—"}
                       </div>
                       <div>
                         <strong>Selected invoice balance{selected.length === 1 ? "" : "s"}:</strong>{" "}
@@ -4704,7 +4787,7 @@ export default function AdminPage() {
                     {mismatch ? (
                       <div style={{ marginTop: 12 }}>
                         <div style={{ color: "#fbbf24", fontSize: 13, marginBottom: 8, lineHeight: 1.5 }}>
-                          The logged check amount does not match the selected invoice balance
+                          The logged {amountLabel} amount does not match the selected invoice balance
                           {selected.length > 1 ? "s" : ""}. Add a note explaining why before posting.
                         </div>
                         <textarea
@@ -4733,20 +4816,17 @@ export default function AdminPage() {
                     leafLinkSelectedOrderNumbers.length === 0 ||
                     leafLinkPostingPayment ||
                     (() => {
-                      const loggedAmount =
-                        typeof checkBeingEdited.amount === "number" && Number.isFinite(checkBeingEdited.amount)
-                          ? checkBeingEdited.amount
-                          : null;
+                      const loggedAmount = leafLinkMatchSession.loggedAmount;
                       const selected = leafLinkMatchChoices.filter((x) =>
                         leafLinkSelectedOrderNumbers.includes(x.orderNumber),
                       );
-                      if (loggedAmount == null || !selected.length) return true;
+                      if (!Number.isFinite(loggedAmount) || !selected.length) return true;
                       const built = buildLeafLinkPaymentSplits(loggedAmount, selected);
                       if (!built.ok) return true;
                       return !built.totalsMatch && leafLinkManualOverrideNote.trim().length < 3;
                     })()
                   }
-                  onClick={() => void markLeafLinkInvoicePaidForCheck()}
+                  onClick={() => void markLeafLinkInvoicePaidFromMatchModal()}
                   style={{
                     ...smallButtonStyle,
                     background: leafLinkPostingPayment ? "rgba(71, 85, 105, 0.5)" : "rgba(22, 163, 74, 0.55)",
@@ -4761,7 +4841,7 @@ export default function AdminPage() {
                       ? `Post ${leafLinkSelectedOrderNumbers.length} payments to LeafLink`
                       : "Post payment to LeafLink"}
                 </button>
-                <button type="button" onClick={() => setLeafLinkMatchModalOpen(false)} style={modalButtonStyle}>
+                <button type="button" onClick={() => closeLeafLinkInvoiceMatchPicker()} style={modalButtonStyle}>
                   Cancel
                 </button>
               </div>

@@ -29,11 +29,13 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const listQuerySchema = z.object({
     take: z.coerce.number().int().positive().max(200).optional(),
     from: isoDate.optional(),
-    to: isoDate.optional()
+    to: isoDate.optional(),
+    payee: z.string().trim().max(200).optional()
 });
 const exportQuerySchema = z.object({
     from: isoDate,
-    to: isoDate
+    to: isoDate,
+    payee: z.string().trim().max(200).optional()
 });
 const checkCaptureIdParam = z.object({ id: z.string().cuid() });
 export const checksRouter = Router();
@@ -45,7 +47,8 @@ checksRouter.get("/export", requireRole([...adminExportRoles]), validate({ query
     }
     const from = String(req.query.from);
     const to = String(req.query.to);
-    const rows = await service.listChecksForExport(companyId, { from, to });
+    const payee = typeof req.query.payee === "string" ? req.query.payee : undefined;
+    const rows = await service.listChecksForExport(companyId, { from, to, payee });
     const csv = service.rowsToCsv(rows);
     const safeFrom = from.replace(/[^\d-]/g, "");
     const safeTo = to.replace(/[^\d-]/g, "");
@@ -61,7 +64,8 @@ checksRouter.get("/", validate({ query: listQuerySchema }), asyncHandler(async (
     const take = Number(req.query?.take || 50);
     const from = typeof req.query?.from === "string" ? req.query.from : undefined;
     const to = typeof req.query?.to === "string" ? req.query.to : undefined;
-    const rows = await service.listChecks(companyId, take, { from, to });
+    const payee = typeof req.query?.payee === "string" ? req.query.payee : undefined;
+    const rows = await service.listChecks(companyId, take, { from, to, payee });
     res.json({ rows });
 }));
 checksRouter.post("/upload", requireRole([...writeRoles]), validate({ body: checkUploadSchema }), asyncHandler(async (req, res) => {

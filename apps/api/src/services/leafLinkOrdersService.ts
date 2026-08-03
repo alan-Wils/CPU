@@ -382,8 +382,21 @@ export function isShortInvoiceStubToken(tok: string): boolean {
 }
 
 /**
+ * LeafLink UUID / opaque ids (after normalize). Never use these for short-stub
+ * substring matching — digits like `9632` appear inside random UUIDs and caused
+ * false `invoice_partial` hits (e.g. Epic Remedy when the check invoice was 9632).
+ */
+function isOpaqueLeafLinkIdentityKey(normalizedKey: string): boolean {
+  if (!normalizedKey) return true;
+  if (/^[a-f0-9]{32}$/i.test(normalizedKey)) return true;
+  if (normalizedKey.length >= 24 && /^[a-f0-9]+$/i.test(normalizedKey)) return true;
+  return false;
+}
+
+/**
  * Classify how a typed invoice token relates to a LeafLink order.
  * Full codes like `d83a9862` only return exact (never last4).
+ * Short stubs only last4/partial against human order numbers — never UUID ids.
  */
 export function classifyInvoiceTokenMatch(
   token: string,
@@ -394,19 +407,29 @@ export function classifyInvoiceTokenMatch(
   if (!tok) return null;
   const normTok = normalizeInvoiceOrderKey(tok);
   if (!normTok) return null;
-  const orderKeys = orderIdentityKeys.map((k) => normalizeInvoiceOrderKey(k)).filter(Boolean);
-  if (orderKeys.some((k) => k === normTok)) return "invoice_exact";
+  const allKeys = orderIdentityKeys.map((k) => normalizeInvoiceOrderKey(k)).filter(Boolean);
+  if (allKeys.some((k) => k === normTok)) return "invoice_exact";
+
+  const orderNumberKeys = [
+    ...allKeys.filter((k) => !isOpaqueLeafLinkIdentityKey(k)),
+    normalizeInvoiceOrderKey(orderNumberForTail),
+  ].filter(Boolean);
+
   if (isShortInvoiceStubToken(tok)) {
     const tokDigits = invoiceDigitsOnly(tok);
     const ordTail4 = orderTailDigits(orderNumberForTail, 4);
     if (tokDigits.length >= 4 && ordTail4.length >= 4 && tokDigits.slice(-4) === ordTail4) {
       return "invoice_last4";
     }
-    if (orderKeys.some((k) => k.includes(normTok) || normTok.includes(k))) {
+    /** Digit-only stubs (e.g. `9632`) must match via last4 — not substring. */
+    if (tokDigits.length > 0 && tokDigits === normTok) {
+      return null;
+    }
+    if (orderNumberKeys.some((k) => k.includes(normTok))) {
       return "invoice_partial";
     }
   } else if (normTok.length <= 5) {
-    if (orderKeys.some((k) => k.includes(normTok) || normTok.includes(k))) {
+    if (orderNumberKeys.some((k) => k.includes(normTok))) {
       return "invoice_partial";
     }
   }

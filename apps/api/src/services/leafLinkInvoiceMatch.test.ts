@@ -27,6 +27,22 @@ describe("LeafLink invoice matching keys", () => {
     expect(classifyInvoiceTokenMatch("9862", ["d83a9862"], "d83a9862")).toBe("invoice_last4");
   });
 
+  it("does not partial-match digit stubs against UUID ids (Epic Remedy false positive)", () => {
+    const uuidContaining9632 = "aec108ac-a1f4-40fa-9632-a12fa9bf6e2f";
+    expect(
+      classifyInvoiceTokenMatch("9632", ["d83a9547", uuidContaining9632], "d83a9547"),
+    ).toBeNull();
+    expect(
+      classifyInvoiceTokenMatch("9632", ["d83a9632", uuidContaining9632], "d83a9632"),
+    ).toBe("invoice_last4");
+  });
+
+  it("still allows short alphanumeric prefix partial against order numbers only", () => {
+    expect(
+      classifyInvoiceTokenMatch("d83a", ["d83a9547", "aec108aca1f440fa9632a12fa9bf6e2f"], "d83a9547"),
+    ).toBe("invoice_partial");
+  });
+
   it("splits multiple invoice numbers", () => {
     expect(splitInvoiceNumberTokens("d83a9831, d83a9834")).toEqual(["d83a9831", "d83a9834"]);
   });

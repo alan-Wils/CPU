@@ -721,10 +721,14 @@ export class CheckCaptureService {
     }
     async listChecks(companyId, take = 50, opts) {
         const createdAt = this.buildDateFilter(opts);
+        const payee = String(opts?.payee || "").trim();
         const rows = await prisma.checkCapture.findMany({
             where: {
                 companyId,
-                ...(createdAt ? { createdAt } : {})
+                ...(createdAt ? { createdAt } : {}),
+                ...(payee
+                    ? { payerName: { contains: payee, mode: "insensitive" } }
+                    : {})
             },
             orderBy: { createdAt: "desc" },
             take: Math.min(Math.max(take, 1), 200),
@@ -779,8 +783,15 @@ export class CheckCaptureService {
         if (!createdAt) {
             throw new AppError("Export requires `from` and `to` query parameters (YYYY-MM-DD)", 400, "CHECK_EXPORT_RANGE_REQUIRED");
         }
+        const payee = String(opts?.payee || "").trim();
         return prisma.checkCapture.findMany({
-            where: { companyId, createdAt },
+            where: {
+                companyId,
+                createdAt,
+                ...(payee
+                    ? { payerName: { contains: payee, mode: "insensitive" } }
+                    : {})
+            },
             orderBy: { createdAt: "desc" },
             select: {
                 id: true,
