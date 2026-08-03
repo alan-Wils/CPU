@@ -669,15 +669,15 @@ export default function AdminPage() {
   const [checkFormError, setCheckFormError] = useState("");
   const [checkFormSuccess, setCheckFormSuccess] = useState("");
   const [checkExporting, setCheckExporting] = useState(false);
-  const [checkLogOpen, setCheckLogOpen] = useState(false);
-  const [cashLogOpen, setCashLogOpen] = useState(false);
+  const [paymentLogOpen, setPaymentLogOpen] = useState(false);
+  /** Which create form is shown in the payment log. */
+  const [paymentCreateKind, setPaymentCreateKind] = useState<"CHECK" | "CASH">("CHECK");
+  /** History filter: checks, cash, or both. */
+  const [paymentFilterMethod, setPaymentFilterMethod] = useState<"BOTH" | "CHECK" | "CASH">("BOTH");
 
   const [cashRows, setCashRows] = useState<CashLogRow[]>([]);
   const [cashListLoading, setCashListLoading] = useState(false);
   const [cashListError, setCashListError] = useState("");
-  const [cashFilterFrom, setCashFilterFrom] = useState(defaultCheckFilterFrom);
-  const [cashFilterTo, setCashFilterTo] = useState(defaultCheckFilterTo);
-  const [cashFilterPayee, setCashFilterPayee] = useState("");
   const [cashDirection, setCashDirection] = useState<"INCOMING" | "OUTGOING">("INCOMING");
   const [cashAmount, setCashAmount] = useState("");
   const [cashPayeeCompany, setCashPayeeCompany] = useState("");
@@ -1096,7 +1096,7 @@ export default function AdminPage() {
   }
 
   async function loadCheckCaptures(): Promise<CheckCaptureRow[]> {
-    if (!canManageUsers(currentUser?.role || "")) return [];
+    if (!canAccessFinancialAdminTools(currentUser?.role || "")) return [];
     const cid = checksCompanyId();
     if (!cid) return [];
     setCheckListLoading(true);
@@ -1118,6 +1118,44 @@ export default function AdminPage() {
     } finally {
       setCheckListLoading(false);
     }
+  }
+
+  async function loadCashEntries(): Promise<CashLogRow[]> {
+    if (!canAccessFinancialAdminTools(currentUser?.role || "")) return [];
+    const cid = checksCompanyId();
+    if (!cid) return [];
+    setCashListLoading(true);
+    setCashListError("");
+    try {
+      const q = new URLSearchParams();
+      if (checkFilterFrom.trim()) q.set("from", checkFilterFrom.trim());
+      if (checkFilterTo.trim()) q.set("to", checkFilterTo.trim());
+      if (checkFilterPayee.trim()) q.set("payee", checkFilterPayee.trim());
+      if (cashHistoryDirection !== "ALL") q.set("direction", cashHistoryDirection);
+      q.set("take", "200");
+      const path = withCompanyQuery(`/api/cash-log?${q.toString()}`, cid);
+      const data = await apiRequest<{ rows?: CashLogRow[] }>(path, { companyId: cid });
+      const rows = Array.isArray(data?.rows) ? data.rows : [];
+      setCashRows(rows);
+      return rows;
+    } catch (e: any) {
+      setCashListError(e?.message || "Could not load cash log.");
+      return [];
+    } finally {
+      setCashListLoading(false);
+    }
+  }
+
+  async function loadPaymentHistory() {
+    if (!canAccessFinancialAdminTools(currentUser?.role || "")) return;
+    const wantCheck = paymentFilterMethod === "BOTH" || paymentFilterMethod === "CHECK";
+    const wantCash = paymentFilterMethod === "BOTH" || paymentFilterMethod === "CASH";
+    const tasks: Promise<unknown>[] = [];
+    if (wantCheck) tasks.push(loadCheckCaptures());
+    else setCheckRows([]);
+    if (wantCash) tasks.push(loadCashEntries());
+    else setCashRows([]);
+    await Promise.all(tasks);
   }
 
   async function saveCheckCapture() {
@@ -1327,32 +1365,6 @@ export default function AdminPage() {
     }
   }
 
-  async function loadCashEntries(): Promise<CashLogRow[]> {
-    if (!canAccessFinancialAdminTools(currentUser?.role || "")) return [];
-    const cid = checksCompanyId();
-    if (!cid) return [];
-    setCashListLoading(true);
-    setCashListError("");
-    try {
-      const q = new URLSearchParams();
-      if (cashFilterFrom.trim()) q.set("from", cashFilterFrom.trim());
-      if (cashFilterTo.trim()) q.set("to", cashFilterTo.trim());
-      if (cashFilterPayee.trim()) q.set("payee", cashFilterPayee.trim());
-      if (cashHistoryDirection !== "ALL") q.set("direction", cashHistoryDirection);
-      q.set("take", "200");
-      const path = withCompanyQuery(`/api/cash-log?${q.toString()}`, cid);
-      const data = await apiRequest<{ rows?: CashLogRow[] }>(path, { companyId: cid });
-      const rows = Array.isArray(data?.rows) ? data.rows : [];
-      setCashRows(rows);
-      return rows;
-    } catch (e: any) {
-      setCashListError(e?.message || "Could not load cash log.");
-      return [];
-    } finally {
-      setCashListLoading(false);
-    }
-  }
-
   async function handleCashReceiptFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
@@ -1489,8 +1501,8 @@ export default function AdminPage() {
       setCashFormError("Select a company context before exporting.");
       return;
     }
-    const from = cashFilterFrom.trim();
-    const to = cashFilterTo.trim();
+    const from = checkFilterFrom.trim();
+    const to = checkFilterTo.trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
       setCashFormError("Use YYYY-MM-DD for both filter dates before exporting.");
       return;
@@ -1503,7 +1515,7 @@ export default function AdminPage() {
         to,
       });
       if (cashHistoryDirection !== "ALL") exportQs.set("direction", cashHistoryDirection);
-      if (cashFilterPayee.trim()) exportQs.set("payee", cashFilterPayee.trim());
+      if (checkFilterPayee.trim()) exportQs.set("payee", checkFilterPayee.trim());
       const path = withCompanyQuery(`/api/cash-log/export?${exportQs.toString()}`, cid);
       const headers: Record<string, string> = {};
       if (token) headers.Authorization = `Bearer ${token}`;
@@ -2107,16 +2119,10 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    if (!checkLogOpen || loading) return;
-    if (!canManageUsers(currentUser?.role || "")) return;
-    void loadCheckCaptures();
-  }, [checkLogOpen, loading, currentUser?.role, selectedCompanyId, company?.id]);
-
-  useEffect(() => {
-    if (!cashLogOpen || loading) return;
-    if (!canManageUsers(currentUser?.role || "")) return;
-    void loadCashEntries();
-  }, [cashLogOpen, loading, currentUser?.role, selectedCompanyId, company?.id]);
+    if (!paymentLogOpen || loading) return;
+    if (!canAccessFinancialAdminTools(currentUser?.role || "")) return;
+    void loadPaymentHistory();
+  }, [paymentLogOpen, loading, currentUser?.role, selectedCompanyId, company?.id]);
 
   useEffect(() => {
     if (!checkBeingEdited) return;
@@ -3335,7 +3341,7 @@ export default function AdminPage() {
                       fontSize: 15,
                     }}
                   >
-                    Log check photos and stub images, or record cash in and out. Each tool opens in its own window.
+                    One combined payment log for checks and cash — photograph checks, record cash in/out, filter history, and export.
                   </p>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
                     <button
@@ -3343,7 +3349,13 @@ export default function AdminPage() {
                       onClick={() => {
                         setCheckFormError("");
                         setCheckFormSuccess("");
-                        setCheckLogOpen(true);
+                        setCashFormError("");
+                        setCashFormSuccess("");
+                        setCashReceiptImageUrls([]);
+                        if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
+                        setCashReceiptFileKey((k) => k + 1);
+                        setPaymentCreateKind("CHECK");
+                        setPaymentLogOpen(true);
                       }}
                       style={{
                         ...smallButtonStyle,
@@ -3353,27 +3365,7 @@ export default function AdminPage() {
                         cursor: "pointer",
                       }}
                     >
-                      Open check log…
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCashFormError("");
-                        setCashFormSuccess("");
-                        setCashReceiptImageUrls([]);
-                        if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
-                        setCashReceiptFileKey((k) => k + 1);
-                        setCashLogOpen(true);
-                      }}
-                      style={{
-                        ...smallButtonStyle,
-                        background: "rgba(34, 197, 94, 0.18)",
-                        border: "1px solid rgba(34, 197, 94, 0.45)",
-                        color: "#bbf7d0",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Open cash log…
+                      Open payment log…
                     </button>
                     <button
                       type="button"
@@ -3391,12 +3383,12 @@ export default function AdminPage() {
                   </div>
                 </section>
               ) : null}
-        {checkLogOpen ? (
+        {paymentLogOpen ? (
           <div style={{ ...modalOverlayStyle, zIndex: 1100 }}>
             <div
               style={{
                 ...modalStyle,
-                maxWidth: 940,
+                maxWidth: 980,
                 maxHeight: "92vh",
                 overflowY: "auto",
                 width: "100%",
@@ -3412,32 +3404,89 @@ export default function AdminPage() {
                   flexWrap: "wrap",
                 }}
               >
-                <h2 style={{ ...sectionTitleStyle, marginBottom: 0 }}>Check log</h2>
+                <h2 style={{ ...sectionTitleStyle, marginBottom: 0 }}>Payment log</h2>
                 <button
                   type="button"
-                  onClick={() => setCheckLogOpen(false)}
+                  onClick={() => setPaymentLogOpen(false)}
                   style={{ ...modalButtonStyle }}
                 >
                   Close
                 </button>
               </div>
-                  <p
-                    style={{
-                      color: "#94a3b8",
-                      marginTop: 0,
-                      marginBottom: 18,
-                      lineHeight: 1.55,
-                      fontSize: 15,
-                    }}
-                  >
-                    Photograph the check and optional stub, enter payee and totals, then save.
-                    Filter by capture date (UTC calendar day) and export CSV for the selected range. Invoice
-                    references may include multiple values (comma, semicolon, or newline); each is matched to saved
-                    LeafLink orders by full order # or by the <strong style={{ color: "#cbd5e1" }}>last four digits</strong>{" "}
-                    (same as the Orders page). After save, you may be prompted to post payments to LeafLink for unpaid
-                    matches.
-                  </p>
+              <p
+                style={{
+                  color: "#94a3b8",
+                  marginTop: 0,
+                  marginBottom: 18,
+                  lineHeight: 1.55,
+                  fontSize: 15,
+                }}
+              >
+                Log check photos and stubs, or record cash in and out. Filter history by date, payee, and
+                method, then export CSV for the selected range. Invoice references may include multiple
+                values (comma, semicolon, or newline); each is matched to saved LeafLink orders by full
+                order # or by the <strong style={{ color: "#cbd5e1" }}>last four digits</strong> (same as
+                the Orders page).
+              </p>
 
+              {!canManageUsers(currentUser?.role || "") ? (
+                <div
+                  style={{
+                    ...messageStyle,
+                    marginBottom: 14,
+                    background: "rgba(30, 58, 138, 0.35)",
+                    border: "1px solid rgba(96, 165, 250, 0.4)",
+                    color: "#bfdbfe",
+                  }}
+                >
+                  View only: only <strong>Owner</strong> or <strong>Admin</strong> can add, edit, or delete cash
+                  entries. You can still review history and export.
+                </div>
+              ) : null}
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
+                <button
+                  type="button"
+                  onClick={() => setPaymentCreateKind("CHECK")}
+                  style={{
+                    ...smallButtonStyle,
+                    background:
+                      paymentCreateKind === "CHECK"
+                        ? "rgba(56, 189, 248, 0.28)"
+                        : "rgba(51, 65, 85, 0.55)",
+                    border:
+                      paymentCreateKind === "CHECK"
+                        ? "1px solid rgba(56, 189, 248, 0.55)"
+                        : "1px solid rgba(148, 163, 184, 0.3)",
+                    color: paymentCreateKind === "CHECK" ? "#bae6fd" : "#cbd5e1",
+                    cursor: "pointer",
+                  }}
+                >
+                  Log check
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentCreateKind("CASH")}
+                  style={{
+                    ...smallButtonStyle,
+                    background:
+                      paymentCreateKind === "CASH"
+                        ? "rgba(34, 197, 94, 0.22)"
+                        : "rgba(51, 65, 85, 0.55)",
+                    border:
+                      paymentCreateKind === "CASH"
+                        ? "1px solid rgba(34, 197, 94, 0.5)"
+                        : "1px solid rgba(148, 163, 184, 0.3)",
+                    color: paymentCreateKind === "CASH" ? "#bbf7d0" : "#cbd5e1",
+                    cursor: "pointer",
+                  }}
+                >
+                  Log cash
+                </button>
+              </div>
+
+              {paymentCreateKind === "CHECK" ? (
+                <>
                   {checkFormError ? (
                     <div
                       style={{
@@ -3563,148 +3612,463 @@ export default function AdminPage() {
                       {checkSaving ? "Saving…" : "Save check capture"}
                     </button>
                   </div>
+                </>
+              ) : null}
 
-                  <div
+              {paymentCreateKind === "CASH" ? (
+                <>
+                  {cashFormError ? (
+                    <div
+                      style={{
+                        ...messageStyle,
+                        marginBottom: 12,
+                        background: "rgba(127, 29, 29, 0.58)",
+                        border: "1px solid rgba(248, 113, 113, 0.5)",
+                        color: "#fecaca",
+                      }}
+                    >
+                      {cashFormError}
+                    </div>
+                  ) : null}
+                  {cashFormSuccess ? (
+                    <div
+                      style={{
+                        ...messageStyle,
+                        marginBottom: 12,
+                        background: "rgba(20, 83, 45, 0.58)",
+                        border: "1px solid rgba(34, 197, 94, 0.5)",
+                        color: "#bbf7d0",
+                      }}
+                    >
+                      {cashFormSuccess}
+                    </div>
+                  ) : null}
+                  <fieldset
+                    disabled={!canManageUsers(currentUser?.role || "")}
                     style={{
-                      borderTop: "1px solid rgba(148, 163, 184, 0.2)",
-                      paddingTop: 18,
+                      border: "none",
+                      margin: 0,
+                      padding: 0,
+                      minWidth: 0,
                     }}
                   >
-                    <h3
-                      style={{
-                        margin: "0 0 12px",
-                        fontSize: 17,
-                        fontWeight: 900,
-                        color: "#e2e8f0",
-                      }}
-                    >
-                      History &amp; export
-                    </h3>
                     <div
                       style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: 12,
-                        alignItems: "flex-end",
-                        marginBottom: 14,
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                        gap: 14,
+                        marginBottom: 16,
                       }}
                     >
-                      <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
-                        From
-                        <input
-                          type="date"
-                          value={checkFilterFrom}
-                          onChange={(e) => setCheckFilterFrom(e.target.value)}
-                          style={inputStyle}
-                        />
-                      </label>
-                      <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
-                        To
-                        <input
-                          type="date"
-                          value={checkFilterTo}
-                          onChange={(e) => setCheckFilterTo(e.target.value)}
-                          style={inputStyle}
-                        />
-                      </label>
-                      <label style={{ ...labelStyle, minWidth: 200, marginBottom: 0 }}>
-                        Payee
-                        <input
-                          value={checkFilterPayee}
-                          onChange={(e) => setCheckFilterPayee(e.target.value)}
-                          placeholder="Search payee name"
-                          style={inputStyle}
-                          autoComplete="off"
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              void loadCheckCaptures();
+                      <label style={{ ...labelStyle, marginBottom: 0 }}>
+                        Direction
+                        <select
+                          value={cashDirection}
+                          onChange={(e) => {
+                            const v = e.target.value as "INCOMING" | "OUTGOING";
+                            setCashDirection(v);
+                            if (v === "INCOMING") {
+                              setCashReceiptImageUrls([]);
+                              if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
+                              setCashReceiptFileKey((k) => k + 1);
                             }
                           }}
-                        />
+                          style={{ ...inputStyle }}
+                        >
+                          <option value="INCOMING">Incoming (cash in)</option>
+                          <option value="OUTGOING">Outgoing (cash out)</option>
+                        </select>
                       </label>
+                      {cashDirection === "INCOMING" ? (
+                        <>
+                          <label style={{ ...labelStyle, marginBottom: 0 }}>
+                            Payee company
+                            <input
+                              value={cashPayeeCompany}
+                              onChange={(e) => setCashPayeeCompany(e.target.value)}
+                              placeholder="Company name"
+                              style={{ ...inputStyle }}
+                              autoComplete="organization"
+                            />
+                          </label>
+                          <label style={{ ...labelStyle, marginBottom: 0 }}>
+                            Date
+                            <input
+                              type="date"
+                              value={cashEntryDate}
+                              onChange={(e) => setCashEntryDate(e.target.value)}
+                              style={{ ...inputStyle }}
+                            />
+                          </label>
+                          <label style={{ ...labelStyle, marginBottom: 0 }}>
+                            Total
+                            <input
+                              value={cashAmount}
+                              onChange={(e) => setCashAmount(e.target.value)}
+                              placeholder="0.00"
+                              inputMode="decimal"
+                              style={{ ...inputStyle }}
+                              autoComplete="off"
+                            />
+                          </label>
+                          <label style={{ ...labelStyle, marginBottom: 0, gridColumn: "1 / -1" }}>
+                            Invoice # (optional — multiple allowed)
+                            <textarea
+                              value={cashInvoiceNumber}
+                              onChange={(e) => setCashInvoiceNumber(e.target.value)}
+                              placeholder={"9511\n9449, 9448"}
+                              rows={3}
+                              style={{ ...inputStyle, resize: "vertical", minHeight: 72, fontFamily: "inherit" }}
+                              autoComplete="off"
+                            />
+                          </label>
+                        </>
+                      ) : (
+                        <>
+                          <label style={{ ...labelStyle, marginBottom: 0 }}>
+                            Department
+                            <select
+                              value={cashDepartment}
+                              onChange={(e) =>
+                                setCashDepartment(e.target.value as CashLogDepartment)
+                              }
+                              style={{ ...inputStyle }}
+                            >
+                              <option value="CULTIVATION">Cultivation</option>
+                              <option value="EXTRACTION">Extraction</option>
+                              <option value="PACKAGING">Packaging</option>
+                              <option value="GENERAL">General</option>
+                            </select>
+                          </label>
+                          <label style={{ ...labelStyle, marginBottom: 0 }}>
+                            Amount
+                            <input
+                              value={cashAmount}
+                              onChange={(e) => setCashAmount(e.target.value)}
+                              placeholder="0.00"
+                              inputMode="decimal"
+                              style={{ ...inputStyle }}
+                              autoComplete="off"
+                            />
+                          </label>
+                          <label style={{ ...labelStyle, marginBottom: 0 }}>
+                            Date (optional)
+                            <input
+                              type="date"
+                              value={cashEntryDate}
+                              onChange={(e) => setCashEntryDate(e.target.value)}
+                              style={{ ...inputStyle }}
+                            />
+                          </label>
+                          <label style={{ ...labelStyle, marginBottom: 0 }}>
+                            Memo (optional)
+                            <input
+                              value={cashMemo}
+                              onChange={(e) => setCashMemo(e.target.value)}
+                              style={{ ...inputStyle }}
+                              autoComplete="off"
+                            />
+                          </label>
+                          <div style={{ gridColumn: "1 / -1" }}>
+                            <div style={{ ...labelStyle, marginBottom: 0 }}>
+                              Receipt photos (optional)
+                              <input
+                                key={cashReceiptFileKey}
+                                ref={cashReceiptInputRef}
+                                type="file"
+                                accept="image/jpeg,image/jpg,image/png,image/webp"
+                                capture="environment"
+                                multiple
+                                disabled={
+                                  cashReceiptUploading ||
+                                  cashSaving ||
+                                  cashReceiptImageUrls.length >= MAX_CASH_RECEIPT_IMAGES
+                                }
+                                onChange={(e) => void handleCashReceiptFileChange(e)}
+                                style={{ ...inputStyle, padding: "8px 10px" }}
+                              />
+                              <div style={{ color: "#64748b", fontSize: 12, marginTop: 6, fontWeight: 600 }}>
+                                Add up to {MAX_CASH_RECEIPT_IMAGES} photos from camera or library. JPEG, PNG, or WebP.
+                                {cashReceiptUploading ? " Uploading…" : null}
+                                {cashReceiptImageUrls.length
+                                  ? ` ${cashReceiptImageUrls.length}/${MAX_CASH_RECEIPT_IMAGES} attached.`
+                                  : null}
+                              </div>
+                              {cashReceiptImageUrls.length ? (
+                                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                                  {cashReceiptImageUrls.map((url, idx) => (
+                                    <div
+                                      key={url}
+                                      style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}
+                                    >
+                                      <a
+                                        href={url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        style={{ color: "#38bdf8", fontWeight: 800, fontSize: 14 }}
+                                      >
+                                        Preview receipt {idx + 1}
+                                      </a>
+                                      <button
+                                        type="button"
+                                        disabled={cashSaving || cashReceiptUploading}
+                                        onClick={() => {
+                                          setCashReceiptImageUrls((prev) => prev.filter((u) => u !== url));
+                                        }}
+                                        style={{
+                                          ...smallButtonStyle,
+                                          background: "rgba(51, 65, 85, 0.6)",
+                                          border: "1px solid rgba(148, 163, 184, 0.35)",
+                                          color: "#e2e8f0",
+                                          cursor: cashSaving || cashReceiptUploading ? "not-allowed" : "pointer",
+                                        }}
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 22 }}>
                       <button
                         type="button"
-                        disabled={checkListLoading}
-                        onClick={() => void loadCheckCaptures()}
+                        disabled={cashSaving || cashReceiptUploading}
+                        onClick={() => void saveCashEntry()}
                         style={{
                           ...smallButtonStyle,
-                          background: "rgba(56, 189, 248, 0.16)",
-                          border: "1px solid rgba(56, 189, 248, 0.4)",
-                          color: "#bae6fd",
-                          cursor: checkListLoading ? "wait" : "pointer",
+                          background:
+                            cashSaving || cashReceiptUploading ? "rgba(71, 85, 105, 0.5)" : "#22c55e",
+                          border: "1px solid rgba(34, 197, 94, 0.7)",
+                          color: "white",
+                          cursor: cashSaving ? "wait" : "pointer",
                         }}
                       >
-                        {checkListLoading ? "Loading…" : "Apply filter"}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={checkExporting}
-                        onClick={() => void exportCheckCapturesCsv()}
-                        style={{
-                          ...smallButtonStyle,
-                          background: "rgba(168, 85, 247, 0.2)",
-                          border: "1px solid rgba(168, 85, 247, 0.45)",
-                          color: "#e9d5ff",
-                          cursor: checkExporting ? "wait" : "pointer",
-                        }}
-                      >
-                        {checkExporting ? "Exporting…" : "Export CSV (range)"}
+                        {cashSaving ? "Saving…" : "Save cash entry"}
                       </button>
                     </div>
-                    {checkListError ? (
-                      <div
-                        style={{
-                          color: "#fecaca",
-                          marginBottom: 10,
-                          fontWeight: 700,
-                        }}
-                      >
-                        {checkListError}
-                      </div>
-                    ) : null}
+                  </fieldset>
+                </>
+              ) : null}
 
-                    <div
-                      style={{
-                        overflowX: "auto",
-                        borderRadius: 12,
-                        border: "1px solid rgba(148, 163, 184, 0.2)",
+              <div
+                style={{
+                  borderTop: "1px solid rgba(148, 163, 184, 0.2)",
+                  paddingTop: 18,
+                }}
+              >
+                <h3
+                  style={{
+                    margin: "0 0 12px",
+                    fontSize: 17,
+                    fontWeight: 900,
+                    color: "#e2e8f0",
+                  }}
+                >
+                  History &amp; export
+                </h3>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 12,
+                    alignItems: "flex-end",
+                    marginBottom: 14,
+                  }}
+                >
+                  <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
+                    From
+                    <input
+                      type="date"
+                      value={checkFilterFrom}
+                      onChange={(e) => setCheckFilterFrom(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
+                    To
+                    <input
+                      type="date"
+                      value={checkFilterTo}
+                      onChange={(e) => setCheckFilterTo(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label style={{ ...labelStyle, minWidth: 200, marginBottom: 0 }}>
+                    Payee
+                    <input
+                      value={checkFilterPayee}
+                      onChange={(e) => setCheckFilterPayee(e.target.value)}
+                      placeholder="Search payee"
+                      style={inputStyle}
+                      autoComplete="off"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void loadPaymentHistory();
+                        }
                       }}
+                    />
+                  </label>
+                  <label style={{ ...labelStyle, minWidth: 140, marginBottom: 0 }}>
+                    Method
+                    <select
+                      value={paymentFilterMethod}
+                      onChange={(e) =>
+                        setPaymentFilterMethod(e.target.value as "BOTH" | "CHECK" | "CASH")
+                      }
+                      style={inputStyle}
                     >
-                      <table
-                        style={{
-                          width: "100%",
-                          borderCollapse: "collapse",
-                          fontSize: 13,
-                          minWidth: 720,
-                        }}
+                      <option value="BOTH">Both</option>
+                      <option value="CHECK">Check</option>
+                      <option value="CASH">Cash</option>
+                    </select>
+                  </label>
+                  {paymentFilterMethod === "BOTH" || paymentFilterMethod === "CASH" ? (
+                    <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
+                      Direction
+                      <select
+                        value={cashHistoryDirection}
+                        onChange={(e) =>
+                          setCashHistoryDirection(e.target.value as "ALL" | "INCOMING" | "OUTGOING")
+                        }
+                        style={inputStyle}
                       >
-                        <thead>
-                          <tr style={{ background: "rgba(2, 6, 23, 0.65)" }}>
-                            <th style={checkThStyle}>Captured</th>
-                            <th style={checkThStyle}>Payee</th>
-                            <th style={checkThStyle}>Total</th>
-                            <th style={checkThStyle}>Invoice #</th>
-                            <th style={checkThStyle}>LeafLink</th>
-                            <th style={checkThStyle}>Images</th>
-                            <th style={checkThStyle}>Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {checkRows.length === 0 ? (
+                        <option value="ALL">All</option>
+                        <option value="INCOMING">Incoming only</option>
+                        <option value="OUTGOING">Outgoing only</option>
+                      </select>
+                    </label>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={checkListLoading || cashListLoading}
+                    onClick={() => void loadPaymentHistory()}
+                    style={{
+                      ...smallButtonStyle,
+                      background: "rgba(56, 189, 248, 0.16)",
+                      border: "1px solid rgba(56, 189, 248, 0.4)",
+                      color: "#bae6fd",
+                      cursor: checkListLoading || cashListLoading ? "wait" : "pointer",
+                    }}
+                  >
+                    {checkListLoading || cashListLoading ? "Loading…" : "Apply filter"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={checkExporting || cashExporting}
+                    onClick={() => {
+                      if (paymentFilterMethod === "CHECK" || paymentFilterMethod === "BOTH") {
+                        void exportCheckCapturesCsv();
+                      }
+                      if (paymentFilterMethod === "CASH" || paymentFilterMethod === "BOTH") {
+                        void exportCashLogCsv();
+                      }
+                    }}
+                    style={{
+                      ...smallButtonStyle,
+                      background: "rgba(168, 85, 247, 0.2)",
+                      border: "1px solid rgba(168, 85, 247, 0.45)",
+                      color: "#e9d5ff",
+                      cursor: checkExporting || cashExporting ? "wait" : "pointer",
+                    }}
+                  >
+                    {checkExporting || cashExporting ? "Exporting…" : "Export CSV (range)"}
+                  </button>
+                </div>
+                {checkListError ? (
+                  <div
+                    style={{
+                      color: "#fecaca",
+                      marginBottom: 10,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {checkListError}
+                  </div>
+                ) : null}
+                {cashListError ? (
+                  <div style={{ color: "#fecaca", marginBottom: 10, fontWeight: 700 }}>
+                    {cashListError}
+                  </div>
+                ) : null}
+
+                <div
+                  style={{
+                    overflowX: "auto",
+                    borderRadius: 12,
+                    border: "1px solid rgba(148, 163, 184, 0.2)",
+                  }}
+                >
+                  <table
+                    style={{
+                      width: "100%",
+                      borderCollapse: "collapse",
+                      fontSize: 13,
+                      minWidth: 860,
+                    }}
+                  >
+                    <thead>
+                      <tr style={{ background: "rgba(2, 6, 23, 0.65)" }}>
+                        <th style={checkThStyle}>Logged</th>
+                        <th style={checkThStyle}>Type</th>
+                        <th style={checkThStyle}>Dir</th>
+                        <th style={checkThStyle}>Payee</th>
+                        <th style={checkThStyle}>Total</th>
+                        <th style={checkThStyle}>Invoice #</th>
+                        <th style={checkThStyle}>LeafLink</th>
+                        <th style={checkThStyle}>Details</th>
+                        <th style={checkThStyle}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        type PaymentHistoryItem =
+                          | { kind: "CHECK"; createdAt: string | null | undefined; row: CheckCaptureRow }
+                          | { kind: "CASH"; createdAt: string | null | undefined; row: CashLogRow };
+                        const merged: PaymentHistoryItem[] = [];
+                        if (paymentFilterMethod === "BOTH" || paymentFilterMethod === "CHECK") {
+                          for (const row of checkRows) {
+                            merged.push({ kind: "CHECK", createdAt: row.createdAt, row });
+                          }
+                        }
+                        if (paymentFilterMethod === "BOTH" || paymentFilterMethod === "CASH") {
+                          for (const row of cashRows) {
+                            merged.push({ kind: "CASH", createdAt: row.createdAt, row });
+                          }
+                        }
+                        merged.sort((a, b) => {
+                          const ta = a.createdAt ? Date.parse(a.createdAt) : 0;
+                          const tb = b.createdAt ? Date.parse(b.createdAt) : 0;
+                          return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+                        });
+                        if (merged.length === 0) {
+                          return (
                             <tr>
-                              <td colSpan={7} style={checkTdStyle}>
-                                No rows for this filter.
+                              <td colSpan={9} style={checkTdStyle}>
+                                {checkListLoading || cashListLoading
+                                  ? "Loading…"
+                                  : "No rows for this filter."}
                               </td>
                             </tr>
-                          ) : (
-                            checkRows.map((row) => (
-                              <tr key={row.id} style={{ borderTop: "1px solid rgba(51,65,85,0.6)" }}>
+                          );
+                        }
+                        return merged.map((item) => {
+                          if (item.kind === "CHECK") {
+                            const row = item.row;
+                            return (
+                              <tr key={`check-${row.id}`} style={{ borderTop: "1px solid rgba(51,65,85,0.6)" }}>
                                 <td style={checkTdStyle}>
                                   {row.createdAt
                                     ? formatCompanyTimestamp(row.createdAt)
                                     : "—"}
                                 </td>
+                                <td style={checkTdStyle}>Check</td>
+                                <td style={checkTdStyle}>—</td>
                                 <td style={checkTdStyle}>{row.payerName || "—"}</td>
                                 <td style={checkTdStyle}>
                                   {row.amount != null ? String(row.amount) : "—"}
@@ -3771,532 +4135,102 @@ export default function AdminPage() {
                                   </div>
                                 </td>
                               </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-            </div>
-          </div>
-        ) : null}
-
-        {cashLogOpen ? (
-          <div style={{ ...modalOverlayStyle, zIndex: 1100 }}>
-            <div
-              style={{
-                ...modalStyle,
-                maxWidth: 900,
-                maxHeight: "92vh",
-                overflowY: "auto",
-                width: "100%",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
-                  marginBottom: 14,
-                  flexWrap: "wrap",
-                }}
-              >
-                <h2 style={{ ...sectionTitleStyle, marginBottom: 0 }}>Cash log</h2>
-                <button
-                  type="button"
-                  onClick={() => setCashLogOpen(false)}
-                  style={{ ...modalButtonStyle }}
-                >
-                  Close
-                </button>
-              </div>
-              <p style={{ color: "#94a3b8", marginTop: 0, lineHeight: 1.55, fontSize: 14 }}>
-                Incoming: payee company, date, total, and optional invoice reference(s). Use comma, semicolon, or new
-                lines for multiple invoices on one deposit — values are matched to LeafLink orders by full order # or{" "}
-                <strong style={{ color: "#cbd5e1" }}>last four digits</strong>. Outgoing: amount, department
-                (cultivation, extraction, packaging, or general), optional date and memo, and optional receipt photo.
-                History filter matches entry date (UTC calendar day); rows with no entry date use logged time for the
-                same range. Use Direction to show only incoming or outgoing rows.
-              </p>
-              {!canManageUsers(currentUser?.role || "") ? (
-                <div
-                  style={{
-                    ...messageStyle,
-                    marginBottom: 14,
-                    background: "rgba(30, 58, 138, 0.35)",
-                    border: "1px solid rgba(96, 165, 250, 0.4)",
-                    color: "#bfdbfe",
-                  }}
-                >
-                  View only: only <strong>Owner</strong> or <strong>Admin</strong> can add, edit, or delete cash
-                  entries. You can still review history and export.
-                </div>
-              ) : null}
-              {cashFormError ? (
-                <div
-                  style={{
-                    ...messageStyle,
-                    marginBottom: 12,
-                    background: "rgba(127, 29, 29, 0.58)",
-                    border: "1px solid rgba(248, 113, 113, 0.5)",
-                    color: "#fecaca",
-                  }}
-                >
-                  {cashFormError}
-                </div>
-              ) : null}
-              {cashFormSuccess ? (
-                <div
-                  style={{
-                    ...messageStyle,
-                    marginBottom: 12,
-                    background: "rgba(20, 83, 45, 0.58)",
-                    border: "1px solid rgba(34, 197, 94, 0.5)",
-                    color: "#bbf7d0",
-                  }}
-                >
-                  {cashFormSuccess}
-                </div>
-              ) : null}
-              <fieldset
-                disabled={!canManageUsers(currentUser?.role || "")}
-                style={{
-                  border: "none",
-                  margin: 0,
-                  padding: 0,
-                  minWidth: 0,
-                }}
-              >
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                  gap: 14,
-                  marginBottom: 16,
-                }}
-              >
-                <label style={{ ...labelStyle, marginBottom: 0 }}>
-                  Direction
-                  <select
-                    value={cashDirection}
-                    onChange={(e) => {
-                      const v = e.target.value as "INCOMING" | "OUTGOING";
-                      setCashDirection(v);
-                      if (v === "INCOMING") {
-                        setCashReceiptImageUrls([]);
-                        if (cashReceiptInputRef.current) cashReceiptInputRef.current.value = "";
-                        setCashReceiptFileKey((k) => k + 1);
-                      }
-                    }}
-                    style={{ ...inputStyle }}
-                  >
-                    <option value="INCOMING">Incoming (cash in)</option>
-                    <option value="OUTGOING">Outgoing (cash out)</option>
-                  </select>
-                </label>
-                {cashDirection === "INCOMING" ? (
-                  <>
-                    <label style={{ ...labelStyle, marginBottom: 0 }}>
-                      Payee company
-                      <input
-                        value={cashPayeeCompany}
-                        onChange={(e) => setCashPayeeCompany(e.target.value)}
-                        placeholder="Company name"
-                        style={{ ...inputStyle }}
-                        autoComplete="organization"
-                      />
-                    </label>
-                    <label style={{ ...labelStyle, marginBottom: 0 }}>
-                      Date
-                      <input
-                        type="date"
-                        value={cashEntryDate}
-                        onChange={(e) => setCashEntryDate(e.target.value)}
-                        style={{ ...inputStyle }}
-                      />
-                    </label>
-                    <label style={{ ...labelStyle, marginBottom: 0 }}>
-                      Total
-                      <input
-                        value={cashAmount}
-                        onChange={(e) => setCashAmount(e.target.value)}
-                        placeholder="0.00"
-                        inputMode="decimal"
-                        style={{ ...inputStyle }}
-                        autoComplete="off"
-                      />
-                    </label>
-                    <label style={{ ...labelStyle, marginBottom: 0, gridColumn: "1 / -1" }}>
-                      Invoice # (optional — multiple allowed)
-                      <textarea
-                        value={cashInvoiceNumber}
-                        onChange={(e) => setCashInvoiceNumber(e.target.value)}
-                        placeholder={"9511\n9449, 9448"}
-                        rows={3}
-                        style={{ ...inputStyle, resize: "vertical", minHeight: 72, fontFamily: "inherit" }}
-                        autoComplete="off"
-                      />
-                    </label>
-                  </>
-                ) : (
-                  <>
-                    <label style={{ ...labelStyle, marginBottom: 0 }}>
-                      Department
-                      <select
-                        value={cashDepartment}
-                        onChange={(e) =>
-                          setCashDepartment(e.target.value as CashLogDepartment)
-                        }
-                        style={{ ...inputStyle }}
-                      >
-                        <option value="CULTIVATION">Cultivation</option>
-                        <option value="EXTRACTION">Extraction</option>
-                        <option value="PACKAGING">Packaging</option>
-                        <option value="GENERAL">General</option>
-                      </select>
-                    </label>
-                    <label style={{ ...labelStyle, marginBottom: 0 }}>
-                      Amount
-                      <input
-                        value={cashAmount}
-                        onChange={(e) => setCashAmount(e.target.value)}
-                        placeholder="0.00"
-                        inputMode="decimal"
-                        style={{ ...inputStyle }}
-                        autoComplete="off"
-                      />
-                    </label>
-                    <label style={{ ...labelStyle, marginBottom: 0 }}>
-                      Date (optional)
-                      <input
-                        type="date"
-                        value={cashEntryDate}
-                        onChange={(e) => setCashEntryDate(e.target.value)}
-                        style={{ ...inputStyle }}
-                      />
-                    </label>
-                    <label style={{ ...labelStyle, marginBottom: 0 }}>
-                      Memo (optional)
-                      <input
-                        value={cashMemo}
-                        onChange={(e) => setCashMemo(e.target.value)}
-                        style={{ ...inputStyle }}
-                        autoComplete="off"
-                      />
-                    </label>
-                    <div style={{ gridColumn: "1 / -1" }}>
-                      <div style={{ ...labelStyle, marginBottom: 0 }}>
-                        Receipt photos (optional)
-                        <input
-                          key={cashReceiptFileKey}
-                          ref={cashReceiptInputRef}
-                          type="file"
-                          accept="image/jpeg,image/jpg,image/png,image/webp"
-                          capture="environment"
-                          multiple
-                          disabled={
-                            cashReceiptUploading ||
-                            cashSaving ||
-                            cashReceiptImageUrls.length >= MAX_CASH_RECEIPT_IMAGES
+                            );
                           }
-                          onChange={(e) => void handleCashReceiptFileChange(e)}
-                          style={{ ...inputStyle, padding: "8px 10px" }}
-                        />
-                        <div style={{ color: "#64748b", fontSize: 12, marginTop: 6, fontWeight: 600 }}>
-                          Add up to {MAX_CASH_RECEIPT_IMAGES} photos from camera or library. JPEG, PNG, or WebP.
-                          {cashReceiptUploading ? " Uploading…" : null}
-                          {cashReceiptImageUrls.length
-                            ? ` ${cashReceiptImageUrls.length}/${MAX_CASH_RECEIPT_IMAGES} attached.`
-                            : null}
-                        </div>
-                        {cashReceiptImageUrls.length ? (
-                          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-                            {cashReceiptImageUrls.map((url, idx) => (
-                              <div
-                                key={url}
-                                style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}
-                              >
-                                <a
-                                  href={url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{ color: "#38bdf8", fontWeight: 800, fontSize: 14 }}
-                                >
-                                  Preview receipt {idx + 1}
-                                </a>
-                                <button
-                                  type="button"
-                                  disabled={cashSaving || cashReceiptUploading}
-                                  onClick={() => {
-                                    setCashReceiptImageUrls((prev) => prev.filter((u) => u !== url));
-                                  }}
-                                  style={{
-                                    ...smallButtonStyle,
-                                    background: "rgba(51, 65, 85, 0.6)",
-                                    border: "1px solid rgba(148, 163, 184, 0.35)",
-                                    color: "#e2e8f0",
-                                    cursor: cashSaving || cashReceiptUploading ? "not-allowed" : "pointer",
-                                  }}
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 22 }}>
-                <button
-                  type="button"
-                  disabled={cashSaving || cashReceiptUploading}
-                  onClick={() => void saveCashEntry()}
-                  style={{
-                    ...smallButtonStyle,
-                    background:
-                      cashSaving || cashReceiptUploading ? "rgba(71, 85, 105, 0.5)" : "#22c55e",
-                    border: "1px solid rgba(34, 197, 94, 0.7)",
-                    color: "white",
-                    cursor: cashSaving ? "wait" : "pointer",
-                  }}
-                >
-                  {cashSaving ? "Saving…" : "Save cash entry"}
-                </button>
-              </div>
-              </fieldset>
-              <div
-                style={{
-                  borderTop: "1px solid rgba(148, 163, 184, 0.2)",
-                  paddingTop: 18,
-                }}
-              >
-                <h3
-                  style={{
-                    margin: "0 0 12px",
-                    fontSize: 17,
-                    fontWeight: 900,
-                    color: "#e2e8f0",
-                  }}
-                >
-                  History &amp; export
-                </h3>
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: 12,
-                    alignItems: "flex-end",
-                    marginBottom: 14,
-                  }}
-                >
-                  <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
-                    From
-                    <input
-                      type="date"
-                      value={cashFilterFrom}
-                      onChange={(e) => setCashFilterFrom(e.target.value)}
-                      style={{ ...inputStyle }}
-                    />
-                  </label>
-                  <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
-                    To
-                    <input
-                      type="date"
-                      value={cashFilterTo}
-                      onChange={(e) => setCashFilterTo(e.target.value)}
-                      style={{ ...inputStyle }}
-                    />
-                  </label>
-                  <label style={{ ...labelStyle, minWidth: 200, marginBottom: 0 }}>
-                    Payee
-                    <input
-                      value={cashFilterPayee}
-                      onChange={(e) => setCashFilterPayee(e.target.value)}
-                      placeholder="Search payee company"
-                      style={{ ...inputStyle }}
-                      autoComplete="off"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void loadCashEntries();
-                        }
-                      }}
-                    />
-                  </label>
-                  <label style={{ ...labelStyle, minWidth: 160, marginBottom: 0 }}>
-                    Direction
-                    <select
-                      value={cashHistoryDirection}
-                      onChange={(e) =>
-                        setCashHistoryDirection(e.target.value as "ALL" | "INCOMING" | "OUTGOING")
-                      }
-                      style={{ ...inputStyle }}
-                    >
-                      <option value="ALL">All</option>
-                      <option value="INCOMING">Incoming only</option>
-                      <option value="OUTGOING">Outgoing only</option>
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    disabled={cashListLoading}
-                    onClick={() => void loadCashEntries()}
-                    style={{
-                      ...smallButtonStyle,
-                      background: "rgba(56, 189, 248, 0.16)",
-                      border: "1px solid rgba(56, 189, 248, 0.4)",
-                      color: "#bae6fd",
-                      cursor: cashListLoading ? "wait" : "pointer",
-                    }}
-                  >
-                    {cashListLoading ? "Loading…" : "Apply filter"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={cashExporting}
-                    onClick={() => void exportCashLogCsv()}
-                    style={{
-                      ...smallButtonStyle,
-                      background: "rgba(168, 85, 247, 0.2)",
-                      border: "1px solid rgba(168, 85, 247, 0.45)",
-                      color: "#e9d5ff",
-                      cursor: cashExporting ? "wait" : "pointer",
-                    }}
-                  >
-                    {cashExporting ? "Exporting…" : "Export CSV (range)"}
-                  </button>
-                </div>
-                {cashListError ? (
-                  <div style={{ color: "#fecaca", marginBottom: 10, fontWeight: 700 }}>
-                    {cashListError}
-                  </div>
-                ) : null}
-                <div
-                  style={{
-                    overflowX: "auto",
-                    borderRadius: 12,
-                    border: "1px solid rgba(148, 163, 184, 0.2)",
-                  }}
-                >
-                  <table
-                    style={{
-                      width: "100%",
-                      borderCollapse: "collapse",
-                      fontSize: 13,
-                      minWidth: 820,
-                    }}
-                  >
-                    <thead>
-                      <tr style={{ background: "rgba(2, 6, 23, 0.65)" }}>
-                        <th style={checkThStyle}>Logged</th>
-                        <th style={checkThStyle}>Dir</th>
-                        <th style={checkThStyle}>Total</th>
-                        <th style={checkThStyle}>Payee co.</th>
-                        <th style={checkThStyle}>Invoice #</th>
-                        <th style={checkThStyle}>LeafLink</th>
-                        <th style={checkThStyle}>Dept</th>
-                        <th style={checkThStyle}>Entry date</th>
-                        <th style={checkThStyle}>Memo</th>
-                        <th style={checkThStyle}>Receipts</th>
-                        <th style={checkThStyle}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cashRows.length === 0 ? (
-                        <tr>
-                          <td colSpan={11} style={checkTdStyle}>
-                            No rows for this filter.
-                          </td>
-                        </tr>
-                      ) : (
-                        cashRows.map((row) => (
-                          <tr key={row.id} style={{ borderTop: "1px solid rgba(51,65,85,0.6)" }}>
-                            <td style={checkTdStyle}>
-                              {row.createdAt ? formatCompanyTimestamp(row.createdAt) : "—"}
-                            </td>
-                            <td style={checkTdStyle}>
-                              {row.direction === "INCOMING" ? "In" : "Out"}
-                            </td>
-                            <td style={checkTdStyle}>{String(row.amount)}</td>
-                            <td style={checkTdStyle}>{row.payeeCompany || "—"}</td>
-                            <td style={checkTdStyle}>{row.invoiceNumber || "—"}</td>
-                            <td style={{ ...checkTdStyle, maxWidth: 200, whiteSpace: "normal", wordBreak: "break-word" }}>
-                              {formatLeafLinkAdminListCell(row)}
-                            </td>
-                            <td style={checkTdStyle}>{formatCashDepartment(row.department)}</td>
-                            <td style={checkTdStyle}>
-                              {row.entryDate
-                                ? formatCompanyTimestamp(row.entryDate)
-                                : "—"}
-                            </td>
-                            <td style={checkTdStyle}>{row.memo || "—"}</td>
-                            <td style={checkTdStyle}>
-                              {(() => {
-                                const urls = cashRowReceiptUrls(row);
-                                if (!urls.length) return "—";
-                                return (
-                                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                    {urls.map((url, idx) => (
-                                      <a
-                                        key={url}
-                                        href={url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        style={{ color: "#38bdf8", fontWeight: 800 }}
-                                      >
-                                        {urls.length === 1 ? "View" : `View ${idx + 1}`}
-                                      </a>
-                                    ))}
-                                  </div>
-                                );
-                              })()}
-                            </td>
-                            <td style={checkTdStyle}>
-                              {canManageUsers(currentUser?.role || "") ? (
-                                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                                  <button
-                                    type="button"
-                                    disabled={editCashSaving && cashBeingEdited?.id === row.id}
-                                    onClick={() => setCashBeingEdited(row)}
-                                    style={{
-                                      ...smallButtonStyle,
-                                      background: "rgba(30, 64, 175, 0.45)",
-                                      border: "1px solid rgba(96, 165, 250, 0.5)",
-                                      color: "#dbeafe",
-                                      cursor: editCashSaving && cashBeingEdited?.id === row.id ? "wait" : "pointer",
-                                    }}
-                                  >
-                                    Edit
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={deletingCashId === row.id}
-                                    onClick={() => requestDeleteCashEntry(row)}
-                                    style={{
-                                      ...smallButtonStyle,
-                                      background:
-                                        deletingCashId === row.id
-                                          ? "rgba(71, 85, 105, 0.5)"
-                                          : "rgba(127, 29, 29, 0.55)",
-                                      border: "1px solid rgba(248, 113, 113, 0.45)",
-                                      color: "#fecaca",
-                                      cursor: deletingCashId === row.id ? "wait" : "pointer",
-                                    }}
-                                  >
-                                    {deletingCashId === row.id ? "…" : "Delete"}
-                                  </button>
+                          const row = item.row;
+                          const receiptUrls = cashRowReceiptUrls(row);
+                          return (
+                            <tr key={`cash-${row.id}`} style={{ borderTop: "1px solid rgba(51,65,85,0.6)" }}>
+                              <td style={checkTdStyle}>
+                                {row.createdAt ? formatCompanyTimestamp(row.createdAt) : "—"}
+                              </td>
+                              <td style={checkTdStyle}>Cash</td>
+                              <td style={checkTdStyle}>
+                                {row.direction === "INCOMING" ? "In" : "Out"}
+                              </td>
+                              <td style={checkTdStyle}>{row.payeeCompany || "—"}</td>
+                              <td style={checkTdStyle}>{String(row.amount)}</td>
+                              <td style={checkTdStyle}>{row.invoiceNumber || "—"}</td>
+                              <td style={{ ...checkTdStyle, maxWidth: 200, whiteSpace: "normal", wordBreak: "break-word" }}>
+                                {formatLeafLinkAdminListCell(row)}
+                              </td>
+                              <td style={{ ...checkTdStyle, whiteSpace: "normal", maxWidth: 260 }}>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                  {row.direction === "OUTGOING" || row.memo ? (
+                                    <span>
+                                      {row.direction === "OUTGOING"
+                                        ? `Dept: ${formatCashDepartment(row.department)}`
+                                        : null}
+                                      {row.direction === "OUTGOING" && row.memo ? " · " : null}
+                                      {row.memo ? `Memo: ${row.memo}` : null}
+                                    </span>
+                                  ) : null}
+                                  <span>
+                                    Entry:{" "}
+                                    {row.entryDate
+                                      ? formatCompanyTimestamp(row.entryDate)
+                                      : "—"}
+                                  </span>
+                                  {receiptUrls.length ? (
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                      {receiptUrls.map((url, idx) => (
+                                        <a
+                                          key={url}
+                                          href={url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          style={{ color: "#38bdf8", fontWeight: 800 }}
+                                        >
+                                          {receiptUrls.length === 1 ? "Receipt" : `Receipt ${idx + 1}`}
+                                        </a>
+                                      ))}
+                                    </div>
+                                  ) : null}
                                 </div>
-                              ) : (
-                                <span style={{ color: "#64748b" }}>—</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))
-                      )}
+                              </td>
+                              <td style={checkTdStyle}>
+                                {canManageUsers(currentUser?.role || "") ? (
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                    <button
+                                      type="button"
+                                      disabled={editCashSaving && cashBeingEdited?.id === row.id}
+                                      onClick={() => setCashBeingEdited(row)}
+                                      style={{
+                                        ...smallButtonStyle,
+                                        background: "rgba(30, 64, 175, 0.45)",
+                                        border: "1px solid rgba(96, 165, 250, 0.5)",
+                                        color: "#dbeafe",
+                                        cursor: editCashSaving && cashBeingEdited?.id === row.id ? "wait" : "pointer",
+                                      }}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={deletingCashId === row.id}
+                                      onClick={() => requestDeleteCashEntry(row)}
+                                      style={{
+                                        ...smallButtonStyle,
+                                        background:
+                                          deletingCashId === row.id
+                                            ? "rgba(71, 85, 105, 0.5)"
+                                            : "rgba(127, 29, 29, 0.55)",
+                                        border: "1px solid rgba(248, 113, 113, 0.45)",
+                                        color: "#fecaca",
+                                        cursor: deletingCashId === row.id ? "wait" : "pointer",
+                                      }}
+                                    >
+                                      {deletingCashId === row.id ? "…" : "Delete"}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span style={{ color: "#64748b" }}>—</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        });
+                      })()}
                     </tbody>
                   </table>
                 </div>
