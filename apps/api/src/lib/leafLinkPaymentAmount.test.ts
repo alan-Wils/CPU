@@ -23,6 +23,18 @@ describe("leafLinkPaymentAmount", () => {
     expect(leafLinkPaymentMatchesInvoice(90, 100, 120)).toBe(false);
   });
 
+  it("capLeafLinkPaymentToOwed never exceeds invoice balance", async () => {
+    const { capLeafLinkPaymentToOwed, assertLeafLinkPaymentDoesNotOverpay } = await import(
+      "./leafLinkPaymentAmount.js"
+    );
+    expect(capLeafLinkPaymentToOwed(1000, 960.15)).toBe(960.15);
+    expect(capLeafLinkPaymentToOwed(900, 960.15)).toBe(900);
+    expect(capLeafLinkPaymentToOwed(960.15, 960.15)).toBe(960.15);
+    expect(() => assertLeafLinkPaymentDoesNotOverpay(1000, 960.15)).toThrow(/cannot exceed/i);
+    expect(() => assertLeafLinkPaymentDoesNotOverpay(960.15, 960.15)).not.toThrow();
+    expect(() => assertLeafLinkPaymentDoesNotOverpay(900, 960.15)).not.toThrow();
+  });
+
   it("buildLeafLinkCpuPaymentNote appends override reason", () => {
     expect(buildLeafLinkCpuPaymentNote("CPU check capture c1", false)).toBe("CPU check capture c1");
     expect(buildLeafLinkCpuPaymentNote("CPU check capture c1", true, "partial payment")).toContain(

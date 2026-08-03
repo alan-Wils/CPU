@@ -18,7 +18,7 @@ import {
     parsePostedPaymentsJson,
     type LeafLinkPostedPaymentRow,
 } from "../lib/leaflinkPostedPayments.js";
-import { buildLeafLinkCpuPaymentNote } from "../lib/leafLinkPaymentAmount.js";
+import { assertLeafLinkPaymentDoesNotOverpay, buildLeafLinkCpuPaymentNote } from "../lib/leafLinkPaymentAmount.js";
 import { AuditService } from "./auditService.js";
 import { findRecentLeafLinkStoredOrdersForCompany } from "./leafLinkOrdersStorePrimitives.js";
 import {
@@ -654,6 +654,7 @@ export class CashLogService {
         if (!Number.isFinite(payAmt) || payAmt <= 0) {
             throw new AppError("Payment amount is invalid.", 400, "CASH_PAYMENT_AMOUNT_INVALID");
         }
+        assertLeafLinkPaymentDoesNotOverpay(payAmt, expectedBalance, "CASH_OVERPAY_BLOCKED");
         const amountMatches =
             sameMoneyCash(expectedBalance, payAmt) || sameMoneyCash(selected.total, payAmt);
         if (!amountMatches && !input.allowAmountOverride) {

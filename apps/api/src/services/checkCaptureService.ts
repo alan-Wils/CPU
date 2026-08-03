@@ -22,6 +22,7 @@ import {
 } from "../lib/leaflinkPostedPayments.js";
 import { findRecentLeafLinkStoredOrdersForCompany } from "./leafLinkOrdersStorePrimitives.js";
 import {
+    assertLeafLinkPaymentDoesNotOverpay,
     buildLeafLinkCpuPaymentNote,
     leafLinkPaymentMatchesInvoice,
 } from "../lib/leafLinkPaymentAmount.js";
@@ -580,6 +581,7 @@ export class CheckCaptureService {
         if (!Number.isFinite(payAmt) || payAmt <= 0) {
             throw new AppError("Payment amount is invalid.", 400, "CHECK_PAYMENT_AMOUNT_INVALID");
         }
+        assertLeafLinkPaymentDoesNotOverpay(payAmt, expectedBalance, "CHECK_OVERPAY_BLOCKED");
         const amountMatches = leafLinkPaymentMatchesInvoice(payAmt, expectedBalance, selected.total);
         if (!amountMatches && !input.allowAmountOverride) {
             throw new AppError("Payment amount does not match invoice balance.", 409, "CHECK_AMOUNT_MISMATCH");

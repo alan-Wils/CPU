@@ -479,8 +479,10 @@ type LeafLinkPaymentSplitLine = {
 
 /**
  * Build per-invoice LeafLink payment amounts.
- * - One invoice: post the logged check/cash amount (partial/full/overpay handled via override note).
- * - Multiple invoices: post each invoice's balance owed (must not exceed the logged amount).
+ * Never posts more than an invoice's balance owed (no overpay).
+ * - Each selected invoice gets min(remaining check, that invoice's owed balance).
+ * - Multiple invoices: each gets its full balance owed (must fit within the logged amount).
+ * - If logged amount ≠ sum of balances owed, totalsMatch is false so the UI requires a note.
  */
 function buildLeafLinkPaymentSplits(
   loggedAmount: number,
@@ -501,9 +503,12 @@ function buildLeafLinkPaymentSplits(
   const totalOwed = roundLeafLinkMoney(lines.reduce((sum, line) => sum + line.owedAmount, 0));
 
   if (selected.length === 1) {
+    const owed = lines[0].owedAmount;
+    /** Never overpay: post at most the invoice balance owed. */
+    const paymentAmount = roundLeafLinkMoney(Math.min(loggedAmount, owed));
     return {
       ok: true,
-      splits: [{ ...lines[0], paymentAmount: roundLeafLinkMoney(loggedAmount) }],
+      splits: [{ ...lines[0], paymentAmount }],
       totalOwed,
       totalsMatch: leafLinkPaymentAmountsMatch(loggedAmount, totalOwed),
     };
@@ -520,11 +525,29 @@ function buildLeafLinkPaymentSplits(
     ok: true,
     splits: lines.map((line) => ({
       ...line,
+      /** Multi-invoice: apply only each invoice's balance from the check — never more. */
       paymentAmount: roundLeafLinkMoney(line.owedAmount),
     })),
     totalOwed,
     totalsMatch: leafLinkPaymentAmountsMatch(loggedAmount, totalOwed),
   };
+}
+
+function leafLinkTotalsMismatchMessage(
+  loggedAmount: number,
+  totalOwed: number,
+  methodLabel: string,
+  invoiceCount: number,
+): string {
+  const diff = roundLeafLinkMoney(loggedAmount - totalOwed);
+  const plural = invoiceCount > 1 ? "s" : "";
+  if (diff > LEAF_LINK_PAYMENT_TOLERANCE) {
+    return `The logged ${methodLabel} (${formatUsdLeafLink(loggedAmount)}) is ${formatUsdLeafLink(diff)} more than the invoice balance${plural} owed (${formatUsdLeafLink(totalOwed)}). Only the balance owed will be posted — invoices are never overpaid. Add a note about the leftover ${formatUsdLeafLink(diff)}.`;
+  }
+  if (diff < -LEAF_LINK_PAYMENT_TOLERANCE) {
+    return `The logged ${methodLabel} (${formatUsdLeafLink(loggedAmount)}) is less than the invoice balance owed (${formatUsdLeafLink(totalOwed)}). This will post a partial payment. Add a note explaining why.`;
+  }
+  return `The logged ${methodLabel} does not match the invoice balance${plural}. Add a note explaining why before posting.`;
 }
 
 function formatCashDepartment(d: CashLogDepartment | string | null | undefined): string {
@@ -4703,9 +4726,11 @@ export default function AdminPage() {
                             {built.splits.map((split) => (
                               <li key={split.candidate.orderNumber}>
                                 {split.candidate.orderNumber}: {formatUsdLeafLink(split.paymentAmount)}
-                                {built.splits.length > 1
-                                  ? ` (balance owed ${formatUsdLeafLink(split.owedAmount)})`
-                                  : ""}
+                                {!leafLinkPaymentAmountsMatch(split.paymentAmount, split.owedAmount)
+                                  ? ` (of ${formatUsdLeafLink(split.owedAmount)} owed)`
+                                  : built.splits.length > 1
+                                    ? ` (balance owed ${formatUsdLeafLink(split.owedAmount)})`
+                                    : ""}
                               </li>
                             ))}
                           </ul>
@@ -4721,13 +4746,17 @@ export default function AdminPage() {
                     {mismatch ? (
                       <div style={{ marginTop: 12 }}>
                         <div style={{ color: "#fbbf24", fontSize: 13, marginBottom: 8, lineHeight: 1.5 }}>
-                          The logged {amountLabel} amount does not match the selected invoice balance
-                          {selected.length > 1 ? "s" : ""}. Add a note explaining why before posting.
+                          {leafLinkTotalsMismatchMessage(
+                            loggedAmount,
+                            built && built.ok ? built.totalOwed : 0,
+                            amountLabel,
+                            selected.length,
+                          )}
                         </div>
                         <textarea
                           value={leafLinkManualOverrideNote}
                           onChange={(e) => setLeafLinkManualOverrideNote(e.target.value)}
-                          placeholder="Why does this payment differ from the invoice balance?"
+                          placeholder="Why does the logged amount differ from the invoice balance(s)?"
                           rows={3}
                           maxLength={500}
                           style={{
@@ -5032,6 +5061,11 @@ export default function AdminPage() {
                       {leafLinkPaymentPrompt.splits.map((split) => (
                         <li key={split.candidate.orderNumber}>
                           {split.candidate.orderNumber}: {formatUsdLeafLink(split.paymentAmount)}
+                          {!leafLinkPaymentAmountsMatch(split.paymentAmount, split.owedAmount)
+                            ? ` (of ${formatUsdLeafLink(split.owedAmount)} owed)`
+                            : leafLinkPaymentPrompt.splits.length > 1
+                              ? ` (balance owed ${formatUsdLeafLink(split.owedAmount)})`
+                              : ""}
                         </li>
                       ))}
                     </ul>
@@ -5040,14 +5074,17 @@ export default function AdminPage() {
                 {!leafLinkPaymentPrompt.totalsMatch ? (
                   <div style={{ marginBottom: 12 }}>
                     <div style={{ color: "#fbbf24", fontSize: 13, marginBottom: 8, lineHeight: 1.5 }}>
-                      The logged payment does not match the invoice balance
-                      {leafLinkPaymentPrompt.splits.length > 1 ? "s" : ""}. Add a note explaining why
-                      before posting.
+                      {leafLinkTotalsMismatchMessage(
+                        leafLinkPaymentPrompt.loggedAmount,
+                        leafLinkPaymentPrompt.totalOwed,
+                        leafLinkPaymentPrompt.paymentMethodLabel,
+                        leafLinkPaymentPrompt.splits.length,
+                      )}
                     </div>
                     <textarea
                       value={leafLinkPaymentOverrideNote}
                       onChange={(e) => setLeafLinkPaymentOverrideNote(e.target.value)}
-                      placeholder="Why does this payment differ from the invoice balance?"
+                      placeholder="Why does the logged amount differ from the invoice balance(s)?"
                       rows={3}
                       maxLength={500}
                       style={{

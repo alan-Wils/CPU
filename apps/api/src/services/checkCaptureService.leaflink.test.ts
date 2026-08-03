@@ -324,4 +324,41 @@ describe("CheckCaptureService LeafLink sync", () => {
     expect(data.paymentSyncStatus).toBe("payment_posted");
     expect(data.leaflinkPaidAt).toBeUndefined();
   });
+
+  it("blocks overpaying an invoice even with override", async () => {
+    vi.spyOn(prisma.checkCapture, "findFirst").mockResolvedValue({
+      id: "c1",
+      checkDate: null,
+      checkNumber: null,
+      amount: 1000,
+      payerName: "Acme",
+      invoiceNumber: "INV-1",
+      leaflinkPaymentId: null,
+    } as any);
+    ((service as any).leafLinkOrdersService.findOpenPaymentCandidatesForCheck as any).mockResolvedValue([
+      {
+        leafLinkKey: "ll1",
+        orderId: "o1",
+        orderNumber: "INV-1",
+        customerName: "Acme",
+        total: 960.15,
+        outstandingBalance: 960.15,
+        status: "Submitted",
+        paymentStatus: "Unpaid",
+        deliveryDate: null,
+        lineItems: [],
+        score: 100,
+        matchedBy: ["invoice_exact"],
+        markedPaidInLeafLink: false,
+      },
+    ]);
+    await expect(
+      service.markLeafLinkInvoicePaid("co1", "u1", "c1", {
+        orderNumber: "INV-1",
+        paymentAmount: 1000,
+        allowAmountOverride: true,
+        overrideNote: "trying to apply whole check",
+      }),
+    ).rejects.toMatchObject({ code: "CHECK_OVERPAY_BLOCKED" } satisfies Partial<AppError>);
+  });
 });
