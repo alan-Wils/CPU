@@ -70,4 +70,22 @@ describe("resolveLeafLinkOrderTotalUsdFromStoredPayload", () => {
     });
     expect(o.outstandingBalance).toBe(0);
   });
+
+  it("CPU detail wrapper still exposes outstandingBalance for payment matching", () => {
+    const summary = normalizeOrder({
+      ...LEAFLINK_ORDER_RECEIVED_ROW,
+      total: { amount: 2010, currency: "USD" },
+      payment_balance: 2010,
+      paid: false,
+    });
+    const boxed = { _cpu_v: CPU_DETAIL_V, summary };
+    expect(summary.outstandingBalance).toBe(2010);
+    expect(resolveLeafLinkOrderTotalUsdFromStoredPayload(boxed, null)).toBe(2010);
+    /** Indexed totalUsd wins over a stale summary.total inside the wrapper. */
+    expect(resolveLeafLinkOrderTotalUsdFromStoredPayload(boxed, 2010)).toBe(2010);
+    expect(resolveLeafLinkOrderTotalUsdFromStoredPayload(
+      { _cpu_v: CPU_DETAIL_V, summary: { ...summary, total: 960 } },
+      2010,
+    )).toBe(2010);
+  });
 });

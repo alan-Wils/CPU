@@ -117,6 +117,43 @@ describe("CheckCaptureService LeafLink sync", () => {
     expect(out.linkedOrders).toHaveLength(0);
   });
 
+  it("warm-syncs LeafLink orders when refreshIfNoMatch and cache has no candidates", async () => {
+    vi.spyOn(prisma.checkCapture, "findFirst").mockResolvedValue({
+      id: "c1",
+      amount: 2009.96,
+      payerName: "The Dispo - REC",
+      invoiceNumber: "d83a9949",
+      leaflinkPaymentId: null,
+      leaflinkOrderNumber: null,
+      leaflinkPostedPayments: null,
+    } as any);
+    const find = (service as any).leafLinkOrdersService.findPaymentMatchCandidatesIncludingPaidForCheck as any;
+    const warm = (service as any).leafLinkOrdersService.syncOrdersWarm as any;
+    find.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        leafLinkKey: "d83a9949",
+        orderId: "d83a9949",
+        orderNumber: "d83a9949",
+        customerName: "The Dispo - REC",
+        total: 2010,
+        outstandingBalance: 2010,
+        status: "Approved",
+        paymentStatus: "Unpaid",
+        deliveryDate: null,
+        lineItems: [],
+        score: 50,
+        matchedBy: ["invoice_last4"],
+        markedPaidInLeafLink: false,
+      },
+    ]);
+    warm.mockResolvedValue({ ok: true });
+    const out = await service.matchLeafLinkInvoice("co1", "c1", { refreshIfNoMatch: true });
+    expect(warm).toHaveBeenCalledWith("co1", "check_payment_match_refresh");
+    expect(find).toHaveBeenCalledTimes(2);
+    expect(out.possibleMatches).toHaveLength(1);
+    expect(out.possibleMatches[0].outstandingBalance).toBe(2010);
+  });
+
   it("blocks duplicate payment post", async () => {
     vi.spyOn(prisma.checkCapture, "findFirst").mockResolvedValue({
       id: "c1",

@@ -1404,7 +1404,14 @@ function collectLeafLinkPaymentCandidatesFromDbRows(
     if (paid && !opts.includePaid) continue;
     const orderNumber = cleanString(summary.orderNumber || summary.shortNumber || summary.id);
     const customerName = cleanString(summary.customerName);
-    const total = typeof summary.total === "number" ? summary.total : orderTotalMoney(summary);
+    /** Prefer indexed `totalUsd` / resolved payload total over a stale summary.total on CPU detail wrappers. */
+    const resolvedTotal = resolveLeafLinkOrderTotalUsdFromStoredPayload(row.payload, row.totalUsd);
+    const total =
+      resolvedTotal != null && resolvedTotal > 0
+        ? resolvedTotal
+        : typeof summary.total === "number"
+          ? summary.total
+          : orderTotalMoney(summary);
     /** Prefer LeafLink remaining balance; fall back to order total only when unpaid and balance missing. */
     const outstandingBalance = paid
       ? 0
@@ -1540,6 +1547,8 @@ function syntheticRawForTotalsFromSummary(summary: LeafLinkOrderSummaryDto): Rec
     raw.total = summary.total;
   if (summary.subtotal !== null && summary.subtotal !== undefined)
     raw.subtotal = summary.subtotal;
+  if (summary.outstandingBalance !== null && summary.outstandingBalance !== undefined)
+    raw.payment_balance = summary.outstandingBalance;
   return raw;
 }
 
@@ -3193,12 +3202,66 @@ export class LeafLinkOrdersService {
     }
   }
 
+  /**
+   * Payment matching must use LeafLink’s current `total` / `payment_balance`, not a stale cache row
+   * (e.g. order edited from $960 → ~$2,010 while CPU still showed the old balance).
+   */
+  async enrichPaymentCandidatesWithLiveBalances(
+    companyId: string,
+    candidates: LeafLinkPaymentMatchCandidateDto[],
+  ): Promise<LeafLinkPaymentMatchCandidateDto[]> {
+    if (!candidates.length) return candidates;
+    const MAX_LIVE = 12;
+    const head = candidates.slice(0, MAX_LIVE);
+    const tail = candidates.slice(MAX_LIVE);
+    const refreshed = await Promise.all(
+      head.map(async (c) => {
+        const lookup = cleanString(c.orderId) || cleanString(c.orderNumber) || cleanString(c.leafLinkKey);
+        if (!lookup) return c;
+        try {
+          const live = await this.getOrder(companyId, lookup);
+          if (!live) return c;
+          const paid = live.paid || cleanString(live.paymentStatus).toLowerCase() === "paid";
+          const total =
+            typeof live.total === "number" && Number.isFinite(live.total) && live.total > 0
+              ? live.total
+              : orderTotalMoney(live);
+          const outstandingBalance = paid
+            ? 0
+            : typeof live.outstandingBalance === "number" && Number.isFinite(live.outstandingBalance)
+              ? live.outstandingBalance
+              : total;
+          return {
+            ...c,
+            total,
+            outstandingBalance,
+            status: live.statusNormalized || live.status || c.status,
+            paymentStatus: live.paymentStatus || c.paymentStatus,
+            deliveryDate: live.deliveryDate ?? c.deliveryDate,
+            lineItems: live.lineItems?.length ? live.lineItems : c.lineItems,
+            markedPaidInLeafLink: paid,
+            customerName: cleanString(live.customerName) || c.customerName,
+          };
+        } catch (err) {
+          logWarn("[LEAFLINK] payment_candidate_live_refresh_failed", {
+            companyId,
+            orderId: lookup,
+            err: err instanceof Error ? err.message : String(err),
+          });
+          return c;
+        }
+      }),
+    );
+    return [...refreshed, ...tail];
+  }
+
   async findOpenPaymentCandidatesForCheck(
     companyId: string,
     input: { invoiceNumber?: string; payerName?: string; amount?: number },
   ): Promise<LeafLinkPaymentMatchCandidateDto[]> {
     const rows = await findRecentLeafLinkStoredOrdersForCompany(companyId, 4000);
-    return collectLeafLinkPaymentCandidatesFromDbRows(rows, input, { includePaid: false });
+    const candidates = collectLeafLinkPaymentCandidatesFromDbRows(rows, input, { includePaid: false });
+    return this.enrichPaymentCandidatesWithLiveBalances(companyId, candidates);
   }
 
   /**
@@ -3210,7 +3273,8 @@ export class LeafLinkOrdersService {
     input: { invoiceNumber?: string; payerName?: string; amount?: number },
   ): Promise<LeafLinkPaymentMatchCandidateDto[]> {
     const rows = await findRecentLeafLinkStoredOrdersForCompany(companyId, 4000);
-    return collectLeafLinkPaymentCandidatesFromDbRows(rows, input, { includePaid: true });
+    const candidates = collectLeafLinkPaymentCandidatesFromDbRows(rows, input, { includePaid: true });
+    return this.enrichPaymentCandidatesWithLiveBalances(companyId, candidates);
   }
 
   /** @deprecated Use {@link postOrderPayment} */

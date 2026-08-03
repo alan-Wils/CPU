@@ -485,6 +485,11 @@ export class CheckCaptureService {
         };
         let linkedOrders = await this.leafLinkOrdersService.findPaymentMatchCandidatesIncludingPaidForCheck(companyId, matchInput);
         if (!linkedOrders.length && refresh) {
+            try {
+                await this.leafLinkOrdersService.syncOrdersWarm(companyId, "check_payment_match_refresh");
+            } catch {
+                /* best-effort; re-query cache below either way */
+            }
             linkedOrders = await this.leafLinkOrdersService.findPaymentMatchCandidatesIncludingPaidForCheck(companyId, matchInput);
         }
         const alreadyPosted = mergePostedPaymentsFromCheckCapture(check);
