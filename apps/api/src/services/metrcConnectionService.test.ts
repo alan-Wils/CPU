@@ -108,8 +108,11 @@ describe("MetrcConnectionService", () => {
     const path = String(locationsCall?.[0] ?? "");
     expect(path).toContain("/locations/v2/active");
     expect(path).toContain("licenseNumber=SF-SBX-CO-1-13402");
-    expect(path).toContain("lastModifiedStart=");
+    expect(path).toContain("pageNumber=1");
     expect(path).toContain("pageSize=20");
+    expect(path).not.toContain("lastModifiedStart=");
+    expect(path).not.toContain("lastModifiedEnd=");
+    expect(out.locationCount).toBe(1);
   });
 
   it("returns credential hint when all auth modes fail", async () => {
@@ -150,5 +153,113 @@ describe("MetrcConnectionService", () => {
     expect(out.userKeyLength).toBeGreaterThan(40);
     expect(out.attemptedModes).toContain("sandbox_basic_vendor_user");
     expect(out.diagnostics.sandboxStatus).toBeDefined();
+  });
+
+  function locationsOk(data: unknown) {
+    return {
+      ok: true as const,
+      status: 200,
+      data,
+      durationMs: 8,
+      retries: 0,
+      rateLimitWaitedMs: 0,
+      authMode: "sandbox_basic_vendor_user" as const,
+      metrcMessage: "OK",
+    };
+  }
+
+  function facilitiesOk(licenseNumber: string) {
+    return locationsOk({ Data: [{ LicenseNumber: licenseNumber, StartDate: "2020-01-01" }] });
+  }
+
+  it("reports TotalRecords from a PascalCase paginated production payload", async () => {
+    const licenseNumber = "403R-00930";
+    loadConfigMock.mockResolvedValue({ ...loaded, licenseNumber, environment: "production" });
+    const dataRows = Array.from({ length: 14 }, (_, i) => ({ Id: i + 1, Name: `Room ${i + 1}` }));
+    getMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/facilities/")) return facilitiesOk(licenseNumber);
+      return locationsOk({
+        Data: dataRows,
+        Total: 14,
+        TotalRecords: 14,
+        PageSize: 20,
+        RecordsOnPage: 14,
+        Page: 1,
+        CurrentPage: 1,
+        TotalPages: 1,
+      });
+    });
+
+    const svc = new MetrcConnectionService();
+    const out = await svc.runTestConnection({ companyId: "c1", actorUserId: "u1" });
+    expect(out.ok && out.connected).toBe(true);
+    if (!out.ok || !out.connected) return;
+    expect(out.locationCount).toBe(14);
+    expect(out.licenseNumber).toBe(licenseNumber);
+    const path = String(
+      getMock.mock.calls.find((c) => String(c[0] ?? "").includes("/locations/v2/active"))?.[0] ?? "",
+    );
+    expect(path).toBe(`/locations/v2/active?licenseNumber=${licenseNumber}&pageNumber=1&pageSize=20`);
+  });
+
+  it("reports lowercase data array totals", async () => {
+    getMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/facilities/")) return facilitiesOk("SF-SBX-CO-1-13402");
+      return locationsOk({ data: [{ Id: 1, Name: "A" }, { id: 2, Name: "B" }], totalRecords: 2 });
+    });
+    const out = await new MetrcConnectionService().runTestConnection({
+      companyId: "c1",
+      actorUserId: "u1",
+    });
+    expect(out.ok && "locationCount" in out ? out.locationCount : 0).toBe(2);
+  });
+
+  it("reports empty paginated totals as zero", async () => {
+    getMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/facilities/")) return facilitiesOk("SF-SBX-CO-1-13402");
+      return locationsOk({
+        Data: [],
+        Total: 0,
+        TotalRecords: 0,
+        PageSize: 20,
+        RecordsOnPage: 0,
+        Page: 1,
+        CurrentPage: 1,
+        TotalPages: 1,
+      });
+    });
+    const out = await new MetrcConnectionService().runTestConnection({
+      companyId: "c1",
+      actorUserId: "u1",
+    });
+    expect(out.ok && out.connected).toBe(true);
+    if (!out.ok || !out.connected) return;
+    expect(out.locationCount).toBe(0);
+  });
+
+  it("treats a malformed locations body as zero locations", async () => {
+    getMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/facilities/")) return facilitiesOk("SF-SBX-CO-1-13402");
+      return locationsOk("not-json-array");
+    });
+    const out = await new MetrcConnectionService().runTestConnection({
+      companyId: "c1",
+      actorUserId: "u1",
+    });
+    expect(out.ok && out.connected).toBe(true);
+    if (!out.ok || !out.connected) return;
+    expect(out.locationCount).toBe(0);
+  });
+
+  it("prefers TotalRecords when Data is empty", async () => {
+    getMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/facilities/")) return facilitiesOk("SF-SBX-CO-1-13402");
+      return locationsOk({ Data: [], TotalRecords: 14, Total: 0 });
+    });
+    const out = await new MetrcConnectionService().runTestConnection({
+      companyId: "c1",
+      actorUserId: "u1",
+    });
+    expect(out.ok && "locationCount" in out ? out.locationCount : 0).toBe(14);
   });
 });

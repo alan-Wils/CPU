@@ -193,4 +193,89 @@ describe("MetrcLocationsSyncService", () => {
     expect(savedMetrc?.metrcLastLocationsSyncAt).toBeTruthy();
     expect(savedMetrc?.metrcTotalLocationsSynced).toBe(1);
   });
+
+  it("fetches sequential pages and dedupes by METRC Id", async () => {
+    getMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/facilities/")) {
+        return {
+          ok: true,
+          status: 200,
+          data: { Data: [{ LicenseNumber: "SF-SBX-CO-1-13402", StartDate: "2026-01-01" }] },
+          durationMs: 5,
+          retries: 0,
+          rateLimitWaitedMs: 0,
+          authMode: "sandbox_basic_vendor_user",
+          metrcMessage: "OK",
+        };
+      }
+      const pageNumber = Number(new URLSearchParams(String(path).split("?")[1] ?? "").get("pageNumber") || "1");
+      if (pageNumber === 1) {
+        return {
+          ok: true,
+          status: 200,
+          data: {
+            Data: Array.from({ length: 20 }, (_, i) => ({
+              Id: i + 1,
+              Name: `Room ${i + 1}`,
+              ForPlants: true,
+            })),
+            TotalRecords: 21,
+            TotalPages: 2,
+            PageSize: 20,
+            Page: 1,
+          },
+          durationMs: 8,
+          retries: 0,
+          rateLimitWaitedMs: 0,
+          authMode: "sandbox_basic_vendor_user",
+          metrcMessage: "OK",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        data: {
+          Data: [
+            { Id: 20, Name: "Room 20 updated", ForPlants: true },
+            { Id: 21, Name: "Room 21", ForPlants: true },
+          ],
+          TotalRecords: 21,
+          TotalPages: 2,
+          PageSize: 20,
+          Page: 2,
+        },
+        durationMs: 8,
+        retries: 0,
+        rateLimitWaitedMs: 0,
+        authMode: "sandbox_basic_vendor_user",
+        metrcMessage: "OK",
+      };
+    });
+    listLocationsMock.mockResolvedValue(
+      Array.from({ length: 21 }, (_, i) => ({
+        metrcLocationId: String(i + 1),
+        licenseNumber: "SF-SBX-CO-1-13402",
+        name: i === 19 ? "Room 20 updated" : `Room ${i + 1}`,
+        locationTypeId: null,
+        locationTypeName: "",
+        forPlants: true,
+        forHarvests: false,
+        forPackages: false,
+        nexbatchRoomSuite: null,
+        nexbatchRoomId: null,
+        nexbatchMappingManual: false,
+      })),
+    );
+
+    const svc = new MetrcLocationsSyncService();
+    const out = await svc.syncMetrcLocations({ companyId: "c1", actorUserId: "u1" });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.count).toBe(21);
+    const locationGets = getMock.mock.calls.filter((c) => String(c[0] ?? "").includes("/locations/v2/active"));
+    expect(locationGets.length).toBeGreaterThanOrEqual(2);
+    const upserted = upsertLocationsMock.mock.calls[0]?.[1] as Array<{ metrcLocationId: string; name: string }>;
+    expect(upserted).toHaveLength(21);
+    expect(upserted.find((r) => r.metrcLocationId === "20")?.name).toBe("Room 20 updated");
+  });
 });

@@ -1,13 +1,19 @@
-/** Parse METRC JSON body: either a bare array or `{ Data: [...] }` of objects. */
+import {
+  extractMetrcCollectionPagination,
+  normalizeMetrcCollectionRecords,
+} from "./metrcCollectionResponse.js";
+
+export {
+  metrcCollectionReportedTotal,
+  normalizeMetrcCollectionRecords,
+  normalizeMetrcCollectionResponse,
+} from "./metrcCollectionResponse.js";
+
+/** Parse METRC JSON body: bare array, `{ Data: [...] }`, or `{ data: [...] }` of objects. */
 export function parseMetrcDataRecords(bodyJson: unknown): Record<string, unknown>[] {
-  if (Array.isArray(bodyJson)) {
-    return bodyJson.filter((x) => x && typeof x === "object") as Record<string, unknown>[];
-  }
-  if (bodyJson && typeof bodyJson === "object" && Array.isArray((bodyJson as { Data?: unknown }).Data)) {
-    const data = (bodyJson as { Data: unknown[] }).Data;
-    return data.filter((x) => x && typeof x === "object") as Record<string, unknown>[];
-  }
-  return [];
+  return normalizeMetrcCollectionRecords(bodyJson).filter(
+    (x) => x && typeof x === "object" && !Array.isArray(x),
+  ) as Record<string, unknown>[];
 }
 
 export function metrcDataRecordCount(bodyJson: unknown): number {
@@ -15,21 +21,16 @@ export function metrcDataRecordCount(bodyJson: unknown): number {
 }
 
 export function extractMetrcListPagination(bodyJson: unknown): Record<string, unknown> | null {
-  if (!bodyJson || typeof bodyJson !== "object" || Array.isArray(bodyJson)) return null;
-  const body = bodyJson as Record<string, unknown>;
-  const keys = [
-    "Total",
-    "TotalRecords",
-    "TotalPages",
-    "PageSize",
-    "PageNumber",
-    "CurrentPage",
-    "RecordsOnPage",
-  ];
+  const paging = extractMetrcCollectionPagination(bodyJson);
   const out: Record<string, unknown> = {};
-  for (const key of keys) {
-    if (body[key] !== undefined) out[key] = body[key];
-  }
+  if (paging.total != null) out.Total = paging.total;
+  if (paging.totalRecords != null) out.TotalRecords = paging.totalRecords;
+  if (paging.totalPages != null) out.TotalPages = paging.totalPages;
+  if (paging.pageSize != null) out.PageSize = paging.pageSize;
+  if (paging.pageNumber != null) out.PageNumber = paging.pageNumber;
+  if (paging.currentPage != null) out.CurrentPage = paging.currentPage;
+  if (paging.recordsOnPage != null) out.RecordsOnPage = paging.recordsOnPage;
+  if (paging.page != null) out.Page = paging.page;
   return Object.keys(out).length > 0 ? out : null;
 }
 
@@ -80,13 +81,7 @@ export function parseMetrcPlantBatchWasteReasonNames(bodyJson: unknown): string[
       }
     }
   };
-  if (Array.isArray(bodyJson)) {
-    processItems(bodyJson);
-    return out;
-  }
-  if (bodyJson && typeof bodyJson === "object" && Array.isArray((bodyJson as { Data?: unknown }).Data)) {
-    processItems((bodyJson as { Data: unknown[] }).Data);
-  }
+  processItems(normalizeMetrcCollectionRecords(bodyJson));
   return out;
 }
 
@@ -114,13 +109,7 @@ export function parseMetrcLabTestTypeNames(bodyJson: unknown): string[] {
       }
     }
   };
-  if (Array.isArray(bodyJson)) {
-    processItems(bodyJson);
-    return out;
-  }
-  if (bodyJson && typeof bodyJson === "object" && Array.isArray((bodyJson as { Data?: unknown }).Data)) {
-    processItems((bodyJson as { Data: unknown[] }).Data);
-  }
+  processItems(normalizeMetrcCollectionRecords(bodyJson));
   return out;
 }
 

@@ -17,6 +17,14 @@ import {
   type ParsedMetrcTransferType,
 } from "../lib/metrcTransferTypesParse.js";
 import {
+  METRC_COLLECTION_MAX_PAGES,
+  METRC_COLLECTION_PAGE_SIZE,
+  dedupeMetrcRecordsById,
+  normalizeMetrcCollectionResponse,
+  shouldFetchNextMetrcCollectionPage,
+  withMetrcCollectionPageQuery,
+} from "../lib/metrcCollectionResponse.js";
+import {
   listMetrcTransferTypesForCompany,
   replaceMetrcTransferTypesForCompany,
   seedFallbackTransferTypesForCompany,
@@ -227,7 +235,41 @@ export class MetrcTransferTypesSyncService {
       const endpointKey = pathname.split("?")[0] || pathname;
 
       if (!isMetrcClientFailure(result)) {
-        parsed = parseMetrcTransferTypesPayload(result.data);
+        const rawRecords = [...normalizeMetrcCollectionResponse(result.data).records];
+        for (let pageNumber = 1; pageNumber <= METRC_COLLECTION_MAX_PAGES; pageNumber += 1) {
+          if (pageNumber > 1) {
+            const next = await client.get<unknown>(
+              withMetrcCollectionPageQuery(pathname, pageNumber, METRC_COLLECTION_PAGE_SIZE),
+            );
+            if (isMetrcClientFailure(next)) break;
+            const page = normalizeMetrcCollectionResponse(next.data);
+            rawRecords.push(...page.records);
+            if (
+              !shouldFetchNextMetrcCollectionPage({
+                pageNumber,
+                maxPages: METRC_COLLECTION_MAX_PAGES,
+                pageSize: METRC_COLLECTION_PAGE_SIZE,
+                recordsOnPage: page.records.length,
+                payload: next.data,
+              })
+            ) {
+              break;
+            }
+            continue;
+          }
+          if (
+            !shouldFetchNextMetrcCollectionPage({
+              pageNumber,
+              maxPages: METRC_COLLECTION_MAX_PAGES,
+              pageSize: METRC_COLLECTION_PAGE_SIZE,
+              recordsOnPage: rawRecords.length,
+              payload: result.data,
+            })
+          ) {
+            break;
+          }
+        }
+        parsed = parseMetrcTransferTypesPayload(dedupeMetrcRecordsById(rawRecords));
         lastStatus = result.status;
         successEndpoint = endpointKey;
         logInfo("[METRC] transfer_types_sync_endpoint_success", {

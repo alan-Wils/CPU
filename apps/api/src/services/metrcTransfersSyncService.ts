@@ -23,6 +23,10 @@ import {
   metrcDataRecordCount,
 } from "../lib/metrcConnectionHelpers.js";
 import {
+  normalizeMetrcCollectionRecords,
+  shouldFetchNextMetrcCollectionPage,
+} from "../lib/metrcCollectionResponse.js";
+import {
   parseMetrcTransfersPayload,
   type ParsedMetrcTransfer,
 } from "../lib/metrcTransfersParse.js";
@@ -273,6 +277,7 @@ export class MetrcTransfersSyncService {
           let pageParsed: ParsedMetrcTransfer[] | null = null;
           let pageRawCount = 0;
           let pagePagination: Record<string, unknown> | null = null;
+          let pagePayload: unknown | undefined;
 
           for (let i = 0; i < candidates.length; i += 1) {
             const candidatePath = candidates[i]!;
@@ -284,6 +289,7 @@ export class MetrcTransfersSyncService {
               pageRawCount = metrcDataRecordCount(result.data);
               pagePagination = extractMetrcListPagination(result.data);
               pageParsed = parseMetrcTransfersPayload(result.data, direction);
+              pagePayload = result.data;
               totalRetries += result.retries;
               totalRateLimitWaitedMs += result.rateLimitWaitedMs;
               directionLastStatus = result.status;
@@ -291,13 +297,7 @@ export class MetrcTransfersSyncService {
                 const rawRows = parseMetrcTransfersPayload(result.data, direction);
                 directionFirstRaw = rawRows[0]?.raw ?? null;
                 if (!directionFirstRaw) {
-                  const records =
-                    result.data &&
-                    typeof result.data === "object" &&
-                    Array.isArray((result.data as { Data?: unknown[] }).Data)
-                      ? (result.data as { Data: unknown[] }).Data
-                      : [];
-                  const first = records[0];
+                  const first = normalizeMetrcCollectionRecords(result.data)[0];
                   directionFirstRaw =
                     first && typeof first === "object" ? (first as Record<string, unknown>) : null;
                 }
@@ -383,7 +383,17 @@ export class MetrcTransfersSyncService {
             paramVariantIndex: variantIndex,
           });
 
-          if (pageRawCount < pageParams.pageSize) break;
+          if (
+            !shouldFetchNextMetrcCollectionPage({
+              pageNumber,
+              maxPages: MAX_TRANSFER_PAGES,
+              pageSize: pageParams.pageSize,
+              recordsOnPage: pageRawCount,
+              payload: pagePayload,
+            })
+          ) {
+            break;
+          }
         }
 
         const mergedVariant = mergeParsedTransfers(variantPages);

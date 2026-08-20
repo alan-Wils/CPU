@@ -23,6 +23,14 @@ describe("metrcLocationsParse", () => {
     expect(rows[0]?.forPackages).toBe(true);
   });
 
+  it("parses lowercase data arrays", () => {
+    const rows = parseMetrcLocationsPayload({
+      data: [{ Id: 8, Name: "Vault", ForPackages: true }],
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.name).toBe("Vault");
+  });
+
   it("dedupes rows by METRC location id (last row wins)", () => {
     const rows = parseMetrcLocationsPayload({
       Data: [

@@ -15,6 +15,7 @@ import {
 } from "../lib/metrcEndpoints.js";
 import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
 import { parseMetrcHarvestsPayload, type ParsedMetrcHarvest } from "../lib/metrcHarvestsParse.js";
+import { shouldFetchNextMetrcCollectionPage } from "../lib/metrcCollectionResponse.js";
 import {
   applyMetrcOperationalSuccess,
   isMetrcSandboxPlaceholderLicense,
@@ -185,6 +186,7 @@ export class MetrcHarvestsSyncService {
       const pageParams = { ...locationsRequest.params, pageNumber };
       const candidates = orderMetrcEndpointCandidates(endpointCtx, "harvests", pageParams);
       let pageParsed: ParsedMetrcHarvest[] | null = null;
+      let pagePayload: unknown | undefined;
 
       for (let i = 0; i < candidates.length; i += 1) {
         const candidatePath = candidates[i]!;
@@ -194,6 +196,7 @@ export class MetrcHarvestsSyncService {
           cacheMetrcEndpointPath(endpointCtx, "harvests", candidatePath);
           lastEndpointKey = metrcEndpointPathKey(candidatePath);
           pageParsed = parseMetrcHarvestsPayload(result.data);
+          pagePayload = result.data;
           totalRetries += result.retries;
           totalRateLimitWaitedMs += result.rateLimitWaitedMs;
           lastStatus = result.status;
@@ -260,7 +263,16 @@ export class MetrcHarvestsSyncService {
 
       pagesFetched += 1;
       pageResults.push(pageParsed);
-      if (pageParsed.length < pageParams.pageSize) break;
+      if (
+        !shouldFetchNextMetrcCollectionPage({
+          pageNumber,
+          maxPages: MAX_HARVEST_PAGES,
+          pageSize: pageParams.pageSize,
+          payload: pagePayload,
+        })
+      ) {
+        break;
+      }
     }
 
     const parsed = mergeParsedPages(pageResults);

@@ -14,6 +14,7 @@ import {
   shouldTryNextMetrcEndpoint,
 } from "../lib/metrcEndpoints.js";
 import { parseMetrcItemsPayload, type ParsedMetrcItem } from "../lib/metrcItemsParse.js";
+import { shouldFetchNextMetrcCollectionPage } from "../lib/metrcCollectionResponse.js";
 import {
   buildMetrcItemsActivePathForPage,
   type MetrcItemsActiveQueryParams,
@@ -240,6 +241,7 @@ export class MetrcItemsSyncService {
       const pageParams: MetrcItemsActiveQueryParams = { ...locationsRequest.params, pageNumber };
       const candidates = orderMetrcEndpointCandidates(input.endpointCtx, "items", pageParams);
       let pageParsed: ParsedMetrcItem[] | null = null;
+      let pagePayload: unknown | undefined;
 
       for (let i = 0; i < candidates.length; i += 1) {
         const candidatePath = candidates[i]!;
@@ -260,6 +262,7 @@ export class MetrcItemsSyncService {
         if (!isMetrcClientFailure(result)) {
           cacheMetrcEndpointPath(input.endpointCtx, "items", candidatePath);
           pageParsed = parseMetrcItemsPayload(result.data);
+          pagePayload = result.data;
           totalRetries += result.retries;
           totalRateLimitWaitedMs += result.rateLimitWaitedMs;
           lastStatus = result.status;
@@ -297,7 +300,16 @@ export class MetrcItemsSyncService {
 
       pagesFetched += 1;
       pageResults.push(pageParsed);
-      if (pageParsed.length < pageParams.pageSize) break;
+      if (
+        !shouldFetchNextMetrcCollectionPage({
+          pageNumber,
+          maxPages: MAX_ITEM_PAGES,
+          pageSize: pageParams.pageSize,
+          payload: pagePayload,
+        })
+      ) {
+        break;
+      }
     }
 
     const parsed = mergeParsedPages(pageResults);

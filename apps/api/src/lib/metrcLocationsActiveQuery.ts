@@ -6,8 +6,8 @@ import type { LoadedMetrcConfig } from "./metrcConfigLoader.js";
 
 export type MetrcLocationsActiveQueryParams = {
   licenseNumber: string;
-  lastModifiedStart: string;
-  lastModifiedEnd: string;
+  lastModifiedStart?: string;
+  lastModifiedEnd?: string;
   pageNumber: number;
   pageSize: number;
 };
@@ -79,8 +79,8 @@ export function defaultMetrcLocationsDateRange(facilityStartDate: string | null)
 export function buildMetrcLocationsActiveQueryString(params: MetrcLocationsActiveQueryParams): string {
   const q = new URLSearchParams();
   q.set("licenseNumber", params.licenseNumber);
-  q.set("lastModifiedStart", params.lastModifiedStart);
-  q.set("lastModifiedEnd", params.lastModifiedEnd);
+  if (params.lastModifiedStart) q.set("lastModifiedStart", params.lastModifiedStart);
+  if (params.lastModifiedEnd) q.set("lastModifiedEnd", params.lastModifiedEnd);
   q.set("pageNumber", String(params.pageNumber));
   q.set("pageSize", String(params.pageSize));
   return `?${q.toString()}`;
@@ -102,18 +102,22 @@ export function buildMetrcLocationsActiveParams(input: {
   configLicense: string;
   pageNumber?: number;
   pageSize?: number;
+  omitLastModified?: boolean;
 }): MetrcLocationsActiveQueryParams {
   const facility = input.facility;
   const licenseNumber =
     facility?.licenseNumber || String(input.configLicense || "").trim();
-  const dates = defaultMetrcLocationsDateRange(facility?.startDate ?? null);
-  return {
+  const params: MetrcLocationsActiveQueryParams = {
     licenseNumber,
-    lastModifiedStart: dates.lastModifiedStart,
-    lastModifiedEnd: dates.lastModifiedEnd,
     pageNumber: input.pageNumber ?? DEFAULT_PAGE_NUMBER,
     pageSize: input.pageSize ?? DEFAULT_PAGE_SIZE,
   };
+  if (!input.omitLastModified) {
+    const dates = defaultMetrcLocationsDateRange(facility?.startDate ?? null);
+    params.lastModifiedStart = dates.lastModifiedStart;
+    params.lastModifiedEnd = dates.lastModifiedEnd;
+  }
+  return params;
 }
 
 export function logMetrcLocationsActiveRequest(input: {
@@ -134,8 +138,8 @@ export function logMetrcLocationsActiveRequest(input: {
     facilitySource: input.facilitySource,
     resolvedUrl: base ? `${base}${path}` : path,
     licenseNumber: input.params.licenseNumber,
-    lastModifiedStart: input.params.lastModifiedStart,
-    lastModifiedEnd: input.params.lastModifiedEnd,
+    lastModifiedStart: input.params.lastModifiedStart ?? null,
+    lastModifiedEnd: input.params.lastModifiedEnd ?? null,
     pageNumber: input.params.pageNumber,
     pageSize: input.params.pageSize,
   });
@@ -148,6 +152,7 @@ export async function resolveMetrcLocationsActiveRequest(input: {
   purpose: string;
   pageNumber?: number;
   pageSize?: number;
+  omitLastModified?: boolean;
 }): Promise<{
   params: MetrcLocationsActiveQueryParams;
   pathnameAndQuery: string;
@@ -176,6 +181,7 @@ export async function resolveMetrcLocationsActiveRequest(input: {
     configLicense: input.loaded.licenseNumber,
     pageNumber: input.pageNumber,
     pageSize: input.pageSize,
+    omitLastModified: input.omitLastModified,
   });
   const pathnameAndQuery = buildMetrcLocationsActivePathname(params);
   const candidates = buildMetrcLocationsActivePathCandidates(params);

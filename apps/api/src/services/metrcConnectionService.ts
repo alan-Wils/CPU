@@ -10,6 +10,7 @@ import { loadCompanyMetrcConfig } from "../lib/metrcConfigLoader.js";
 import { resolveMetrcApiBaseUrl } from "../lib/metrcResolveBaseUrl.js";
 import type { MetrcAttemptFailure } from "../lib/metrcConnectionAttempts.js";
 import { parseLocationsPayload, toSampleLocation } from "../lib/metrcConnectionHelpers.js";
+import { metrcCollectionReportedTotal } from "../lib/metrcCollectionResponse.js";
 import {
   orderMetrcEndpointCandidates,
   shouldTryNextMetrcEndpoint,
@@ -285,6 +286,7 @@ export class MetrcConnectionService {
       loaded,
       companyId: input.companyId,
       purpose: "test_connection",
+      omitLastModified: true,
     });
     const operationalLicense = locationsRequest.params.licenseNumber;
     const candidates = orderMetrcEndpointCandidates(
@@ -311,6 +313,7 @@ export class MetrcConnectionService {
         });
 
         const locations = parseLocationsPayload(result.data);
+        const locationCount = metrcCollectionReportedTotal(result.data);
         const facilityName = pickMetrcFacilityNameFromLocations(locations);
         const success: MetrcTestConnectionSuccess = {
           ok: true,
@@ -318,7 +321,7 @@ export class MetrcConnectionService {
           checkedAt,
           baseUrl: client.baseUrl ?? baseUrl,
           licenseNumber: operationalLicense,
-          locationCount: locations.length,
+          locationCount,
           sampleLocations: locations.slice(0, 5).map(toSampleLocation),
           authMode: result.authMode as MetrcClientAuthMode,
           userKeyLength,
@@ -439,6 +442,7 @@ export class MetrcConnectionService {
             const retryResult = await retryClient.get<unknown>(testPath);
             if (!isMetrcClientFailure(retryResult)) {
               const locations = parseLocationsPayload(retryResult.data);
+              const locationCount = metrcCollectionReportedTotal(retryResult.data);
               const facilityName = pickMetrcFacilityNameFromLocations(locations);
               const success: MetrcTestConnectionSuccess = {
                 ok: true,
@@ -446,7 +450,7 @@ export class MetrcConnectionService {
                 checkedAt,
                 baseUrl: retryClient.baseUrl ?? baseUrl,
                 licenseNumber: operationalLicense,
-                locationCount: locations.length,
+                locationCount,
                 sampleLocations: locations.slice(0, 5).map(toSampleLocation),
                 authMode: retryResult.authMode as MetrcClientAuthMode,
                 userKeyLength: reloaded.userApiKey.length,

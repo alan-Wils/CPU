@@ -28,6 +28,20 @@ describe("metrcLocationsActiveQuery", () => {
     })).toBe(`/locations/v2/active${q}`);
   });
 
+  it("builds connection-test query without last-modified filters", () => {
+    const q = buildMetrcLocationsActiveQueryString({
+      licenseNumber: "403R-00930",
+      pageNumber: 1,
+      pageSize: 20,
+    });
+    expect(q).toBe("?licenseNumber=403R-00930&pageNumber=1&pageSize=20");
+    expect(buildMetrcLocationsActivePathname({
+      licenseNumber: "403R-00930",
+      pageNumber: 1,
+      pageSize: 20,
+    })).toBe("/locations/v2/active?licenseNumber=403R-00930&pageNumber=1&pageSize=20");
+  });
+
   it("uses facility StartDate when present", () => {
     const range = defaultMetrcLocationsDateRange("2026-03-15");
     expect(range.lastModifiedStart).toBe("2026-03-15");

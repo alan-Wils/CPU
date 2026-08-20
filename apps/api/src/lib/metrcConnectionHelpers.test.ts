@@ -26,6 +26,14 @@ describe("parseLocationsPayload", () => {
     expect(rows).toHaveLength(2);
   });
 
+  it("reads lowercase data wrapper", () => {
+    const rows = parseLocationsPayload({
+      data: [{ Id: 4, Name: "Vault" }],
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.Name ?? rows[0]?.name).toBe("Vault");
+  });
+
   it("returns empty for invalid", () => {
     expect(parseLocationsPayload(null)).toEqual([]);
     expect(parseLocationsPayload({})).toEqual([]);
@@ -73,6 +81,12 @@ describe("parseMetrcPlantBatchWasteReasonNames", () => {
         Data: [{ Name: "Pruning" }, "Other"],
       }),
     ).toEqual(["Pruning", "Other"]);
+  });
+
+  it("parses lowercase data wrapper", () => {
+    expect(parseMetrcPlantBatchWasteReasonNames({ data: ["Contamination"] })).toEqual([
+      "Contamination",
+    ]);
   });
 });
 

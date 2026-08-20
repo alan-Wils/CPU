@@ -25,6 +25,7 @@ import {
   formatMetrcSuccessMessage,
 } from "../lib/metrcStatusPersistence.js";
 import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
+import { normalizeMetrcCollectionRecords } from "../lib/metrcCollectionResponse.js";
 
 export type MetrcPullResource = Exclude<
   MetrcEndpointResource,
@@ -70,12 +71,7 @@ const RESOURCE_META: Record<
 };
 
 function normalizeMetrcArray(payload: unknown): unknown[] {
-  if (Array.isArray(payload)) return payload;
-  if (!payload || typeof payload !== "object") return [];
-  const r = payload as Record<string, unknown>;
-  if (Array.isArray(r.Data)) return r.Data;
-  if (Array.isArray(r.data)) return r.data;
-  return [];
+  return normalizeMetrcCollectionRecords(payload);
 }
 
 function summarizeRow(row: unknown): Record<string, unknown> {

@@ -8,6 +8,7 @@ import { parseMetrcFacilityLicenseRows } from "../lib/metrcLocationsActiveQuery.
 import { buildMetrcTransfersListPathname } from "../lib/metrcTransfersActiveQuery.js";
 import { isMetrcSandboxPlaceholderLicense } from "../lib/metrcOperationalStatus.js";
 import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
+import { normalizeMetrcCollectionRecords } from "../lib/metrcCollectionResponse.js";
 import {
   buildMetrcTransfersSyncQueryParamVariants,
   type MetrcTransfersListDirection,
@@ -93,10 +94,7 @@ export class MetrcTransfersRawDebugService {
       }
 
       const rawRecords = metrcDataRecordCount(result.data);
-      const dataRecords =
-        result.data && typeof result.data === "object" && Array.isArray((result.data as { Data?: unknown }).Data)
-          ? ((result.data as { Data: unknown[] }).Data[0] ?? null)
-          : null;
+      const first = normalizeMetrcCollectionRecords(result.data)[0] ?? null;
 
       endpoints.push({
         direction,
@@ -105,7 +103,7 @@ export class MetrcTransfersRawDebugService {
         httpStatus: result.status,
         rawRecordCount: rawRecords,
         pagination: extractMetrcListPagination(result.data),
-        firstRawItem: dataRecords,
+        firstRawItem: first,
         raw: result.data,
       });
     }

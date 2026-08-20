@@ -15,6 +15,7 @@ import {
 import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
 import type { MetrcPlantGrowthPhaseList } from "../lib/metrcPlantsActiveQuery.js";
 import { parseMetrcPlantsPayload, type ParsedMetrcPlant } from "../lib/metrcPlantsParse.js";
+import { shouldFetchNextMetrcCollectionPage } from "../lib/metrcCollectionResponse.js";
 import { isMetrcSandboxPlaceholderLicense } from "../lib/metrcOperationalStatus.js";
 import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 import {
@@ -152,6 +153,7 @@ export class MetrcPlantsSyncService {
         const pageParams = { ...locationsRequest.params, pageNumber };
         const candidates = orderMetrcEndpointCandidates(endpointCtx, resource, pageParams);
         let pageParsed: ParsedMetrcPlant[] | null = null;
+        let pagePayload: unknown | undefined;
 
         for (let i = 0; i < candidates.length; i += 1) {
           const candidatePath = candidates[i]!;
@@ -161,6 +163,7 @@ export class MetrcPlantsSyncService {
             cacheMetrcEndpointPath(endpointCtx, resource, candidatePath);
             endpointsUsed.push(metrcEndpointPathKey(candidatePath));
             pageParsed = parseMetrcPlantsPayload(result.data, phase);
+            pagePayload = result.data;
             lastStatus = result.status;
             break;
           }
@@ -207,7 +210,16 @@ export class MetrcPlantsSyncService {
         }
 
         allParsed.push(...pageParsed);
-        if (pageParsed.length < pageParams.pageSize) break;
+        if (
+          !shouldFetchNextMetrcCollectionPage({
+            pageNumber,
+            maxPages: MAX_PLANT_PAGES,
+            pageSize: pageParams.pageSize,
+            payload: pagePayload,
+          })
+        ) {
+          break;
+        }
       }
     }
 

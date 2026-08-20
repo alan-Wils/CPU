@@ -22,6 +22,7 @@ import {
   type MetrcPackageReconciliationSummary,
 } from "../lib/metrcPackageInventoryReconciliation.js";
 import { parseMetrcPackagesPayload, type ParsedMetrcPackage } from "../lib/metrcPackagesParse.js";
+import { shouldFetchNextMetrcCollectionPage } from "../lib/metrcCollectionResponse.js";
 import { buildWideMetrcPackagesActiveDateRange } from "../lib/metrcPackagesActiveQuery.js";
 import {
   buildMetrcPackageSyncDiagnostics,
@@ -324,6 +325,7 @@ export class MetrcPackagesSyncService {
       };
       const candidates = orderMetrcEndpointCandidates(endpointCtx, "packages", pageParams);
       let pageParsed: ParsedMetrcPackage[] | null = null;
+      let pagePayload: unknown | undefined;
 
       for (let i = 0; i < candidates.length; i += 1) {
         const pathname = candidates[i]!;
@@ -335,6 +337,7 @@ export class MetrcPackagesSyncService {
           const records = parseMetrcPackagesPayload(result.data);
           rawMetrcPackageCount += records.length;
           pageParsed = records;
+          pagePayload = result.data;
           totalRetries += result.retries;
           totalRateLimitWaitedMs += result.rateLimitWaitedMs;
           lastStatus = result.status;
@@ -360,7 +363,16 @@ export class MetrcPackagesSyncService {
 
       pagesFetched += 1;
       pageResults.push(pageParsed);
-      if (pageParsed.length < pageParams.pageSize) break;
+      if (
+        !shouldFetchNextMetrcCollectionPage({
+          pageNumber,
+          maxPages: MAX_PACKAGE_PAGES,
+          pageSize: pageParams.pageSize,
+          payload: pagePayload,
+        })
+      ) {
+        break;
+      }
     }
 
     if (pagesFetched > 0) {

@@ -15,6 +15,7 @@ import {
 } from "../lib/metrcEndpoints.js";
 import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
 import { parseMetrcPlantBatchesPayload, type ParsedMetrcPlantBatch } from "../lib/metrcPlantBatchesParse.js";
+import { shouldFetchNextMetrcCollectionPage } from "../lib/metrcCollectionResponse.js";
 import {
   applyMetrcOperationalSuccess,
   isMetrcSandboxPlaceholderLicense,
@@ -177,6 +178,7 @@ export class MetrcPlantBatchesSyncService {
       const pageParams = { ...locationsRequest.params, pageNumber };
       const candidates = orderMetrcEndpointCandidates(endpointCtx, "plant_batches", pageParams);
       let pageParsed: ParsedMetrcPlantBatch[] | null = null;
+      let pagePayload: unknown | undefined;
 
       for (let i = 0; i < candidates.length; i += 1) {
         const candidatePath = candidates[i]!;
@@ -186,6 +188,7 @@ export class MetrcPlantBatchesSyncService {
           cacheMetrcEndpointPath(endpointCtx, "plant_batches", candidatePath);
           lastEndpointKey = metrcEndpointPathKey(candidatePath);
           pageParsed = parseMetrcPlantBatchesPayload(result.data);
+          pagePayload = result.data;
           totalRetries += result.retries;
           totalRateLimitWaitedMs += result.rateLimitWaitedMs;
           lastStatus = result.status;
@@ -252,7 +255,16 @@ export class MetrcPlantBatchesSyncService {
 
       pagesFetched += 1;
       pageResults.push(pageParsed);
-      if (pageParsed.length < pageParams.pageSize) break;
+      if (
+        !shouldFetchNextMetrcCollectionPage({
+          pageNumber,
+          maxPages: MAX_PLANT_BATCH_PAGES,
+          pageSize: pageParams.pageSize,
+          payload: pagePayload,
+        })
+      ) {
+        break;
+      }
     }
 
     const parsed = mergeParsedPages(pageResults);

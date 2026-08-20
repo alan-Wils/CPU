@@ -28,6 +28,14 @@ import {
   formatMetrcSuccessMessage,
 } from "../lib/metrcStatusPersistence.js";
 import { parseMetrcStrainsPayload } from "../lib/metrcStrainsParse.js";
+import {
+  METRC_COLLECTION_MAX_PAGES,
+  METRC_COLLECTION_PAGE_SIZE,
+  dedupeMetrcRecordsById,
+  normalizeMetrcCollectionResponse,
+  shouldFetchNextMetrcCollectionPage,
+  withMetrcCollectionPageQuery,
+} from "../lib/metrcCollectionResponse.js";
 import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 import {
   listMetrcStrainsForCompany,
@@ -175,21 +183,81 @@ export class MetrcStrainsSyncService {
     let lastStatus = 502;
     let lastMessage = "METRC strains sync failed.";
     let lastEndpoint: string | undefined;
+    const rawRecords: unknown[] = [];
+    let pagesFetched = 0;
+    let totalRetries = 0;
+    let totalRateLimitWaitedMs = 0;
+    let lastSuccessPathname = candidates[0];
+    let lastSuccessResult: Awaited<ReturnType<typeof client.get<unknown>>> | null = null;
 
-    for (let i = 0; i < candidates.length; i += 1) {
-      const pathname = candidates[i]!;
-      const result = await client.get<unknown>(pathname);
+    for (let pageNumber = 1; pageNumber <= METRC_COLLECTION_MAX_PAGES; pageNumber += 1) {
+      const pageCandidates =
+        pageNumber === 1
+          ? candidates
+          : candidates.map((path) =>
+              withMetrcCollectionPageQuery(path, pageNumber, METRC_COLLECTION_PAGE_SIZE),
+            );
+      let pagePayload: unknown | null = null;
 
-      if (!isMetrcClientFailure(result)) {
-        cacheMetrcEndpointPath(endpointCtx, "strains", pathname);
-        const parsed = parseMetrcStrainsPayload(result.data);
+      for (let i = 0; i < pageCandidates.length; i += 1) {
+        const pathname = pageCandidates[i]!;
+        const result = await client.get<unknown>(pathname);
+
+        if (!isMetrcClientFailure(result)) {
+          cacheMetrcEndpointPath(endpointCtx, "strains", pathname);
+          lastSuccessPathname = pathname;
+          lastSuccessResult = result;
+          pagePayload = result.data;
+          totalRetries += result.retries;
+          totalRateLimitWaitedMs += result.rateLimitWaitedMs;
+          lastStatus = result.status;
+          break;
+        }
+
+        lastStatus = result.status || 502;
+        lastMessage = metrcPullFailureMessage(lastStatus, result.metrcMessage || result.message);
+        lastEndpoint = result.endpoint ?? pathname.split("?")[0];
+
+        if (
+          shouldTryNextMetrcEndpoint("strains", i, pageCandidates.length, {
+            status: result.status,
+            upstreamType: result.upstreamError?.type,
+          })
+        ) {
+          continue;
+        }
+        break;
+      }
+
+      if (pagePayload === null) break;
+
+      const page = normalizeMetrcCollectionResponse(pagePayload);
+      rawRecords.push(...page.records);
+      pagesFetched += 1;
+      if (
+        !shouldFetchNextMetrcCollectionPage({
+          pageNumber,
+          maxPages: METRC_COLLECTION_MAX_PAGES,
+          pageSize: METRC_COLLECTION_PAGE_SIZE,
+          recordsOnPage: page.records.length,
+          payload: pagePayload,
+        })
+      ) {
+        break;
+      }
+    }
+
+    if (lastSuccessResult && !isMetrcClientFailure(lastSuccessResult) && pagesFetched > 0) {
+        const result = lastSuccessResult;
+        const pathname = lastSuccessPathname ?? candidates[0]!;
+        const parsed = parseMetrcStrainsPayload(dedupeMetrcRecordsById(rawRecords));
         const syncedAt = new Date();
         const syncedAtIso = syncedAt.toISOString();
         const rateLimitWarning =
-          result.rateLimitWaitedMs > 0
-            ? `Rate limiter delayed this request by ${result.rateLimitWaitedMs}ms.`
-            : result.retries > 0
-              ? `Completed after ${result.retries} retries.`
+          totalRateLimitWaitedMs > 0
+            ? `Rate limiter delayed this request by ${totalRateLimitWaitedMs}ms.`
+            : totalRetries > 0
+              ? `Completed after ${totalRetries} retries.`
               : null;
 
         const cultivationBefore = await this.loadCultivationConfig(input.companyId);
@@ -266,7 +334,7 @@ export class MetrcStrainsSyncService {
           count: totalStrainsSynced,
           nexbatchStrainsCreated: reconciled.nexbatchStrainsCreated,
           durationMs: result.durationMs,
-          retries: result.retries,
+          retries: totalRetries,
         });
 
         return {
@@ -278,25 +346,10 @@ export class MetrcStrainsSyncService {
           nexbatchStrainsCreated: reconciled.nexbatchStrainsCreated,
           strains,
           durationMs: result.durationMs,
-          retries: result.retries,
+          retries: totalRetries,
           rateLimitWarning,
           endpoint: endpointKey,
         };
-      }
-
-      lastStatus = result.status || 502;
-      lastMessage = metrcPullFailureMessage(lastStatus, result.metrcMessage || result.message);
-      lastEndpoint = result.endpoint ?? pathname.split("?")[0];
-
-      if (
-        shouldTryNextMetrcEndpoint("strains", i, candidates.length, {
-          status: result.status,
-          upstreamType: result.upstreamError?.type,
-        })
-      ) {
-        continue;
-      }
-      break;
     }
 
     if (lastStatus === 401 || lastStatus === 403) {

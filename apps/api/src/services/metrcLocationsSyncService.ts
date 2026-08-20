@@ -14,7 +14,14 @@ import {
   shouldTryNextMetrcEndpoint,
 } from "../lib/metrcEndpoints.js";
 import { resolveMetrcLocationsActiveRequest } from "../lib/metrcLocationsActiveQuery.js";
-import { parseMetrcLocationsPayload, type ParsedMetrcLocation } from "../lib/metrcLocationsParse.js";
+import { parseMetrcLocationsPayload } from "../lib/metrcLocationsParse.js";
+import {
+  METRC_COLLECTION_MAX_PAGES,
+  METRC_COLLECTION_PAGE_SIZE,
+  dedupeMetrcRecordsById,
+  normalizeMetrcCollectionResponse,
+  shouldFetchNextMetrcCollectionPage,
+} from "../lib/metrcCollectionResponse.js";
 import { suggestNexbatchRoomForMetrcLocation } from "../lib/metrcLocationRoomMatch.js";
 import {
   findNexbatchRoomOption,
@@ -206,21 +213,84 @@ export class MetrcLocationsSyncService {
     let lastStatus = 502;
     let lastMessage = "METRC locations sync failed.";
     let lastEndpoint: string | undefined;
+    const rawRecords: unknown[] = [];
+    let pagesFetched = 0;
+    let totalRetries = 0;
+    let totalRateLimitWaitedMs = 0;
+    let lastSuccessPathname = candidates[0];
+    let lastSuccessResult: Awaited<ReturnType<typeof client.get<unknown>>> | null = null;
 
-    for (let i = 0; i < candidates.length; i += 1) {
-      const pathname = candidates[i]!;
-      const result = await client.get<unknown>(pathname);
+    for (let pageNumber = 1; pageNumber <= METRC_COLLECTION_MAX_PAGES; pageNumber += 1) {
+      const pageParams = {
+        ...locationsRequest.params,
+        pageNumber,
+        pageSize: locationsRequest.params.pageSize || METRC_COLLECTION_PAGE_SIZE,
+      };
+      const pageCandidates = orderMetrcEndpointCandidates(endpointCtx, "rooms", pageParams);
+      let pagePayload: unknown | null = null;
 
-      if (!isMetrcClientFailure(result)) {
-        cacheMetrcEndpointPath(endpointCtx, "rooms", pathname);
-        const parsed = parseMetrcLocationsPayload(result.data);
+      for (let i = 0; i < pageCandidates.length; i += 1) {
+        const pathname = pageCandidates[i]!;
+        const result = await client.get<unknown>(pathname);
+
+        if (!isMetrcClientFailure(result)) {
+          cacheMetrcEndpointPath(endpointCtx, "rooms", pathname);
+          lastSuccessPathname = pathname;
+          lastSuccessResult = result;
+          pagePayload = result.data;
+          totalRetries += result.retries;
+          totalRateLimitWaitedMs += result.rateLimitWaitedMs;
+          lastStatus = result.status;
+          break;
+        }
+
+        lastStatus = result.status || 502;
+        lastMessage = metrcPullFailureMessage(lastStatus, result.metrcMessage || result.message);
+        lastEndpoint = result.endpoint ?? pathname.split("?")[0];
+
+        if (
+          shouldTryNextMetrcEndpoint("rooms", i, pageCandidates.length, {
+            status: result.status,
+            upstreamType: result.upstreamError?.type,
+          })
+        ) {
+          continue;
+        }
+        break;
+      }
+
+      if (pagePayload === null) {
+        if (pagesFetched === 0) break;
+        break;
+      }
+
+      const page = normalizeMetrcCollectionResponse(pagePayload);
+      rawRecords.push(...page.records);
+      pagesFetched += 1;
+      if (
+        !shouldFetchNextMetrcCollectionPage({
+          pageNumber,
+          maxPages: METRC_COLLECTION_MAX_PAGES,
+          pageSize: pageParams.pageSize,
+          recordsOnPage: page.records.length,
+          payload: pagePayload,
+        })
+      ) {
+        break;
+      }
+    }
+
+    if (lastSuccessResult && !isMetrcClientFailure(lastSuccessResult) && pagesFetched > 0) {
+        const result = lastSuccessResult;
+        const pathname = lastSuccessPathname ?? candidates[0]!;
+        const parsed = parseMetrcLocationsPayload(dedupeMetrcRecordsById(rawRecords));
         const syncedAt = new Date();
         const syncedAtIso = syncedAt.toISOString();
         const rateLimitWarning =
-          result.rateLimitWaitedMs > 0
-            ? `Rate limiter delayed this request by ${result.rateLimitWaitedMs}ms.`
-            : result.retries > 0
-              ? `Completed after ${result.retries} retries.`
+          totalRateLimitWaitedMs > 0
+            ? `Rate limiter delayed this request by ${totalRateLimitWaitedMs}ms.`
+            : totalRetries > 0
+              ? `Completed after ${totalRetries} retries.`
               : null;
 
         await upsertMetrcLocationsForCompany(
@@ -288,7 +358,7 @@ export class MetrcLocationsSyncService {
           count: totalLocationsSynced,
           autoMappedCount,
           durationMs: result.durationMs,
-          retries: result.retries,
+          retries: totalRetries,
         });
 
         return {
@@ -299,27 +369,12 @@ export class MetrcLocationsSyncService {
           lastLocationsSync: syncedAtIso,
           locations,
           durationMs: result.durationMs,
-          retries: result.retries,
+          retries: totalRetries,
           rateLimitWarning,
           endpoint: endpointKey,
           nexbatchRooms,
           autoMappedCount,
         };
-      }
-
-      lastStatus = result.status || 502;
-      lastMessage = metrcPullFailureMessage(lastStatus, result.metrcMessage || result.message);
-      lastEndpoint = result.endpoint ?? pathname.split("?")[0];
-
-      if (
-        shouldTryNextMetrcEndpoint("rooms", i, candidates.length, {
-          status: result.status,
-          upstreamType: result.upstreamError?.type,
-        })
-      ) {
-        continue;
-      }
-      break;
     }
 
     if (lastStatus === 401 || lastStatus === 403) {

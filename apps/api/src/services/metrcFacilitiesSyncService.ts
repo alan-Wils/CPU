@@ -27,6 +27,14 @@ import {
 } from "../lib/metrcStatusPersistence.js";
 import type { MetrcEnvironment } from "../lib/metrcResolveBaseUrl.js";
 import {
+  METRC_COLLECTION_MAX_PAGES,
+  METRC_COLLECTION_PAGE_SIZE,
+  dedupeMetrcRecordsById,
+  normalizeMetrcCollectionResponse,
+  shouldFetchNextMetrcCollectionPage,
+  withMetrcCollectionPageQuery,
+} from "../lib/metrcCollectionResponse.js";
+import {
   listMetrcFacilitiesForCompany,
   upsertMetrcFacilitiesForCompany,
 } from "../repositories/metrcFacilityRepository.js";
@@ -127,7 +135,45 @@ export class MetrcFacilitiesSyncService {
 
       if (!isMetrcClientFailure(result)) {
         cacheMetrcEndpointPath(endpointCtx, "facilities", pathname);
-        const parsed = parseMetrcFacilitiesPayload(result.data, loaded.stateCode || "CO");
+        const rawRecords = [...normalizeMetrcCollectionResponse(result.data).records];
+        for (let pageNumber = 1; pageNumber <= METRC_COLLECTION_MAX_PAGES; pageNumber += 1) {
+          const payload = pageNumber === 1 ? result.data : null;
+          if (pageNumber > 1) {
+            const next = await client.get<unknown>(
+              withMetrcCollectionPageQuery(pathname, pageNumber, METRC_COLLECTION_PAGE_SIZE),
+            );
+            if (isMetrcClientFailure(next)) break;
+            const page = normalizeMetrcCollectionResponse(next.data);
+            rawRecords.push(...page.records);
+            if (
+              !shouldFetchNextMetrcCollectionPage({
+                pageNumber,
+                maxPages: METRC_COLLECTION_MAX_PAGES,
+                pageSize: METRC_COLLECTION_PAGE_SIZE,
+                recordsOnPage: page.records.length,
+                payload: next.data,
+              })
+            ) {
+              break;
+            }
+            continue;
+          }
+          if (
+            !shouldFetchNextMetrcCollectionPage({
+              pageNumber,
+              maxPages: METRC_COLLECTION_MAX_PAGES,
+              pageSize: METRC_COLLECTION_PAGE_SIZE,
+              recordsOnPage: rawRecords.length,
+              payload,
+            })
+          ) {
+            break;
+          }
+        }
+        const parsed = parseMetrcFacilitiesPayload(
+          dedupeMetrcRecordsById(rawRecords),
+          loaded.stateCode || "CO",
+        );
         const syncedAt = new Date();
         const syncedAtIso = syncedAt.toISOString();
         const rateLimitWarning =
