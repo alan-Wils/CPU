@@ -4,6 +4,40 @@ import { AppError } from "../errors/AppError.js";
 
 export const LEAF_LINK_PAYMENT_AMOUNT_TOLERANCE = 0.01;
 
+/** How to choose LeafLink `payment_date` when posting from NexBatch. */
+export type LeafLinkPaymentDateSource = "received" | "document";
+
+/** Local calendar `YYYY-MM-DD` (received / submitted day). */
+export function todayLocalIsoDate(now = new Date()): string {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Resolve LeafLink payment date.
+ * Default: **received** = today (when logged in NexBatch), not the check/cash document date.
+ * **document** = check written date / cash entry date when present.
+ */
+export function resolveLeafLinkPaymentDateIso(input: {
+  paymentDateSource?: LeafLinkPaymentDateSource | null;
+  documentDate?: Date | string | null;
+  now?: Date;
+}): string {
+  const source = input.paymentDateSource === "document" ? "document" : "received";
+  if (source === "document" && input.documentDate != null) {
+    const d =
+      input.documentDate instanceof Date
+        ? input.documentDate
+        : new Date(String(input.documentDate));
+    if (Number.isFinite(d.getTime())) {
+      return d.toISOString().slice(0, 10);
+    }
+  }
+  return todayLocalIsoDate(input.now ?? new Date());
+}
+
 export function sameLeafLinkMoney(a: number, b: number): boolean {
   return Math.abs(Number(a || 0) - Number(b || 0)) <= LEAF_LINK_PAYMENT_AMOUNT_TOLERANCE;
 }

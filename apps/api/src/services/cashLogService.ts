@@ -18,7 +18,7 @@ import {
     parsePostedPaymentsJson,
     type LeafLinkPostedPaymentRow,
 } from "../lib/leaflinkPostedPayments.js";
-import { assertLeafLinkPaymentDoesNotOverpay, buildLeafLinkCpuPaymentNote } from "../lib/leafLinkPaymentAmount.js";
+import { assertLeafLinkPaymentDoesNotOverpay, buildLeafLinkCpuPaymentNote, resolveLeafLinkPaymentDateIso } from "../lib/leafLinkPaymentAmount.js";
 import { AuditService } from "./auditService.js";
 import { findRecentLeafLinkStoredOrdersForCompany } from "./leafLinkOrdersStorePrimitives.js";
 import {
@@ -611,6 +611,8 @@ export class CashLogService {
             allowAmountOverride?: boolean;
             paymentAmount?: number;
             overrideNote?: string;
+            /** Default `received` = today; `document` = cash entry date. */
+            paymentDateSource?: "received" | "document";
         },
     ) {
         const entry = await prisma.cashLogEntry.findFirst({
@@ -675,9 +677,10 @@ export class CashLogService {
                 );
             }
         }
-        const paymentDateIso = entry.entryDate
-            ? new Date(entry.entryDate).toISOString().slice(0, 10)
-            : new Date().toISOString().slice(0, 10);
+        const paymentDateIso = resolveLeafLinkPaymentDateIso({
+            paymentDateSource: input.paymentDateSource,
+            documentDate: entry.entryDate,
+        });
         const paymentNote = buildLeafLinkCpuPaymentNote(
             `CPU cash log ${entry.id}`,
             !amountMatches,
@@ -689,7 +692,7 @@ export class CashLogService {
                 leafLinkOrderId: selected.orderId,
                 amount: payAmt,
                 paymentDateIso,
-                reference: entry.invoiceNumber ?? null,
+                reference: selected.orderNumber || entry.invoiceNumber || null,
                 note: paymentNote,
                 paymentMethod: "Cash",
             });

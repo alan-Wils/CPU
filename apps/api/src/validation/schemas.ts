@@ -343,6 +343,12 @@ export const checkLeafLinkMarkPaidSchema = z.object({
     paymentAmount: z.number().positive().max(10_000_000).optional(),
     /** Required when allowAmountOverride is true — explains why logged payment differs from invoice balance. */
     overrideNote: z.string().max(500).optional(),
+    /**
+     * LeafLink payment_date source.
+     * `received` (default) = today when posted in NexBatch.
+     * `document` = check written date / cash entry date.
+     */
+    paymentDateSource: z.enum(["received", "document"]).optional(),
 }).superRefine((data, ctx) => {
     if (!data.orderId && !data.orderNumber) {
         ctx.addIssue({

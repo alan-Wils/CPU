@@ -49,6 +49,18 @@ export function mergePostedPaymentsFromCheckCapture(check: {
   return [];
 }
 
+/** Human-readable order list for digests / logs (e.g. `#d83a9884, #d83a9870`). */
+export function formatPostedLeafLinkOrderNumbers(
+  posted: LeafLinkPostedPaymentRow[],
+  fallbackOrderNumber?: string | null,
+): string {
+  if (posted.length > 0) {
+    return posted.map((p) => `#${p.orderNumber}`).join(", ");
+  }
+  const single = String(fallbackOrderNumber || "").trim();
+  return single ? `#${single}` : "";
+}
+
 export function hasPostedOrderNumber(
   posted: LeafLinkPostedPaymentRow[],
   orderNumber: string,

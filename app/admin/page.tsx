@@ -370,6 +370,8 @@ type CheckCaptureRow = {
   leaflinkPaidAt?: string | null;
   paymentSyncStatus?: string | null;
   paymentSyncError?: string | null;
+  /** All LeafLink payments posted from this check (multi-invoice). */
+  leaflinkPostedPayments?: unknown;
   leafLinkInvoiceStatus?: LeafLinkInvoiceLineStatus | null;
 };
 
@@ -409,6 +411,36 @@ type CashLogRow = {
   leafLinkInvoiceStatus?: LeafLinkInvoiceLineStatus | null;
 };
 
+function parsePostedLeafLinkPayments(raw: unknown): Array<{ orderNumber: string; paymentId: string; amount: number }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ orderNumber: string; paymentId: string; amount: number }> = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    const orderNumber = String(rec.orderNumber ?? "").trim();
+    const paymentId = String(rec.paymentId ?? "").trim();
+    const amount = typeof rec.amount === "number" && Number.isFinite(rec.amount) ? rec.amount : Number(rec.amount);
+    if (!orderNumber || !paymentId || !Number.isFinite(amount)) continue;
+    out.push({ orderNumber, paymentId, amount });
+  }
+  return out;
+}
+
+function postedLeafLinkOrderNumbersLabel(row: {
+  leaflinkPostedPayments?: unknown;
+  leaflinkOrderNumber?: string | null;
+  leaflinkPaymentId?: string | null;
+  amount?: number | null;
+}): string {
+  const fromJson = parsePostedLeafLinkPayments(row.leaflinkPostedPayments);
+  if (fromJson.length > 1) {
+    return fromJson.map((p) => `#${p.orderNumber}`).join(", ");
+  }
+  if (fromJson.length === 1) return `#${fromJson[0].orderNumber}`;
+  const single = String(row.leaflinkOrderNumber || "").trim();
+  return single ? `#${single}` : "";
+}
+
 function formatLeafLinkAdminListCell(row: {
   direction?: "INCOMING" | "OUTGOING";
   leafLinkInvoiceStatus?: LeafLinkInvoiceLineStatus | null;
@@ -417,15 +449,20 @@ function formatLeafLinkAdminListCell(row: {
   leaflinkPaidAt?: string | null;
   paymentSyncStatus?: string | null;
   leaflinkPaymentSyncStatus?: string | null;
+  leaflinkPostedPayments?: unknown;
+  leaflinkPaymentId?: string | null;
+  amount?: number | null;
 }): string {
   const payPosted =
     Boolean(row.leaflinkPaidAt) ||
     String(row.paymentSyncStatus || "").toLowerCase() === "payment_posted" ||
-    String(row.leaflinkPaymentStatus || "").toLowerCase() === "paid";
+    String(row.leaflinkPaymentStatus || "").toLowerCase() === "paid" ||
+    parsePostedLeafLinkPayments(row.leaflinkPostedPayments).length > 0;
   if (payPosted) {
-    return row.leaflinkOrderNumber
-      ? `Paid in LeafLink (#${row.leaflinkOrderNumber})`
-      : "Paid in LeafLink";
+    const orders = postedLeafLinkOrderNumbersLabel(row);
+    const count = parsePostedLeafLinkPayments(row.leaflinkPostedPayments).length;
+    if (count > 1) return `Paid in LeafLink (${count}: ${orders})`;
+    return orders ? `Paid in LeafLink (${orders})` : "Paid in LeafLink";
   }
   const cashSync = String(row.leaflinkPaymentSyncStatus || "").toLowerCase();
   if (cashSync === "payment_posted") {
@@ -744,6 +781,10 @@ export default function AdminPage() {
   const [leafLinkSelectedOrderNumbers, setLeafLinkSelectedOrderNumbers] = useState<string[]>([]);
   const [leafLinkPostingPayment, setLeafLinkPostingPayment] = useState(false);
   const [leafLinkManualOverrideNote, setLeafLinkManualOverrideNote] = useState("");
+  /** LeafLink payment_date: received (today, default) vs check/cash document date. */
+  const [leafLinkPaymentDateSource, setLeafLinkPaymentDateSource] = useState<"received" | "document">(
+    "received",
+  );
   const [leafLinkPaymentPrompt, setLeafLinkPaymentPrompt] = useState<{
     kind: "check" | "cash";
     entryId: string;
@@ -804,7 +845,11 @@ export default function AdminPage() {
 
   /** Resolves when user confirms or cancels the LeafLink payment apply dialog. */
   const leafLinkPaymentPromptRef = useRef<
-    ((result: { ok: boolean; overrideNote?: string }) => void) | null
+    ((result: {
+      ok: boolean;
+      overrideNote?: string;
+      paymentDateSource?: "received" | "document";
+    }) => void) | null
   >(null);
   /** Prevents double-click / parallel LeafLink payment posts. */
   const leafLinkPostingLockRef = useRef(false);
@@ -865,13 +910,15 @@ export default function AdminPage() {
       loggedAmount: input.loggedAmount,
     });
     setLeafLinkMatchChoices(input.candidates);
-    setLeafLinkSelectedOrderNumbers(
-      allBuilt.ok && allBuilt.totalsMatch
-        ? input.candidates.map((c) => c.orderNumber)
-        : [input.candidates[0].orderNumber],
-    );
+    /** Always pre-select every matched invoice — multi-check payments must not silently post only the first. */
+    setLeafLinkSelectedOrderNumbers(input.candidates.map((c) => c.orderNumber));
     setLeafLinkManualOverrideNote("");
-    setLeafLinkMatchError("");
+    setLeafLinkPaymentDateSource("received");
+    setLeafLinkMatchError(
+      allBuilt.ok
+        ? ""
+        : allBuilt.error,
+    );
     setLeafLinkMatchModalOpen(true);
   }
 
@@ -883,7 +930,7 @@ export default function AdminPage() {
     totalOwed: number;
     totalsMatch: boolean;
     paymentMethodLabel: "check" | "cash";
-  }): Promise<{ ok: boolean; overrideNote?: string }> {
+  }): Promise<{ ok: boolean; overrideNote?: string; paymentDateSource?: "received" | "document" }> {
     return new Promise((resolve) => {
       const dangling = leafLinkPaymentPromptRef.current;
       if (dangling) {
@@ -892,11 +939,15 @@ export default function AdminPage() {
       }
       leafLinkPaymentPromptRef.current = resolve;
       setLeafLinkPaymentOverrideNote("");
+      setLeafLinkPaymentDateSource("received");
       setLeafLinkPaymentPrompt(input);
     });
   }
 
-  function closeLeafLinkPaymentApplyDialog(ok: boolean) {
+  function closeLeafLinkPaymentApplyDialog(
+    ok: boolean,
+    paymentDateSource: "received" | "document" = "received",
+  ) {
     const note = leafLinkPaymentOverrideNote.trim();
     const mismatch = leafLinkPaymentPrompt != null && !leafLinkPaymentPrompt.totalsMatch;
     const resolver = leafLinkPaymentPromptRef.current;
@@ -904,7 +955,15 @@ export default function AdminPage() {
     setLeafLinkPaymentPrompt(null);
     setLeafLinkPaymentOverrideNote("");
     if (resolver) {
-      resolver(ok ? { ok: true, overrideNote: mismatch ? note : undefined } : { ok: false });
+      resolver(
+        ok
+          ? {
+              ok: true,
+              overrideNote: mismatch ? note : undefined,
+              paymentDateSource,
+            }
+          : { ok: false },
+      );
     }
   }
 
@@ -916,6 +975,7 @@ export default function AdminPage() {
     paymentAmount: number;
     owedAmount: number;
     overrideNote?: string;
+    paymentDateSource?: "received" | "document";
   }) {
     const cid = checksCompanyId();
     if (!cid) throw new Error("Select a company context before posting.");
@@ -931,6 +991,7 @@ export default function AdminPage() {
         orderNumber: input.candidate.orderNumber,
         ...(input.candidate.orderId ? { orderId: input.candidate.orderId } : {}),
         paymentAmount: input.paymentAmount,
+        paymentDateSource: input.paymentDateSource || leafLinkPaymentDateSource || "received",
         ...(orderMismatch
           ? {
               allowAmountOverride: true,
@@ -947,14 +1008,17 @@ export default function AdminPage() {
     splits: LeafLinkPaymentSplitLine[];
     totalsMatch: boolean;
     overrideNote?: string;
+    paymentDateSource?: "received" | "document";
   }) {
     if (leafLinkPostingLockRef.current) {
       throw new Error("A LeafLink payment post is already in progress.");
     }
     leafLinkPostingLockRef.current = true;
+    let postedCount = 0;
     try {
       const cid = checksCompanyId();
       if (!cid) throw new Error("Select a company context before posting.");
+      const dateSource = input.paymentDateSource || leafLinkPaymentDateSource || "received";
       const postedOrderKeys = new Set<string>();
       for (const split of input.splits) {
         const key = String(split.candidate.orderNumber || "").trim().toLowerCase();
@@ -962,17 +1026,29 @@ export default function AdminPage() {
           throw new Error(`Duplicate invoice ${split.candidate.orderNumber} was skipped — already in this post.`);
         }
         if (key) postedOrderKeys.add(key);
-        await postLeafLinkPaymentToApi({
-          kind: input.kind,
-          entryId: input.entryId,
-          candidate: split.candidate,
-          paymentAmount: split.paymentAmount,
-          owedAmount: split.owedAmount,
-          overrideNote:
-            !input.totalsMatch || !leafLinkPaymentAmountsMatch(split.paymentAmount, split.owedAmount)
-              ? input.overrideNote
-              : undefined,
-        });
+        try {
+          await postLeafLinkPaymentToApi({
+            kind: input.kind,
+            entryId: input.entryId,
+            candidate: split.candidate,
+            paymentAmount: split.paymentAmount,
+            owedAmount: split.owedAmount,
+            paymentDateSource: dateSource,
+            overrideNote:
+              !input.totalsMatch || !leafLinkPaymentAmountsMatch(split.paymentAmount, split.owedAmount)
+                ? input.overrideNote
+                : undefined,
+          });
+          postedCount += 1;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (postedCount > 0 && postedCount < input.splits.length) {
+            throw new Error(
+              `Posted ${postedCount} of ${input.splits.length} LeafLink payments, then failed on ${split.candidate.orderNumber}: ${msg}. Use Find LeafLink Invoice to post the remaining invoices.`,
+            );
+          }
+          throw err;
+        }
       }
       await resyncLeafLinkOrdersAfterPayment(cid);
     } finally {
@@ -1091,6 +1167,7 @@ export default function AdminPage() {
           splits: built.splits,
           totalsMatch: built.totalsMatch,
           overrideNote: prompt.overrideNote,
+          paymentDateSource: prompt.paymentDateSource || "received",
         });
         showPaymentAppliedToast();
       } catch (e: unknown) {
@@ -1840,6 +1917,7 @@ export default function AdminPage() {
         splits: built.splits,
         totalsMatch: built.totalsMatch,
         overrideNote: !built.totalsMatch ? overrideNote : undefined,
+        paymentDateSource: leafLinkPaymentDateSource,
       });
       showPaymentAppliedToast();
       closeLeafLinkInvoiceMatchPicker();
@@ -4580,8 +4658,42 @@ export default function AdminPage() {
                   </div>
                   <div style={{ fontSize: 12, color: "#cbd5e1", marginBottom: 8 }}>
                     Status: <strong>{checkBeingEdited.paymentSyncStatus || "not_matched"}</strong>
-                    {checkBeingEdited.leaflinkOrderNumber ? ` | Order: ${checkBeingEdited.leaflinkOrderNumber}` : ""}
-                    {checkBeingEdited.leaflinkPaymentId ? ` | Payment: ${checkBeingEdited.leaflinkPaymentId}` : ""}
+                    {(() => {
+                      const posted = parsePostedLeafLinkPayments(checkBeingEdited.leaflinkPostedPayments);
+                      if (posted.length > 1) {
+                        return (
+                          <div style={{ marginTop: 6, lineHeight: 1.45 }}>
+                            <strong>{posted.length} LeafLink payments posted:</strong>
+                            <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                              {posted.map((p) => (
+                                <li key={`${p.orderNumber}-${p.paymentId}`}>
+                                  #{p.orderNumber}: {formatUsdLeafLink(p.amount)} (payment {p.paymentId})
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        );
+                      }
+                      if (posted.length === 1) {
+                        return (
+                          <>
+                            {" "}
+                            | Order: {posted[0].orderNumber} | Payment: {posted[0].paymentId} |{" "}
+                            {formatUsdLeafLink(posted[0].amount)}
+                          </>
+                        );
+                      }
+                      return (
+                        <>
+                          {checkBeingEdited.leaflinkOrderNumber
+                            ? ` | Order: ${checkBeingEdited.leaflinkOrderNumber}`
+                            : ""}
+                          {checkBeingEdited.leaflinkPaymentId
+                            ? ` | Payment: ${checkBeingEdited.leaflinkPaymentId}`
+                            : ""}
+                        </>
+                      );
+                    })()}
                   </div>
                   {leafLinkMatchError ? (
                     <div style={{ color: "#fecaca", fontSize: 12, marginBottom: 8 }}>{leafLinkMatchError}</div>
@@ -4635,10 +4747,10 @@ export default function AdminPage() {
                 </button>
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: 12, lineHeight: 1.5, fontSize: 13 }}>
-                Select one or more invoices that match the <strong>full</strong> invoice number on this{" "}
-                {leafLinkMatchSession.kind} (e.g. <code>d83a9849</code>). When multiple are selected, each gets
-                its own LeafLink payment for its balance owed. Wrong-order posts (e.g. applying 9849 onto 9947)
-                are blocked.
+                All matched invoices are selected by default. Keep every invoice this check covers checked —
+                each gets its own LeafLink payment for its balance owed (last-4 stubs like{" "}
+                <code>9884</code> are OK when the LLC name differs from the LeafLink customer). Deselect only
+                invoices that should not be paid from this check. Wrong-order posts are blocked.
               </p>
               {leafLinkMatchChoices.map((m) => {
                 const selected = leafLinkSelectedOrderNumbers.includes(m.orderNumber);
@@ -4768,6 +4880,29 @@ export default function AdminPage() {
                         />
                       </div>
                     ) : null}
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: "#bae6fd", marginBottom: 6 }}>
+                        LeafLink payment date
+                      </div>
+                      <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: "#e2e8f0", marginBottom: 6, cursor: "pointer" }}>
+                        <input
+                          type="radio"
+                          name="leaflink-payment-date-match"
+                          checked={leafLinkPaymentDateSource === "received"}
+                          onChange={() => setLeafLinkPaymentDateSource("received")}
+                        />
+                        Today / received (default) — when you log it in NexBatch
+                      </label>
+                      <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: "#e2e8f0", cursor: "pointer" }}>
+                        <input
+                          type="radio"
+                          name="leaflink-payment-date-match"
+                          checked={leafLinkPaymentDateSource === "document"}
+                          onChange={() => setLeafLinkPaymentDateSource("document")}
+                        />
+                        {leafLinkMatchSession.kind === "check" ? "Check written date" : "Cash entry date"}
+                      </label>
+                    </div>
                   </div>
                 );
               })()}
@@ -5096,6 +5231,31 @@ export default function AdminPage() {
                     />
                   </div>
                 ) : null}
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#bae6fd", marginBottom: 6 }}>
+                    LeafLink payment date
+                  </div>
+                  <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: "#e2e8f0", marginBottom: 6, cursor: "pointer" }}>
+                    <input
+                      type="radio"
+                      name="leaflink-payment-date-prompt"
+                      checked={leafLinkPaymentDateSource === "received"}
+                      onChange={() => setLeafLinkPaymentDateSource("received")}
+                    />
+                    Today / received (default) — when you log it in NexBatch
+                  </label>
+                  <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: "#e2e8f0", cursor: "pointer" }}>
+                    <input
+                      type="radio"
+                      name="leaflink-payment-date-prompt"
+                      checked={leafLinkPaymentDateSource === "document"}
+                      onChange={() => setLeafLinkPaymentDateSource("document")}
+                    />
+                    {leafLinkPaymentPrompt.paymentMethodLabel === "check"
+                      ? "Check written date"
+                      : "Cash entry date"}
+                  </label>
+                </div>
                 <div
                   style={{
                     display: "flex",
@@ -5115,7 +5275,7 @@ export default function AdminPage() {
                       !leafLinkPaymentPrompt.totalsMatch &&
                       leafLinkPaymentOverrideNote.trim().length < 3
                     }
-                    onClick={() => closeLeafLinkPaymentApplyDialog(true)}
+                    onClick={() => closeLeafLinkPaymentApplyDialog(true, leafLinkPaymentDateSource)}
                   >
                     {leafLinkPaymentPrompt.splits.length > 1
                       ? `Post ${leafLinkPaymentPrompt.splits.length} payments`

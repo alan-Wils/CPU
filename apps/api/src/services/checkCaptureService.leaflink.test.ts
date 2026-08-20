@@ -300,14 +300,64 @@ describe("CheckCaptureService LeafLink sync", () => {
         orderNumber: "INV-1",
         amount: 100,
         paymentMethod: "Check",
+        paymentDateIso: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
       }),
     );
+    const postedArg = ((service as any).leafLinkOrdersService.postOrderPayment as any).mock.calls[0][1];
+    /** Default payment date is today/received — not the check written date (2026-05-01). */
+    expect(postedArg.paymentDateIso).not.toBe("2026-05-01");
     expect(updateSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           leaflinkPaidAt: expect.any(Date),
           paymentSyncStatus: "payment_posted",
         }),
+      }),
+    );
+  });
+
+  it("posts with document payment date when paymentDateSource=document", async () => {
+    vi.spyOn(prisma.checkCapture, "findFirst").mockResolvedValue({
+      id: "c1",
+      checkDate: new Date("2026-05-01T00:00:00.000Z"),
+      checkNumber: "1001",
+      amount: 100,
+      payerName: "Acme",
+      invoiceNumber: "INV-1",
+      leaflinkPaymentId: null,
+      leaflinkPostedPayments: null,
+    } as any);
+    vi.spyOn(prisma.checkCapture, "update").mockResolvedValue({ id: "c1" } as any);
+    ((service as any).leafLinkOrdersService.findOpenPaymentCandidatesForCheck as any).mockResolvedValue([
+      {
+        leafLinkKey: "ll1",
+        orderId: "o1",
+        orderNumber: "INV-1",
+        customerName: "Acme",
+        total: 100,
+        outstandingBalance: 100,
+        status: "Submitted",
+        paymentStatus: "Unpaid",
+        deliveryDate: null,
+        lineItems: [],
+        score: 100,
+        matchedBy: ["invoice_exact"],
+        markedPaidInLeafLink: false,
+      },
+    ]);
+    ((service as any).leafLinkOrdersService.postOrderPayment as any).mockResolvedValue({
+      paymentId: "p1",
+      paymentStatus: "posted",
+      rawResponse: { id: "p1", status: "posted" },
+    });
+    await service.markLeafLinkInvoicePaid("co1", "u1", "c1", {
+      orderNumber: "INV-1",
+      paymentDateSource: "document",
+    });
+    expect((service as any).leafLinkOrdersService.postOrderPayment).toHaveBeenCalledWith(
+      "co1",
+      expect.objectContaining({
+        paymentDateIso: "2026-05-01",
       }),
     );
   });

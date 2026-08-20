@@ -25,6 +25,7 @@ import {
     assertLeafLinkPaymentDoesNotOverpay,
     buildLeafLinkCpuPaymentNote,
     leafLinkPaymentMatchesInvoice,
+    resolveLeafLinkPaymentDateIso,
 } from "../lib/leafLinkPaymentAmount.js";
 import {
     LeafLinkOrdersService,
@@ -447,6 +448,7 @@ export class CheckCaptureService {
                 leaflinkPaidAt: true,
                 paymentSyncStatus: true,
                 paymentSyncError: true,
+                leaflinkPostedPayments: true,
                 createdAt: true,
                 updatedAt: true
             }
@@ -601,7 +603,10 @@ export class CheckCaptureService {
                 );
             }
         }
-        const paymentDateIso = check.checkDate ? new Date(check.checkDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+        const paymentDateIso = resolveLeafLinkPaymentDateIso({
+            paymentDateSource: input?.paymentDateSource,
+            documentDate: check.checkDate,
+        });
         const paymentNote = buildLeafLinkCpuPaymentNote(
             `CPU check capture ${check.id}`,
             !amountMatches,
@@ -613,7 +618,7 @@ export class CheckCaptureService {
                 leafLinkOrderId: selected.orderId,
                 amount: payAmt,
                 paymentDateIso,
-                reference: check.checkNumber ?? check.invoiceNumber ?? null,
+                reference: check.checkNumber || selected.orderNumber || check.invoiceNumber || null,
                 note: paymentNote,
                 paymentMethod: "Check",
             });
@@ -723,6 +728,8 @@ export class CheckCaptureService {
                 leaflinkPaymentStatus: true,
                 leaflinkPaidAt: true,
                 paymentSyncStatus: true,
+                leaflinkPostedPayments: true,
+                leaflinkPaymentId: true,
             },
         });
     }
@@ -763,6 +770,7 @@ export class CheckCaptureService {
                 leaflinkPaidAt: true,
                 paymentSyncStatus: true,
                 paymentSyncError: true,
+                leaflinkPostedPayments: true,
                 createdAt: true,
                 updatedAt: true
             }

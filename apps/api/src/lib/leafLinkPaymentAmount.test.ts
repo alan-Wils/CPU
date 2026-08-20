@@ -3,7 +3,9 @@ import {
   buildLeafLinkCpuPaymentNote,
   leafLinkOrderOwedAmount,
   leafLinkPaymentMatchesInvoice,
+  resolveLeafLinkPaymentDateIso,
   sameLeafLinkMoney,
+  todayLocalIsoDate,
 } from "./leafLinkPaymentAmount.js";
 
 describe("leafLinkPaymentAmount", () => {
@@ -40,5 +42,29 @@ describe("leafLinkPaymentAmount", () => {
     expect(buildLeafLinkCpuPaymentNote("CPU check capture c1", true, "partial payment")).toContain(
       "partial payment",
     );
+  });
+
+  it("resolveLeafLinkPaymentDateIso defaults to today/received, not document date", () => {
+    const now = new Date(2026, 7, 20, 15, 0, 0); // local Aug 20 2026
+    expect(
+      resolveLeafLinkPaymentDateIso({
+        documentDate: new Date("2026-07-30T12:00:00.000Z"),
+        now,
+      }),
+    ).toBe(todayLocalIsoDate(now));
+    expect(
+      resolveLeafLinkPaymentDateIso({
+        paymentDateSource: "received",
+        documentDate: new Date("2026-07-30T12:00:00.000Z"),
+        now,
+      }),
+    ).toBe(todayLocalIsoDate(now));
+    expect(
+      resolveLeafLinkPaymentDateIso({
+        paymentDateSource: "document",
+        documentDate: new Date("2026-07-30T12:00:00.000Z"),
+        now,
+      }),
+    ).toBe("2026-07-30");
   });
 });

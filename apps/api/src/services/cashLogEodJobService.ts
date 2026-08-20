@@ -6,6 +6,10 @@ import { CashLogService } from "./cashLogService.js";
 import { CheckCaptureService } from "./checkCaptureService.js";
 import { findRecentLeafLinkStoredOrdersForCompany } from "./leafLinkOrdersStorePrimitives.js";
 import { summarizeLeafLinkInvoiceFromStoredRows } from "./leafLinkOrdersService.js";
+import {
+  formatPostedLeafLinkOrderNumbers,
+  mergePostedPaymentsFromCheckCapture,
+} from "../lib/leaflinkPostedPayments.js";
 import { sendHtmlEmail } from "../lib/mailer.js";
 import { logInfo, logWarn } from "../lib/logger.js";
 import { recordUsageEventSafe } from "./usageEventRecord.js";
@@ -332,10 +336,14 @@ function checkDigestLeafLinkCell(
 ): string {
   const payStatus = String(r.leaflinkPaymentStatus || "").toLowerCase();
   const ps = String(r.paymentSyncStatus || "").trim();
-  const ord = String(r.leaflinkOrderNumber || "").trim();
+  const posted = mergePostedPaymentsFromCheckCapture(r);
+  const ordersLabel = formatPostedLeafLinkOrderNumbers(posted, r.leaflinkOrderNumber);
   const paidAt = r.leaflinkPaidAt;
-  if (paidAt || ps === "payment_posted" || payStatus === "paid") {
-    return escapeHtml(ord ? `Paid in LeafLink (#${ord})` : "Paid in LeafLink");
+  if (paidAt || ps === "payment_posted" || payStatus === "paid" || posted.length > 0) {
+    if (posted.length > 1) {
+      return escapeHtml(`Paid in LeafLink (${posted.length}: ${ordersLabel})`);
+    }
+    return escapeHtml(ordersLabel ? `Paid in LeafLink (${ordersLabel})` : "Paid in LeafLink");
   }
   const s = summarizeLeafLinkInvoiceFromStoredRows(storedScan, {
     invoiceNumber: r.invoiceNumber,
