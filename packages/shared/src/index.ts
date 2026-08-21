@@ -70,6 +70,22 @@ export {
 } from "./pectinMeltToMakeFormula.js";
 
 export {
+  classifyInvoiceTokenMatch,
+  invoiceDigitsOnly,
+  invoiceMatchKindAllowsPost,
+  isNumericInvoiceStubToken,
+  isOpaqueLeafLinkIdentityKey,
+  isShortInvoiceStubToken,
+  matchedByIncludesPossibleInvoiceMatch,
+  normalizeInvoiceOrderKey,
+  splitInvoiceNumberTokens,
+  trailingNumericInvoicePortion,
+  LEAF_LINK_INVOICE_POST_MATCH_KINDS,
+  LEAF_LINK_INVOICE_POSSIBLE_MATCH_KINDS,
+  type LeafLinkInvoiceTokenMatchKind,
+} from "./leafLinkInvoiceMatch.js";
+
+export {
   LEAFLINK_INVENTORY_COMPACT_VERSION,
   LEAFLINK_INVENTORY_COMPACT_COLS,
   LEAFLINK_INVENTORY_COMPACT_FIELD_COUNT,

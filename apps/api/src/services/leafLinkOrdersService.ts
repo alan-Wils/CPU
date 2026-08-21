@@ -30,6 +30,18 @@ import {
   releaseLeafLinkOrdersSyncLock,
   type LeafLinkOrdersSyncCursor,
 } from "./leafLinkOrdersSyncStateService.js";
+import {
+  classifyInvoiceTokenMatch,
+  splitInvoiceNumberTokens,
+} from "../lib/leafLinkInvoiceMatch.js";
+
+export {
+  assertSelectedOrderMatchesInvoiceNumber,
+  classifyInvoiceTokenMatch,
+  isShortInvoiceStubToken,
+  normalizeInvoiceOrderKey,
+  splitInvoiceNumberTokens,
+} from "../lib/leafLinkInvoiceMatch.js";
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -340,146 +352,6 @@ const MAX_QUALIFYING_ORDERS_IN_PAYLOAD = 8000;
 const MAX_LINE_ITEMS_TO_TRUST_SUM = 120;
 /** Max Postgres rows hydrated for the Orders list when `refresh=false`. Must stay ≤ prisma cap in leafLinkOrdersStorePrimitives. */
 const STORED_ORDERS_LIST_SCAN_LIMIT = 25_000;
-
-/** User-entered invoice field may list several refs separated by comma, semicolon, or newline. */
-export function splitInvoiceNumberTokens(raw: string | undefined): string[] {
-  if (!raw) return [];
-  return String(raw)
-    .split(/[\n,;]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function invoiceDigitsOnly(s: string): string {
-  return String(s || "").replace(/\D/g, "");
-}
-
-/** Normalize invoice / order refs for exact compare (e.g. d83a9862). */
-export function normalizeInvoiceOrderKey(raw: string | undefined | null): string {
-  return String(raw || "")
-    .trim()
-    .toLowerCase()
-    .replace(/^#/, "")
-    .replace(/[^a-z0-9]/g, "");
-}
-
-/** Last `n` digits from the order # / id string (for matching short stubs only). */
-function orderTailDigits(orderNumber: string, n: number): string {
-  const d = invoiceDigitsOnly(orderNumber);
-  return d.length >= n ? d.slice(-n) : d;
-}
-
-/**
- * True when the typed token is a short stub (e.g. last-4 digits).
- * Full invoice codes like `d83a9862` must match the whole order number — not last4.
- */
-export function isShortInvoiceStubToken(tok: string): boolean {
-  const key = normalizeInvoiceOrderKey(tok);
-  if (!key) return false;
-  if (key.length <= 4) return true;
-  const digits = invoiceDigitsOnly(tok);
-  return digits.length > 0 && digits.length <= 4 && digits === key;
-}
-
-/**
- * LeafLink UUID / opaque ids (after normalize). Never use these for short-stub
- * substring matching — digits like `9632` appear inside random UUIDs and caused
- * false `invoice_partial` hits (e.g. Epic Remedy when the check invoice was 9632).
- */
-function isOpaqueLeafLinkIdentityKey(normalizedKey: string): boolean {
-  if (!normalizedKey) return true;
-  if (/^[a-f0-9]{32}$/i.test(normalizedKey)) return true;
-  if (normalizedKey.length >= 24 && /^[a-f0-9]+$/i.test(normalizedKey)) return true;
-  return false;
-}
-
-/**
- * Classify how a typed invoice token relates to a LeafLink order.
- * Full codes like `d83a9862` only return exact (never last4).
- * Short stubs only last4/partial against human order numbers — never UUID ids.
- */
-export function classifyInvoiceTokenMatch(
-  token: string,
-  orderIdentityKeys: string[],
-  orderNumberForTail: string,
-): "invoice_exact" | "invoice_last4" | "invoice_partial" | null {
-  const tok = String(token || "").trim();
-  if (!tok) return null;
-  const normTok = normalizeInvoiceOrderKey(tok);
-  if (!normTok) return null;
-  const allKeys = orderIdentityKeys.map((k) => normalizeInvoiceOrderKey(k)).filter(Boolean);
-  if (allKeys.some((k) => k === normTok)) return "invoice_exact";
-
-  const orderNumberKeys = [
-    ...allKeys.filter((k) => !isOpaqueLeafLinkIdentityKey(k)),
-    normalizeInvoiceOrderKey(orderNumberForTail),
-  ].filter(Boolean);
-
-  if (isShortInvoiceStubToken(tok)) {
-    const tokDigits = invoiceDigitsOnly(tok);
-    const ordTail4 = orderTailDigits(orderNumberForTail, 4);
-    if (tokDigits.length >= 4 && ordTail4.length >= 4 && tokDigits.slice(-4) === ordTail4) {
-      return "invoice_last4";
-    }
-    /** Digit-only stubs (e.g. `9632`) must match via last4 — not substring. */
-    if (tokDigits.length > 0 && tokDigits === normTok) {
-      return null;
-    }
-    if (orderNumberKeys.some((k) => k.includes(normTok))) {
-      return "invoice_partial";
-    }
-  } else if (normTok.length <= 5) {
-    if (orderNumberKeys.some((k) => k.includes(normTok))) {
-      return "invoice_partial";
-    }
-  }
-  return null;
-}
-
-/**
- * When an invoice number is present on a check/cash row, the selected LeafLink order must
- * match it (full code exact, or short stub last-4). Blocks payee/amount-only wrong posts
- * like applying invoice 9849 onto order d83a9947.
- */
-export function assertSelectedOrderMatchesInvoiceNumber(
-  invoiceNumber: string | null | undefined,
-  selected: { orderNumber: string; orderId?: string | null; leafLinkKey?: string | null },
-): void {
-  const tokens = splitInvoiceNumberTokens(invoiceNumber ?? undefined);
-  if (!tokens.length) return;
-
-  const orderKeys = [selected.orderNumber, selected.orderId, selected.leafLinkKey]
-    .map((v) => String(v || "").trim())
-    .filter(Boolean);
-  const orderNumber = String(selected.orderNumber || "").trim();
-
-  let hadExact = false;
-  let hadLast4 = false;
-  for (const tok of tokens) {
-    const kind = classifyInvoiceTokenMatch(tok, orderKeys, orderNumber);
-    if (kind === "invoice_exact") hadExact = true;
-    if (kind === "invoice_last4") hadLast4 = true;
-  }
-
-  if (hadExact) return;
-
-  const hasFullCodeToken = tokens.some((t) => !isShortInvoiceStubToken(t));
-  if (hasFullCodeToken) {
-    throw new AppError(
-      `Selected LeafLink order ${orderNumber || "(unknown)"} does not match the full invoice number on this entry (${tokens.join(", ")}). Use the exact order code (e.g. d83a9849).`,
-      409,
-      "LEAFLINK_INVOICE_ORDER_MISMATCH",
-    );
-  }
-
-  if (hadLast4) return;
-
-  throw new AppError(
-    `Selected LeafLink order ${orderNumber || "(unknown)"} does not match invoice ${tokens.join(", ")} on this entry. Wrong-order posts are blocked.`,
-    409,
-    "LEAFLINK_INVOICE_ORDER_MISMATCH",
-  );
-}
 
 function leafLinkOrdersFullSyncMaxPages(): number {
   const raw = String(process.env.LEAFLINK_ORDERS_FULL_SYNC_MAX_PAGES ?? "").trim();

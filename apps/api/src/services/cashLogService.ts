@@ -22,8 +22,11 @@ import { assertLeafLinkPaymentDoesNotOverpay, buildLeafLinkCpuPaymentNote, resol
 import { AuditService } from "./auditService.js";
 import { findRecentLeafLinkStoredOrdersForCompany } from "./leafLinkOrdersStorePrimitives.js";
 import {
-    LeafLinkOrdersService,
     assertSelectedOrderMatchesInvoiceNumber,
+    matchedByIncludesPossibleInvoiceMatch,
+} from "../lib/leafLinkInvoiceMatch.js";
+import {
+    LeafLinkOrdersService,
     type LeafLinkPaymentMatchCandidateDto,
     summarizeLeafLinkInvoiceFromStoredRows,
 } from "./leafLinkOrdersService.js";
@@ -577,7 +580,7 @@ export class CashLogService {
                     ? false
                     : sameMoneyCash(c.total, entryAmt) || sameMoneyCash(c.outstandingBalance ?? c.total, entryAmt);
             const invoicePartial = hasInvoiceTokens
-                ? c.matchedBy.includes("invoice_partial") || c.matchedBy.includes("invoice_last4")
+                ? matchedByIncludesPossibleInvoiceMatch(c.matchedBy)
                 : false;
             if (hasInvoiceTokens) return Boolean(invoicePartial);
             return Boolean(nameOk && amountOk);

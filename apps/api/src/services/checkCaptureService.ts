@@ -28,8 +28,11 @@ import {
     resolveLeafLinkPaymentDateIso,
 } from "../lib/leafLinkPaymentAmount.js";
 import {
-    LeafLinkOrdersService,
     assertSelectedOrderMatchesInvoiceNumber,
+    matchedByIncludesPossibleInvoiceMatch,
+} from "../lib/leafLinkInvoiceMatch.js";
+import {
+    LeafLinkOrdersService,
     type LeafLinkPaymentMatchCandidateDto,
     summarizeLeafLinkInvoiceFromStoredRows,
 } from "./leafLinkOrdersService.js";
@@ -503,7 +506,7 @@ export class CheckCaptureService {
         const hasInvoiceTokens = Boolean(normalizeText(check.invoiceNumber));
         const payeeNeedle = normalizeText(check.payerName);
         const checkAmount = typeof check.amount === "number" ? check.amount : null;
-        /** Full invoice code match only — last4 stubs are possible matches, not exact. */
+        /** Full invoice code match only — trailing-digit stubs are possible matches, not exact. */
         const exactMatches = candidates.filter((c) => c.matchedBy.includes("invoice_exact"));
         const possibleMatches = candidates.filter((c) => {
             if (exactMatches.find((x) => x.orderNumber === c.orderNumber))
@@ -514,7 +517,7 @@ export class CheckCaptureService {
             const nameOk = payeeNeedle ? normalizeText(c.customerName).includes(payeeNeedle) : false;
             const amountOk = checkAmount == null ? false : (sameMoney(c.total, checkAmount) || sameMoney(c.outstandingBalance, checkAmount));
             const invoicePartial = hasInvoiceTokens
-                ? c.matchedBy.includes("invoice_partial") || c.matchedBy.includes("invoice_last4")
+                ? matchedByIncludesPossibleInvoiceMatch(c.matchedBy)
                 : false;
             /** When an invoice # is present, never offer payee/amount-only candidates (caused 9849→9947 wrong posts). */
             if (hasInvoiceTokens) return Boolean(invoicePartial);

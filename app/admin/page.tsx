@@ -3701,11 +3701,11 @@ export default function AdminPage() {
                       />
                     </label>
                     <label style={{ ...labelStyle, gridColumn: "1 / -1" }}>
-                      Invoice # (one or many — matches LeafLink order # or last 4 digits)
+                      Invoice # (one or many — matches LeafLink order # or last 5 digits)
                       <textarea
                         value={checkInvoice}
                         onChange={(e) => setCheckInvoice(e.target.value)}
-                        placeholder={"9511\n9449, 9448"}
+                        placeholder={"10061\n9449, 9448"}
                         rows={3}
                         style={{ ...inputStyle, resize: "vertical", minHeight: 72, fontFamily: "inherit" }}
                         autoComplete="off"
@@ -3838,11 +3838,11 @@ export default function AdminPage() {
                             />
                           </label>
                           <label style={{ ...labelStyle, marginBottom: 0, gridColumn: "1 / -1" }}>
-                            Invoice # (optional — multiple allowed)
+                            Invoice # (optional — multiple allowed, matches order # or last 5 digits)
                             <textarea
                               value={cashInvoiceNumber}
                               onChange={(e) => setCashInvoiceNumber(e.target.value)}
-                              placeholder={"9511\n9449, 9448"}
+                              placeholder={"10061\n9449, 9448"}
                               rows={3}
                               style={{ ...inputStyle, resize: "vertical", minHeight: 72, fontFamily: "inherit" }}
                               autoComplete="off"
@@ -4617,7 +4617,7 @@ export default function AdminPage() {
                   />
                 </label>
                 <label style={{ ...labelStyle, marginBottom: 0, gridColumn: "1 / -1" }}>
-                  Invoice # (optional — multiple allowed, matches order # or last 4 digits)
+                  Invoice # (optional — multiple allowed, matches order # or last 5 digits)
                   <textarea
                     value={editCheckInvoice}
                     onChange={(e) => setEditCheckInvoice(e.target.value)}
@@ -4773,8 +4773,8 @@ export default function AdminPage() {
               </div>
               <p style={{ color: "#94a3b8", marginTop: 0, marginBottom: 12, lineHeight: 1.5, fontSize: 13 }}>
                 All matched invoices are selected by default. Keep every invoice this check covers checked —
-                each gets its own LeafLink payment for its balance owed (last-4 stubs like{" "}
-                <code>9884</code> are OK when the LLC name differs from the LeafLink customer). Deselect only
+                each gets its own LeafLink payment for its balance owed (last-5 digit stubs like{" "}
+                <code>10061</code> are OK when the LLC name differs from the LeafLink customer). Deselect only
                 invoices that should not be paid from this check. Wrong-order posts are blocked.
               </p>
               {leafLinkMatchChoices.map((m) => {
@@ -5079,7 +5079,7 @@ export default function AdminPage() {
                       <input type="date" value={editCashEntryDate} onChange={(e) => setEditCashEntryDate(e.target.value)} style={{ ...inputStyle }} />
                     </label>
                     <label style={{ ...labelStyle, marginBottom: 0, gridColumn: "1 / -1" }}>
-                      Invoice # (optional — multiple allowed)
+                      Invoice # (optional — multiple allowed, matches order # or last 5 digits)
                       <textarea
                         value={editCashInvoiceNumber}
                         onChange={(e) => setEditCashInvoiceNumber(e.target.value)}
