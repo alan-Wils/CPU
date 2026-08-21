@@ -613,6 +613,8 @@ export class CashLogService {
             overrideNote?: string;
             /** Default `received` = today; `document` = cash entry date. */
             paymentDateSource?: "received" | "document";
+            /** When short: `full` (default) marks paid; `partial` leaves balance open. */
+            settlementMode?: "full" | "partial";
         },
     ) {
         const entry = await prisma.cashLogEntry.findFirst({
@@ -664,10 +666,14 @@ export class CashLogService {
         assertLeafLinkPaymentDoesNotOverpay(payAmt, expectedBalance, "CASH_OVERPAY_BLOCKED");
         const amountMatches =
             sameMoneyCash(expectedBalance, payAmt) || sameMoneyCash(selected.total, payAmt);
-        if (!amountMatches && !input.allowAmountOverride) {
+        const underpay =
+            Number.isFinite(expectedBalance) && payAmt + 0.01 < Number(expectedBalance);
+        const settlementMode = underpay && input.settlementMode === "partial" ? "partial" : "full";
+        const markPaidInFull = underpay && settlementMode === "full";
+        if (!amountMatches && !input.allowAmountOverride && !markPaidInFull) {
             throw new AppError("Payment amount does not match invoice balance.", 409, "CASH_AMOUNT_MISMATCH");
         }
-        if (!amountMatches && input.allowAmountOverride) {
+        if (!amountMatches && (input.allowAmountOverride || markPaidInFull)) {
             const overrideNote = String(input.overrideNote || "").trim();
             if (overrideNote.length < 3) {
                 throw new AppError(
@@ -682,7 +688,9 @@ export class CashLogService {
             documentDate: entry.entryDate,
         });
         const paymentNote = buildLeafLinkCpuPaymentNote(
-            `CPU cash log ${entry.id}`,
+            markPaidInFull
+                ? `CPU cash log ${entry.id} — mark paid in full (credit/short)`
+                : `CPU cash log ${entry.id}`,
             !amountMatches,
             input.overrideNote,
         );
@@ -696,6 +704,13 @@ export class CashLogService {
                 note: paymentNote,
                 paymentMethod: "Cash",
             });
+            if (markPaidInFull) {
+                await this.leafLinkOrdersService.markOrderPaidInFull(companyId, {
+                    orderNumber: selected.orderNumber,
+                    leafLinkOrderId: selected.orderId,
+                    paidDateIso: paymentDateIso,
+                });
+            }
             const row: LeafLinkPostedPaymentRow = {
                 orderNumber: selected.orderNumber,
                 paymentId: posted.paymentId,
@@ -724,6 +739,8 @@ export class CashLogService {
                     paymentAmount: payAmt,
                     invoiceBalance: expectedBalance,
                     amountMatches,
+                    settlementMode: underpay ? settlementMode : "full",
+                    markPaidInFull,
                     overrideNote: amountMatches ? null : String(input.overrideNote || "").trim() || null,
                     paymentId: posted.paymentId,
                     result: posted.paymentStatus,

@@ -14,6 +14,7 @@ describe("CheckCaptureService LeafLink sync", () => {
       findPaymentMatchCandidatesIncludingPaidForCheck: vi.fn(),
       syncOrdersWarm: vi.fn(),
       postOrderPayment: vi.fn(),
+      markOrderPaidInFull: vi.fn(),
     };
     (service as any).auditService = {
       logAction: vi.fn(),
@@ -255,6 +256,7 @@ describe("CheckCaptureService LeafLink sync", () => {
       service.markLeafLinkInvoicePaid("co1", "u1", "c1", {
         orderNumber: "INV-1",
         paymentAmount: 90,
+        settlementMode: "partial",
       }),
     ).rejects.toMatchObject({ code: "CHECK_AMOUNT_MISMATCH" } satisfies Partial<AppError>);
   });
@@ -401,15 +403,68 @@ describe("CheckCaptureService LeafLink sync", () => {
       paymentAmount: 40,
       allowAmountOverride: true,
       overrideNote: "Partial payment on account",
+      settlementMode: "partial",
     });
     expect(out.ok).toBe(true);
     expect((service as any).leafLinkOrdersService.postOrderPayment).toHaveBeenCalledWith(
       "co1",
       expect.objectContaining({ amount: 40 }),
     );
+    expect((service as any).leafLinkOrdersService.markOrderPaidInFull).not.toHaveBeenCalled();
     const data = updateSpy.mock.calls[0]?.[0]?.data as Record<string, unknown>;
     expect(data.paymentSyncStatus).toBe("payment_posted");
     expect(data.leaflinkPaidAt).toBeUndefined();
+  });
+
+  it("marks invoice paid in full when short payment uses settlementMode full (credit)", async () => {
+    vi.spyOn(prisma.checkCapture, "findFirst").mockResolvedValue({
+      id: "c1",
+      checkDate: new Date("2026-05-01T00:00:00.000Z"),
+      checkNumber: "1001",
+      amount: 1044,
+      payerName: "Solace",
+      invoiceNumber: "9963",
+      leaflinkPaymentId: null,
+      leaflinkPostedPayments: null,
+    } as any);
+    const updateSpy = vi.spyOn(prisma.checkCapture, "update").mockResolvedValue({ id: "c1" } as any);
+    ((service as any).leafLinkOrdersService.findOpenPaymentCandidatesForCheck as any).mockResolvedValue([
+      {
+        leafLinkKey: "ll1",
+        orderId: "d83a9963",
+        orderNumber: "d83a9963",
+        customerName: "Solace Meds",
+        total: 1080,
+        outstandingBalance: 1080,
+        status: "Delivered",
+        paymentStatus: "Unpaid",
+        deliveryDate: null,
+        lineItems: [],
+        score: 50,
+        matchedBy: ["invoice_last4"],
+        markedPaidInLeafLink: false,
+      },
+    ]);
+    ((service as any).leafLinkOrdersService.postOrderPayment as any).mockResolvedValue({
+      paymentId: "p-full",
+      paymentStatus: "posted",
+      rawResponse: { id: "p-full" },
+    });
+    ((service as any).leafLinkOrdersService.markOrderPaidInFull as any).mockResolvedValue(undefined);
+    const out = await service.markLeafLinkInvoicePaid("co1", "u1", "c1", {
+      orderNumber: "d83a9963",
+      paymentAmount: 1044,
+      allowAmountOverride: true,
+      overrideNote: "Customer credit applied",
+      settlementMode: "full",
+    });
+    expect(out.ok).toBe(true);
+    expect((service as any).leafLinkOrdersService.markOrderPaidInFull).toHaveBeenCalledWith(
+      "co1",
+      expect.objectContaining({ orderNumber: "d83a9963" }),
+    );
+    const data = updateSpy.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+    expect(data.leaflinkPaidAt).toEqual(expect.any(Date));
   });
 
   it("blocks overpaying an invoice even with override", async () => {

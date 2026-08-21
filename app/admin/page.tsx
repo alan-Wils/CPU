@@ -575,6 +575,7 @@ function leafLinkTotalsMismatchMessage(
   totalOwed: number,
   methodLabel: string,
   invoiceCount: number,
+  settlementMode: "full" | "partial" = "full",
 ): string {
   const diff = roundLeafLinkMoney(loggedAmount - totalOwed);
   const plural = invoiceCount > 1 ? "s" : "";
@@ -582,7 +583,11 @@ function leafLinkTotalsMismatchMessage(
     return `The logged ${methodLabel} (${formatUsdLeafLink(loggedAmount)}) is ${formatUsdLeafLink(diff)} more than the invoice balance${plural} owed (${formatUsdLeafLink(totalOwed)}). Only the balance owed will be posted — invoices are never overpaid. Add a note about the leftover ${formatUsdLeafLink(diff)}.`;
   }
   if (diff < -LEAF_LINK_PAYMENT_TOLERANCE) {
-    return `The logged ${methodLabel} (${formatUsdLeafLink(loggedAmount)}) is less than the invoice balance owed (${formatUsdLeafLink(totalOwed)}). This will post a partial payment. Add a note explaining why.`;
+    const shortBy = formatUsdLeafLink(-diff);
+    if (settlementMode === "full") {
+      return `The logged ${methodLabel} (${formatUsdLeafLink(loggedAmount)}) is ${shortBy} less than the invoice balance owed (${formatUsdLeafLink(totalOwed)}). Full payment will post ${formatUsdLeafLink(loggedAmount)} and mark the invoice paid in full (e.g. credit covers ${shortBy}). Add a note explaining why.`;
+    }
+    return `The logged ${methodLabel} (${formatUsdLeafLink(loggedAmount)}) is ${shortBy} less than the invoice balance owed (${formatUsdLeafLink(totalOwed)}). Partial payment will post ${formatUsdLeafLink(loggedAmount)} and leave ${shortBy} owed. Add a note explaining why.`;
   }
   return `The logged ${methodLabel} does not match the invoice balance${plural}. Add a note explaining why before posting.`;
 }
@@ -785,6 +790,8 @@ export default function AdminPage() {
   const [leafLinkPaymentDateSource, setLeafLinkPaymentDateSource] = useState<"received" | "document">(
     "received",
   );
+  /** When check/cash is short of invoice balance: full (default, mark paid) vs partial. */
+  const [leafLinkSettlementMode, setLeafLinkSettlementMode] = useState<"full" | "partial">("full");
   const [leafLinkPaymentPrompt, setLeafLinkPaymentPrompt] = useState<{
     kind: "check" | "cash";
     entryId: string;
@@ -849,6 +856,7 @@ export default function AdminPage() {
       ok: boolean;
       overrideNote?: string;
       paymentDateSource?: "received" | "document";
+      settlementMode?: "full" | "partial";
     }) => void) | null
   >(null);
   /** Prevents double-click / parallel LeafLink payment posts. */
@@ -914,6 +922,7 @@ export default function AdminPage() {
     setLeafLinkSelectedOrderNumbers(input.candidates.map((c) => c.orderNumber));
     setLeafLinkManualOverrideNote("");
     setLeafLinkPaymentDateSource("received");
+    setLeafLinkSettlementMode("full");
     setLeafLinkMatchError(
       allBuilt.ok
         ? ""
@@ -930,7 +939,12 @@ export default function AdminPage() {
     totalOwed: number;
     totalsMatch: boolean;
     paymentMethodLabel: "check" | "cash";
-  }): Promise<{ ok: boolean; overrideNote?: string; paymentDateSource?: "received" | "document" }> {
+  }): Promise<{
+    ok: boolean;
+    overrideNote?: string;
+    paymentDateSource?: "received" | "document";
+    settlementMode?: "full" | "partial";
+  }> {
     return new Promise((resolve) => {
       const dangling = leafLinkPaymentPromptRef.current;
       if (dangling) {
@@ -940,6 +954,7 @@ export default function AdminPage() {
       leafLinkPaymentPromptRef.current = resolve;
       setLeafLinkPaymentOverrideNote("");
       setLeafLinkPaymentDateSource("received");
+      setLeafLinkSettlementMode("full");
       setLeafLinkPaymentPrompt(input);
     });
   }
@@ -947,6 +962,7 @@ export default function AdminPage() {
   function closeLeafLinkPaymentApplyDialog(
     ok: boolean,
     paymentDateSource: "received" | "document" = "received",
+    settlementMode: "full" | "partial" = "full",
   ) {
     const note = leafLinkPaymentOverrideNote.trim();
     const mismatch = leafLinkPaymentPrompt != null && !leafLinkPaymentPrompt.totalsMatch;
@@ -961,6 +977,7 @@ export default function AdminPage() {
               ok: true,
               overrideNote: mismatch ? note : undefined,
               paymentDateSource,
+              settlementMode,
             }
           : { ok: false },
       );
@@ -976,6 +993,7 @@ export default function AdminPage() {
     owedAmount: number;
     overrideNote?: string;
     paymentDateSource?: "received" | "document";
+    settlementMode?: "full" | "partial";
   }) {
     const cid = checksCompanyId();
     if (!cid) throw new Error("Select a company context before posting.");
@@ -984,6 +1002,7 @@ export default function AdminPage() {
       input.kind === "check"
         ? `/api/checks/${encodeURIComponent(input.entryId)}/leaflink-mark-paid`
         : `/api/cash-log/${encodeURIComponent(input.entryId)}/leaflink-mark-paid`;
+    const settlementMode = input.settlementMode || leafLinkSettlementMode || "full";
     await apiRequest(withCompanyQuery(path, cid), {
       method: "POST",
       companyId: cid,
@@ -992,6 +1011,7 @@ export default function AdminPage() {
         ...(input.candidate.orderId ? { orderId: input.candidate.orderId } : {}),
         paymentAmount: input.paymentAmount,
         paymentDateSource: input.paymentDateSource || leafLinkPaymentDateSource || "received",
+        settlementMode,
         ...(orderMismatch
           ? {
               allowAmountOverride: true,
@@ -1009,6 +1029,7 @@ export default function AdminPage() {
     totalsMatch: boolean;
     overrideNote?: string;
     paymentDateSource?: "received" | "document";
+    settlementMode?: "full" | "partial";
   }) {
     if (leafLinkPostingLockRef.current) {
       throw new Error("A LeafLink payment post is already in progress.");
@@ -1019,6 +1040,7 @@ export default function AdminPage() {
       const cid = checksCompanyId();
       if (!cid) throw new Error("Select a company context before posting.");
       const dateSource = input.paymentDateSource || leafLinkPaymentDateSource || "received";
+      const settlementMode = input.settlementMode || leafLinkSettlementMode || "full";
       const postedOrderKeys = new Set<string>();
       for (const split of input.splits) {
         const key = String(split.candidate.orderNumber || "").trim().toLowerCase();
@@ -1034,6 +1056,7 @@ export default function AdminPage() {
             paymentAmount: split.paymentAmount,
             owedAmount: split.owedAmount,
             paymentDateSource: dateSource,
+            settlementMode,
             overrideNote:
               !input.totalsMatch || !leafLinkPaymentAmountsMatch(split.paymentAmount, split.owedAmount)
                 ? input.overrideNote
@@ -1168,6 +1191,7 @@ export default function AdminPage() {
           totalsMatch: built.totalsMatch,
           overrideNote: prompt.overrideNote,
           paymentDateSource: prompt.paymentDateSource || "received",
+          settlementMode: prompt.settlementMode || "full",
         });
         showPaymentAppliedToast();
       } catch (e: unknown) {
@@ -1918,6 +1942,7 @@ export default function AdminPage() {
         totalsMatch: built.totalsMatch,
         overrideNote: !built.totalsMatch ? overrideNote : undefined,
         paymentDateSource: leafLinkPaymentDateSource,
+        settlementMode: leafLinkSettlementMode,
       });
       showPaymentAppliedToast();
       closeLeafLinkInvoiceMatchPicker();
@@ -4839,7 +4864,9 @@ export default function AdminPage() {
                               <li key={split.candidate.orderNumber}>
                                 {split.candidate.orderNumber}: {formatUsdLeafLink(split.paymentAmount)}
                                 {!leafLinkPaymentAmountsMatch(split.paymentAmount, split.owedAmount)
-                                  ? ` (of ${formatUsdLeafLink(split.owedAmount)} owed)`
+                                  ? leafLinkSettlementMode === "full"
+                                    ? ` (of ${formatUsdLeafLink(split.owedAmount)} owed) + mark paid in full`
+                                    : ` (of ${formatUsdLeafLink(split.owedAmount)} owed) — leave remainder open`
                                   : built.splits.length > 1
                                     ? ` (balance owed ${formatUsdLeafLink(split.owedAmount)})`
                                     : ""}
@@ -4855,7 +4882,53 @@ export default function AdminPage() {
                         </div>
                       )}
                     </div>
-                    {mismatch ? (
+                    {mismatch && loggedAmount + LEAF_LINK_PAYMENT_TOLERANCE < (built && built.ok ? built.totalOwed : 0) ? (
+                      <div style={{ marginTop: 12 }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: "#bae6fd", marginBottom: 6 }}>
+                          Settlement
+                        </div>
+                        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: "#e2e8f0", marginBottom: 6, cursor: "pointer" }}>
+                          <input
+                            type="radio"
+                            name="leaflink-settlement-match"
+                            checked={leafLinkSettlementMode === "full"}
+                            onChange={() => setLeafLinkSettlementMode("full")}
+                          />
+                          Full payment (default) — post check amount and mark invoice paid in full (credit)
+                        </label>
+                        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: "#e2e8f0", marginBottom: 8, cursor: "pointer" }}>
+                          <input
+                            type="radio"
+                            name="leaflink-settlement-match"
+                            checked={leafLinkSettlementMode === "partial"}
+                            onChange={() => setLeafLinkSettlementMode("partial")}
+                          />
+                          Partial payment — post check amount only; leave remaining balance owed
+                        </label>
+                        <div style={{ color: "#fbbf24", fontSize: 13, marginBottom: 8, lineHeight: 1.5 }}>
+                          {leafLinkTotalsMismatchMessage(
+                            loggedAmount,
+                            built && built.ok ? built.totalOwed : 0,
+                            amountLabel,
+                            selected.length,
+                            leafLinkSettlementMode,
+                          )}
+                        </div>
+                        <textarea
+                          value={leafLinkManualOverrideNote}
+                          onChange={(e) => setLeafLinkManualOverrideNote(e.target.value)}
+                          placeholder="Why does the logged amount differ? (e.g. customer credit)"
+                          rows={3}
+                          maxLength={500}
+                          style={{
+                            ...inputStyle,
+                            width: "100%",
+                            minHeight: 84,
+                            resize: "vertical",
+                          }}
+                        />
+                      </div>
+                    ) : mismatch ? (
                       <div style={{ marginTop: 12 }}>
                         <div style={{ color: "#fbbf24", fontSize: 13, marginBottom: 8, lineHeight: 1.5 }}>
                           {leafLinkTotalsMismatchMessage(
@@ -4863,6 +4936,7 @@ export default function AdminPage() {
                             built && built.ok ? built.totalOwed : 0,
                             amountLabel,
                             selected.length,
+                            leafLinkSettlementMode,
                           )}
                         </div>
                         <textarea
@@ -5208,18 +5282,45 @@ export default function AdminPage() {
                 </div>
                 {!leafLinkPaymentPrompt.totalsMatch ? (
                   <div style={{ marginBottom: 12 }}>
+                    {leafLinkPaymentPrompt.loggedAmount + LEAF_LINK_PAYMENT_TOLERANCE <
+                    leafLinkPaymentPrompt.totalOwed ? (
+                      <>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: "#bae6fd", marginBottom: 6 }}>
+                          Settlement
+                        </div>
+                        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: "#e2e8f0", marginBottom: 6, cursor: "pointer" }}>
+                          <input
+                            type="radio"
+                            name="leaflink-settlement-prompt"
+                            checked={leafLinkSettlementMode === "full"}
+                            onChange={() => setLeafLinkSettlementMode("full")}
+                          />
+                          Full payment (default) — post amount and mark invoice paid in full (credit)
+                        </label>
+                        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: "#e2e8f0", marginBottom: 8, cursor: "pointer" }}>
+                          <input
+                            type="radio"
+                            name="leaflink-settlement-prompt"
+                            checked={leafLinkSettlementMode === "partial"}
+                            onChange={() => setLeafLinkSettlementMode("partial")}
+                          />
+                          Partial payment — leave remaining balance owed
+                        </label>
+                      </>
+                    ) : null}
                     <div style={{ color: "#fbbf24", fontSize: 13, marginBottom: 8, lineHeight: 1.5 }}>
                       {leafLinkTotalsMismatchMessage(
                         leafLinkPaymentPrompt.loggedAmount,
                         leafLinkPaymentPrompt.totalOwed,
                         leafLinkPaymentPrompt.paymentMethodLabel,
                         leafLinkPaymentPrompt.splits.length,
+                        leafLinkSettlementMode,
                       )}
                     </div>
                     <textarea
                       value={leafLinkPaymentOverrideNote}
                       onChange={(e) => setLeafLinkPaymentOverrideNote(e.target.value)}
-                      placeholder="Why does the logged amount differ from the invoice balance(s)?"
+                      placeholder="Why does the logged amount differ? (e.g. customer credit)"
                       rows={3}
                       maxLength={500}
                       style={{
@@ -5275,7 +5376,9 @@ export default function AdminPage() {
                       !leafLinkPaymentPrompt.totalsMatch &&
                       leafLinkPaymentOverrideNote.trim().length < 3
                     }
-                    onClick={() => closeLeafLinkPaymentApplyDialog(true, leafLinkPaymentDateSource)}
+                    onClick={() =>
+                      closeLeafLinkPaymentApplyDialog(true, leafLinkPaymentDateSource, leafLinkSettlementMode)
+                    }
                   >
                     {leafLinkPaymentPrompt.splits.length > 1
                       ? `Post ${leafLinkPaymentPrompt.splits.length} payments`

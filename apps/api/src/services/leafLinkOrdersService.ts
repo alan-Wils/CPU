@@ -3353,6 +3353,51 @@ export class LeafLinkOrdersService {
     const paymentStatus = cleanString(rec.status || rec.payment_status || rec.state) || "posted";
     return { paymentId, paymentStatus, rawResponse: body };
   }
+
+  /**
+   * Mark an orders-received invoice paid in full (LeafLink UI “mark as paid” when payment is under
+   * the balance, e.g. customer credit covers the remainder).
+   */
+  async markOrderPaidInFull(
+    companyId: string,
+    input: { orderNumber: string; leafLinkOrderId?: string | null; paidDateIso: string },
+  ): Promise<void> {
+    const creds = await this.leafLinkService.resolveRuntimeCredentials(companyId);
+    if (!creds.integrationEnabled || !creds.apiKey || (!creds.companyId && !creds.companySlug)) {
+      throw new AppError("LeafLink is not configured.", 400, "LEAFLINK_MISSING_CONFIG");
+    }
+    await this.assertOrdersCapableOrThrow(creds);
+    const base = creds.baseUrl.replace(/\/+$/, "");
+    const orderRef = cleanString(input.leafLinkOrderId || input.orderNumber).replace(/^#/, "");
+    if (!orderRef) {
+      throw new AppError("Missing LeafLink order number to mark paid.", 400, "LEAFLINK_PAYMENT_ORDER_REQUIRED");
+    }
+    const paidDateRaw = cleanString(input.paidDateIso);
+    const paidDate =
+      /^\d{4}-\d{2}-\d{2}$/.test(paidDateRaw)
+        ? `${paidDateRaw}T12:00:00.000Z`
+        : (paidDateRaw || new Date().toISOString());
+    const id = encodeURIComponent(orderRef);
+    const urls: string[] = [];
+    if (creds.companyId) {
+      urls.push(`${base}/v2/companies/${encodeURIComponent(creds.companyId)}/orders-received/${id}/`);
+    }
+    urls.push(`${base}/v2/orders-received/${id}/`);
+    await leafLinkAuthedRequest(urls, creds, creds.source, 25_000, "PATCH", {
+      paid: true,
+      paid_date: paidDate,
+    });
+    logInfo("[LEAFLINK] order_marked_paid_in_full", { companyId, orderRef });
+    try {
+      await this.getOrder(companyId, orderRef);
+    } catch (err) {
+      logWarn("[LEAFLINK] order_paid_refresh_failed", {
+        companyId,
+        orderRef,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 }
 
 function baseOutConfiguredForOrders(creds: LeafLinkRuntimeCredentials): boolean {

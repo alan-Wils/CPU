@@ -590,10 +590,15 @@ export class CheckCaptureService {
         }
         assertLeafLinkPaymentDoesNotOverpay(payAmt, expectedBalance, "CHECK_OVERPAY_BLOCKED");
         const amountMatches = leafLinkPaymentMatchesInvoice(payAmt, expectedBalance, selected.total);
-        if (!amountMatches && !input.allowAmountOverride) {
+        const underpay =
+            Number.isFinite(expectedBalance) && payAmt + 0.01 < Number(expectedBalance);
+        /** When short: `full` (default) marks invoice paid after posting; `partial` leaves balance open. */
+        const settlementMode = underpay && input?.settlementMode === "partial" ? "partial" : "full";
+        const markPaidInFull = underpay && settlementMode === "full";
+        if (!amountMatches && !input.allowAmountOverride && !markPaidInFull) {
             throw new AppError("Payment amount does not match invoice balance.", 409, "CHECK_AMOUNT_MISMATCH");
         }
-        if (!amountMatches && input.allowAmountOverride) {
+        if (!amountMatches && (input.allowAmountOverride || markPaidInFull)) {
             const overrideNote = String(input.overrideNote || "").trim();
             if (overrideNote.length < 3) {
                 throw new AppError(
@@ -608,7 +613,9 @@ export class CheckCaptureService {
             documentDate: check.checkDate,
         });
         const paymentNote = buildLeafLinkCpuPaymentNote(
-            `CPU check capture ${check.id}`,
+            markPaidInFull
+                ? `CPU check capture ${check.id} — mark paid in full (credit/short)`
+                : `CPU check capture ${check.id}`,
             !amountMatches,
             input.overrideNote,
         );
@@ -622,6 +629,13 @@ export class CheckCaptureService {
                 note: paymentNote,
                 paymentMethod: "Check",
             });
+            if (markPaidInFull) {
+                await this.leafLinkOrdersService.markOrderPaidInFull(companyId, {
+                    orderNumber: selected.orderNumber,
+                    leafLinkOrderId: selected.orderId,
+                    paidDateIso: paymentDateIso,
+                });
+            }
             const row: LeafLinkPostedPaymentRow = {
                 orderNumber: selected.orderNumber,
                 paymentId: posted.paymentId,
@@ -629,6 +643,7 @@ export class CheckCaptureService {
                 postedAt: new Date().toISOString(),
             };
             const mergedJson = [...parsePostedPaymentsJson(check.leaflinkPostedPayments), row];
+            const settledFully = amountMatches || markPaidInFull;
             await prisma.checkCapture.update({
                 where: { id: check.id },
                 data: {
@@ -637,8 +652,8 @@ export class CheckCaptureService {
                     leaflinkPaymentId: posted.paymentId,
                     leaflinkPaymentStatus: posted.paymentStatus,
                     leaflinkMatchedAt: new Date(),
-                    /** Only mark the check “paid in LeafLink” when the posted amount covers the invoice balance. */
-                    ...(amountMatches ? { leaflinkPaidAt: new Date() } : {}),
+                    /** Only mark the check “paid in LeafLink” when amount matches or Full settlement was chosen. */
+                    ...(settledFully ? { leaflinkPaidAt: new Date() } : {}),
                     leaflinkPostedPayments: mergedJson as import("@prisma/client").Prisma.InputJsonValue,
                     leaflinkPaymentResponseJson: JSON.stringify(posted.rawResponse),
                     paymentSyncStatus: "payment_posted",
@@ -660,6 +675,8 @@ export class CheckCaptureService {
                     paymentAmount: payAmt,
                     invoiceBalance: expectedBalance,
                     amountMatches,
+                    settlementMode: underpay ? settlementMode : "full",
+                    markPaidInFull,
                     overrideNote: amountMatches ? null : String(input.overrideNote || "").trim() || null,
                     paymentId: posted.paymentId,
                     result: posted.paymentStatus

@@ -349,6 +349,12 @@ export const checkLeafLinkMarkPaidSchema = z.object({
      * `document` = check written date / cash entry date.
      */
     paymentDateSource: z.enum(["received", "document"]).optional(),
+    /**
+     * When logged payment is less than invoice balance:
+     * `full` (default) = post the payment and mark the invoice paid in full (e.g. customer credit).
+     * `partial` = post the payment only; leave remaining balance open.
+     */
+    settlementMode: z.enum(["full", "partial"]).optional(),
 }).superRefine((data, ctx) => {
     if (!data.orderId && !data.orderNumber) {
         ctx.addIssue({
